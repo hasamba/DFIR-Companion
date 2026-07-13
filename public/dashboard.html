@@ -928,6 +928,10 @@
     .synth-meta .sm-added { color: var(--c-6bcb77); } .synth-meta .sm-removed { color: var(--c-ff7a7a); } .synth-meta .sm-changed { color: var(--c-ffd93b); }
     .synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: var(--c-6aa9ff); }
     .synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
+    /* Immediate FP cascade (#12): a conclusion neutralized the instant a supporting finding was marked
+       false positive, pending the queued re-synthesis. */
+    .stale-badge { color: var(--c-ffd93b); font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .hyp-needs-review { color: var(--c-ffd93b); font-size: 11px; font-weight: 600; margin-left: 6px; }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
       border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
@@ -5758,10 +5762,13 @@
       if ((h.relatedIocIds || []).length) chips.push(`<span class="hyp-chip" title="implicated IOCs">${h.relatedIocIds.length} IOC${h.relatedIocIds.length === 1 ? "" : "s"}</span>`);
       const meta = chips.length ? `<div class="hyp-meta">${chips.join("")}</div>` : "";
       const id = escAttr(h.id);
-      return `<div class="hyp ${escAttr(h.status)}" data-id="${id}">` +
+      // Immediate FP cascade (#12): supporting evidence was marked false positive — flag for re-judging.
+      // A pristine hypothesis was also flipped to 'unknown'; editing it (any field) clears the flag.
+      const review = h.needsReview ? `<span class="hyp-needs-review" title="An event or IOC that supported this hypothesis was marked false positive — re-judge it. Editing any field clears this flag.">⚠️ needs review</span>` : "";
+      return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}" data-id="${id}">` +
         `<div class="hyp-row1">` +
           `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
-          `<span class="hyp-title">${esc(h.title)}</span>${src}` +
+          `<span class="hyp-title">${esc(h.title)}</span>${src}${review}` +
           `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
         `</div>${outcome}${desc}${meta}` +
         `<div class="hyp-row2">` +
@@ -10043,9 +10050,15 @@
         const evLink = a.eventIds && a.eventIds.length
           ? `<a href="#" class="anomaly-events" data-evids="${escAttr(a.eventIds.join(","))}" data-label="${escAttr((a.asset || "") + " · " + (a.bucketStart || ""))}" style="font-size:11px;color:var(--c-6aa9ff);margin-left:6px" title="Filter the forensic timeline to exactly these ${a.eventIds.length} events">view ${a.eventIds.length} event${a.eventIds.length !== 1 ? "s" : ""}</a>`
           : "";
+        // Immediate FP cascade (#12): one-click suppress the whole spike — marks every event in it false
+        // positive (detection-misfire) via the batch endpoint, so a noisy/benign spike deflates at once
+        // (anomalies recompute over FP-filtered events) and drops out of the baseline.
+        const fpLink = a.eventIds && a.eventIds.length
+          ? `<a href="#" class="anomaly-fp" data-evids="${escAttr(a.eventIds.join(","))}" data-label="${escAttr((a.asset || "") + " · " + (a.bucketStart || ""))}" style="font-size:11px;color:var(--c-ff9f45,#ff9f45);margin-left:8px" title="Mark all ${a.eventIds.length} events in this spike as false positive (detection-misfire) — the spike deflates and stops skewing the baseline">✗ mark spike FP</a>`
+          : "";
         return `<tr>` +
           `<td><span class="sev-${esc(a.severity)}" style="color:${sevColor};font-weight:bold">${esc(a.severity)}</span></td>` +
-          `<td><strong>${esc(a.asset)}</strong>${evLink}</td>` +
+          `<td><strong>${esc(a.asset)}</strong>${evLink}${fpLink}</td>` +
           `<td title="${escAttr(typeTip)}">${esc(typeCell)}</td>` +
           `<td style="color:var(--c-9aa4b2);font-size:11px">${window}</td>` +
           `<td title="events in this bucket for this asset">${esc(String(a.eventCount))}</td>` +
@@ -10059,6 +10072,19 @@
         `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
         `<th>Severity</th><th>Asset</th><th title="peer = vs other assets this bucket; self = vs this asset's own baseline">Type</th><th>Bucket</th><th>Events</th><th>Baseline</th><th>Ratio</th>` +
         `</tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    // Immediate FP cascade (#12): mark every event in an anomaly spike false positive in one batch call.
+    // The anomalies panel recomputes over FP-filtered events, so the suppressed spike deflates/disappears
+    // and stops skewing the baseline; the single batch re-synthesis (kicked by the route) folds it in.
+    function markAnomalySpikeFalsePositive(ids, label) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !ids.length) return;
+      if (!confirm(`Mark all ${ids.length} event(s) in this spike (${label}) as false positive?`)) return;
+      const items = ids.map(id => ({ kind: "event", ref: id, reason: "detection-misfire" }));
+      fetch(`/cases/${caseId}/false-positive/batch`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items, reason: "detection-misfire", note: `anomaly spike suppressed (${label})` }),
+      }).then(() => { scheduleAnomaliesReload(); }).catch(() => {});
     }
 
     // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
@@ -13042,6 +13068,8 @@
             const color = PRIO[s.priority] || "#9aa4b2";
             return `<div class="step-row" style="--step-color:${color}">` +
               `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
+              // Immediate FP cascade (#12): this step advanced a finding just marked false positive.
+              (s.staleReSynth ? ` <span class="stale-badge" title="A finding this step relied on was marked false positive — re-synthesis is queued to refresh it.">⏳ stale — re-synthesis queued</span>` : "") +
               (s.rationale ? `<span class="step-rationale">${esc(s.rationale)}</span>` : "") +
               (s.pointer ? `<span class="step-pointer">→ ${esc(s.pointer)}</span>` : "") +
               collectDirectiveHtml(s.collect) +
@@ -13057,7 +13085,11 @@
             return `<div class="qrow">` +
               `<div class="q-head">${commentChip("question", q.id)} ${tagChip("question", q.id)}` +
               (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
-              ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong></div>` +
+              ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong>` +
+              // Immediate FP cascade (#12): a finding that backed this answer was just marked false
+              // positive; the answer was neutralized now and re-synthesis is queued to recompute it.
+              (q.staleReSynth ? ` <span class="stale-badge" title="A finding this answer relied on was marked false positive — this answer was cleared and re-synthesis is queued.">⏳ stale — re-synthesis queued</span>` : "") +
+              `</div>` +
               `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +
               // Contradiction badge (investigation-guidance #3): the negative answer conflicts with
               // ATT&CK-tagged events in the timeline — flag it so a wrong "no" is never read as settled.
@@ -14127,6 +14159,14 @@
         e.preventDefault();
         const ids = (aev.getAttribute("data-evids") || "").split(",").filter(Boolean);
         filterTimelineToEventIds(ids, aev.getAttribute("data-label") || "");
+        return;
+      }
+      // Timeline-anomaly "mark spike FP" link (#12) → batch-mark every event in the spike false positive.
+      const afp = e.target.closest && e.target.closest(".anomaly-fp");
+      if (afp) {
+        e.preventDefault();
+        const ids = (afp.getAttribute("data-evids") || "").split(",").filter(Boolean);
+        markAnomalySpikeFalsePositive(ids, afp.getAttribute("data-label") || "");
         return;
       }
       const chip = e.target.closest && e.target.closest(".comment-chip");

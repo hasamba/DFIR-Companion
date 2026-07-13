@@ -2,7 +2,9 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import {
   FalsePositiveStore, markerId, type FalsePositiveMarker, FALSE_POSITIVE_REASONS,
+  applyFalsePositive, falsePositiveEventIds,
 } from "../analysis/falsePositive.js";
+import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
 import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
@@ -90,6 +92,47 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     };
   };
 
+  // Immediate FP cascade (investigation-guidance #12): the instant markers are saved, synchronously
+  // reconsider the STORED conclusions a background re-synthesis would otherwise leave stale for the
+  // seconds it runs — key questions + next-steps that rested on a now-rejected finding (badged "stale —
+  // re-synthesis queued"), and hypotheses whose supporting evidence was just rejected. Best-effort: a
+  // failure here must never fail the FP marking itself. Runs under the state lock so it can't race the
+  // re-synthesis's read-modify-write. The authoritative re-synthesis (kicked right after) clears the flags.
+  const cascadeFalsePositive = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
+    try {
+      const stateStore = options.stateStore;
+      if (stateStore) {
+        await ctx.runStateExclusive(caseId, async () => {
+          const state = await stateStore.load(caseId);
+          const survivingFindingIds = new Set(applyFalsePositive(state, markers).findings.map((f) => f.id));
+          const priorFindingIds = state.findings.map((f) => f.id);
+          const removedFindingIds = new Set(priorFindingIds.filter((id) => !survivingFindingIds.has(id)));
+          const q = reconsiderKeyQuestions(state.keyQuestions, { survivingFindingIds, priorFindingIds, staleReSynth: true });
+          const s = reconsiderNextSteps(state.nextSteps, { removedFindingIds, staleReSynth: true });
+          if (q.changed || s.changed) {
+            await stateStore.save({ ...state, keyQuestions: q.questions, nextSteps: s.steps });
+          }
+        });
+        // Hypotheses (a side store, not InvestigationState): flag/neutralize any whose evidence was
+        // just rejected. Map IOC-value markers back to their IOC ids for the intersection test.
+        if (options.hypothesisStore) {
+          const state = await stateStore.load(caseId);
+          const iocIdByValue = new Map(state.iocs.map((i) => [i.value.trim().toLowerCase(), i.id] as const));
+          const fpIocIds = new Set(
+            markers.filter((m) => m.kind === "ioc")
+              .map((m) => iocIdByValue.get(m.ref.trim().toLowerCase()))
+              .filter((id): id is string => !!id),
+          );
+          await options.hypothesisStore.reconsiderForFalsePositive(caseId, {
+            fpEventIds: falsePositiveEventIds(markers), fpIocIds,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`[DFIR] FP cascade failed for case ${caseId}: ${(err as Error).message}`);
+    }
+  };
+
   app.post("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
       const marker = buildFalsePositiveMarker(req.body ?? {});
@@ -113,6 +156,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
         detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
       });
+      await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
       resynthesizeInBackground(req.params.id); // re-derive conclusions without it
       return res.status(200).json(next);
     } catch (err) {
@@ -153,6 +197,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
         detail: `${built.length} item(s) marked false-positive`,
       });
+      await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
       resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
       return res.status(200).json(next);
     } catch (err) {

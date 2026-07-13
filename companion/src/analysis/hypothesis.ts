@@ -45,6 +45,11 @@ export const hypothesisSchema = z.object({
   // True once the analyst has edited this hypothesis via PATCH. Freezes a synthesis hypothesis
   // against auto-refresh/prune. Always effectively true for analyst-authored ones.
   analystTouched: z.boolean().default(false).catch(false),
+  // Immediate FP cascade (investigation-guidance #12): set when a supporting event/IOC of this
+  // hypothesis was just marked false positive, so the dashboard flags it for the analyst to re-judge.
+  // A pristine (untouched) hypothesis is ALSO flipped to `unknown`; a touched one keeps its status
+  // (freeze contract) and only carries the flag. Cleared on analyst PATCH and on synthesis refresh.
+  needsReview: z.boolean().default(false).catch(false),
   // Stable derive key for a synthesis hypothesis (= its id). Absent for analyst-authored ones.
   sourceKey: z.string().optional(),
   author: z.string().optional(),
@@ -218,6 +223,7 @@ export function mergeHypotheses(
           relatedTechniques: [...seed.relatedTechniques],
           relatedEventIds: [...seed.relatedEventIds],
           relatedIocIds: [...seed.relatedIocIds],
+          needsReview: false,   // authoritative refresh clears any interim FP-cascade flag (#12)
           updatedAt: now,
         };
         changed = true;
@@ -236,6 +242,7 @@ export function mergeHypotheses(
         notes: "",
         source: "synthesis",
         analystTouched: false,
+        needsReview: false,
         sourceKey: seed.sourceKey,
         createdAt: now,
         updatedAt: now,
@@ -294,6 +301,7 @@ export function buildAnalystHypothesis(
     notes: String(input.notes ?? "").trim().slice(0, MAX_TEXT_LEN),
     source: "analyst",
     analystTouched: true,
+    needsReview: false,
     author: (input.author || "").trim() || "anonymous",
     createdAt: now,
     updatedAt: now,
@@ -315,6 +323,47 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
     ...(patch.assignee !== undefined ? { assignee: String(patch.assignee).trim() } : {}),
     ...(patch.notes !== undefined ? { notes: String(patch.notes).trim().slice(0, MAX_TEXT_LEN) } : {}),
     analystTouched: true,
+    needsReview: false,   // the analyst is editing it now — that IS the review (#12)
     updatedAt: now,
   };
+}
+
+export interface ReconsiderHypothesesInput {
+  fpEventIds: ReadonlySet<string>; // forensic-event ids just marked false positive (lowercased)
+  fpIocIds: ReadonlySet<string>;   // IOC ids just marked false positive
+}
+
+export interface ReconsiderHypothesesResult {
+  hypotheses: Hypothesis[];
+  changed: boolean;
+}
+
+// Immediate FP cascade (investigation-guidance #12): when an event or IOC is marked false positive, any
+// hypothesis whose SUPPORTING evidence (relatedEventIds / relatedIocIds) intersects the new markers is
+// no longer safely supported. Flag it `needsReview` so the analyst re-judges it now. A PRISTINE
+// (untouched) hypothesis is ALSO flipped to `unknown` — its support just eroded; a TOUCHED one keeps its
+// status (the analyst-owned freeze contract) and only carries the flag. Pure + idempotent — no clock use
+// beyond `now`, applied only to hypotheses that actually intersect a marker.
+export function reconsiderHypotheses(
+  hypotheses: readonly Hypothesis[],
+  input: ReconsiderHypothesesInput,
+  now: string,
+): ReconsiderHypothesesResult {
+  let changed = false;
+  const next = hypotheses.map((h) => {
+    const hits =
+      h.relatedEventIds.some((id) => input.fpEventIds.has(id.trim().toLowerCase())) ||
+      h.relatedIocIds.some((id) => input.fpIocIds.has(id));
+    if (!hits) return h;
+    const flipStatus = !h.analystTouched && h.status !== "unknown";
+    if (h.needsReview && !flipStatus) return h; // already flagged, nothing more to change
+    changed = true;
+    return {
+      ...h,
+      needsReview: true,
+      ...(flipStatus ? { status: "unknown" as HypothesisStatus } : {}),
+      updatedAt: now,
+    };
+  });
+  return { hypotheses: next, changed };
 }

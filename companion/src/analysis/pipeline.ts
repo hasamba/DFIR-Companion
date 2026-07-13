@@ -172,6 +172,7 @@ import {
   deriveWindow, type ModelEvidenceRequest,
 } from "./secondLook.js";
 import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
+import { reconsiderKeyQuestions, textMentionsFindingId } from "./fpCascade.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
@@ -1316,17 +1317,6 @@ export interface PipelineOptions {
   // Per-case import-meta store. When set, synthesis + the evidence-gap panel flag a zero-yield AI
   // import (a source read as "clean" that actually dropped everything — investigation-guidance #10).
   importMetaStore?: ImportMetaStore;
-}
-
-// Whole-word (id-boundary) match of a finding id inside free text — used to catch a key question's
-// dependency on a finding via its 'pointer'/'answer' prose (e.g. "Findings f1 and f2") when there's
-// no structured relatedFindingIds link, either because the question predates that field or the
-// model only named the finding in prose. Escapes regex metacharacters since ids can contain them
-// (e.g. "f-auto-e1").
-function textMentionsFindingId(text: string | undefined, findingId: string): boolean {
-  if (!text) return false;
-  const escaped = findingId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "i").test(text);
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -4526,21 +4516,15 @@ export class AnalysisPipeline {
     // threat is misleading even when another finding also backs it, and we can't safely guess what
     // the finding-minus-the-FP'd-one answer should say without asking the model again. Guarantees a
     // key question can never keep citing a finding that's already gone.
-    const survivingFindingIds = new Set(next.findings.map((f) => f.id));
-    const priorFindingIds = state.findings.map((f) => f.id); // ids that existed going into this run
+    // Shared with the FP-mark route's synchronous cascade (investigation-guidance #12). Here it runs as
+    // the AUTHORITATIVE recompute (staleReSynth off → clears any interim stale badge), guaranteeing a key
+    // question can never keep citing a finding that's gone.
     next = {
       ...next,
-      keyQuestions: next.keyQuestions.map((q) => {
-        const related = (q.relatedFindingIds ?? []).filter((id) => survivingFindingIds.has(id));
-        const structuralLoss = (q.relatedFindingIds ?? []).some((id) => !survivingFindingIds.has(id));
-        const textualLoss = priorFindingIds.some(
-          (id) => !survivingFindingIds.has(id) && (textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id)),
-        );
-        return (structuralLoss || textualLoss) && q.status !== "unknown"
-          ? { ...q, relatedFindingIds: related, status: "unknown" as const, answer: "",
-              pointer: "re-evaluate — the finding(s) that supported this answer were marked false positive" }
-          : { ...q, relatedFindingIds: related };
-      }),
+      keyQuestions: reconsiderKeyQuestions(next.keyQuestions, {
+        survivingFindingIds: new Set(next.findings.map((f) => f.id)),
+        priorFindingIds: state.findings.map((f) => f.id), // ids that existed going into this run
+      }).questions,
     };
 
     // Answer-contradiction validator (investigation-guidance #3): a key question whose answer asserts
