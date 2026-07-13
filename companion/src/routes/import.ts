@@ -279,7 +279,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 }
               } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation });
+                // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
+                // method stashed (log path only; null otherwise) and stamp it onto import-meta.
+                const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
                 options.onImportMeta?.(caseId);
               }
               logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -464,7 +467,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 }
               } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation });
+                // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
+                // method stashed (log path only; null otherwise) and stamp it onto import-meta.
+                const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {

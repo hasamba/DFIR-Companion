@@ -9,6 +9,7 @@ function meta(p: Partial<ImportMeta>): ImportMeta {
     addedCount: p.addedCount ?? 0, removedCount: 0, lastDiff: null,
     iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
     linesIn: p.linesIn ?? 0, path: p.path ?? "ai",
+    ...(p.truncation !== undefined ? { truncation: p.truncation } : {}),
   };
 }
 function finding(sev: Finding["severity"]): Finding {
@@ -37,6 +38,24 @@ describe("classifyImportYield (trigger a — zero-yield AI import)", () => {
   });
   it("does NOT flag a tiny AI import below the line threshold", () => {
     expect(classifyImportYield(meta({ path: "ai", linesIn: ZERO_YIELD_MIN_LINES_DEFAULT - 1, addedCount: 0 }))).toBeNull();
+  });
+});
+
+describe("classifyImportYield (trigger b — cap-hit template truncation, #10 deferred)", () => {
+  it("flags an import whose log-aggregation cap dropped distinct patterns, even when events WERE produced", () => {
+    const w = classifyImportYield(meta({ lastImportFile: "huge.log", path: "ai", addedCount: 120, linesIn: 90000, truncation: { distinctTemplates: 950, keptTemplates: 400 } }));
+    expect(w).not.toBeNull();
+    expect(w!.reason).toBe("cap_hit");
+    expect(w!.message).toMatch(/550 of 950 distinct log patterns/);
+    expect(w!.message).toMatch(/DFIR_LOG_MAX_TEMPLATES/);
+  });
+  it("does NOT flag when nothing was truncated (kept >= distinct)", () => {
+    expect(classifyImportYield(meta({ path: "ai", addedCount: 50, truncation: { distinctTemplates: 120, keptTemplates: 400 } }))).toBeNull();
+    expect(classifyImportYield(meta({ path: "ai", addedCount: 50, truncation: null }))).toBeNull();
+  });
+  it("zero-yield (trigger a) takes precedence when both could apply", () => {
+    const w = classifyImportYield(meta({ path: "ai", addedCount: 0, linesIn: 27290, truncation: { distinctTemplates: 950, keptTemplates: 400 } }));
+    expect(w!.reason).toBe("zero_yield_ai");
   });
 });
 

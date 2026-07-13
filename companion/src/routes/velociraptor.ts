@@ -502,6 +502,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const mitreTechniques = toStringArray(req.body?.mitreTechniques);
     const mode = req.body?.mode === "collection" ? "collection" : "hunt";
     const hostname = typeof req.body?.hostname === "string" ? req.body.hostname.trim() : "";
+    // ACH hunt→hypothesis link (investigation-guidance #14, deferred): when the analyst deploys a hunt to
+    // TEST a specific hypothesis, carry its id so an empty result counts as a MISS against that exact
+    // hypothesis (→ eventual `exhausted`), not just a technique-overlap match.
+    const relatedHypothesisId = typeof req.body?.relatedHypothesisId === "string" && req.body.relatedHypothesisId.trim()
+      ? req.body.relatedHypothesisId.trim() : undefined;
     if (!vql) return res.status(400).json({ error: "vql is required" });
     if (!title) return res.status(400).json({ error: "title is required" });
     try {
@@ -511,7 +516,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         const result = await collectHostResolved(hostname, vql, description);
         // A collection is a per-host FLOW (no huntId), so its outcome isn't auto-collected — but recording
         // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
-        await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString() });
+        await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString(), ...(relatedHypothesisId ? { relatedHypothesisId } : {}) });
         options.onVeloHunt?.(caseId);
         logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "hunt", action: "deploy-collection", detail: `collection "${title}" on ${hostname}`,
@@ -540,7 +545,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         ctx.veloHuntTimers().set(launch.huntId, timer);
         ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
       }
-      await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString() });
+      await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString(), ...(relatedHypothesisId ? { relatedHypothesisId } : {}) });
       options.onVeloHunt?.(caseId);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "hunt", action: "deploy-hunt", detail: `fleet hunt "${title}" deployed (${source})`,

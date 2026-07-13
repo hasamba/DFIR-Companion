@@ -5,5 +5,5 @@ repos:
       - id: betterleaks
         args:
           - '--config'
-          - '.betterleaks.toml'
+          - '.betterleaks-config.toml'
           - '--verbose'

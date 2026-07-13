@@ -70,9 +70,17 @@ export interface AggregateOptions {
   maxTemplates?: number;
 }
 
+// Optional out-parameter (investigation-guidance #10, trigger b): how many DISTINCT templates existed vs
+// how many survived the cap, so a caller can flag "N of M log patterns weren't triaged" — a coverage
+// blind spot, since the dropped patterns were never shown to the AI. Populated in place; harmless to omit.
+export interface AggregateStats {
+  distinctTemplates: number;
+  keptTemplates: number;
+}
+
 // Group log lines into counted templates. Order within a count tie follows first
 // appearance, so the output is stable/deterministic.
-export function aggregateLogLines(lines: readonly string[], opts: AggregateOptions = {}): LogTemplate[] {
+export function aggregateLogLines(lines: readonly string[], opts: AggregateOptions = {}, stats?: AggregateStats): LogTemplate[] {
   const groups = new Map<string, LogTemplate>();
   const insertionOrder = new Map<string, number>();
   let order = 0;
@@ -96,6 +104,7 @@ export function aggregateLogLines(lines: readonly string[], opts: AggregateOptio
   const byCountDesc = (a: LogTemplate, b: LogTemplate): number => b.count - a.count || byInsertion(a, b);
 
   const max = opts.maxTemplates ?? 400;
+  if (stats) { stats.distinctTemplates = all.length; stats.keptTemplates = Math.min(all.length, max); }
   if (all.length <= max) return all.sort(byCountDesc);
 
   // Truncation needed. A naive "most frequent first" cap silently drops RARE templates once a log

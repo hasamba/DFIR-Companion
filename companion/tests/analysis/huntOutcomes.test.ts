@@ -63,6 +63,13 @@ describe("recordDeploy", () => {
     expect(out[0].vqlPreview).toContain("glob");
   });
 
+  it("carries relatedHypothesisId when the hunt was deployed to test a hypothesis (#14 deferred)", () => {
+    const linked = recordDeploy([], { source: "fleet", title: "test h2", vql: "SELECT 1", huntId: "H.h", deployedAt: T0, relatedHypothesisId: "hyp-2" });
+    expect(linked[0].relatedHypothesisId).toBe("hyp-2");
+    const unlinked = recordDeploy([], { source: "fleet", title: "generic", vql: "SELECT 1", huntId: "H.g", deployedAt: T0 });
+    expect(unlinked[0].relatedHypothesisId).toBeUndefined();
+  });
+
   it("records a bundle with no VQL fingerprint, id from huntId", () => {
     const out = recordDeploy([], { source: "bundle", title: "Fast Triage", huntId: "H.999", deployedAt: T0 });
     expect(out[0].vqlFingerprint).toBe("");

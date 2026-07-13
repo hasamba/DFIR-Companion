@@ -69,7 +69,7 @@ import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "./scope.js";
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
-import { aggregateLogLines } from "./logAggregate.js";
+import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
@@ -103,7 +103,7 @@ import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
 import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
-import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -171,7 +171,7 @@ import {
   buildSecondLookRequests, resolveSecondLookRequests, buildSecondLookPlan, summarizeSecondLook,
   deriveWindow, type ModelEvidenceRequest,
 } from "./secondLook.js";
-import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
+import { groundAndScoreFindings, capIntelOnlyFindings, buildIntelCorroborationSteps, corroborationLabel } from "./findingGrounding.js";
 import { scoreFindingsRelevance } from "./findingRelevance.js";
 import { buildPrevalenceIndex, eventPrevalence, prevalenceTag, rarityScore } from "./prevalence.js";
 import { reconsiderKeyQuestions, textMentionsFindingId } from "./fpCascade.js";
@@ -1525,6 +1525,16 @@ export class AnalysisPipeline {
   // when nothing that affects the output has changed since the last run. In-memory: a
   // fresh process (or an explicit `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
+  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when
+  // the distinct-template cap dropped patterns the AI never saw; consumed once by the import route to
+  // stamp a cap-hit coverage warning onto import-meta. A side channel because import methods return only
+  // the state, not metadata.
+  private readonly importTruncation = new Map<string, AggregateStats>();
+  consumeImportTruncation(caseId: string): AggregateStats | undefined {
+    const v = this.importTruncation.get(caseId);
+    this.importTruncation.delete(caseId);
+    return v;
+  }
   // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
   // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
   // edit to the override file, and keeps the warning from spamming every synthesis run.
@@ -1678,8 +1688,14 @@ export class AnalysisPipeline {
     const { lines } = parseLogLines(logText);
     if (lines.length === 0) return this.opts.stateStore.load(caseId);
 
-    // Collapse the raw lines into distinct, counted patterns (most frequent first).
-    const templates = aggregateLogLines(lines);
+    // Collapse the raw lines into distinct, counted patterns (most frequent first). Capture the
+    // aggregation stats so a cap-hit (more distinct patterns than the AI could be shown) is flagged
+    // as a coverage blind spot by the import route (#10 trigger b).
+    const aggStats: AggregateStats = { distinctTemplates: 0, keptTemplates: 0 };
+    const maxTemplates = Number(process.env.DFIR_LOG_MAX_TEMPLATES) || undefined;   // else the built-in default
+    const templates = aggregateLogLines(lines, { maxTemplates }, aggStats);
+    if (aggStats.distinctTemplates > aggStats.keptTemplates) this.importTruncation.set(caseId, aggStats);
+    else this.importTruncation.delete(caseId);
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 
@@ -4255,8 +4271,16 @@ export class AnalysisPipeline {
     const prevalenceIndex = buildPrevalenceIndex(state.forensicTimeline);
     const rarityOf = (e: ForensicEvent): number => rarityScore(e, prevalenceIndex);
     // Stratified selection: all Critical/High + the earliest (initial-access) + an even
-    // time-spread sample, chronologically — better kill-chain coverage than severity-only.
-    let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
+    // time-spread sample, chronologically — better kill-chain coverage than severity-only. The ANNOTATED
+    // form (investigation-guidance #4) exposes which CLASS claimed each event, so renderEvent can prefix
+    // context-only rows with "~" (the model reads anchors vs supporting context) and the synth-meta card
+    // can show the analyst what evidence classes the model actually saw.
+    let selection = selectSynthesisEventsAnnotated(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
+    let promptEvents = selection.events;
+    // Context classes: everything that is NOT a primary verdict-bearing anchor / initial-access event —
+    // these are the supporting rows the model should read as context, marked "~" in the timeline.
+    const CONTEXT_CLASSES = new Set<SelectionClass>(["anchor_context", "corroborated", "technique", "rare", "spread"]);
+    const isContext = (id: string): boolean => CONTEXT_CLASSES.has(selection.classOf.get(id) as SelectionClass);
 
     // Analyst notebook context: when both notebookStore and aiControlStore are wired and the
     // analyst has opted in (includeNotebook: true in ai-control.json), append the notebook
@@ -4442,16 +4466,24 @@ export class AnalysisPipeline {
       // tagged, so the model knows a 500× pattern is routine and a 1-off is anomalous.
       const p = eventPrevalence(e, prevalenceIndex);
       const prevTag = p ? prevalenceTag(p) : "";
-      return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+      // "~" prefix (investigation-guidance #4): this row is supporting CONTEXT (pulled in to explain an
+      // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
+      const ctx = isContext(e.id) ? "~" : "";
+      return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
       + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
-    if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit, rarityOf);
+    if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(scopedEvents, fit, rarityOf); promptEvents = selection.events; }
 
     const timelineText = promptEvents.map(renderEvent).join("\n");
     const truncatedNote = scopedEvents.length > promptEvents.length
       ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
+      : "";
+    // Legend for the "~" context prefix (investigation-guidance #4) — only when at least one context row
+    // is present, so it costs nothing on a small case.
+    const contextLegend = promptEvents.some((e) => isContext(e.id))
+      ? " Rows prefixed \"~\" are SUPPORTING CONTEXT (pulled in to explain a nearby anchor), not primary findings — weight them as background."
       : "";
     const userPrompt =
       scopeNote +
@@ -4469,7 +4501,7 @@ export class AnalysisPipeline {
       satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
-      `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}).${contextLegend}\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
@@ -4631,6 +4663,17 @@ export class AnalysisPipeline {
           .map((f) => [f.id, f.relevance] as const),
       );
       next = { ...next, findings: scoreFindingsRelevance({ findings: capped, scopedEvents: inScope, graph: evidenceGraph, aiRelevanceById }) };
+
+      // Auto "corroborate <ioc>" next-steps (investigation-guidance #7, deferred): for every finding the
+      // intel gate just floored to intel-only, add a concrete "go get the behavioral evidence" step so the
+      // capped lead becomes a directed action, not a dead end. Idempotent ids; prepend so the verification
+      // steps sit near the top, and don't duplicate a step the model already emitted with the same id.
+      const corroborateSteps = buildIntelCorroborationSteps({ findings: next.findings, iocs: next.iocs, scopedEvents: inScope, hostNames });
+      if (corroborateSteps.length) {
+        const existing = new Set((next.nextSteps ?? []).map((s) => s.id));
+        const fresh = corroborateSteps.filter((s) => !existing.has(s.id));
+        if (fresh.length) next = { ...next, nextSteps: [...fresh, ...(next.nextSteps ?? [])] };
+      }
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
@@ -4709,6 +4752,7 @@ export class AnalysisPipeline {
       durationMs: Date.now() - synthStart,
       eventCount: next.forensicTimeline.length,
       iocCount: next.iocs.length,
+      selectionCounts: { ...selection.counts },   // #4: the evidence mix the model saw
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

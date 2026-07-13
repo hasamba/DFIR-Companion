@@ -339,11 +339,12 @@ function timelineAnomalies(state: InvestigationState, lines: string[]): void {
 // a deterministic "collect X from host Y" directive — the report analog of the dashboard Evidence Gaps
 // panel. Only the uncovered-tactic items are rendered here (silent windows already have §3.3, and
 // lookalike-actor next techniques are §4.6.1); "" when the case has none.
-function evidenceGaps(state: InvestigationState, lines: string[]): void {
+function evidenceGaps(state: InvestigationState, lines: string[], secondLookLeads: string[] = []): void {
   const all = buildKnownUnknownItems(state, state.forensicTimeline);
   const uncovered = all.filter((i) => i.kind === "uncovered_tactic");
   const yieldGaps = all.filter((i) => i.kind === "yield_gap");   // #10 source-yield blind spots
-  if (!uncovered.length && !yieldGaps.length) return;
+  const leads = secondLookLeads.filter((l) => l && l.trim());     // #11 second-look collection leads
+  if (!uncovered.length && !yieldGaps.length && !leads.length) return;
   lines.push("#### 4.6.2 Evidence gaps — what this case is missing", "");
   lines.push("_Coverage gaps derived from the case (a lead, not proof). Collect the named evidence to close each._", "");
   for (const i of uncovered) {
@@ -352,6 +353,11 @@ function evidenceGaps(state: InvestigationState, lines: string[]): void {
   }
   for (const i of yieldGaps) {
     lines.push(`- **Source blind spot** — ${cellMd(i.label)}`);
+  }
+  // Second-look collection leads (investigation-guidance #11): the post-synthesis raw re-query searched
+  // for these and found nothing — each is a concrete "collect this next" gap the case still has.
+  for (const lead of leads.slice(0, 15)) {
+    lines.push(`- **Unresolved lead** — ${cellMd(lead)} (searched the raw record, no evidence found yet — collect to confirm/deny)`);
   }
   lines.push("");
 }
@@ -495,7 +501,7 @@ function kevCorrelation(state: InvestigationState, exposure: CustomerExposureSum
   lines.push("");
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog): void {
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog, secondLookLeads: string[] = []): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
@@ -592,7 +598,7 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
 
   adversaryHints(state, lines);
 
-  evidenceGaps(state, lines);
+  evidenceGaps(state, lines, secondLookLeads);
 
   lines.push("### 4.7 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {
@@ -946,6 +952,7 @@ export function renderMarkdownReport(
   template: ReportTemplate = defaultReportTemplate(),
   kevCatalog?: KevCatalog,
   hypotheses?: Hypothesis[],
+  secondLookLeads: string[] = [],   // #11 deferred: unresolved second-look collection leads
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -981,7 +988,7 @@ export function renderMarkdownReport(
       timelineCoverage(state, lines);
       timelineAnomalies(state, lines);
     },
-    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog),
+    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads),
     conclusions: () => conclusions(state, meta, lines),
     hypotheses: () => {
       if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, lines);

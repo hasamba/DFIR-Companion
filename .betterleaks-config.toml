@@ -1,0 +1,56 @@
+# DFIR-Companion project overrides for the betterleaks secret/PII scan.
+#
+# This EXTENDS the full default ruleset (.betterleaks.toml) by path — the whole ruleset still loads —
+# and then layers project-appropriate adjustments on top. A DFIR forensics tool inherently contains
+# sample IPs, hostnames, emails, and phone numbers as its DATA, test fixtures, and demo cases, so the
+# generic PII rules produce hundreds of false positives with ~zero real-secret signal here. We disable
+# those PII rules but KEEP every genuine-secret rule (API keys, tokens, private keys), and allowlist the
+# handful of deliberate fake fixtures the token rules match.
+
+title = "DFIR-Companion betterleaks overrides"
+
+[extend]
+path = ".betterleaks.toml"
+# Disabled: inherent to a forensics tool's data/fixtures; no secret-leak value in this repo.
+#   - private-ip-address : RFC1918 sample IPs everywhere in tests/importers/demo cases
+#   - email-address      : phishing-scenario / test emails, commit-author emails
+#   - il-phone-number    : matched audit timestamps / map constants / hashes, not phones
+# KEPT: internal-hostname (with an allowlist below), and all real-secret rules.
+disabledRules = ["private-ip-address", "email-address", "il-phone-number"]
+
+# internal-hostname stays ON (to catch a genuinely-new internal FQDN), but every hostname it currently
+# flags is a demo/test/code false positive — the corporate Active Directory demo domain, EvidenceForge
+# benchmark domains, and even CSS/JS property tokens. Allowlist them (matched against the whole line).
+[[allowlists]]
+description = "DFIR demo/test/code hostnames (internal-hostname false positives)"
+targetRules = ["internal-hostname"]
+regexTarget = "line"
+regexes = [
+  '''(?i)[\w.-]+\.corp\b''',
+  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme)\.local\b''',
+  '''(?i)\b(?:client01|other)\.lan\b''',
+  '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
+]
+
+# The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe
+# TEST-mode key with "Fake" in the name, the canonical AWS docs example key, a fake JWT, and a false
+# match on Windows Event-ID tradecraft prose. Allowlist those exact fixtures; a real leaked key still fails.
+[[allowlists]]
+description = "Deliberate fake-secret test fixtures (not real credentials)"
+targetRules = ["stripe-access-token", "generic-api-key"]
+regexTarget = "line"
+regexes = [
+  '''(?i)sk_test_''',                 # Stripe TEST-mode key fixtures only; live/prod keys still flagged
+  '''AKIAIOSFODNN7EXAMPLE''',         # canonical AWS documentation example access key
+  '''eyJabc12345\.eyJdef67890''',     # fake JWT fixture in anonymize.test.ts
+  '''PsExec/WMI/WinRM''',             # DFIR tradecraft prose in attack-groups.json (false generic-api-key match)
+]
+
+# The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
+# own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.
+[[allowlists]]
+description = "Betterleaks config/ruleset files (contain secret-like regex patterns by design)"
+paths = [
+  '''\.betterleaks\.toml''',
+  '''\.betterleaks-config\.toml''',
+]

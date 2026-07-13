@@ -18,7 +18,7 @@ jobs:
 
       - name: Install betterleaks
         run: |
-          curl -fsSL https://github.com/betterleaks/betterleaks/releases/download/v1.6.1/betterleaks_1.6.1_linux_amd64.tar.gz -o betterleaks.tar.gz
+          curl -fsSL https://github.com/betterleaks/betterleaks/releases/download/v1.6.1/betterleaks_1.6.1_linux_x64.tar.gz -o betterleaks.tar.gz
           tar -xzf betterleaks.tar.gz
           chmod +x betterleaks
           sudo mv betterleaks /usr/local/bin/
@@ -26,4 +26,4 @@ jobs:
 
       - name: Scan git history & working tree
         run: |
-          betterleaks git . --config .betterleaks.toml -v --exit-code
+          betterleaks git . --config .betterleaks-config.toml -v --exit-code 1

@@ -11,7 +11,7 @@
 //   CAPS       — a single-tool, single-host, uncorroborated finding can't keep a high confidence.
 // It only ever LOWERS confidence (never invents grounding, never raises a score) and is pure + idempotent.
 
-import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity } from "./stateTypes.js";
+import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity, NextStep } from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
@@ -115,26 +115,36 @@ export interface IntelCapInput {
   hostNames: ReadonlySet<string>;          // the case's own host short-names (see iocAnchors.shortHost)
 }
 
+// The intel-only classification for ONE finding: null when it's not an over-graded intel-only finding,
+// else the verdict-carrying IOCs it rests on and whether any verdict conflicts with the case's own
+// infrastructure. Shared by the cap (below) and the corroborate-nextStep builder so the two never drift.
+interface IntelOnlyVerdict { verdictIocs: IOC[]; hasConflict: boolean; }
+function classifyIntelOnlyFinding(
+  f: Finding,
+  iocById: ReadonlyMap<string, IOC>,
+  scopedEvents: readonly ForensicEvent[],
+  hostNames: ReadonlySet<string>,
+): IntelOnlyVerdict | null {
+  if (SEV_ORDER[f.severity] > SEV_ORDER.High) return null;   // only High/Critical can be over-graded by intel
+  const verdictIocs = (f.relatedIocs ?? [])
+    .map((id) => iocById.get(id))
+    .filter((i): i is IOC => !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
+  if (!verdictIocs.length) return null;   // not intel-driven
+  const classes = verdictIocs.map((i) =>
+    classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }));
+  const intelOnly = classes.every((c) => c === "lone-intel" || c === "conflicted");
+  const behavioralGrounding = !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
+  if (!intelOnly || behavioralGrounding) return null;
+  return { verdictIocs, hasConflict: classes.some((c) => c === "conflicted") };
+}
+
 export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
   const { findings, iocs, scopedEvents, hostNames } = input;
   const iocById = new Map(iocs.map((i) => [i.id, i] as const));
   return findings.map((f) => {
-    // Only High/Critical findings can be over-graded by intel; leave the rest.
-    if (SEV_ORDER[f.severity] > SEV_ORDER.High) return f;
-    // The finding's verdict-carrying related IOCs.
-    const verdictIocs = (f.relatedIocs ?? [])
-      .map((id) => iocById.get(id))
-      .filter((i): i is IOC => !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
-    if (!verdictIocs.length) return f;   // not intel-driven
-
-    const classes = verdictIocs.map((i) =>
-      classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }));
-    const intelOnly = classes.every((c) => c === "lone-intel" || c === "conflicted");
-    const hasConflict = classes.some((c) => c === "conflicted");
-    const behavioralGrounding = !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
-    if (!intelOnly || behavioralGrounding) return f;
-
-    const note = hasConflict
+    const v = classifyIntelOnlyFinding(f, iocById, scopedEvents, hostNames);
+    if (!v) return f;
+    const note = v.hasConflict
       ? "capped: rests on a threat-intel verdict about the case's OWN infrastructure — most likely stale/wrong, verify before acting"
       : "capped: rests on uncorroborated single-provider threat-intel only — a lead, not a confirmed compromise; verify before acting";
     return {
@@ -144,6 +154,41 @@ export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
       confidenceReason: appendReason(f.confidenceReason, note),
     };
   });
+}
+
+// Auto-generated "corroborate <ioc>" next-steps (investigation-guidance #7, deferred piece). For every
+// finding the intel-verdict gate floored to intel-only, emit ONE concrete verification step: go get the
+// behavioral evidence (an actual process/connection) that would confirm or drop the reputation hit — so
+// a capped lead turns into a directed action instead of a dead end. Stable, idempotent ids so re-synthesis
+// doesn't duplicate them. Pure. Returns [] when nothing was intel-capped.
+export function buildIntelCorroborationSteps(input: IntelCapInput): NextStep[] {
+  const { findings, iocs, scopedEvents, hostNames } = input;
+  const iocById = new Map(iocs.map((i) => [i.id, i] as const));
+  const steps: NextStep[] = [];
+  for (const f of findings) {
+    const v = classifyIntelOnlyFinding(f, iocById, scopedEvents, hostNames);
+    if (!v) continue;
+    const values = [...new Set(v.verdictIocs.map((i) => i.value))].slice(0, 3);
+    const list = values.join(", ");
+    // Best-effort host: the asset on a scoped event that mentions one of these IOC values.
+    const host = scopedEvents.find((e) => e.asset && values.some((val) => (e.description || "").toLowerCase().includes(val.toLowerCase())))?.asset;
+    steps.push({
+      id: `n-corroborate-${f.id}`,
+      priority: "high",
+      action: `Corroborate the threat-intel verdict on ${list} with behavioral evidence`,
+      rationale: v.hasConflict
+        ? "This finding rests on an intel verdict about the case's OWN infrastructure — likely stale; confirm with a real process/connection before acting."
+        : "This finding rests on uncorroborated single-provider intel — find the behavioral evidence that confirms it, or drop it.",
+      pointer: `finding ${f.id}; indicators ${list}`,
+      collect: {
+        ...(host ? { host } : {}),
+        logSource: `endpoint/EDR process + network telemetry referencing ${list}`,
+        expectedOutcome: `a real process execution or network connection tied to ${list} (not just a reputation hit) — its absence downgrades this to a false positive`,
+      },
+      relatedFindingIds: [f.id],
+    });
+  }
+  return steps;
 }
 
 // A compact one-liner for the existing-findings prompt echo and the report/dashboard, e.g.
