@@ -5802,6 +5802,8 @@
         `<div class="hyp-row1">` +
           `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
           `<span class="hyp-title">${esc(h.title)}</span>${src}${review}${exhausted}` +
+          // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
+          (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" onclick="linkNextHuntToHypothesis('${id}', this.getAttribute('data-t'))" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
           `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
         `</div>${outcome}${desc}${discrim}${meta}` +
         `<div class="hyp-row2">` +
@@ -5817,6 +5819,26 @@
       fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, { method: "PATCH",
         headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
         .then(() => loadHypotheses(caseId)).catch(() => {});
+    }
+
+    // #14 deferred: arm the NEXT deployed Velociraptor hunt to test a specific hypothesis. Consumed once
+    // by launchHuntInto (which stamps relatedHypothesisId on the deploy). A visible note + one-click cancel
+    // so the analyst knows the link is pending.
+    let pendingHuntHypothesis = null;
+    function linkNextHuntToHypothesis(id, title) {
+      pendingHuntHypothesis = { id, title: title || id };
+      const msg = document.getElementById("suggestHuntsMsg");
+      if (msg) msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" onclick="pendingHuntHypothesis=null;this.parentElement.textContent='';return false;" style="color:var(--c-6aa9ff)">cancel</a>`;
+      const sec = document.getElementById("sec-velohunts");
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    // Read + clear the pending hypothesis link (used by launchHuntInto).
+    function consumePendingHuntHypothesis() {
+      const p = pendingHuntHypothesis;
+      pendingHuntHypothesis = null;
+      const msg = document.getElementById("suggestHuntsMsg");
+      if (msg && p) msg.textContent = "";
+      return p ? p.id : undefined;
     }
 
     function hypDelete(id) {
@@ -7348,8 +7370,11 @@
       if (btn) btn.disabled = true;
       const recorded = ctx && ctx.caseId;
       const url = recorded ? `/cases/${encodeURIComponent(ctx.caseId)}/velociraptor/deploy-hunt` : "/velociraptor/hunt";
+      // #14: link this hunt to a hypothesis — either the caller set it on ctx, or the analyst armed the
+      // "🎯 test via hunt" button (consumed once here). An empty result then exhausts that hypothesis.
+      const relatedHypothesisId = (ctx && ctx.relatedHypothesisId) || (recorded ? consumePendingHuntHypothesis() : undefined);
       const body = recorded
-        ? { vql, title: ctx.title || description || "DFIR fleet hunt", description: description || "DFIR hunt", source: ctx.source || "fleet", mitreTechniques: ctx.mitre || [] }
+        ? { vql, title: ctx.title || description || "DFIR fleet hunt", description: description || "DFIR hunt", source: ctx.source || "fleet", mitreTechniques: ctx.mitre || [], ...(relatedHypothesisId ? { relatedHypothesisId } : {}) }
         : { vql, description: description || "DFIR hunt" };
       fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
