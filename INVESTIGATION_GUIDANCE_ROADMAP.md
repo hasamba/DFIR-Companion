@@ -4,12 +4,13 @@
 > #1–#15 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = second-look
 > loop; #12 = immediate FP cascade; #13 = rabbit-hole detection; #14 = ACH-style hypotheses; #15 =
 > per-case prevalence/baseline + proactive FP-pattern propagation, landed as #15a + #15b). Full suite
-> green (3638 tests), clean `tsc`. Deferred within those items (documented
-> in each commit): the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the
-> anchor-scoring bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7); #10 trigger (b)
-> cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only);
-> #14 threading an explicit `relatedHypothesisId` through the hunt-DEPLOY route/UI (exhaustion works
-> today via technique-overlap matching; the explicit link field exists but isn't set from the UI yet).
+> green (3649 tests), clean `tsc`. **The deferred sub-items are now ALSO resolved** (one cleanup PR):
+> #4 `~` context-prefix + per-class counts on the synth-meta card; #7 auto "corroborate `<ioc>`" next-step
+> for intel-only findings; #10 trigger (b) cap-hit log-truncation warning; #11 second-look collection
+> leads in the exported report; #14 explicit `relatedHypothesisId` via the hunt-deploy route + a per-
+> hypothesis "test via hunt" button. The ONLY thing intentionally left open is the #7 anchor-scoring bump
+> retune — a benchmark-driven tuning question, not a code gap (retuning weights blind risks regressing
+> the tuned benchmark corpus).
 > **One operational step remains for #1:** the live `companion/prompts/*.txt` override files are
 > gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
 > up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
