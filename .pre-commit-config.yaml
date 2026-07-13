@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/betterleaks/betterleaks
+    rev: v1.6.1      # use latest release tag from GitHub releases []
+    hooks:
+      - id: betterleaks
+        args:
+          - '--config'
+          - '.betterleaks.toml'
+          - '--verbose'
