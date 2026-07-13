@@ -39,6 +39,17 @@ export const hypothesisSchema = z.object({
   relatedTechniques: z.array(z.string()).default([]).catch([]), // ATT&CK ids (T1566, T1021.006…)
   relatedEventIds: z.array(z.string()).default([]).catch([]),   // supporting forensic-event ids
   relatedIocIds: z.array(z.string()).default([]).catch([]),     // implicated IOC ids
+  // ACH-style analysis (investigation-guidance #14). `contradictingEventIds` are events INCONSISTENT
+  // with this explanation — tracked so a hypothesis is judged by fewest contradictions (ACH), not most
+  // support, and a red herring can't sail through unopposed. `discriminator` names the single artifact
+  // (host + artifact) that would best separate this hypothesis from the leading alternative — it doubles
+  // as a concrete collection directive. `exhausted` is set deterministically once N linked hunts came
+  // back empty against `expectedOutcome` (see markExhaustedHypotheses) → it feeds the negative-knowledge
+  // synthesis block; `exhaustedReason` is the human one-liner.
+  contradictingEventIds: z.array(z.string()).default([]).catch([]),
+  discriminator: z.string().default("").catch(""),
+  exhausted: z.boolean().default(false).catch(false),
+  exhaustedReason: z.string().default("").catch(""),
   assignee: z.string().default("").catch(""),
   notes: z.string().default("").catch(""),
   source: z.enum(HYPOTHESIS_SOURCES).default("analyst").catch("analyst"),
@@ -71,6 +82,8 @@ export interface HypothesisSeed {
   relatedTechniques: string[];
   relatedEventIds: string[];
   relatedIocIds: string[];
+  contradictingEventIds: string[]; // ACH (#14): events inconsistent with this explanation
+  discriminator: string;           // ACH (#14): the artifact (host + artifact) that best separates it
 }
 
 // Fields an analyst may set when creating a hypothesis by hand (or promoting a notebook entry).
@@ -98,6 +111,8 @@ export type HypothesisPatch = Partial<
     | "relatedTechniques"
     | "relatedEventIds"
     | "relatedIocIds"
+    | "contradictingEventIds"
+    | "discriminator"
     | "assignee"
     | "notes"
   >
@@ -164,6 +179,9 @@ export function sanitizeHypotheses(
       relatedTechniques: dedupeStrings(h.relatedTechniques as string[]).slice(0, MAX_TECHNIQUES),
       relatedEventIds: dedupeStrings(h.relatedEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
       relatedIocIds: dedupeStrings(h.relatedIocIds as string[]).filter((id) => validIocIds.has(id)).slice(0, MAX_LINKS),
+      // ACH (#14): contradicting events must be REAL case events too (no invented refs); discriminator is prose.
+      contradictingEventIds: dedupeStrings(h.contradictingEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
+      discriminator: String(h.discriminator ?? "").trim().slice(0, MAX_TEXT_LEN),
     });
     if (out.length >= cap) break;
   }
@@ -187,9 +205,11 @@ function seedDiffersFrom(h: Hypothesis, seed: HypothesisSeed): boolean {
     h.description !== seed.description ||
     h.expectedOutcome !== seed.expectedOutcome ||
     h.status !== seed.status ||
-    h.relatedTechniques.join(" ") !== seed.relatedTechniques.join(" ") ||
-    h.relatedEventIds.join(" ") !== seed.relatedEventIds.join(" ") ||
-    h.relatedIocIds.join(" ") !== seed.relatedIocIds.join(" ")
+    h.relatedTechniques.join(" ") !== seed.relatedTechniques.join(" ") ||
+    h.relatedEventIds.join(" ") !== seed.relatedEventIds.join(" ") ||
+    h.relatedIocIds.join(" ") !== seed.relatedIocIds.join(" ") ||
+    h.contradictingEventIds.join(" ") !== (seed.contradictingEventIds ?? []).join(" ") ||
+    h.discriminator !== (seed.discriminator ?? "")
   );
 }
 
@@ -223,6 +243,8 @@ export function mergeHypotheses(
           relatedTechniques: [...seed.relatedTechniques],
           relatedEventIds: [...seed.relatedEventIds],
           relatedIocIds: [...seed.relatedIocIds],
+          contradictingEventIds: [...(seed.contradictingEventIds ?? [])],   // ACH (#14)
+          discriminator: seed.discriminator ?? "",
           needsReview: false,   // authoritative refresh clears any interim FP-cascade flag (#12)
           updatedAt: now,
         };
@@ -238,6 +260,10 @@ export function mergeHypotheses(
         relatedTechniques: [...seed.relatedTechniques],
         relatedEventIds: [...seed.relatedEventIds],
         relatedIocIds: [...seed.relatedIocIds],
+        contradictingEventIds: [...(seed.contradictingEventIds ?? [])],   // ACH (#14)
+        discriminator: seed.discriminator ?? "",
+        exhausted: false,
+        exhaustedReason: "",
         assignee: "",
         notes: "",
         source: "synthesis",
@@ -297,6 +323,10 @@ export function buildAnalystHypothesis(
     relatedTechniques: dedupeStrings(input.relatedTechniques).slice(0, MAX_TECHNIQUES),
     relatedEventIds: dedupeStrings(input.relatedEventIds).slice(0, MAX_LINKS),
     relatedIocIds: dedupeStrings(input.relatedIocIds).slice(0, MAX_LINKS),
+    contradictingEventIds: [],
+    discriminator: "",
+    exhausted: false,
+    exhaustedReason: "",
     assignee: String(input.assignee ?? "").trim(),
     notes: String(input.notes ?? "").trim().slice(0, MAX_TEXT_LEN),
     source: "analyst",
@@ -320,6 +350,8 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
     ...(patch.relatedTechniques !== undefined ? { relatedTechniques: dedupeStrings(patch.relatedTechniques).slice(0, MAX_TECHNIQUES) } : {}),
     ...(patch.relatedEventIds !== undefined ? { relatedEventIds: dedupeStrings(patch.relatedEventIds).slice(0, MAX_LINKS) } : {}),
     ...(patch.relatedIocIds !== undefined ? { relatedIocIds: dedupeStrings(patch.relatedIocIds).slice(0, MAX_LINKS) } : {}),
+    ...(patch.contradictingEventIds !== undefined ? { contradictingEventIds: dedupeStrings(patch.contradictingEventIds).slice(0, MAX_LINKS) } : {}),
+    ...(patch.discriminator !== undefined ? { discriminator: String(patch.discriminator).trim().slice(0, MAX_TEXT_LEN) } : {}),
     ...(patch.assignee !== undefined ? { assignee: String(patch.assignee).trim() } : {}),
     ...(patch.notes !== undefined ? { notes: String(patch.notes).trim().slice(0, MAX_TEXT_LEN) } : {}),
     analystTouched: true,
@@ -362,6 +394,71 @@ export function reconsiderHypotheses(
       ...h,
       needsReview: true,
       ...(flipStatus ? { status: "unknown" as HypothesisStatus } : {}),
+      updatedAt: now,
+    };
+  });
+  return { hypotheses: next, changed };
+}
+
+// ACH ranking (investigation-guidance #14). Analysis of Competing Hypotheses ranks by FEWEST
+// contradictions, not most support — the explanation that survives the most disconfirming evidence
+// wins, which is exactly what stops a well-supported-but-wrong red herring from topping the list.
+// Exhausted / refuted hypotheses sink (they're negative knowledge). Pure; returns a sorted COPY.
+export function rankHypothesesAch(hypotheses: readonly Hypothesis[]): Hypothesis[] {
+  const dead = (h: Hypothesis): number => (h.exhausted || h.status === "refuted" ? 1 : 0);
+  return hypotheses.slice().sort((a, b) =>
+    dead(a) - dead(b) ||
+    a.contradictingEventIds.length - b.contradictingEventIds.length ||   // fewest contradictions first
+    b.relatedEventIds.length - a.relatedEventIds.length ||               // then most support
+    a.title.localeCompare(b.title));
+}
+
+// One hunting signal against a hypothesis (investigation-guidance #14): a collected hunt either tied to
+// the hypothesis explicitly (`relatedHypothesisId`) or matched to it by shared ATT&CK technique, and
+// whether it MISSED (returned no evidence for the thing the hypothesis predicted).
+export interface HypothesisHuntSignal {
+  relatedHypothesisId?: string;
+  techniques: string[];
+  missed: boolean;      // true = the hunt came back empty (negative evidence for what it tested)
+  title?: string;       // for the exhaustion reason
+}
+
+export interface MarkExhaustedResult {
+  hypotheses: Hypothesis[];
+  changed: boolean;
+}
+
+// Mark a hypothesis `exhausted` once enough hunts that tested it came back EMPTY (investigation-guidance
+// #14): its `expectedOutcome` has been hunted for and not found. A hunt matches a hypothesis by an
+// explicit `relatedHypothesisId`, else by shared ATT&CK technique. Only OPEN hypotheses are exhausted
+// (a supported/refuted one is already resolved). `exhausted` is an orthogonal flag, NOT a status change,
+// so it respects the analyst-freeze contract while still feeding the negative-knowledge synthesis block.
+// Pure + idempotent — re-running with the same signals is a no-op.
+export function markExhaustedHypotheses(
+  hypotheses: readonly Hypothesis[],
+  signals: readonly HypothesisHuntSignal[],
+  now: string,
+  minMisses = 2,
+): MarkExhaustedResult {
+  const threshold = Math.max(1, Math.floor(minMisses));
+  let changed = false;
+  const next = hypotheses.map((h) => {
+    if (h.status !== "open" || h.exhausted) return h;
+    const techniqueSet = new Set(h.relatedTechniques);
+    let misses = 0;
+    for (const s of signals) {
+      if (!s.missed) continue;
+      const matches = s.relatedHypothesisId
+        ? s.relatedHypothesisId === h.id
+        : s.techniques.some((t) => techniqueSet.has(t));
+      if (matches) misses += 1;
+    }
+    if (misses < threshold) return h;
+    changed = true;
+    return {
+      ...h,
+      exhausted: true,
+      exhaustedReason: `${misses} hunt(s) for its expected outcome came back empty — no supporting evidence found`,
       updatedAt: now,
     };
   });

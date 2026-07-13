@@ -1,17 +1,19 @@
 # Making DFIR-Companion Lead the Investigation
 
-> **Implementation status (Tier 0–2 + Tier 3 #12–#13 shipped and merged to master).** Proposals
-> #1–#13 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
-> second-look loop; #12 = the immediate FP cascade; #13 = rabbit-hole detection). Full suite green
-> (3620 tests), clean `tsc`. Deferred within those items (documented
+> **Implementation status (Tier 0–2 + Tier 3 #12–#14 shipped and merged to master).** Proposals
+> #1–#14 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
+> second-look loop; #12 = the immediate FP cascade; #13 = rabbit-hole detection; #14 = ACH-style
+> hypotheses). Full suite green (3626 tests), clean `tsc`. Deferred within those items (documented
 > in each commit): the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the
 > anchor-scoring bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7); #10 trigger (b)
-> cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only).
+> cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only);
+> #14 threading an explicit `relatedHypothesisId` through the hunt-DEPLOY route/UI (exhaustion works
+> today via technique-overlap matching; the explicit link field exists but isn't set from the UI yet).
 > **One operational step remains for #1:** the live `companion/prompts/*.txt` override files are
 > gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
 > up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
 > #11 evidenceRequests instructions). Until then the drift-detection check warns on every preflight and
-> synthesis run. **Tier 3 remaining: #14–#15** as specified below.
+> synthesis run. **Tier 3 remaining: #15** (the last item) as specified below.
 
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the

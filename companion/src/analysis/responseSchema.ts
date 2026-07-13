@@ -120,6 +120,10 @@ export const deltaSchema = z.object({
     relatedTechniques: z.array(z.string()).default([]).catch([]),
     relatedEventIds: z.array(z.string()).default([]).catch([]),
     relatedIocIds: z.array(z.string()).default([]).catch([]),
+    // ACH-style analysis (investigation-guidance #14): events INCONSISTENT with this explanation, and
+    // the single artifact (host + artifact) that would best separate it from the leading alternative.
+    contradictingEventIds: z.array(z.string()).default([]).catch([]),
+    discriminator: z.string().default("").catch(""),
   })).optional(),
   // Second-look loop (investigation-guidance #11): data the model knows it was NOT shown (only a
   // sample of the timeline is included in the prompt). Each request is resolved AFTER synthesis against

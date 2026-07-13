@@ -31,6 +31,10 @@ export interface HuntOutcome {
   deployedAt: string;         // ISO
   status: HuntOutcomeStatus;
   foundEvidence?: boolean;    // collected: did the hunt return ANY rows / add any new events or IOCs
+  // ACH-style hypotheses (investigation-guidance #14): the hypothesis this hunt was deployed to test, so
+  // a hunt that comes back empty counts as a MISS against it (→ eventual `exhausted`). Optional — most
+  // hunts aren't tied to a specific hypothesis and fall back to technique-overlap matching.
+  relatedHypothesisId?: string;
   resultRows?: number;        // collected: total rows the hunt returned (what the analyst sees) — a snapshot, not cumulative
   addedEvents?: number;       // collected: events NEW to the case after dedup (cumulative across re-collects)
   addedIocs?: number;         // collected: IOCs new to the case (cumulative)
@@ -79,6 +83,7 @@ export interface HuntDeployInput {
   vql?: string;
   mitreTechniques?: string[];
   huntId?: string;
+  relatedHypothesisId?: string;  // ACH (#14): the hypothesis this hunt tests, when deployed from one
   deployedAt: string;         // ISO (the route stamps it — keeps this module time-free)
 }
 
@@ -101,6 +106,7 @@ export function recordDeploy(
     vqlPreview: input.vql ? normalizeVql(input.vql).slice(0, MAX_VQL_PREVIEW_LEN) : "",
     mitreTechniques: dedupeStrings((input.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean)).slice(0, 20),
     ...(huntId ? { huntId } : {}),
+    ...(input.relatedHypothesisId ? { relatedHypothesisId: String(input.relatedHypothesisId).trim() } : {}),
     deployedAt: input.deployedAt,
     status: "deployed",
   };

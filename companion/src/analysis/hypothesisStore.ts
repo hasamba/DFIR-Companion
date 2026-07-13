@@ -9,11 +9,13 @@ import {
   type NewHypothesis,
   type HypothesisPatch,
   type ReconsiderHypothesesInput,
+  type HypothesisHuntSignal,
   hypothesesSchema,
   mergeHypotheses,
   buildAnalystHypothesis,
   applyHypothesisPatch,
   reconsiderHypotheses,
+  markExhaustedHypotheses,
 } from "./hypothesis.js";
 
 // Per-case hypothesis store (issue #140). Persists `state/hypotheses.json` via the atomic-write
@@ -98,6 +100,21 @@ export class HypothesisStore {
   ): Promise<{ changed: boolean; hypotheses: Hypothesis[] }> {
     const existing = await this.load(caseId);
     const { hypotheses, changed } = reconsiderHypotheses(existing, input, now);
+    if (changed) await this.save(caseId, hypotheses);
+    return { changed, hypotheses };
+  }
+
+  // ACH exhaustion (investigation-guidance #14): flag open hypotheses whose linked/technique-matched
+  // hunts have come back empty enough times (see markExhaustedHypotheses). Persists only when something
+  // changed. Called from synthesis so the negative-knowledge block reflects it.
+  async applyExhaustion(
+    caseId: string,
+    signals: readonly HypothesisHuntSignal[],
+    now: string = new Date().toISOString(),
+    minMisses?: number,
+  ): Promise<{ changed: boolean; hypotheses: Hypothesis[] }> {
+    const existing = await this.load(caseId);
+    const { hypotheses, changed } = markExhaustedHypotheses(existing, signals, now, minMisses);
     if (changed) await this.save(caseId, hypotheses);
     return { changed, hypotheses };
   }

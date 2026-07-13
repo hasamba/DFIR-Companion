@@ -936,6 +936,12 @@
     .rel-rabbit { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); background: var(--c-2a2410, #2a2410); }
     .rel-parked { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); background: var(--c-141821, #141821); }
     .hyp-needs-review { color: var(--c-ffd93b); font-size: 11px; font-weight: 600; margin-left: 6px; }
+    /* ACH-style hypotheses (#14). */
+    .hyp-contra { color: var(--c-ff7a7a) !important; border-color: var(--c-5a2a2a, #5a2a2a) !important; }
+    .hyp-exhausted { color: var(--c-9aa4b2); font-size: 11px; font-weight: 600; margin-left: 6px; }
+    .hyp.exhausted { opacity: 0.7; }
+    .hyp-discriminator { font-size: 12px; color: var(--c-9fd0ff, #9fd0ff); margin: 3px 0; }
+    .hyp-ach-note { color: var(--c-6b7280); font-size: 10px; font-weight: 400; }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
       border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
@@ -5745,11 +5751,19 @@
         badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
       }
       if (!hypotheses.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No hypotheses yet — they're auto-generated whenever synthesis runs (after each import). Click <strong>✨ Generate</strong> in the section title to run synthesis now, or add one below.</div>"; return; }
+      // ACH ranking (investigation-guidance #14): within each status group, order by FEWEST
+      // contradictions first (the explanation that survives the most disconfirming evidence wins), then
+      // most support — and sink exhausted hypotheses (hunts came back empty) to the bottom.
+      const achSort = (a, b) =>
+        ((a.exhausted ? 1 : 0) - (b.exhausted ? 1 : 0)) ||
+        ((a.contradictingEventIds || []).length - (b.contradictingEventIds || []).length) ||
+        ((b.relatedEventIds || []).length - (a.relatedEventIds || []).length) ||
+        String(a.title).localeCompare(String(b.title));
       let html = "";
       for (const [v, label] of HYP_STATUS) {
-        const group = hypotheses.filter(h => h.status === v);
+        const group = hypotheses.filter(h => h.status === v).sort(achSort);
         if (!group.length) continue;
-        html += `<div class="hyp-grouphdr">${esc(label)} (${group.length})</div>`;
+        html += `<div class="hyp-grouphdr">${esc(label)} (${group.length})<span class="hyp-ach-note" title="Analysis of Competing Hypotheses: ranked by fewest contradictions, not most support"> · ranked by fewest contradictions</span></div>`;
         html += group.map(renderHypCard).join("");
       }
       el.innerHTML = html;
@@ -5763,18 +5777,26 @@
       const chips = [];
       (h.relatedTechniques || []).forEach(t => chips.push(`<span class="hyp-chip">${esc(t)}</span>`));
       if ((h.relatedEventIds || []).length) chips.push(`<span class="hyp-chip" title="supporting forensic events">↳ ${h.relatedEventIds.length} event${h.relatedEventIds.length === 1 ? "" : "s"}</span>`);
+      // ACH (#14): contradicting-event count is the primary ranking signal — show it prominently (red).
+      const contraN = (h.contradictingEventIds || []).length;
+      if (contraN) chips.push(`<span class="hyp-chip hyp-contra" title="events INCONSISTENT with this explanation (ACH: judged by fewest contradictions)">⊖ ${contraN} contradicting</span>`);
       if ((h.relatedIocIds || []).length) chips.push(`<span class="hyp-chip" title="implicated IOCs">${h.relatedIocIds.length} IOC${h.relatedIocIds.length === 1 ? "" : "s"}</span>`);
       const meta = chips.length ? `<div class="hyp-meta">${chips.join("")}</div>` : "";
+      // ACH (#14): the discriminator — the single artifact that best separates this hypothesis from the
+      // leading alternative. Doubles as a concrete collection directive.
+      const discrim = h.discriminator ? `<div class="hyp-discriminator" title="The artifact that would best separate this hypothesis from the leading alternative — collect it next"><b>🔬 Discriminator:</b> ${esc(h.discriminator)}</div>` : "";
       const id = escAttr(h.id);
       // Immediate FP cascade (#12): supporting evidence was marked false positive — flag for re-judging.
       // A pristine hypothesis was also flipped to 'unknown'; editing it (any field) clears the flag.
       const review = h.needsReview ? `<span class="hyp-needs-review" title="An event or IOC that supported this hypothesis was marked false positive — re-judge it. Editing any field clears this flag.">⚠️ needs review</span>` : "";
-      return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}" data-id="${id}">` +
+      // ACH exhaustion (#14): hunts for this hypothesis came back empty → treated as negative knowledge.
+      const exhausted = h.exhausted ? `<span class="hyp-exhausted" title="${escAttr(h.exhaustedReason || "Hunts for this hypothesis came back empty — treated as settled negative knowledge.")}">⊘ exhausted</span>` : "";
+      return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
         `<div class="hyp-row1">` +
           `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
-          `<span class="hyp-title">${esc(h.title)}</span>${src}${review}` +
+          `<span class="hyp-title">${esc(h.title)}</span>${src}${review}${exhausted}` +
           `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
-        `</div>${outcome}${desc}${meta}` +
+        `</div>${outcome}${desc}${discrim}${meta}` +
         `<div class="hyp-row2">` +
           `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" onchange="hypPatch('${id}',{assignee:this.value})" />` +
           `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" onchange="hypPatch('${id}',{notes:this.value})" />` +
