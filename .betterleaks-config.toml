@@ -45,3 +45,12 @@ regexes = [
   '''eyJabc12345\.eyJdef67890''',     # fake JWT fixture in anonymize.test.ts
   '''PsExec/WMI/WinRM''',             # DFIR tradecraft prose in attack-groups.json (false generic-api-key match)
 ]
+
+# The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
+# own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.
+[[allowlists]]
+description = "Betterleaks config/ruleset files (contain secret-like regex patterns by design)"
+paths = [
+  '''\.betterleaks\.toml''',
+  '''\.betterleaks-config\.toml''',
+]
