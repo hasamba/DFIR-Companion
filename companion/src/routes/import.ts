@@ -25,6 +25,8 @@ import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
+import { FalsePositiveStore } from "../analysis/falsePositive.js";
+import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
@@ -264,8 +266,20 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               const s = await demoteForensicForCase(caseId);
               const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
               const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
+              // known false-positive pattern? Match the NEW forensic events against the FP markers'
+              // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
+              let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
+              try {
+                const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
+                const newEvents = s.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+                if (newEvents.length) {
+                  const markers = await new FalsePositiveStore(store).load(caseId);
+                  fpPropagation = matchFpPropagation(newEvents, markers);
+                }
+              } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic" });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation });
                 options.onImportMeta?.(caseId);
               }
               logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -437,8 +451,20 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               const s = await demoteForensicForCase(caseId);
               const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
               const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
+              // known false-positive pattern? Match the NEW forensic events against the FP markers'
+              // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
+              let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
+              try {
+                const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
+                const newEvents = s.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+                if (newEvents.length) {
+                  const markers = await new FalsePositiveStore(store).load(caseId);
+                  fpPropagation = matchFpPropagation(newEvents, markers);
+                }
+              } catch { /* non-fatal — propagation is a suggestion, never blocks the import */ }
               if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic" });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation });
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {

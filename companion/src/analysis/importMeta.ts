@@ -48,6 +48,18 @@ export const importMetaSchema = z.object({
   // older import-meta.json files load with linesIn 0 / path "" and simply never trip the check.
   linesIn: z.number().catch(0),                                  // raw input lines/rows the import read
   path: z.enum(["deterministic", "ai", ""]).catch(""),           // "ai" = the log/CSV AI-triage path; "" = unknown/legacy
+  // Proactive FP-pattern propagation (investigation-guidance #15b): new events from THIS import that
+  // reproduce a known false-positive pattern, surfaced as a one-click "review & bulk-mark" banner
+  // suggestion (never auto-applied). Optional/lenient; absent on older files and imports with no match.
+  fpPropagation: z.array(z.object({
+    markerId: z.string().catch(""),
+    ref: z.string().catch(""),
+    note: z.string().catch(""),
+    patternFingerprint: z.string().catch(""),
+    count: z.number().catch(0),
+    matchedEventIds: z.array(z.string()).catch([]),
+    sampleLabel: z.string().catch(""),
+  })).catch([]),
 });
 
 export type ImportMeta = z.infer<typeof importMetaSchema>;
@@ -56,7 +68,7 @@ const EMPTY: ImportMeta = {
   lastImportedAt: "", lastImportKind: "", lastImportFile: "",
   addedCount: 0, removedCount: 0, lastDiff: null,
   iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
-  linesIn: 0, path: "",
+  linesIn: 0, path: "", fpPropagation: [],
 };
 
 // Cap how many added/removed events we store in the detail list — a single import can add
@@ -71,6 +83,7 @@ export interface ImportRecord {
   iocsDiff: IocsDiff;   // IOC diff
   linesIn?: number;                          // raw input lines/rows the import read (#10)
   path?: "deterministic" | "ai";             // which extraction path ran (#10)
+  fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
 }
 
 export class ImportMetaStore {
@@ -109,6 +122,7 @@ export class ImportMetaStore {
       },
       linesIn: Math.max(0, Math.floor(rec.linesIn ?? 0)),
       path: rec.path ?? "",
+      fpPropagation: rec.fpPropagation ?? [],
     };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;

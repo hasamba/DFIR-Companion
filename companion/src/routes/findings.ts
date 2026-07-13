@@ -5,6 +5,7 @@ import {
   applyFalsePositive, falsePositiveEventIds,
 } from "../analysis/falsePositive.js";
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
+import { patternKey } from "../analysis/prevalence.js";
 import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
@@ -133,10 +134,29 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     }
   };
 
+  // Proactive FP-pattern propagation (#15b): stamp the anchor event's normalized prevalence pattern key
+  // onto each EVENT marker, so a later import can recognize the same pattern re-arriving and suggest a
+  // bulk-mark. One state load for the whole batch; best-effort (a lookup miss just leaves it unset).
+  const stampPatternFingerprints = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
+    const needing = markers.filter((m) => m.kind === "event" && !m.patternFingerprint);
+    if (!needing.length || !options.stateStore) return;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const byId = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
+      for (const m of needing) {
+        const ev = byId.get(m.ref);
+        if (!ev) continue;
+        const key = patternKey(ev);
+        if (key) m.patternFingerprint = key;
+      }
+    } catch { /* best-effort — leave fingerprints unset */ }
+  };
+
   app.post("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
       const marker = buildFalsePositiveMarker(req.body ?? {});
       if (!marker) return res.status(400).json({ error: "ref is required (and note is required when reason is 'other')" });
+      await stampPatternFingerprints(req.params.id, [marker]);
       const markers = await falsePositives.load(req.params.id);
       const next = [...markers.filter((m) => m.id !== marker.id), marker];
       await falsePositives.save(req.params.id, next);
@@ -186,6 +206,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           }))
         .filter((m: FalsePositiveMarker | null): m is FalsePositiveMarker => m !== null);
       if (!built.length) return res.status(400).json({ error: "at least one valid item (with a ref) is required" });
+      await stampPatternFingerprints(req.params.id, built);   // #15b: capture each event's pattern key
       const markers = await falsePositives.load(req.params.id);
       // De-dupe within the batch and against existing markers (last occurrence wins) by id.
       const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
