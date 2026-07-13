@@ -66,7 +66,7 @@ import {
 } from "./secondOpinion.js";
 import { correlateEvents } from "./correlate.js";
 import { detectTool } from "./toolDetect.js";
-import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore } from "./scope.js";
+import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "./scope.js";
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines } from "./logAggregate.js";
@@ -166,7 +166,11 @@ import { detectBeacons, beaconEnvOptions } from "./beaconDetect.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
 import { buildAssetGraph } from "./assetGraph.js";
-import { shortHost } from "./iocAnchors.js";
+import { shortHost, rankConnectiveIocs } from "./iocAnchors.js";
+import {
+  buildSecondLookRequests, resolveSecondLookRequests, buildSecondLookPlan, summarizeSecondLook,
+  deriveWindow, type ModelEvidenceRequest,
+} from "./secondLook.js";
 import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -609,6 +613,13 @@ export const SYNTHESIS_PROMPT = [
   "  'refuted' if it contradicts it, else 'open'), 'relatedTechniques' (ATT&CK ids), and the supporting",
   "  'relatedEventIds' / 'relatedIocIds'. Propose hypotheses even for gaps the evidence does NOT yet",
   "  resolve (status 'open') — those drive the next collection. Use the event/ioc ids shown below.",
+  "- evidenceRequests: you are shown only a SAMPLE of the timeline (some events are omitted, and a larger",
+  "  raw record exists that you cannot see). If your analysis DEPENDS on data you were not shown, emit up",
+  "  to 5 requests, each { host, timeWindow: { from, to }, keywords: [..], reason }. Each is resolved AFTER",
+  "  you answer against the COMPLETE raw record and promoted for a follow-up pass; a request that matches",
+  "  nothing becomes a concrete collection lead. Use SPECIFIC keywords (a host, process, filename, domain,",
+  "  IP, or command — e.g. 'rsync', 'nfs-01', '.zip', the C2 domain), not generic words. Omit when the",
+  "  shown timeline already suffices. This is how you pull in evidence to resolve an 'open' hypothesis.",
   "",
   "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
   "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
@@ -639,6 +650,9 @@ export const SYNTHESIS_PROMPT = [
       hypotheses: [
         { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"] },
         { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [] },
+      ],
+      evidenceRequests: [
+        { host: "FS01", timeWindow: { from: "2025-04-27T00:00Z", to: "2025-04-28T00:00Z" }, keywords: ["rsync", "nfs-01", ".zip"], reason: "confirm the staging→exfil hypothesis with archive-write + outbound-transfer rows not shown above" },
       ],
       forensicEvents: [],
       timelineNote: "",
@@ -1982,17 +1996,31 @@ export class AnalysisPipeline {
   async promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
-    opts: { importedAt: string },
+    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
   ): Promise<InvestigationState> {
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
       if (!events.length) return state;
       const delta = deltaSchema.parse({
         findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
+        timelineNote: opts.note ?? `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
         forensicEvents: events.map((e) => ({ ...e })),
       });
       state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
+      // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
+      // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
+      // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
+      if (opts.tagById) {
+        const tagged = new Set(Object.keys(opts.tagById));
+        state = {
+          ...state,
+          forensicTimeline: state.forensicTimeline.map((e) =>
+            tagged.has(e.id)
+              ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...opts.tagById![e.id]])] }
+              : e,
+          ),
+        };
+      }
       await this.opts.stateStore.save(state);
       this.opts.onState?.(state);
       return state;
@@ -4179,7 +4207,7 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal } & SynthThinkingInput = {}): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean } & SynthThinkingInput = {}): Promise<InvestigationState> {
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
@@ -4649,7 +4677,110 @@ export class AnalysisPipeline {
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
     this.opts.onSynth?.(caseId, findingsDiff, next);
     this.opts.onState?.(next);
+
+    // Second-look loop (investigation-guidance #11): now that this run has conclusions + (open)
+    // hypotheses + key questions, re-query the COMPLETE raw record (the super-timeline + the scoped
+    // events the sampler omitted) for the terms those open questions imply, promote the matches, and
+    // trigger EXACTLY ONE bounded re-synthesis so the conclusions fold them in. `skipSecondLook` on that
+    // re-synthesis (and on the second-opinion dryRun path, already returned above) is the one-iteration
+    // guard that makes this terminate. Best-effort: a sweep failure must never fail the synthesis.
+    if (!opts.skipSecondLook && this.opts.superTimelineStore) {
+      try {
+        const outcome = await this.runSecondLook(caseId, {
+          next, scopedEvents, promptEvents, scope, evidenceRequests: delta.evidenceRequests,
+        });
+        if (outcome) {
+          if (outcome.meta.promoted > 0) {
+            // Promotion changed the in-scope timeline → the synthHash differs → this re-synthesis runs
+            // (not skipped) and, with skipSecondLook, does NOT sweep again. Bounded to one extra AI call.
+            const resynth = await this.synthesize(caseId, {
+              force: true, skipSecondLook: true, ...(opts.signal ? { signal: opts.signal } : {}),
+            });
+            await this.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
+            return resynth;
+          }
+          // Nothing new to promote, but empty requests are still surfaced as collection leads.
+          await this.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
+        }
+      } catch (err) {
+        console.warn(`[DFIR] second-look sweep failed for case ${caseId}: ${(err as Error).message}`);
+      }
+    }
     return next;
+  }
+
+  // Second-look sweep (investigation-guidance #11) — the impure orchestration around the pure secondLook
+  // module. Mines the case's OPEN questions (open hypotheses, unknown/partial key questions with a
+  // collect target, top connective IOCs) plus the model's own evidenceRequests into concrete searches,
+  // resolves them against the omitted scoped events AND the super-timeline within the active window,
+  // promotes the not-yet-analyzed matches (capped, tagged with provenance), and returns a meta summary.
+  // Returns null when there was nothing to search for. Never re-synthesizes itself — the caller does.
+  private async runSecondLook(
+    caseId: string,
+    ctx: {
+      next: InvestigationState;
+      scopedEvents: ForensicEvent[];
+      promptEvents: ForensicEvent[];
+      scope: ScopeWindow;
+      evidenceRequests?: ModelEvidenceRequest[];
+    },
+  ): Promise<{ meta: import("./synthMeta.js").SecondLookMeta } | null> {
+    const superStore = this.opts.superTimelineStore;
+    if (!superStore) return null;
+
+    // Active window: the explicit scope when set, else the span of the dated in-scope events. Bounds the
+    // raw re-query so a huge super-timeline is searched only over the incident window.
+    const window = hasScope(ctx.scope)
+      ? { from: ctx.scope.start ?? undefined, to: ctx.scope.end ?? undefined }
+      : deriveWindow(ctx.scopedEvents);
+
+    const hypotheses = this.opts.hypothesisStore ? await this.opts.hypothesisStore.load(caseId) : [];
+    const iocValueById = new Map(ctx.next.iocs.map((i) => [i.id, i.value] as const));
+    const connectiveIocs = rankConnectiveIocs(ctx.next, ctx.scopedEvents, { max: 5 });
+
+    const requests = buildSecondLookRequests({
+      hypotheses,
+      iocValueById,
+      keyQuestions: ctx.next.keyQuestions,
+      connectiveIocs,
+      modelRequests: ctx.evidenceRequests,
+      window,
+    });
+    if (!requests.length) return null;
+
+    // Candidate pool: the scoped events the sampler OMITTED from the prompt + the super-timeline rows in
+    // the window (deduped by id). A super row that is a copy of a forensic event shares its id, so
+    // `forensicEventIds` (below) correctly marks it non-promotable — only genuinely-new raw rows promote.
+    const shownIds = new Set(ctx.promptEvents.map((e) => e.id));
+    const omitted = ctx.scopedEvents.filter((e) => !shownIds.has(e.id));
+    const superRows = (await superStore.query(caseId, { from: window.from, to: window.to })).events;
+    const byId = new Map<string, ForensicEvent>();
+    for (const e of [...omitted, ...superRows]) if (!byId.has(e.id)) byId.set(e.id, e);
+    const candidates = [...byId.values()];
+
+    const forensicEventIds = new Set(ctx.next.forensicTimeline.map((e) => e.id));
+    const resolutions = resolveSecondLookRequests(requests, candidates, forensicEventIds);
+    const plan = buildSecondLookPlan(resolutions);
+
+    if (plan.promotions.length) {
+      await this.promoteSuperTimeline(caseId, plan.promotions, {
+        importedAt: new Date().toISOString(),
+        tagById: plan.tagById,
+        note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
+      });
+    }
+
+    const matched = resolutions.filter((r) => r.matchedEventIds.length > 0).length;
+    return {
+      meta: {
+        promoted: plan.promotions.length,
+        requests: requests.length,
+        matched,
+        leads: plan.leads.map((l) => l.reason).slice(0, 10),
+        summary: summarizeSecondLook(plan),
+        at: new Date().toISOString(),
+      },
+    };
   }
 
   // Second LLM opinion (issue #116). On-demand QA cross-check: a DIFFERENT model independently

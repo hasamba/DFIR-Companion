@@ -38,7 +38,8 @@ export const PROMPT_CAPABILITIES: readonly PromptCapability[] = [
     //   name unique to the #8 `collect` instruction), NOT the bare word "collect" — that appears as
     //   prose in every older prompt ("collect email gateway logs"), so it silently PASSED a stale
     //   pre-#8 override that lacked the structured directive.
-    markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "logSource"],
+    // evidenceRequests→ guidance #11 second-look loop (delta.evidenceRequests drives the raw re-query).
+    markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "logSource", "evidenceRequests"],
   },
 ];
 

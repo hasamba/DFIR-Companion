@@ -145,6 +145,11 @@ export interface ForensicEvent {
     method: string;    // how it was decoded: "powershell-enc" | "base64"
     iocs: string[];    // canonical IOC ids (i###) extracted from the decoded content
   };
+  // Provenance markers explaining WHY this event was pulled into the analyzed timeline by an automated
+  // pass rather than a normal import — currently the second-look loop (guidance #11), which stamps
+  // "[second-look: h2]" onto a raw super-timeline row it promoted to resolve an open hypothesis/question.
+  // Rendered as a small chip on the timeline row so the analyst sees the row is machine-surfaced.
+  provenance?: string[];
 }
 
 // Result of validating a parent→child process relationship against behavioral intel
