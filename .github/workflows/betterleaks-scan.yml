@@ -26,4 +26,4 @@ jobs:
 
       - name: Scan git history & working tree
         run: |
-          betterleaks git . --config .betterleaks.toml -v --exit-code
+          betterleaks git . --config .betterleaks.toml -v --exit-code 1
