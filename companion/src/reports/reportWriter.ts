@@ -48,6 +48,7 @@ import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
+import type { SynthMetaStore } from "../analysis/synthMeta.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -84,7 +85,16 @@ export class ReportWriter {
     private readonly reportTemplateControl?: ReportTemplateControlStore,
     private readonly kevStore?: KevStore,
     private readonly hypothesisStore?: HypothesisStore,
+    private readonly synthMeta?: SynthMetaStore,   // #11 deferred: second-look collection leads in the report
   ) {}
+
+  // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
+  // that matched NOTHING — each an actionable "collect this next" gap. Lives in synth-meta, not state, so
+  // it's loaded here on demand for the report. [] when unavailable.
+  private async loadSecondLookLeads(caseId: string): Promise<string[]> {
+    if (!this.synthMeta) return [];
+    try { return (await this.synthMeta.load(caseId)).secondLook?.leads ?? []; } catch { return []; }
+  }
 
   // Resolve the report template selected for the case (issue #60). Falls back to the default
   // "standard" template when no selection is stored, the stores aren't wired, or the selected
@@ -380,9 +390,10 @@ export class ReportWriter {
     template: ReportTemplate = defaultReportTemplate(),
     kevCatalog?: KevCatalog,
     hypotheses?: Hypothesis[],
+    secondLookLeads?: string[],
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -413,7 +424,8 @@ export class ReportWriter {
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
     const kevCatalog = await this.loadKevCatalog();
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses);
+    const secondLookLeads = await this.loadSecondLookLeads(caseId);
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -446,6 +458,7 @@ export class ReportWriter {
     // The redacted export honors the per-case report template too (branding/section layout).
     const template = await this.loadTemplate(caseId);
     const kevCatalog = await this.loadKevCatalog();
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses);
+    const secondLookLeads = applyAnonDeep(await this.loadSecondLookLeads(caseId), redact);
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads);
   }
 }

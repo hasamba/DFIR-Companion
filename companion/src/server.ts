@@ -2877,7 +2877,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
