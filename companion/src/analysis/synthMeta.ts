@@ -41,6 +41,10 @@ export const synthMetaSchema = z.object({
   eventCount: z.number().optional().catch(undefined),
   iocCount: z.number().optional().catch(undefined),
   secondLook: secondLookSchema.nullable().optional().catch(undefined),
+  // Per-class selection counts (investigation-guidance #4): how many events of each selection class the
+  // model actually saw this run (anchor / earliest / context / corroborated / technique / rare / spread),
+  // so the analyst can see the evidence mix behind the conclusions. Optional/lenient; absent on old files.
+  selectionCounts: z.record(z.string(), z.number()).optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
@@ -51,6 +55,7 @@ export interface SynthPerfMetrics {
   durationMs: number;
   eventCount: number;
   iocCount: number;
+  selectionCounts?: Record<string, number>;   // #4: per-class counts of the events the model saw
 }
 
 export class SynthMetaStore {

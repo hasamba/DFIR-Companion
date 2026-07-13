@@ -103,7 +103,7 @@ import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
 import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
-import { selectSynthesisEvents, buildSynthesisContext } from "./synthSelect.js";
+import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -4255,8 +4255,16 @@ export class AnalysisPipeline {
     const prevalenceIndex = buildPrevalenceIndex(state.forensicTimeline);
     const rarityOf = (e: ForensicEvent): number => rarityScore(e, prevalenceIndex);
     // Stratified selection: all Critical/High + the earliest (initial-access) + an even
-    // time-spread sample, chronologically — better kill-chain coverage than severity-only.
-    let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
+    // time-spread sample, chronologically — better kill-chain coverage than severity-only. The ANNOTATED
+    // form (investigation-guidance #4) exposes which CLASS claimed each event, so renderEvent can prefix
+    // context-only rows with "~" (the model reads anchors vs supporting context) and the synth-meta card
+    // can show the analyst what evidence classes the model actually saw.
+    let selection = selectSynthesisEventsAnnotated(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
+    let promptEvents = selection.events;
+    // Context classes: everything that is NOT a primary verdict-bearing anchor / initial-access event —
+    // these are the supporting rows the model should read as context, marked "~" in the timeline.
+    const CONTEXT_CLASSES = new Set<SelectionClass>(["anchor_context", "corroborated", "technique", "rare", "spread"]);
+    const isContext = (id: string): boolean => CONTEXT_CLASSES.has(selection.classOf.get(id) as SelectionClass);
 
     // Analyst notebook context: when both notebookStore and aiControlStore are wired and the
     // analyst has opted in (includeNotebook: true in ai-control.json), append the notebook
@@ -4442,16 +4450,24 @@ export class AnalysisPipeline {
       // tagged, so the model knows a 500× pattern is routine and a 1-off is anomalous.
       const p = eventPrevalence(e, prevalenceIndex);
       const prevTag = p ? prevalenceTag(p) : "";
-      return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+      // "~" prefix (investigation-guidance #4): this row is supporting CONTEXT (pulled in to explain an
+      // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
+      const ctx = isContext(e.id) ? "~" : "";
+      return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
       + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
-    if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit, rarityOf);
+    if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(scopedEvents, fit, rarityOf); promptEvents = selection.events; }
 
     const timelineText = promptEvents.map(renderEvent).join("\n");
     const truncatedNote = scopedEvents.length > promptEvents.length
       ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
+      : "";
+    // Legend for the "~" context prefix (investigation-guidance #4) — only when at least one context row
+    // is present, so it costs nothing on a small case.
+    const contextLegend = promptEvents.some((e) => isContext(e.id))
+      ? " Rows prefixed \"~\" are SUPPORTING CONTEXT (pulled in to explain a nearby anchor), not primary findings — weight them as background."
       : "";
     const userPrompt =
       scopeNote +
@@ -4469,7 +4485,7 @@ export class AnalysisPipeline {
       satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
-      `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}):\n${timelineText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}).${contextLegend}\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
@@ -4709,6 +4725,7 @@ export class AnalysisPipeline {
       durationMs: Date.now() - synthStart,
       eventCount: next.forensicTimeline.length,
       iocCount: next.iocs.length,
+      selectionCounts: { ...selection.counts },   // #4: the evidence mix the model saw
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

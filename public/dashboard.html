@@ -8285,7 +8285,16 @@
           secondLook = `<div style="margin-top:5px;color:var(--c-9aa4b2);font-size:11px" title="Second-look requests that matched nothing in the raw record — collect these to close the gap">🔎 Second look found no new evidence; collection leads: ${leads}${sl.leads.length > 4 ? ` +${sl.leads.length - 4} more` : ''}</div>`;
         }
       }
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${detail}${secondLook}${largeAdvisory}`;
+      // Evidence mix (#4): the per-class counts of events the model actually saw this run, so the analyst
+      // understands the basis — e.g. "24 anchors · 60 context · 12 corroborated · 8 rare".
+      let evidenceMix = '';
+      const sc = m.selectionCounts;
+      if (sc && typeof sc === 'object') {
+        const LABELS = { anchor: 'anchors', earliest: 'earliest', anchor_context: 'context', corroborated: 'corroborated', technique: 'technique', rare: 'rare', spread: 'spread' };
+        const parts = Object.keys(LABELS).filter(k => (sc[k] || 0) > 0).map(k => `${sc[k]} ${LABELS[k]}`);
+        if (parts.length) evidenceMix = `<div class="sm-perf" style="margin-top:4px" title="How many events of each selection class the model saw — the evidence mix behind these conclusions (#4)">🧩 saw ${esc(parts.join(' · '))}</div>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
     }
 
     // --- Correlation profile (per-case cross-source event merge window) -------------------------
