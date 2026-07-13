@@ -206,6 +206,11 @@ export interface InvestigationQuestion {
   // where/what to collect to answer it, so the UI can offer a one-click Deploy and a later import can be
   // matched back to it. Complements the free-text `pointer`.
   collect?: CollectDirective;
+  // Immediate FP cascade (investigation-guidance #12): set by reconsiderKeyQuestions when the FP-mark
+  // route synchronously reset this question because a supporting finding was just rejected — the answer
+  // is neutralized NOW and this badges "stale — re-synthesis queued" until the background re-synthesis
+  // recomputes the authoritative answer (which clears the flag). Absent = current.
+  staleReSynth?: boolean;
 }
 
 export type StepPriority = "critical" | "high" | "medium" | "low";
@@ -224,6 +229,9 @@ export interface NextStep {
   collect?: CollectDirective;
   // Finding ids this step advances, so the playbook can link it without prose-scraping "f<n>" tokens.
   relatedFindingIds?: string[];
+  // Immediate FP cascade (investigation-guidance #12): set when the FP-mark route detected this step
+  // advances a finding that was just rejected — badged "stale" until the re-synthesis rewrites the list.
+  staleReSynth?: boolean;
 }
 
 export interface InvestigationState {

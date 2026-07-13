@@ -1,8 +1,8 @@
 # Making DFIR-Companion Lead the Investigation
 
-> **Implementation status (Tier 0 + Tier 1 + all of Tier 2 shipped and merged to master).** Proposals
-> #1–#11 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
-> second-look loop). Full suite green (3596 tests), clean `tsc`. Deferred within those items (documented
+> **Implementation status (Tier 0–2 + Tier 3 #12 shipped and merged to master).** Proposals
+> #1–#12 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
+> second-look loop; #12 = the immediate FP cascade). Full suite green (3609 tests), clean `tsc`. Deferred within those items (documented
 > in each commit): the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the
 > anchor-scoring bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7); #10 trigger (b)
 > cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only).
@@ -10,7 +10,7 @@
 > gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
 > up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
 > #11 evidenceRequests instructions). Until then the drift-detection check warns on every preflight and
-> synthesis run. **Tier 3 (#12–#15) remains** as specified below.
+> synthesis run. **Tier 3 remaining: #13–#15** as specified below.
 
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the

@@ -8,10 +8,12 @@ import {
   type HypothesisSeed,
   type NewHypothesis,
   type HypothesisPatch,
+  type ReconsiderHypothesesInput,
   hypothesesSchema,
   mergeHypotheses,
   buildAnalystHypothesis,
   applyHypothesisPatch,
+  reconsiderHypotheses,
 } from "./hypothesis.js";
 
 // Per-case hypothesis store (issue #140). Persists `state/hypotheses.json` via the atomic-write
@@ -82,6 +84,20 @@ export class HypothesisStore {
   ): Promise<{ changed: boolean; hypotheses: Hypothesis[] }> {
     const existing = await this.load(caseId);
     const { hypotheses, changed } = mergeHypotheses(existing, seeds, now);
+    if (changed) await this.save(caseId, hypotheses);
+    return { changed, hypotheses };
+  }
+
+  // Immediate FP cascade (investigation-guidance #12): flag/neutralize hypotheses whose supporting
+  // evidence was just marked false positive (see reconsiderHypotheses). Persists only when something
+  // changed. Called synchronously by the FP-mark route so the dashboard reflects it before re-synthesis.
+  async reconsiderForFalsePositive(
+    caseId: string,
+    input: ReconsiderHypothesesInput,
+    now: string = new Date().toISOString(),
+  ): Promise<{ changed: boolean; hypotheses: Hypothesis[] }> {
+    const existing = await this.load(caseId);
+    const { hypotheses, changed } = reconsiderHypotheses(existing, input, now);
     if (changed) await this.save(caseId, hypotheses);
     return { changed, hypotheses };
   }
