@@ -1,15 +1,16 @@
 # Making DFIR-Companion Lead the Investigation
 
-> **Implementation status (Tier 0 + Tier 1 shipped on this branch).** Proposals #1–#7 are
-> implemented, unit-tested, and committed here (one commit each). Full suite green: 2294 analysis +
-> 695 reports/server tests, clean `tsc`. Deferred within those items (documented in each commit):
-> the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the anchor-scoring
-> bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7, needs #8's structured collect
-> targets). **One operational step remains for #1:** the live `companion/prompts/*.txt` override files
-> are gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment
-> picks up the built-in prompt (hypotheses / confidenceReason / the new structured-tag & attack-graph
-> instructions). Until then the new drift-detection check will warn on every preflight and synthesis
-> run. Tiers 2–3 (#8–#15) remain as specified below.
+> **Implementation status (Tier 0 + Tier 1 + all of Tier 2 shipped and merged to master).** Proposals
+> #1–#11 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
+> second-look loop). Full suite green (3596 tests), clean `tsc`. Deferred within those items (documented
+> in each commit): the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the
+> anchor-scoring bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7); #10 trigger (b)
+> cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only).
+> **One operational step remains for #1:** the live `companion/prompts/*.txt` override files are
+> gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
+> up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
+> #11 evidenceRequests instructions). Until then the drift-detection check warns on every preflight and
+> synthesis run. **Tier 3 (#12–#15) remains** as specified below.
 
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the

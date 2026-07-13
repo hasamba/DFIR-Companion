@@ -116,6 +116,20 @@ export const deltaSchema = z.object({
     relatedEventIds: z.array(z.string()).default([]).catch([]),
     relatedIocIds: z.array(z.string()).default([]).catch([]),
   })).optional(),
+  // Second-look loop (investigation-guidance #11): data the model knows it was NOT shown (only a
+  // sample of the timeline is included in the prompt). Each request is resolved AFTER synthesis against
+  // the complete raw record (super-timeline + omitted scoped events); matches are promoted for one
+  // bounded re-synthesis, and a request that matches nothing becomes a collection lead. Lenient/optional
+  // so a model that omits it (or fills it partially) still parses. Consumed in pipeline.ts, not merged.
+  evidenceRequests: z.array(z.object({
+    host: z.string().optional().catch(undefined),
+    timeWindow: z.object({
+      from: z.string().optional().catch(undefined),
+      to: z.string().optional().catch(undefined),
+    }).optional().catch(undefined),
+    keywords: z.array(z.string()).default([]).catch([]),
+    reason: z.string().default("").catch(""),
+  })).optional(),
 });
 
 export type AnalysisDelta = z.infer<typeof deltaSchema>;

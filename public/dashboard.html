@@ -4693,6 +4693,11 @@
         const iocRefs = (e.deobfuscated.iocs || []).length ? ` (IOCs: ${e.deobfuscated.iocs.map(i => esc(i)).join(", ")})` : "";
         parts.push(`<div style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all">Decoded: ${esc(e.deobfuscated.decoded)}${iocRefs}</div>`);
       }
+      // Second-look provenance (#11): this raw row was pulled up from the super-timeline by the
+      // post-synthesis re-query — show WHY (which open question/hypothesis it answers).
+      if (Array.isArray(e.provenance) && e.provenance.length) {
+        parts.push(`<span style="color:#6bcB77" title="Promoted from the raw super-timeline by the second-look re-query">🔁 ${e.provenance.map(esc).join(" ")}</span>`);
+      }
       const ev = (show("evidence") && caseId) ? evidenceLinks(caseId, e.sourceScreenshots) : "";
       if (ev) parts.push(ev.replace(/^<br>/, ""));
       if (!parts.length) return { title, toggle: "", panel: "" };
@@ -8228,7 +8233,19 @@
       const largeAdvisory = (m.eventCount !== undefined && m.eventCount >= 5000)
         ? `<div style="margin-top:5px;color:var(--c-ffd93b);font-size:11px">⚠ Large case (${m.eventCount.toLocaleString()} events) — consider restricting the investigation scope to a date range for faster synthesis.</div>`
         : '';
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${detail}${largeAdvisory}`;
+      // Second-look loop (#11): the post-synthesis raw re-query result. A green line when it pulled
+      // rows up and re-synthesized; a muted line listing collection leads when requests came back empty.
+      let secondLook = '';
+      const sl = m.secondLook;
+      if (sl && (sl.promoted > 0 || (sl.leads && sl.leads.length))) {
+        if (sl.promoted > 0) {
+          secondLook = `<div style="margin-top:5px;color:var(--c-6bcb77);font-size:11px" title="The tool re-queried the complete raw record for the open questions and folded new matches into the conclusions">🔁 ${esc(sl.summary || (sl.promoted + ' raw event(s) promoted'))}</div>`;
+        } else {
+          const leads = sl.leads.slice(0, 4).map(esc).join('; ');
+          secondLook = `<div style="margin-top:5px;color:var(--c-9aa4b2);font-size:11px" title="Second-look requests that matched nothing in the raw record — collect these to close the gap">🔎 Second look found no new evidence; collection leads: ${leads}${sl.leads.length > 4 ? ` +${sl.leads.length - 4} more` : ''}</div>`;
+        }
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${detail}${secondLook}${largeAdvisory}`;
     }
 
     // --- Correlation profile (per-case cross-source event merge window) -------------------------
