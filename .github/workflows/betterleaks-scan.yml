@@ -18,12 +18,12 @@ jobs:
 
       - name: Install betterleaks
         run: |
-          curl -sSfL https://github.com/betterleaks/betterleaks/releases/latest/download/betterleaks_linux_amd64.tar.gz | tar -xz
+          curl -fsSL https://github.com/betterleaks/betterleaks/releases/download/v1.6.1/betterleaks_1.6.1_linux_amd64.tar.gz -o betterleaks.tar.gz
+          tar -xzf betterleaks.tar.gz
+          chmod +x betterleaks
           sudo mv betterleaks /usr/local/bin/
+          betterleaks --version
 
       - name: Scan git history & working tree
         run: |
-          betterleaks git . \
-            --config .betterleaks.toml \
-            -v \
-            --exit-code
+          betterleaks git . --config .betterleaks.toml -v --exit-code
