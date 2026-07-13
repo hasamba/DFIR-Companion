@@ -13,7 +13,9 @@
 > gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
 > up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
 > #11 evidenceRequests instructions). Until then the drift-detection check warns on every preflight and
-> synthesis run. **Tier 3 remaining: #15** (the last item) as specified below.
+> synthesis run. **Tier 3 #15 in progress (split into two PRs): #15a prevalence/baseline engine shipping now
+(prevalence.ts index + synthesis renderEvent baseline tags + rarity bias in the #4 selection fill);
+#15b (FP-pattern propagation + dashboard surfaces) to follow.**
 
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the

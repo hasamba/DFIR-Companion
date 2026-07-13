@@ -173,6 +173,7 @@ import {
 } from "./secondLook.js";
 import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
 import { scoreFindingsRelevance } from "./findingRelevance.js";
+import { buildPrevalenceIndex, eventPrevalence, prevalenceTag, rarityScore } from "./prevalence.js";
 import { reconsiderKeyQuestions, textMentionsFindingId } from "./fpCascade.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -4247,9 +4248,15 @@ export class AnalysisPipeline {
     // still creates findings for any Critical/High event NOT shown here (eligibleIds below
     // is the full scoped set), so capping the prompt never loses a severe detection.
     const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    // Per-case prevalence/baseline (investigation-guidance #15): how common each activity PATTERN is
+    // across the WHOLE case timeline (not just the scoped subset — the baseline is a property of the
+    // corpus). Feeds a rarity bias into the selection fill (a 1-off wins a seat over 500× noise) and a
+    // common/rare tag into each rendered event so the model gets explicit baseline context.
+    const prevalenceIndex = buildPrevalenceIndex(state.forensicTimeline);
+    const rarityOf = (e: ForensicEvent): number => rarityScore(e, prevalenceIndex);
     // Stratified selection: all Critical/High + the earliest (initial-access) + an even
     // time-spread sample, chronologically — better kill-chain coverage than severity-only.
-    let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS);
+    let promptEvents = selectSynthesisEvents(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
 
     // Analyst notebook context: when both notebookStore and aiControlStore are wired and the
     // analyst has opted in (includeNotebook: true in ai-control.json), append the notebook
@@ -4430,12 +4437,17 @@ export class AnalysisPipeline {
     // Each event carries its structured tags (host / process lineage / src→dst / corroborating-source
     // count) after the prose (investigation-guidance #5) — only when set, so a bare event costs no extra
     // tokens. This is what lets the model connect cross-host activity instead of guessing from prose.
-    const renderEvent = (e: ForensicEvent) =>
-      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
+    const renderEvent = (e: ForensicEvent) => {
+      // Prevalence baseline tag (#15): only the informative extremes (clearly common / clearly rare) are
+      // tagged, so the model knows a 500× pattern is routine and a 1-off is anomalous.
+      const p = eventPrevalence(e, prevalenceIndex);
+      const prevTag = p ? prevalenceTag(p) : "";
+      return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+    };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
       + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
-    if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
+    if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit, rarityOf);
 
     const timelineText = promptEvents.map(renderEvent).join("\n");
     const truncatedNote = scopedEvents.length > promptEvents.length

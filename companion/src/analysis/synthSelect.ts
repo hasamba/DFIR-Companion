@@ -23,6 +23,8 @@ const PER_ANCHOR_CONTEXT_CAP = 6;
 const BUDGET_ANCHOR_CONTEXT = 0.40;
 const BUDGET_CORROBORATED = 0.25;
 const BUDGET_TECHNIQUE = 0.15;
+const BUDGET_RARE = 0.15;          // prevalence #15: reserved seats for RARE (low-prevalence) events
+const RARE_SCORE_MIN = 0.34;       // rarityOf(e) ≥ this counts as rare (≈ ≤2 occurrences via 1/count)
 
 // Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
 // context; the rest are the behavioral fills. Exposed (via the annotated selection) so the dashboard
@@ -33,6 +35,7 @@ export type SelectionClass =
   | "anchor_context"
   | "corroborated"
   | "technique"
+  | "rare"
   | "spread";
 
 export interface AnnotatedSelection {
@@ -43,7 +46,7 @@ export interface AnnotatedSelection {
 }
 
 function emptyCounts(): Record<SelectionClass, number> {
-  return { anchor: 0, earliest: 0, anchor_context: 0, corroborated: 0, technique: 0, spread: 0 };
+  return { anchor: 0, earliest: 0, anchor_context: 0, corroborated: 0, technique: 0, rare: 0, spread: 0 };
 }
 
 function eventMs(e: ForensicEvent): number | null {
@@ -112,7 +115,11 @@ function anchorContextCandidates(
 // earliest initial-access events) and then fills with reserved per-class budgets — same-host context
 // around each anchor, cross-source-corroborated events, and ATT&CK-technique-tagged events — before an
 // even/whole-burst spread. Returns CHRONOLOGICAL order so the model reads the attack as a story.
-export function selectSynthesisEventsAnnotated(events: ForensicEvent[], max: number): AnnotatedSelection {
+export function selectSynthesisEventsAnnotated(
+  events: ForensicEvent[],
+  max: number,
+  rarityOf?: (e: ForensicEvent) => number,   // prevalence #15: higher = rarer; omitted = no rarity bias
+): AnnotatedSelection {
   const byTime = [...events].sort(byEventTime);
   if (events.length <= max || max <= 0) {
     return { events: byTime, classOf: new Map(), counts: emptyCounts(), omitted: 0 };
@@ -164,6 +171,19 @@ export function selectSynthesisEventsAnnotated(events: ForensicEvent[], max: num
   // RESERVED FILL 3: ATT&CK-technique-tagged events regardless of severity (behavioral signal).
   fill(byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0), Math.floor(remaining * BUDGET_TECHNIQUE), "technique");
 
+  // RESERVED FILL 4 (prevalence #15): RARE events — a low-prevalence pattern (seen once or twice in the
+  // whole case) is far more likely to be signal than the 500× nightly-robocopy baseline, yet grades Low
+  // and never won a seat. Only active when a rarity function is supplied; rarest first. Additive — with
+  // no rarityOf the selection is byte-identical to before.
+  if (rarityOf) {
+    const rareCandidates = byTime
+      .filter((e) => !classOf.has(e.id) && rarityOf(e) >= RARE_SCORE_MIN)
+      .sort((a, b) => rarityOf(b) - rarityOf(a) || byEventTime(a, b));
+    // Guarantee at least one rare seat when any rare candidate exists (the whole point: a 1-off must not
+    // be crowded out by baseline noise), even when the fractional budget rounds to 0 at a small cap.
+    if (rareCandidates.length) fill(rareCandidates, Math.max(1, Math.floor(remaining * BUDGET_RARE)), "rare");
+  }
+
   // SPREAD remainder: keep whole activity bursts (burstDetect phases) rather than shredding clusters
   // with an even sample; whatever budget is left after whole bursts is filled by an even time-spread.
   if (capacityLeft() > 0) {
@@ -198,8 +218,12 @@ export function selectSynthesisEventsAnnotated(events: ForensicEvent[], max: num
 
 // Backwards-compatible wrapper: the chosen events in chronological order. All existing callers use this;
 // the reserved-budget improvement flows through them automatically.
-export function selectSynthesisEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
-  return selectSynthesisEventsAnnotated(events, max).events;
+export function selectSynthesisEvents(
+  events: ForensicEvent[],
+  max: number,
+  rarityOf?: (e: ForensicEvent) => number,
+): ForensicEvent[] {
+  return selectSynthesisEventsAnnotated(events, max, rarityOf).events;
 }
 
 // A compact context digest for the synthesis prompt: the compromised assets (host/account
