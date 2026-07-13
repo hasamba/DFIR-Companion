@@ -942,6 +942,10 @@
     .hyp.exhausted { opacity: 0.7; }
     .hyp-discriminator { font-size: 12px; color: var(--c-9fd0ff, #9fd0ff); margin: 3px 0; }
     .hyp-ach-note { color: var(--c-6b7280); font-size: 10px; font-weight: 400; }
+    /* Prevalence baseline chips (#15b). */
+    .prev-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
+    .prev-common { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); }
+    .prev-rare { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
       border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
@@ -4712,6 +4716,9 @@
       if (Array.isArray(e.provenance) && e.provenance.length) {
         parts.push(`<span style="color:#6bcB77" title="Promoted from the raw super-timeline by the second-look re-query">🔁 ${e.provenance.map(esc).join(" ")}</span>`);
       }
+      // Prevalence baseline (#15b): how common this activity pattern is across the case.
+      const prevChip = prevalenceChip(e);
+      if (prevChip) parts.push(prevChip);
       const ev = (show("evidence") && caseId) ? evidenceLinks(caseId, e.sourceScreenshots) : "";
       if (ev) parts.push(ev.replace(/^<br>/, ""));
       if (!parts.length) return { title, toggle: "", panel: "" };
@@ -8617,7 +8624,31 @@
         const label = m.lastImportFile || m.lastImportKind || "this file";
         yieldWarn = `<div class="sm-line" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600">⚠️ ${esc(label)}: ${(m.linesIn).toLocaleString()} lines → 0 events via AI triage — re-run triage or grep the raw file for the case's IOCs/hosts before treating this source as clean.</div>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${yieldWarn}${detail}`;
+      // Proactive FP-pattern propagation (#15b): new events reproduce a known false-positive pattern —
+      // offer a one-click bulk-mark (SUGGESTED, never auto-applied). data-evids drives the batch call.
+      let fpProp = "";
+      const props = Array.isArray(m.fpPropagation) ? m.fpPropagation.filter(p => p && (p.count || 0) > 0) : [];
+      if (props.length) {
+        fpProp = props.map(p => {
+          const what = esc((p.note || p.ref || "a marked-FP pattern").slice(0, 80));
+          return `<div class="sm-line" style="color:var(--c-ffb454,#ffb454);font-weight:600" title="These new events match the pattern of a finding/event you previously marked false positive. Review, then bulk-mark — never auto-applied.">`
+            + `🔁 ${p.count} new event${p.count === 1 ? "" : "s"} match FP pattern “${what}” `
+            + `<a href="#" class="fp-propagate" data-evids="${escAttr((p.matchedEventIds || []).join(","))}" data-label="${escAttr(p.note || p.ref || "FP pattern")}" style="color:var(--c-6aa9ff);margin-left:6px">review &amp; bulk-mark →</a>`
+            + `</div>`;
+        }).join("");
+      }
+      el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong>${src}${kind}</span><span>${summary}</span></div>${yieldWarn}${fpProp}${detail}`;
+    }
+    // #15b: bulk-mark every new event matching a propagated FP pattern (one confirm → batch endpoint).
+    function propagateFalsePositive(ids, label) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !ids.length) return;
+      if (!confirm(`Mark all ${ids.length} new event(s) matching the “${label}” pattern as false positive?`)) return;
+      const items = ids.map(id => ({ kind: "event", ref: id, reason: "duplicate" }));
+      fetch(`/cases/${caseId}/false-positive/batch`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items, reason: "duplicate", note: `matches previously-marked FP pattern (${label})` }),
+      }).then(() => { const c = document.getElementById("caseId").value.trim(); if (c) fetch(`/cases/${c}/import-meta`).then(r => r.json()).then(renderImportMeta).catch(() => {}); }).catch(() => {});
     }
     function paintIocImportMeta(m) {
       const el = document.getElementById("iocImportMeta");
@@ -12569,7 +12600,50 @@
       }).join("");
     }
 
+    // Per-case prevalence chip (#15b, client mirror of prevalence.ts): how common each activity pattern
+    // is across the loaded timeline, so a row can show "seen 214×" (baseline) vs "rare 1×" (anomaly). A
+    // lightweight approximation of the server key — a display hint, not the authoritative synthesis index.
+    let prevIndexClient = new Map();
+    function clientCommandShape(text) {
+      return String(text || "").toLowerCase()
+        .replace(/\b[a-f0-9]{32,64}\b/g, "<hash>")
+        .replace(/\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?/g, "<guid>")
+        .replace(/\\\\[^\s"']+/g, "<unc>").replace(/[a-z]:\\[^\s"']*/g, "<path>")
+        .replace(/(?:\/[^\s"'/]+){2,}\/?/g, "<path>")
+        .replace(/"[^"]*"/g, "<str>").replace(/'[^']*'/g, "<str>")
+        .replace(/\b\d[\d.,:]*\b/g, "<n>").replace(/\s+/g, " ").trim().slice(0, 200);
+    }
+    function clientPatternKey(e) {
+      const hash = String(e.sha256 || e.md5 || "").trim().toLowerCase();
+      if (hash) return "hash:" + hash;
+      const proc = String(e.processName || "").trim().toLowerCase();
+      const shape = clientCommandShape(e.description);
+      if (proc) return "proc:" + proc + "|" + shape;
+      return shape ? "desc:" + shape : "";
+    }
+    function buildClientPrevalence(events) {
+      const idx = new Map();
+      for (const e of (events || [])) {
+        const k = clientPatternKey(e);
+        if (!k) continue;
+        let st = idx.get(k);
+        if (!st) { st = { count: 0, hosts: new Set() }; idx.set(k, st); }
+        st.count++; if (e.asset) st.hosts.add(String(e.asset).toLowerCase());
+      }
+      return idx;
+    }
+    function prevalenceChip(e) {
+      const st = prevIndexClient.get(clientPatternKey(e));
+      if (!st) return "";
+      const hosts = st.hosts.size ? ` on ${st.hosts.size} host${st.hosts.size === 1 ? "" : "s"}` : "";
+      if (st.count >= 20) return `<span class="prev-chip prev-common" title="This pattern is common in this case — likely routine baseline activity.">≈ seen ${st.count}×${esc(hosts)}</span>`;
+      if (st.count <= 2) return `<span class="prev-chip prev-rare" title="This pattern is rare in this case — more likely to be signal than noise.">◆ rare (${st.count}×)</span>`;
+      return "";
+    }
     function renderTimelineEvents(ft) {
+      // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
+      // filtered/paged subset, so counts are stable as the analyst filters.
+      prevIndexClient = buildClientPrevalence((lastState && lastState.forensicTimeline) ? lastState.forensicTimeline : ft);
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
       // When the corroboration lens is on, scope the Sources menu to the tools present on events that
@@ -14206,6 +14280,14 @@
         e.preventDefault();
         const ids = (afp.getAttribute("data-evids") || "").split(",").filter(Boolean);
         markAnomalySpikeFalsePositive(ids, afp.getAttribute("data-label") || "");
+        return;
+      }
+      // Import-banner "review & bulk-mark" link (#15b) → batch-mark the new events matching an FP pattern.
+      const fpp = e.target.closest && e.target.closest(".fp-propagate");
+      if (fpp) {
+        e.preventDefault();
+        const ids = (fpp.getAttribute("data-evids") || "").split(",").filter(Boolean);
+        propagateFalsePositive(ids, fpp.getAttribute("data-label") || "FP pattern");
         return;
       }
       const chip = e.target.closest && e.target.closest(".comment-chip");

@@ -34,6 +34,11 @@ export interface FalsePositiveMarker {
   markedAt: string;
   markedBy: string;              // analyst name/id; "anonymous" when not supplied
   label?: string;                // optional human-readable label (e.g. an event's description) for display
+  // Proactive FP-pattern propagation (investigation-guidance #15b): the normalized prevalence pattern key
+  // of the anchor event, captured when an EVENT is marked false positive. After each import, new events
+  // whose pattern key equals this are surfaced as a one-click bulk-mark suggestion (never auto-applied).
+  // Only set for event markers; absent for finding/IOC markers and older files.
+  patternFingerprint?: string;
 }
 
 export function markerId(kind: FalsePositiveKind, ref: string): string {

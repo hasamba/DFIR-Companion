@@ -1,9 +1,10 @@
 # Making DFIR-Companion Lead the Investigation
 
-> **Implementation status (Tier 0–2 + Tier 3 #12–#14 shipped and merged to master).** Proposals
-> #1–#14 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = the
-> second-look loop; #12 = the immediate FP cascade; #13 = rabbit-hole detection; #14 = ACH-style
-> hypotheses). Full suite green (3626 tests), clean `tsc`. Deferred within those items (documented
+> **Implementation status: ALL 15 proposals shipped and merged to master — the roadmap is COMPLETE.**
+> #1–#15 are implemented, unit-tested, and merged (PRs #96–#99, #102, #103 for #1–#10; #11 = second-look
+> loop; #12 = immediate FP cascade; #13 = rabbit-hole detection; #14 = ACH-style hypotheses; #15 =
+> per-case prevalence/baseline + proactive FP-pattern propagation, landed as #15a + #15b). Full suite
+> green (3638 tests), clean `tsc`. Deferred within those items (documented
 > in each commit): the `~` context-prefix prompt notation and per-class counts into synthMeta (#4); the
 > anchor-scoring bump retune and the auto-generated "corroborate `<ioc>`" nextStep (#7); #10 trigger (b)
 > cap-hit truncation; #11 report-side surfacing of collection leads (kept on the live dashboard only);
@@ -13,9 +14,7 @@
 > gitignored deployment artifacts — regenerate them with `npm run prompts:eject` so the deployment picks
 > up the built-in prompt (hypotheses / confidenceReason / structured-tag & attack-graph / #8 collect /
 > #11 evidenceRequests instructions). Until then the drift-detection check warns on every preflight and
-> synthesis run. **Tier 3 #15 in progress (split into two PRs): #15a prevalence/baseline engine shipping now
-(prevalence.ts index + synthesis renderEvent baseline tags + rarity bias in the #4 selection fill);
-#15b (FP-pattern propagation + dashboard surfaces) to follow.**
+> synthesis run. **The roadmap is fully delivered; no items remain.**
 
 **Goal.** Make the Companion genuinely lead an investigation — better decisions, higher recall of
 what actually happened, better dot-connecting, a working FP / rabbit-hole / real-lead triage, the
