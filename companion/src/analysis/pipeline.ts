@@ -171,7 +171,7 @@ import {
   buildSecondLookRequests, resolveSecondLookRequests, buildSecondLookPlan, summarizeSecondLook,
   deriveWindow, type ModelEvidenceRequest,
 } from "./secondLook.js";
-import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
+import { groundAndScoreFindings, capIntelOnlyFindings, buildIntelCorroborationSteps, corroborationLabel } from "./findingGrounding.js";
 import { scoreFindingsRelevance } from "./findingRelevance.js";
 import { buildPrevalenceIndex, eventPrevalence, prevalenceTag, rarityScore } from "./prevalence.js";
 import { reconsiderKeyQuestions, textMentionsFindingId } from "./fpCascade.js";
@@ -4647,6 +4647,17 @@ export class AnalysisPipeline {
           .map((f) => [f.id, f.relevance] as const),
       );
       next = { ...next, findings: scoreFindingsRelevance({ findings: capped, scopedEvents: inScope, graph: evidenceGraph, aiRelevanceById }) };
+
+      // Auto "corroborate <ioc>" next-steps (investigation-guidance #7, deferred): for every finding the
+      // intel gate just floored to intel-only, add a concrete "go get the behavioral evidence" step so the
+      // capped lead becomes a directed action, not a dead end. Idempotent ids; prepend so the verification
+      // steps sit near the top, and don't duplicate a step the model already emitted with the same id.
+      const corroborateSteps = buildIntelCorroborationSteps({ findings: next.findings, iocs: next.iocs, scopedEvents: inScope, hostNames });
+      if (corroborateSteps.length) {
+        const existing = new Set((next.nextSteps ?? []).map((s) => s.id));
+        const fresh = corroborateSteps.filter((s) => !existing.has(s.id));
+        if (fresh.length) next = { ...next, nextSteps: [...fresh, ...(next.nextSteps ?? [])] };
+      }
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
