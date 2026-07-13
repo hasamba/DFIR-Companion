@@ -8,6 +8,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
 import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
@@ -334,6 +335,22 @@ function timelineAnomalies(state: InvestigationState, lines: string[]): void {
 // set overlaps the case's identified techniques. Offline hypothesis fuel from the bundled MITRE
 // Groups dataset — NOT attribution (every row shows the group's total technique count so a 4-of-150
 // diffuse match reads differently from a 4-of-12 focused one, and the caveat is stated up front).
+// Evidence gaps (investigation-guidance #9): the kill-chain phases with no covering finding, each with
+// a deterministic "collect X from host Y" directive — the report analog of the dashboard Evidence Gaps
+// panel. Only the uncovered-tactic items are rendered here (silent windows already have §3.3, and
+// lookalike-actor next techniques are §4.6.1); "" when the case has none.
+function evidenceGaps(state: InvestigationState, lines: string[]): void {
+  const items = buildKnownUnknownItems(state, state.forensicTimeline).filter((i) => i.kind === "uncovered_tactic");
+  if (!items.length) return;
+  lines.push("#### 4.6.2 Evidence gaps — uncovered kill-chain phases", "");
+  lines.push("_A real (Critical/High) finding exists but no finding explains these phases. Collect the named evidence to close each gap — a lead, not proof._", "");
+  for (const i of items) {
+    lines.push(`- **${i.tactic}** — ${cellMd(i.label)}`);
+    for (const c of i.collect) lines.push(`  - ${cellMd(collectSummary(c))}`);
+  }
+  lines.push("");
+}
+
 function adversaryHints(state: InvestigationState, lines: string[]): void {
   lines.push("#### 4.6.1 Adversary group hints", "");
   const result = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
@@ -569,6 +586,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   }
 
   adversaryHints(state, lines);
+
+  evidenceGaps(state, lines);
 
   lines.push("### 4.7 Key investigative questions", "");
   if (state.keyQuestions.length === 0) {
