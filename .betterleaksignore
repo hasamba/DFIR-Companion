@@ -1,0 +1,6 @@
+testdata/
+node_modules/
+vendor/
+docs/
+*.md
+**/*_test.go
