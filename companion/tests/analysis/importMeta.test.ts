@@ -35,6 +35,7 @@ describe("ImportMetaStore", () => {
       lastImportedAt: "", lastImportKind: "", lastImportFile: "",
       addedCount: 0, removedCount: 0, lastDiff: null,
       iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
+      linesIn: 0, path: "",
     });
   });
 
@@ -73,6 +74,7 @@ describe("ImportMetaStore", () => {
       lastImportedAt: "", lastImportKind: "", lastImportFile: "",
       addedCount: 0, removedCount: 0, lastDiff: null,
       iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
+      linesIn: 0, path: "",
     });
   });
 

@@ -2722,6 +2722,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
     playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
+    importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
     superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined),  // explainEvent falls back here for raw super-only events
