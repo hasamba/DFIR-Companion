@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { Finding, InvestigationState, Severity, StepPriority } from "./stateTypes.js";
 import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
 import { collectSummary, isActionableCollect } from "./collectDirective.js";
+import { uncoveredCoreTactics, tacticCollectDirectives } from "./knownUnknowns.js";
+import { rankHosts } from "./hostRanking.js";
 
 // Playbook tracking (issue #36, Phase 1). Turns the AI's "next steps" and the
 // high-severity findings into a trackable checklist of remediation/investigation
@@ -16,7 +18,7 @@ import { collectSummary, isActionableCollect } from "./collectDirective.js";
 export const PLAYBOOK_STATUSES = ["todo", "in_progress", "done", "skipped"] as const;
 export type PlaybookStatus = (typeof PLAYBOOK_STATUSES)[number];
 
-export const PLAYBOOK_SOURCES = ["next_step", "finding", "question", "custom"] as const;
+export const PLAYBOOK_SOURCES = ["next_step", "finding", "question", "known_unknown", "custom"] as const;
 export type PlaybookSource = (typeof PLAYBOOK_SOURCES)[number];
 
 const STEP_PRIORITIES = ["critical", "high", "medium", "low"] as const;
@@ -47,7 +49,7 @@ export interface DerivedTaskSeed {
   title: string;
   description: string;
   priority: StepPriority;
-  source: "next_step" | "finding" | "question";
+  source: "next_step" | "finding" | "question" | "known_unknown";
   sourceKey: string;
   relatedFindingId?: string;
 }
@@ -265,6 +267,22 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
       priority: "high",
       source: "question",
       sourceKey: `question:${q.id}`,
+    });
+  }
+  // Collection tasks from uncovered kill-chain phases (investigation-guidance #9): a core ATT&CK phase
+  // with no covering finding becomes a status-tracked "collect the evidence that would explain it"
+  // task, pointed at the right host + artifact (tacticCollectDirectives). Only fires once the case has
+  // a real (Critical/High) finding — uncoveredCoreTactics gates on that. Stable sourceKey `ku:<tactic>`.
+  const topHosts = rankHosts(state).topHosts;
+  for (const tactic of uncoveredCoreTactics(state)) {
+    const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts);
+    if (!dirs.length) continue;
+    seeds.push({
+      title: `Collect evidence for the unexplained phase: ${tactic}`,
+      description: dirs.map((d) => collectSummary(d)).filter(Boolean).join("\n"),
+      priority: "high",
+      source: "known_unknown",
+      sourceKey: `ku:${tactic.toLowerCase().replace(/\s+/g, "-")}`,
     });
   }
   return seeds;

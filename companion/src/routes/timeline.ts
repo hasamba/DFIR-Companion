@@ -80,6 +80,19 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
+  // Evidence gaps / known unknowns (investigation-guidance #9): the kill-chain phases with no covering
+  // finding (each carrying a deterministic "collect X from host Y" directive), silent-window coverage
+  // gaps, and lookalike-actor likely-next techniques. The SAME structured items the synthesis prompt
+  // consumes, so the panel and the model see one list. Pure/offline; no AI, no Velociraptor required.
+  app.get("/cases/:id/known-unknowns", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
+    try {
+      return res.status(200).json({ items: await options.pipeline.knownUnknownsForCase(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {

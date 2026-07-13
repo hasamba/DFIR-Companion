@@ -45,7 +45,7 @@ import {
 } from "./gapHypothesis.js";
 import { SHADOW_ARTIFACTS } from "./shadowArtifacts.js";
 import { diffFindings, type FindingsDiff } from "./findingsDiff.js";
-import { buildKnownUnknowns } from "./knownUnknowns.js";
+import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } from "./knownUnknowns.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
 import type { SynthMetaStore } from "./synthMeta.js";
@@ -3661,18 +3661,34 @@ export class AnalysisPipeline {
   // the matched actors' likely-next techniques) so synthesis + hunts treat what's MISSING as open
   // questions, not just what the evidence shows. Pure block; the offline adversary dataset is cached.
   // Wrapped defensively — a known-unknowns failure must never break synthesis or hunt suggestions.
-  private knownUnknownsBlock(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+  // The STRUCTURED known-unknowns for a case (investigation-guidance #9) — the SINGLE source the
+  // synthesis prompt block AND the GET /cases/:id/known-unknowns panel both consume, so the model and
+  // the analyst provably see the same gap list. Defensive: a failure here must never break synthesis.
+  private knownUnknownItems(state: InvestigationState, scopedEvents: ForensicEvent[]): KnownUnknownItem[] {
     try {
-      const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
       const hints = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
-      return buildKnownUnknowns(state, scopedEvents, {
+      return buildKnownUnknownItems(state, scopedEvents, {
         gapOptions: gapEnvOptions(),
         nextTechniques: hints.nextTechniques,
-        max,
       });
     } catch {
-      return "";
+      return [];
     }
+  }
+
+  private knownUnknownsBlock(state: InvestigationState, scopedEvents: ForensicEvent[]): string {
+    const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
+    return renderKnownUnknowns(this.knownUnknownItems(state, scopedEvents), max);
+  }
+
+  // Read-only: the structured evidence-gap items for a case (scope + false-positive filtered, exactly
+  // as synthesis sees them). Powers the "Evidence gaps" dashboard panel and the report section.
+  async knownUnknownsForCase(caseId: string): Promise<KnownUnknownItem[]> {
+    const loaded = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    return this.knownUnknownItems(loaded, scopedEvents);
   }
 
   // Candidate-threat-actor preamble (#165), OFF by default (DFIR_SYNTH_ADVERSARY_HINTS). Feeds the
