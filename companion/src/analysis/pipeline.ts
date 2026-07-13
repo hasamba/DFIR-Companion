@@ -615,6 +615,11 @@ export const SYNTHESIS_PROMPT = [
   "  'refuted' if it contradicts it, else 'open'), 'relatedTechniques' (ATT&CK ids), and the supporting",
   "  'relatedEventIds' / 'relatedIocIds'. Propose hypotheses even for gaps the evidence does NOT yet",
   "  resolve (status 'open') — those drive the next collection. Use the event/ioc ids shown below.",
+  "  ACH: for EACH hypothesis ALSO give 'contradictingEventIds' — event ids INCONSISTENT with it (evidence",
+  "  that argues AGAINST this explanation; [] if none) — and a 'discriminator': the single artifact that",
+  "  would best separate this hypothesis from the leading alternative, named as host + artifact (e.g.",
+  "  'Security.evtx 4648 on FS01'). Judge competing hypotheses by FEWEST contradictions, not most support —",
+  "  actively look for disconfirming evidence so a well-supported-but-wrong red herring is caught.",
   "- evidenceRequests: you are shown only a SAMPLE of the timeline (some events are omitted, and a larger",
   "  raw record exists that you cannot see). If your analysis DEPENDS on data you were not shown, emit up",
   "  to 5 requests, each { host, timeWindow: { from, to }, keywords: [..], reason }. Each is resolved AFTER",
@@ -655,8 +660,8 @@ export const SYNTHESIS_PROMPT = [
         { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain", relatedFindingIds: [] },
       ],
       hypotheses: [
-        { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"] },
-        { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [] },
+        { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"], contradictingEventIds: [], discriminator: "email gateway logs on MAIL01 for the delivery event" },
+        { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [], contradictingEventIds: ["e9"], discriminator: "$MFT on FS01 for the archive-creation timestamp" },
       ],
       evidenceRequests: [
         { host: "FS01", timeWindow: { from: "2025-04-27T00:00Z", to: "2025-04-28T00:00Z" }, keywords: ["rsync", "nfs-01", ".zip"], reason: "confirm the staging→exfil hypothesis with archive-write + outbound-transfer rows not shown above" },
@@ -4276,9 +4281,23 @@ export class AnalysisPipeline {
     // analyst ruled out must not be re-asserted or re-opened. Loaded from the same store, once.
     let refutedHypothesesBlock = "";
     if (this.opts.hypothesisStore) {
+      // ACH exhaustion (investigation-guidance #14): before reading, flag hypotheses whose linked or
+      // technique-matched hunts have come back empty — so the negative-knowledge block below and the
+      // "to test" list reflect them. Derived from collected hunt outcomes; persisted; idempotent.
+      const exhaustionOutcomes = await this.loadHuntOutcomes(caseId);
+      const huntSignals = exhaustionOutcomes
+        .filter((o) => o.status === "collected")
+        .map((o) => ({
+          ...(o.relatedHypothesisId ? { relatedHypothesisId: o.relatedHypothesisId } : {}),
+          techniques: o.mitreTechniques ?? [],
+          missed: o.foundEvidence === false,
+          title: o.title,
+        }));
+      if (huntSignals.some((s) => s.missed)) await this.opts.hypothesisStore.applyExhaustion(caseId, huntSignals);
+
       const allHypotheses = await this.opts.hypothesisStore.load(caseId);
       const open = allHypotheses
-        .filter((h) => h.status === "open" && (h.source === "analyst" || h.analystTouched))
+        .filter((h) => h.status === "open" && !h.exhausted && (h.source === "analyst" || h.analystTouched))
         .slice(0, 15);
       if (open.length) {
         analystHypothesesBlock =

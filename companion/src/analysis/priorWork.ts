@@ -44,16 +44,26 @@ export function renderRefutedHypothesesBlock(hypotheses: readonly Hypothesis[], 
   const refuted = (hypotheses ?? []).filter(
     (h) => h.status === "refuted" && (h.source === "analyst" || h.analystTouched),
   );
-  if (!refuted.length) return "";
+  // ACH exhaustion (investigation-guidance #14): a hypothesis whose hunts all came back empty is
+  // negative knowledge too — the model should stop deriving findings for a theory the evidence hunt
+  // exhausted, exactly like a refuted one. `exhausted` is set deterministically (markExhaustedHypotheses)
+  // so it needs no analyst-touch gate.
+  const exhausted = (hypotheses ?? []).filter((h) => h.exhausted && h.status !== "refuted");
+  if (!refuted.length && !exhausted.length) return "";
   const cap = Math.max(1, Math.floor(limit));
-  const lines = refuted.slice(0, cap).map((h) => {
+  const refutedLines = refuted.slice(0, cap).map((h) => {
     const note = (h.notes ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
-    return `- ${h.title}${note ? ` — ${note}` : ""}`;
+    return `- [refuted] ${h.title}${note ? ` — ${note}` : ""}`;
+  });
+  const exhaustedLines = exhausted.slice(0, cap).map((h) => {
+    const why = (h.exhaustedReason ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+    return `- [exhausted] ${h.title}${why ? ` — ${why}` : ""}`;
   });
   return (
-    "REFUTED HYPOTHESES (the investigator ruled these out — do NOT re-assert them, re-open threads for " +
-    "them, or derive findings/nextSteps from them; treat each as settled negative knowledge):\n" +
-    lines.join("\n") + "\n\n"
+    "REFUTED / EXHAUSTED HYPOTHESES (the investigator ruled these out, or hunts for them came back empty — " +
+    "do NOT re-assert them, re-open threads for them, or derive findings/nextSteps from them; treat each as " +
+    "settled negative knowledge):\n" +
+    [...refutedLines, ...exhaustedLines].join("\n") + "\n\n"
   );
 }
 
