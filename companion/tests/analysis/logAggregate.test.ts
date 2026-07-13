@@ -1,5 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { aggregateLogLines, templateizeLine, splitLeadingTimestamp } from "../../src/analysis/logAggregate.js";
+import { aggregateLogLines, templateizeLine, splitLeadingTimestamp, type AggregateStats } from "../../src/analysis/logAggregate.js";
+
+describe("aggregateLogLines stats out-param (#10 trigger b)", () => {
+  it("reports distinct vs kept so a cap-hit is detectable", () => {
+    // 5 distinct patterns, cap at 3 → 2 dropped.
+    const lines = ["alpha 1", "beta 2", "gamma 3", "delta 4", "epsilon 5"];
+    const stats: AggregateStats = { distinctTemplates: 0, keptTemplates: 0 };
+    const kept = aggregateLogLines(lines, { maxTemplates: 3 }, stats);
+    expect(kept).toHaveLength(3);
+    expect(stats.distinctTemplates).toBe(5);
+    expect(stats.keptTemplates).toBe(3);
+  });
+  it("reports distinct === kept when under the cap (no truncation)", () => {
+    const stats: AggregateStats = { distinctTemplates: 0, keptTemplates: 0 };
+    aggregateLogLines(["a 1", "a 2", "b 3"], { maxTemplates: 400 }, stats);  // 2 distinct patterns, under cap
+    expect(stats.distinctTemplates).toBe(2);
+    expect(stats.keptTemplates).toBe(2);
+    expect(stats.distinctTemplates > stats.keptTemplates).toBe(false);   // → no cap_hit warning
+  });
+});
 
 describe("splitLeadingTimestamp", () => {
   it("strips an ISO-8601 timestamp", () => {

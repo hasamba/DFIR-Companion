@@ -69,7 +69,7 @@ import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "./scope.js";
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
-import { aggregateLogLines } from "./logAggregate.js";
+import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
@@ -1525,6 +1525,16 @@ export class AnalysisPipeline {
   // when nothing that affects the output has changed since the last run. In-memory: a
   // fresh process (or an explicit `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
+  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when
+  // the distinct-template cap dropped patterns the AI never saw; consumed once by the import route to
+  // stamp a cap-hit coverage warning onto import-meta. A side channel because import methods return only
+  // the state, not metadata.
+  private readonly importTruncation = new Map<string, AggregateStats>();
+  consumeImportTruncation(caseId: string): AggregateStats | undefined {
+    const v = this.importTruncation.get(caseId);
+    this.importTruncation.delete(caseId);
+    return v;
+  }
   // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
   // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
   // edit to the override file, and keeps the warning from spamming every synthesis run.
@@ -1678,8 +1688,14 @@ export class AnalysisPipeline {
     const { lines } = parseLogLines(logText);
     if (lines.length === 0) return this.opts.stateStore.load(caseId);
 
-    // Collapse the raw lines into distinct, counted patterns (most frequent first).
-    const templates = aggregateLogLines(lines);
+    // Collapse the raw lines into distinct, counted patterns (most frequent first). Capture the
+    // aggregation stats so a cap-hit (more distinct patterns than the AI could be shown) is flagged
+    // as a coverage blind spot by the import route (#10 trigger b).
+    const aggStats: AggregateStats = { distinctTemplates: 0, keptTemplates: 0 };
+    const maxTemplates = Number(process.env.DFIR_LOG_MAX_TEMPLATES) || undefined;   // else the built-in default
+    const templates = aggregateLogLines(lines, { maxTemplates }, aggStats);
+    if (aggStats.distinctTemplates > aggStats.keptTemplates) this.importTruncation.set(caseId, aggStats);
+    else this.importTruncation.delete(caseId);
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
 

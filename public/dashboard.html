@@ -8633,6 +8633,14 @@
         const label = m.lastImportFile || m.lastImportKind || "this file";
         yieldWarn = `<div class="sm-line" style="color:var(--c-ff6b6b,#ff6b6b);font-weight:600">⚠️ ${esc(label)}: ${(m.linesIn).toLocaleString()} lines → 0 events via AI triage — re-run triage or grep the raw file for the case's IOCs/hosts before treating this source as clean.</div>`;
       }
+      // Cap-hit truncation (#10 trigger b): the log-aggregation cap dropped distinct patterns the AI never
+      // saw — a rare one-off attack line can hide there. Mirrors the server classifyImportYield cap_hit.
+      const tr = m.truncation;
+      if (tr && (tr.distinctTemplates || 0) > (tr.keptTemplates || 0)) {
+        const label = m.lastImportFile || m.lastImportKind || "this file";
+        const dropped = tr.distinctTemplates - tr.keptTemplates;
+        yieldWarn += `<div class="sm-line" style="color:var(--c-ffb454,#ffb454);font-weight:600">⚠️ ${esc(label)}: ${dropped.toLocaleString()} of ${tr.distinctTemplates.toLocaleString()} distinct log patterns weren't triaged (cap ${tr.keptTemplates.toLocaleString()}) — a one-off attack line can hide in the dropped rare patterns; raise DFIR_LOG_MAX_TEMPLATES or split the file and re-import.</div>`;
+      }
       // Proactive FP-pattern propagation (#15b): new events reproduce a known false-positive pattern —
       // offer a one-click bulk-mark (SUGGESTED, never auto-applied). data-evids drives the batch call.
       let fpProp = "";

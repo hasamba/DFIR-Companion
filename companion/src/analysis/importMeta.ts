@@ -48,6 +48,13 @@ export const importMetaSchema = z.object({
   // older import-meta.json files load with linesIn 0 / path "" and simply never trip the check.
   linesIn: z.number().catch(0),                                  // raw input lines/rows the import read
   path: z.enum(["deterministic", "ai", ""]).catch(""),           // "ai" = the log/CSV AI-triage path; "" = unknown/legacy
+  // Cap-hit truncation (investigation-guidance #10, trigger b): the log-aggregation cap dropped distinct
+  // patterns the AI never saw — a coverage blind spot, not a clean import. Optional/lenient; absent when
+  // nothing was truncated. keptTemplates of distinctTemplates were triaged.
+  truncation: z.object({
+    distinctTemplates: z.number().catch(0),
+    keptTemplates: z.number().catch(0),
+  }).nullable().optional().catch(undefined),
   // Proactive FP-pattern propagation (investigation-guidance #15b): new events from THIS import that
   // reproduce a known false-positive pattern, surfaced as a one-click "review & bulk-mark" banner
   // suggestion (never auto-applied). Optional/lenient; absent on older files and imports with no match.
@@ -68,7 +75,7 @@ const EMPTY: ImportMeta = {
   lastImportedAt: "", lastImportKind: "", lastImportFile: "",
   addedCount: 0, removedCount: 0, lastDiff: null,
   iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
-  linesIn: 0, path: "", fpPropagation: [],
+  linesIn: 0, path: "", fpPropagation: [], truncation: null,
 };
 
 // Cap how many added/removed events we store in the detail list — a single import can add
@@ -84,6 +91,7 @@ export interface ImportRecord {
   linesIn?: number;                          // raw input lines/rows the import read (#10)
   path?: "deterministic" | "ai";             // which extraction path ran (#10)
   fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
+  truncation?: ImportMeta["truncation"];     // cap-hit template truncation (#10 trigger b)
 }
 
 export class ImportMetaStore {
@@ -123,6 +131,7 @@ export class ImportMetaStore {
       linesIn: Math.max(0, Math.floor(rec.linesIn ?? 0)),
       path: rec.path ?? "",
       fpPropagation: rec.fpPropagation ?? [],
+      truncation: rec.truncation ?? null,
     };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;
@@ -142,7 +151,7 @@ export class ImportMetaStore {
 // path (log/CSV) that produced ZERO graded events — the northpeak failure, where a 27,290-line proxy
 // log contributed nothing and read as "source clean". Deterministic + pure over the persisted meta.
 export interface ImportYieldWarning {
-  reason: "zero_yield_ai";
+  reason: "zero_yield_ai" | "cap_hit";
   file: string;
   kind: string;
   linesIn: number;
@@ -165,21 +174,37 @@ function inferPhasesFromSource(kind: string, file: string): string[] {
 }
 
 export function classifyImportYield(
-  meta: Pick<ImportMeta, "path" | "addedCount" | "linesIn" | "lastImportKind" | "lastImportFile">,
+  meta: Pick<ImportMeta, "path" | "addedCount" | "linesIn" | "lastImportKind" | "lastImportFile" | "truncation">,
   opts: { minLines?: number } = {},
 ): ImportYieldWarning | null {
   const minLines = opts.minLines ?? ZERO_YIELD_MIN_LINES_DEFAULT;
-  if (meta.path !== "ai") return null;                 // only the AI-triage path can silently drop everything
-  if ((meta.addedCount ?? 0) > 0) return null;         // it produced events → not a blind spot
-  const linesIn = meta.linesIn ?? 0;
-  if (linesIn < minLines) return null;                 // a genuinely tiny/empty file isn't a coverage gap
   const label = meta.lastImportFile || meta.lastImportKind || "an imported file";
-  return {
-    reason: "zero_yield_ai",
-    file: meta.lastImportFile,
-    kind: meta.lastImportKind,
-    linesIn,
-    message: `${label}: ${linesIn.toLocaleString()} lines → 0 events via AI triage — re-run triage or grep the raw file for the case's IOCs/hosts before treating this source as clean`,
-    inferredPhases: inferPhasesFromSource(meta.lastImportKind, meta.lastImportFile),
-  };
+  // Trigger (a): the AI-triage path produced ZERO events from a large file — the northpeak blind spot.
+  if (meta.path === "ai" && (meta.addedCount ?? 0) === 0 && (meta.linesIn ?? 0) >= minLines) {
+    const linesIn = meta.linesIn ?? 0;
+    return {
+      reason: "zero_yield_ai",
+      file: meta.lastImportFile,
+      kind: meta.lastImportKind,
+      linesIn,
+      message: `${label}: ${linesIn.toLocaleString()} lines → 0 events via AI triage — re-run triage or grep the raw file for the case's IOCs/hosts before treating this source as clean`,
+      inferredPhases: inferPhasesFromSource(meta.lastImportKind, meta.lastImportFile),
+    };
+  }
+  // Trigger (b): the log-aggregation cap dropped distinct patterns the AI never saw — a coverage blind
+  // spot even when events WERE produced (the rare, one-off patterns are the least likely to survive a
+  // frequency cap, and exactly where a lone attack line hides).
+  const t = meta.truncation;
+  if (t && t.distinctTemplates > t.keptTemplates) {
+    const dropped = t.distinctTemplates - t.keptTemplates;
+    return {
+      reason: "cap_hit",
+      file: meta.lastImportFile,
+      kind: meta.lastImportKind,
+      linesIn: meta.linesIn ?? 0,
+      message: `${label}: ${dropped.toLocaleString()} of ${t.distinctTemplates.toLocaleString()} distinct log patterns were NOT triaged (cap ${t.keptTemplates.toLocaleString()}) — a one-off attack line can hide in the dropped rare patterns; raise DFIR_LOG_MAX_TEMPLATES or split the file and re-import`,
+      inferredPhases: inferPhasesFromSource(meta.lastImportKind, meta.lastImportFile),
+    };
+  }
+  return null;
 }
