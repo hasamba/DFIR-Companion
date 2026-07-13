@@ -73,6 +73,11 @@ export class SuperTimelineStore {
     return (await this.loadEvents(caseId)).find((e) => e.id === id) ?? null;
   }
 
+  // Every stored event (unpaginated) — for the manual "Run tagger" pass over the whole raw timeline.
+  async all(caseId: string): Promise<ForensicEvent[]> {
+    return this.loadEvents(caseId);
+  }
+
   async setLabels(caseId: string, eventId: string, labels: string[]): Promise<void> {
     const map = await this.loadLabels(caseId);
     const clean = [...new Set(labels.map((l) => String(l).trim()).filter(Boolean))];

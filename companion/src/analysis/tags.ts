@@ -109,4 +109,15 @@ export class TagsStore {
     await this.save(caseId, next);
     return true;
   }
+
+  // Remove every tag whose author starts with `prefix` in a single load+save; returns how many were
+  // removed. Backs the tagger's "Clear tagger tags" (prefix "tagger:") so a noisy ruleset is fully
+  // reversible WITHOUT touching analyst-authored tags. No-op write when nothing matches.
+  async removeByAuthorPrefix(caseId: string, prefix: string): Promise<number> {
+    const tags = await this.load(caseId);
+    const next = tags.filter((t) => !t.author.startsWith(prefix));
+    const removed = tags.length - next.length;
+    if (removed) await this.save(caseId, next);
+    return removed;
+  }
 }

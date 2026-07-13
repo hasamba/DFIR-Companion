@@ -1,0 +1,164 @@
+# DFIR Companion — content-based event tagger ruleset (Timesketch tagger analyzer, ported).
+#
+# Each top-level key is a rule id. A rule names one or more condition blocks and the actions to apply
+# to every matching event:
+#
+#   any:   [ {field, <op>}, ... ]   # OR  — at least one condition must match
+#   all:   [ {field, <op>}, ... ]   # AND — every condition must match
+#   none:  [ {field, <op>}, ... ]   # NOT — no condition may match
+#   tags:      ['label', ...]       # analyst tags (filterable in the super-timeline)
+#   mitre:     ['T1543', ...]       # merged into the event's ATT&CK techniques (forensic timeline)
+#   severity:  High                 # raises (never lowers) the event's severity (forensic timeline)
+#   view:      'name'               # optional saved-view label reported by a manual run
+#
+# Operators (exactly one per condition):
+#   contains: 'x'  |  ['a','b']     # case-insensitive substring; a list is OR
+#   equals:   'x'  |  ['a','b']     # case-insensitive exact match (per array element for list fields)
+#   regex:    'pat'   flags: 'i'    # JS regex against the field text
+#   exists:   true | false          # field present-and-non-empty / absent
+#
+# Matchable fields are the real ForensicEvent fields — an UNKNOWN field is a load error, never a
+# silent no-op:  description, message, asset, path, artifactName, processName, parentName, sha256,
+# md5, srcIp, dstIp, veloUrl, severity, action, sources, mitreTechniques, relatedFindingIds,
+# provenance, port, pid, count.
+#
+# DESIGN NOTE — this default set is COMPLEMENTARY to the built-in deterministic grader
+# (analysis/tradecraftRules.ts), which already scores Defender/AV tampering, BYOVD, UAC bypass,
+# mimikatz and log-clearing command lines. To avoid double-grading the same event, the rules below
+# target artifact/event-ID/path/filename evidence rather than re-implementing those command-line
+# patterns. Edit freely from the dashboard (Tagger → Edit rules) or point TAGGER_RULES_FILE at your
+# own file.
+
+# ─────────────────────────── Windows Event Log — persistence / execution ───────────────────────────
+win_service_install:
+  description: Windows service installed (Security 4697 / System 7045)
+  any:
+    - { field: message, contains: ['7045', '4697', 'A new service was installed', 'Service Control Manager'] }
+  none:
+    - { field: message, contains: ['svchost.exe -k'] }   # routine OS service hosting
+  tags: ['win-service', 'persistence']
+  mitre: ['T1543.003']
+  severity: Medium
+  view: 'Service installation'
+
+win_scheduled_task:
+  description: Scheduled task created / updated (Security 4698/4702, TaskScheduler 106/140)
+  any:
+    - { field: message, contains: ['4698', '4702', 'A scheduled task was created', 'A scheduled task was updated', 'TaskScheduler'] }
+  tags: ['win-scheduled-task', 'persistence']
+  mitre: ['T1053.005']
+  severity: Medium
+  view: 'Scheduled tasks'
+
+win_wmi_persistence:
+  description: WMI event subscription (permanent consumer) — a classic fileless persistence
+  any:
+    - { field: message, contains: ['EventConsumer', 'CommandLineEventConsumer', '__EventFilter', 'FilterToConsumerBinding'] }
+  tags: ['wmi-persistence', 'persistence']
+  mitre: ['T1546.003']
+  severity: High
+  view: 'WMI persistence'
+
+win_run_key:
+  description: Registry Run / RunOnce autorun key written
+  any:
+    - { field: path, regex: '\\currentversion\\run(?:once)?\\', flags: 'i' }
+    - { field: message, regex: '\\currentversion\\run(?:once)?\\', flags: 'i' }
+  tags: ['autorun', 'persistence']
+  mitre: ['T1547.001']
+  severity: Medium
+  view: 'Autorun keys'
+
+# ─────────────────────────── Credential access / LSASS ───────────────────────────
+win_lsass_access:
+  description: LSASS process access / dump indicators (Sysmon 10, dump filenames)
+  any:
+    - { field: message, contains: ['lsass.exe', 'lsass.dmp', 'GrantedAccess', 'TargetImage: C:\\Windows\\System32\\lsass.exe'] }
+    - { field: path, contains: ['lsass.dmp'] }
+  tags: ['lsass', 'credential-access']
+  mitre: ['T1003.001']
+  severity: High
+  view: 'LSASS access'
+
+win_ntds_shadow:
+  description: NTDS.dit / SAM / SYSTEM hive theft or shadow-copy staging
+  any:
+    - { field: message, contains: ['ntds.dit', 'ntdsutil', 'HarddiskVolumeShadowCopy', '\\system32\\config\\sam'] }
+    - { field: path, contains: ['ntds.dit'] }
+  tags: ['ntds', 'credential-access']
+  mitre: ['T1003.003']
+  severity: High
+  view: 'Credential store theft'
+
+# ─────────────────────────── Lateral movement / remote access ───────────────────────────
+win_remote_logon:
+  description: Remote interactive / network logon (Security 4624 type 3/10)
+  all:
+    - { field: message, contains: ['4624'] }
+  any:
+    - { field: message, contains: ['Logon Type:		3', 'Logon Type:		10', 'LogonType 10', 'LogonType 3'] }
+  tags: ['remote-logon', 'lateral-movement']
+  mitre: ['T1021']
+  severity: Low
+  view: 'Remote logons'
+
+win_rdp:
+  description: RDP session activity (TerminalServices, port 3389)
+  any:
+    - { field: message, contains: ['TerminalServices', 'RemoteConnectionManager', 'RDP-Tcp'] }
+    - { field: port, equals: '3389' }
+  tags: ['rdp', 'lateral-movement']
+  mitre: ['T1021.001']
+  severity: Low
+  view: 'RDP activity'
+
+win_smb_admin_share:
+  description: Admin share / PsExec-style service execution (ADMIN$, PSEXESVC)
+  any:
+    - { field: message, contains: ['ADMIN$', 'PSEXESVC', '\\\\*\\C$', 'psexec'] }
+    - { field: processName, contains: ['psexec', 'psexesvc'] }
+  tags: ['smb-admin-share', 'lateral-movement']
+  mitre: ['T1021.002', 'T1570']
+  severity: Medium
+  view: 'Admin-share execution'
+
+# ─────────────────────────── Execution — script hosts ───────────────────────────
+win_powershell_encoded:
+  description: PowerShell with an encoded command (base64) — obfuscated execution
+  any:
+    - { field: message, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
+    - { field: description, regex: '-e(?:nc|ncodedcommand)?\s+[a-z0-9+/=]{16,}', flags: 'i' }
+  tags: ['powershell-encoded', 'execution', 'defense-evasion']
+  mitre: ['T1059.001', 'T1027']
+  severity: Medium
+  view: 'Encoded PowerShell'
+
+win_suspicious_child:
+  description: Office / script host spawning a shell (macro or exploit execution chain)
+  all:
+    - { field: parentName, regex: '(winword|excel|powerpnt|outlook|mshta|wscript|cscript)\.exe', flags: 'i' }
+    - { field: processName, regex: '(cmd|powershell|pwsh|rundll32|regsvr32)\.exe', flags: 'i' }
+  tags: ['suspicious-child-process', 'execution']
+  mitre: ['T1059', 'T1566.001']
+  severity: High
+  view: 'Office-spawned shells'
+
+# ─────────────────────────── Impact — ransomware precursors ───────────────────────────
+win_shadow_copy_delete:
+  description: Volume shadow copy / backup deletion (recovery inhibition)
+  any:
+    - { field: message, contains: ['vssadmin delete shadows', 'wmic shadowcopy delete', 'wbadmin delete', 'bcdedit', 'Delete Catalog'] }
+  tags: ['shadow-copy-delete', 'impact']
+  mitre: ['T1490']
+  severity: High
+  view: 'Recovery inhibition'
+
+# ─────────────────────────── Malware staging locations ───────────────────────────
+staging_temp_executable:
+  description: Executable written to a world-writable / temp staging path
+  any:
+    - { field: path, regex: '\\(?:temp|tmp|appdata\\local\\temp|programdata|public|windows\\temp)\\[^\\]*\.(?:exe|dll|scr|ps1|bat|hta|js|vbs)$', flags: 'i' }
+  tags: ['temp-staging', 'defense-evasion']
+  mitre: ['T1036']
+  severity: Medium
+  view: 'Temp-path executables'
