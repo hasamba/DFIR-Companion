@@ -3555,6 +3555,19 @@
       #sec-hostranking .hr-det-ioc-val{color:var(--c-d6deea);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       #sec-hostranking .hr-det-more,#sec-hostranking .hr-det-empty{color:var(--c-9aa4b2);font-size:10px;padding:2px 0}
     </style>
+    <section id="sec-evidence-gaps" style="grid-column: 1 / -1"><h2>Evidence Gaps<span class="ev-sub">what this case is MISSING — uncovered kill-chain phases (with where to collect), silent windows, and lookalike-actor next moves (derived, no AI); a lead, not proof</span></h2><div id="evidenceGaps">—</div></section>
+    <style>
+      #sec-evidence-gaps .eg-empty{color:var(--c-9aa4b2);font-size:12px;margin-top:10px}
+      #sec-evidence-gaps .eg-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+      #sec-evidence-gaps .eg-item{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-b5651d);border-radius:6px;padding:8px 10px}
+      #sec-evidence-gaps .eg-item.eg-gap{border-left-color:var(--c-ffb454)}
+      #sec-evidence-gaps .eg-item.eg-next{border-left-color:var(--c-6aa9ff)}
+      #sec-evidence-gaps .eg-kind{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--c-9aa4b2);margin-right:6px}
+      #sec-evidence-gaps .eg-label{color:var(--c-d6deea)}
+      #sec-evidence-gaps .eg-collect{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:12px}
+      #sec-evidence-gaps .eg-what{color:var(--c-e0a458,#e0a458)}
+      #sec-evidence-gaps .eg-gaplink{color:var(--c-6aa9ff);cursor:pointer;font-size:12px;text-decoration:underline;margin-top:4px;display:inline-block}
+    </style>
     <section id="sec-gaps" style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <style>
       #sec-gaps .gh-empty{color:var(--c-9aa4b2);font-size:12px;margin-top:10px}
@@ -8834,7 +8847,7 @@
           // timeline — no AI call needed, so refresh them right away instead of waiting on the
           // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
           scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
-          scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
+          scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
           scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
           scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
           scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload();
@@ -10042,6 +10055,55 @@
       clearTimeout(timelineGapsTimer);
       timelineGapsTimer = setTimeout(() => loadTimelineGaps(caseId), 800);
     }
+
+    // Evidence gaps (investigation-guidance #9): what the case is MISSING — uncovered kill-chain phases
+    // (each with a where-to-collect directive), silent windows, and lookalike-actor next moves. GET
+    // /cases/:id/known-unknowns returns the SAME structured items the synthesis prompt consumes.
+    let evidenceGapsData = [];
+    let evidenceGapsTimer = null;
+    function loadEvidenceGaps(caseId) {
+      fetch(`/cases/${caseId}/known-unknowns`).then(r => r.json()).then(j => {
+        evidenceGapsData = (j && Array.isArray(j.items)) ? j.items : [];
+        renderEvidenceGaps();
+      }).catch(() => {});
+    }
+    function scheduleEvidenceGapsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(evidenceGapsTimer);
+      evidenceGapsTimer = setTimeout(() => loadEvidenceGaps(caseId), 800);
+    }
+    function egShortHost(v) { return String(v || "").toLowerCase().replace(/^https?:\/\//, "").split(/[\/:?]/)[0].split(".")[0]; }
+    function renderEvidenceGaps() {
+      const el = document.getElementById("evidenceGaps");
+      if (!el) return;
+      const items = evidenceGapsData || [];
+      if (!items.length) { el.innerHTML = "<div class='eg-empty'>No evidence gaps flagged yet — surfaced once the case has a Critical/High finding (run Synthesize).</div>"; return; }
+      // Deploy a collect directive only for a KNOWN case host (short-host match) when Velociraptor is
+      // configured — reuses the #8 .collect-deploy button + its global delegated click handler.
+      const knownHosts = new Set(((lastState && lastState.forensicTimeline) || []).map(e => egShortHost(e.asset)).filter(Boolean));
+      const collectBtn = (c) => {
+        if (!c || !c.host) return "";
+        const what = c.logSource || c.artifact || "";
+        const summary = `📥 collect ${esc(what)}${what ? " " : ""}from ${esc(c.host)}`;
+        const deployable = veloEnabled && knownHosts.has(egShortHost(c.host));
+        const btn = deployable
+          ? `<button class="collect-deploy" data-host="${escAttr(c.host)}" data-artifact="${escAttr(c.artifact || "")}" data-logsource="${escAttr(c.logSource || "")}" title="Launch this collection on ${escAttr(c.host)} via Velociraptor">⬇ Collect on ${esc(c.host)}</button>`
+          : `<span class="collect-manual" title="${veloEnabled ? 'Host not seen in this case — collect manually' : 'Velociraptor API not configured — collect manually'}">manual collection</span>`;
+        return `<span class="eg-collect"><span class="eg-what">${summary}</span> ${btn}</span>`;
+      };
+      el.innerHTML = "<div class='eg-list'>" + items.map(it => {
+        if (it.kind === "silence_gap") {
+          return `<div class="eg-item eg-gap"><span class="eg-kind">silent window</span><span class="eg-label">${esc(it.label)}</span><br><a class="eg-gaplink" onclick="var g=document.getElementById('sec-gaps'); if(g) g.scrollIntoView({behavior:'smooth'})">See Timeline Gaps →</a></div>`;
+        }
+        if (it.kind === "likely_next_technique") {
+          return `<div class="eg-item eg-next"><span class="eg-kind">likely next</span><span class="eg-label">${esc(it.label)}</span></div>`;
+        }
+        const collects = (it.collect || []).map(collectBtn).join("");
+        return `<div class="eg-item"><span class="eg-kind">uncovered phase</span><span class="eg-label">${esc(it.label)}</span>${collects}</div>`;
+      }).join("") + "</div>";
+    }
+
     function renderTimelineGaps() {
       const el = document.getElementById("timelineGaps");
       if (!el) return;
@@ -13250,6 +13312,7 @@
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
       loadTimelineGaps(caseId);
+      loadEvidenceGaps(caseId);
       loadBeacons(caseId);
       loadAnomalies(caseId);
       loadAdversaryHints(caseId);
@@ -13343,7 +13406,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -15443,6 +15506,7 @@
       { id: "sec-phases",       label: "Attack Phases" },
       { id: "sec-hostranking",  label: "Host & Account Ranking" },
       { id: "sec-gaps",         label: "Timeline Gaps" },
+      { id: "sec-evidence-gaps", label: "Evidence Gaps" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
