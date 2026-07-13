@@ -552,6 +552,7 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
+| `DFIR_REPORT_SYNTH_COVERAGE` | _(off)_ | Set truthy to add a **§3.4 Synthesis coverage** footnote to the report — "considered N of M in-window events (K omitted: budget/filtered)", the token estimate, and how many high-severity omissions the safety-net backfill recovered. The dashboard synth-meta card always shows this line; this flag only controls whether it also appears in the exported report |
 | `DFIR_AI_CONTEXT_TOKENS` | `128000` | Model context window; raise for Claude/Gemini (200k/1M) to send more per call |
 | `DFIR_AI_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
 | `DFIR_AI_AUTO_SYNTHESIZE` | `on` | Re-synthesize during capture: `on` \| `off` |

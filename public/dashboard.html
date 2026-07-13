@@ -8319,7 +8319,26 @@
         const parts = Object.keys(LABELS).filter(k => (sc[k] || 0) > 0).map(k => `${sc[k]} ${LABELS[k]}`);
         if (parts.length) evidenceMix = `<div class="sm-perf" style="margin-top:4px" title="How many events of each selection class the model saw — the evidence mix behind these conclusions (#4)">🧩 saw ${esc(parts.join(' · '))}</div>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
+      // Coverage audit (#62): how many in-window events the model actually read vs left out, and why.
+      // A muted line normally; amber when a chunk was dropped for the size limit, so the analyst can see
+      // the conclusions rest on a subset (and consider narrowing the scope).
+      let coverage = '';
+      const cv = m.coverage;
+      if (cv && typeof cv === 'object' && cv.inWindow > 0) {
+        const omitted = (cv.omittedBudget || 0) + (cv.omittedLegitimate || 0);
+        let txt = `📊 Considered <strong>${cv.considered.toLocaleString()}</strong> of ${cv.inWindow.toLocaleString()} in-window events`;
+        if (omitted > 0) {
+          const bits = [];
+          if (cv.omittedBudget > 0) bits.push(`${cv.omittedBudget.toLocaleString()} size limit`);
+          if (cv.omittedLegitimate > 0) bits.push(`${cv.omittedLegitimate.toLocaleString()} filtered`);
+          txt += ` (${omitted.toLocaleString()} omitted: ${bits.join(', ')})`;
+        }
+        if (cv.omittedHighSeverity > 0) txt += ` · ${cv.omittedHighSeverity} high-severity recovered by the safety net`;
+        if (cv.promptTokensEstimate > 0) txt += ` · ~${Math.round(cv.promptTokensEstimate / 1000)}k tokens`;
+        const warn = cv.omittedBudget > 0;
+        coverage = `<div class="sm-perf" style="margin-top:4px${warn ? ';color:var(--c-ffd93b)' : ''}" title="How much of the in-scope timeline the AI actually read this run (#62). Events omitted for the size limit are still in the case; any Critical/High among them is still covered by the deterministic safety-net backfill.">${txt}</div>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${coverage}${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
     }
 
     // --- Correlation profile (per-case cross-source event merge window) -------------------------

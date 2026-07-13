@@ -525,4 +525,20 @@ describe("renderMarkdownReport", () => {
       expect(md).toContain("country-level");
     });
   });
+
+  describe("synthesis coverage footnote (#62)", () => {
+    const coverage = { inWindow: 412, considered: 287, omittedBudget: 120, omittedLegitimate: 5, omittedScope: 0, omittedHighSeverity: 8, promptTokensEstimate: 61000 };
+
+    it("renders the coverage section when a snapshot is passed", () => {
+      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], coverage);
+      expect(md).toContain("### 3.4 Synthesis coverage");
+      expect(md).toContain("considered 287 of 412");
+      expect(md).toContain("safety-net backfill");
+    });
+
+    it("omits the coverage section by default (no snapshot passed)", () => {
+      const md = renderMarkdownReport(emptyState("c1"));
+      expect(md).not.toContain("### 3.4 Synthesis coverage");
+    });
+  });
 });
