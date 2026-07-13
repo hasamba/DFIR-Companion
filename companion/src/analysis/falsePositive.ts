@@ -92,6 +92,29 @@ export function buildFalsePositiveContext(markers: FalsePositiveMarker[]): strin
   );
 }
 
+// Rabbit-hole detection (investigation-guidance #13): 'authorized-test' / 'known-good-tool' markers are
+// not just noise to erase — a sanctioned pentest or admin tool running during the incident window is
+// investigation-SHAPING context (it explains benign-looking activity AND is exactly what an attacker
+// hides behind). Retain them as a one-line CONTEXT block fed to synthesis, distinct from the pure-
+// exclusion block above. Returns "" when no such markers exist. Finding/IOC markers only (event markers
+// are opaque ids already removed from the timeline).
+export function buildAuthorizedContextBlock(markers: FalsePositiveMarker[]): string {
+  const relevant = markers.filter(
+    (m) => (m.reason === "authorized-test" || m.reason === "known-good-tool") && (m.kind === "finding" || m.kind === "ioc"),
+  );
+  if (relevant.length === 0) return "";
+  const lines = relevant
+    .map((m) => `- [${m.reason}] ${m.kind}: ${m.ref}${m.note ? ` — ${m.note}` : ""}`)
+    .join("\n");
+  return (
+    "SANCTIONED ACTIVITY CONTEXT (authorized test / known-good tooling the client flagged — NOT the " +
+    "incident, but it shapes it): treat matching activity as EXPECTED rather than malicious, yet REMEMBER " +
+    "attackers hide inside sanctioned tooling — if real incident evidence overlaps this window or these " +
+    "tools, call out the overlap explicitly instead of dismissing it:\n" +
+    lines
+  );
+}
+
 export class FalsePositiveStore {
   constructor(private readonly cases: CaseStore) {}
 

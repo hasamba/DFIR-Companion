@@ -289,3 +289,70 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
   const edges = [...edgeMap.values()].sort((a, b) => a.id.localeCompare(b.id));
   return { nodes, edges };
 }
+
+// One connected component of the evidence graph (rabbit-hole detection #13). `nodeIds`/`eventIds` are
+// the nodes and their backing forensic events; `critHighCount` is how many of its nodes carry a
+// Critical/High max-severity — the signal used to pick the MAIN component (the corroborated attack mass).
+export interface GraphComponent {
+  nodeIds: Set<string>;
+  eventIds: Set<string>;
+  nodeCount: number;
+  critHighCount: number;
+}
+
+// Undirected connected components over the evidence graph's edges. A node with no edge is its own
+// singleton component. Pure + deterministic. Union-find, so it's near-linear even on large graphs.
+export function connectedComponents(graph: EvidenceGraph): GraphComponent[] {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    // path-compress
+    let c = x;
+    while (parent.get(c) !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+    return r;
+  };
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n] as const));
+  for (const n of graph.nodes) parent.set(n.id, n.id);
+  const union = (a: string, b: string): void => {
+    if (!parent.has(a) || !parent.has(b)) return; // ignore an edge to a node that wasn't emitted
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const e of graph.edges) union(e.source, e.target);
+
+  const byRoot = new Map<string, GraphComponent>();
+  for (const n of graph.nodes) {
+    const root = find(n.id);
+    let comp = byRoot.get(root);
+    if (!comp) { comp = { nodeIds: new Set(), eventIds: new Set(), nodeCount: 0, critHighCount: 0 }; byRoot.set(root, comp); }
+    comp.nodeIds.add(n.id);
+    comp.nodeCount += 1;
+    const sev = nodeById.get(n.id)!.maxSeverity;
+    if (sev === "Critical" || sev === "High") comp.critHighCount += 1;
+    for (const eid of n.eventIds) comp.eventIds.add(eid);
+  }
+  return [...byRoot.values()];
+}
+
+// The MAIN component (rabbit-hole detection #13): the connected component that holds the corroborated
+// Critical/High attack mass — the most Crit/High nodes, tie-broken by most backing events then most
+// nodes. This is the "known attack path"; a finding with zero linkage to it is a rabbit-hole candidate.
+// Returns null when the graph has no edges/nodes (nothing to anchor relevance against).
+export function mainComponent(graph: EvidenceGraph): GraphComponent | null {
+  const comps = connectedComponents(graph);
+  if (!comps.length) return null;
+  return comps.slice().sort((a, b) =>
+    b.critHighCount - a.critHighCount ||
+    b.eventIds.size - a.eventIds.size ||
+    b.nodeCount - a.nodeCount)[0];
+}
+
+// The host labels in a component, for the "to link it, look for:" discriminator on a disconnected
+// finding — the entities that, if they appeared in the finding's evidence, would tie it to the attack.
+export function componentHostLabels(graph: EvidenceGraph, comp: GraphComponent, max = 4): string[] {
+  const labels = graph.nodes
+    .filter((n) => n.kind === "host" && comp.nodeIds.has(n.id))
+    .map((n) => n.label);
+  return [...new Set(labels)].sort().slice(0, max);
+}

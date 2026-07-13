@@ -931,6 +931,10 @@
     /* Immediate FP cascade (#12): a conclusion neutralized the instant a supporting finding was marked
        false positive, pending the queued re-synthesis. */
     .stale-badge { color: var(--c-ffd93b); font-size: 11px; font-weight: 600; white-space: nowrap; }
+    /* Rabbit-hole detection (#13): relevance chips on findings. */
+    .rel-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
+    .rel-rabbit { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); background: var(--c-2a2410, #2a2410); }
+    .rel-parked { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); background: var(--c-141821, #141821); }
     .hyp-needs-review { color: var(--c-ffd93b); font-size: 11px; font-weight: 600; margin-left: 6px; }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
@@ -13140,7 +13144,11 @@
       const notFp = fpFindingTitles.size
         ? (state.findings || []).filter(f => !isFindingFalsePositive(f.title, fpFindingTitles))
         : (state.findings || []);
-      const sorted = [...notFp].sort((a, b) => SEV.indexOf(a.severity) - SEV.indexOf(b.severity));
+      // Rabbit-hole grouping (investigation-guidance #13): leads (connected/undetermined) first, then
+      // Parked (unrelated-but-real), then Possible rabbit holes (disconnected) — so guidance sinks
+      // findings with no causal link to the attack path below the real leads. Severity orders within each.
+      const relRank = f => f.relevance === "disconnected" ? 2 : f.relevance === "unrelated-but-real" ? 1 : 0;
+      const sorted = [...notFp].sort((a, b) => (relRank(a) - relRank(b)) || (SEV.indexOf(a.severity) - SEV.indexOf(b.severity)));
       const minConf = parseInt(document.getElementById("confFilter").value, 10) || 0;
       // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
       const _findingCorrob = (f) => {
@@ -13207,13 +13215,22 @@
           const chevron = `<button type="button" class="finding-chevron" data-fev-toggle="${escAttr(f.id)}" title="Expand evidence"${hasEvidence ? "" : " disabled"}>` +
             `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l5 5-5 5"/></svg></button>`;
           const tagPillsHtml = tagPills("finding", f.id);
+          // Rabbit-hole detection (investigation-guidance #13): a chip that names the finding's relation
+          // to the main attack path. 'disconnected' = possible rabbit hole (with the "look for" chip);
+          // 'unrelated-but-real' = parked (a genuine but separate issue). Leads carry no chip (default).
+          let relChip = "";
+          if (f.relevance === "disconnected") {
+            relChip = ` <span class="rel-chip rel-rabbit" title="${escAttr(f.relevanceDiscriminator || "No causal link to the main attack path — verify before chasing.")}">🕳️ possible rabbit hole — verify before chasing</span>`;
+          } else if (f.relevance === "unrelated-but-real") {
+            relChip = ` <span class="rel-chip rel-parked" title="Genuine activity, but not part of this incident's attack path — parked.">🅿️ parked — real but unrelated</span>`;
+          }
           return `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}">` +
             chevron +
             `<input type="checkbox" class="finding-cb finding-row-cb" data-fid="${escAttr(f.id)}" ${isSelFinding ? "checked" : ""} title="Select finding" />` +
             `<span class="finding-sev-cell sev-${esc(f.severity)}"><span class="fsq"></span>${esc(f.severity)}</span>` +
             `<span class="finding-id-cell" title="${escAttr(f.id)}">${esc(f.id)}</span>` +
             `<span class="finding-main-cell">` +
-              `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}</span>` +
+              `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}</span>` +
               `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
               (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
             `</span>` +

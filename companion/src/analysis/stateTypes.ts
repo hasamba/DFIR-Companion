@@ -57,6 +57,16 @@ export interface Finding {
   // `corroboration` is the rollup above. Both recomputed every synthesis; persisted for display.
   ungrounded?: boolean;
   corroboration?: FindingCorroboration;
+  // Rabbit-hole detection (investigation-guidance #13). `relevance` places the finding relative to the
+  // corroborated main attack path: 'connected' (on it) → a lead; 'disconnected' (evidence sits in a
+  // separate graph component) → a possible rabbit hole; 'unrelated-but-real' (AI: genuine but a separate
+  // issue) → parked; 'undetermined' (evidence not in the causal graph, or unscored). `connectedness` is
+  // the 0–1 fraction of the finding's graph-modeled evidence that touches the main component.
+  // `relevanceDiscriminator` (disconnected only) names what to look for to tie it into the attack path.
+  // All recomputed every synthesis by scoreFindingsRelevance; persisted for display/grouping.
+  relevance?: "connected" | "disconnected" | "unrelated-but-real" | "undetermined";
+  connectedness?: number;
+  relevanceDiscriminator?: string;
   title: string;
   description: string;
   relatedIocs: string[];        // IOC ids

@@ -26,7 +26,7 @@ import { applySeverityFloor } from "./severityFloor.js";
 import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
-import { applyFalsePositive, buildFalsePositiveContext, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
+import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
@@ -172,6 +172,7 @@ import {
   deriveWindow, type ModelEvidenceRequest,
 } from "./secondLook.js";
 import { groundAndScoreFindings, capIntelOnlyFindings, corroborationLabel } from "./findingGrounding.js";
+import { scoreFindingsRelevance } from "./findingRelevance.js";
 import { reconsiderKeyQuestions, textMentionsFindingId } from "./fpCascade.js";
 import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } from "./promptBudget.js";
 import type { AiControlStore } from "./aiControl.js";
@@ -626,11 +627,16 @@ export const SYNTHESIS_PROMPT = [
   "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
   "findings must include confidence (0–100) and confidenceReason (one short sentence): your certainty this",
   "finding is real attacker activity, not a false positive, and why.",
+  "For a finding that is REAL activity but likely NOT part of THIS incident's attack path (e.g. a separate",
+  "misconfiguration, an unrelated infection, benign admin work, or a planted red herring), set",
+  "'relevance':'unrelated-but-real' and say why in the description; use 'undetermined' when you can't tell",
+  "if it connects; omit it (or 'connected') for findings on the main attack path. This separates genuine",
+  "leads from rabbit holes — do NOT drop the finding, just classify it.",
   "Shape:",
   "",
   JSON.stringify(
     {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, confidenceReason: "why this score", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"] }],
+      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, confidenceReason: "why this score", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"], relevance: "connected|unrelated-but-real|undetermined" }],
       iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
       mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
       attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
@@ -4328,6 +4334,9 @@ export class AnalysisPipeline {
       .map((t) => `[${t.id}] ${t.description}`)
       .join("\n") || "(none open)";
     const falsePositiveBlock = buildFalsePositiveContext(markers);
+    // Rabbit-hole detection (#13): authorized-test / known-good-tool markers are RETAINED as shaping
+    // context (a sanctioned pentest during the window is signal, not just noise), not merely erased.
+    const authorizedContextBlock = buildAuthorizedContextBlock(markers);
     // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits)
     // so the model grounds findings/attacker-path in structure instead of inferring blind.
     const kevCatalog = await this.getKevCatalog();
@@ -4405,7 +4414,7 @@ export class AnalysisPipeline {
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`;
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) promptEvents = selectSynthesisEvents(scopedEvents, fit);
 
@@ -4433,6 +4442,7 @@ export class AnalysisPipeline {
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
+      (authorizedContextBlock ? `${authorizedContextBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const synthStart = Date.now();
@@ -4570,14 +4580,26 @@ export class AnalysisPipeline {
     // Deterministic + idempotent; only ever lowers confidence. Runs last, so it grades the FINAL finding
     // set (incl. backfills + accepted second-opinion deltas).
     {
-      const graphLinkedEventIds = new Set(buildEvidenceGraph(next).edges.flatMap((e) => e.eventIds));
+      const evidenceGraph = buildEvidenceGraph(next);
+      const graphLinkedEventIds = new Set(evidenceGraph.edges.flatMap((e) => e.eventIds));
       const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
       const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds });
       // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
       // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
       // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.
       const hostNames = new Set(buildAssetGraph(next).assets.filter((a) => a.type === "host").map((a) => shortHost(a.name)));
-      next = { ...next, findings: capIntelOnlyFindings({ findings: grounded, iocs: next.iocs, scopedEvents: inScope, hostNames }) };
+      const capped = capIntelOnlyFindings({ findings: grounded, iocs: next.iocs, scopedEvents: inScope, hostNames });
+      // Rabbit-hole detection (investigation-guidance #13): place each finding relative to the corroborated
+      // main attack component. A finding whose graph-modeled evidence sits in a SEPARATE component is a
+      // rabbit-hole candidate ('disconnected'); the model's per-finding relevance verdict refines a
+      // disconnected one into 'unrelated-but-real' (a genuine separate issue) vs undetermined noise. The
+      // deterministic linkage is authoritative; the AI never upgrades a rabbit hole into a lead.
+      const aiRelevanceById = new Map(
+        (delta.findings ?? [])
+          .filter((f): f is typeof f & { relevance: "connected" | "unrelated-but-real" | "undetermined" } => !!f.relevance && surviving.has(f.id))
+          .map((f) => [f.id, f.relevance] as const),
+      );
+      next = { ...next, findings: scoreFindingsRelevance({ findings: capped, scopedEvents: inScope, graph: evidenceGraph, aiRelevanceById }) };
     }
 
     // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
