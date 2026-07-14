@@ -1110,6 +1110,10 @@
     .fp-marker-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--c-9aa4b2); flex-shrink: 0; width: 52px; }
     .fp-marker-ref { text-decoration: line-through; color: var(--c-cbd3df); flex: 1; min-width: 120px; }
     .fp-marker-reason { font-size: 10.5px; border: 1px solid var(--c-2a2f3a); border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); }
+    /* Learned patterns (#65) */
+    .lp-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+    .lp-sig { color: var(--c-e6e9ef); }
+    .lp-count { color: var(--c-ffb454, #ffb454); font-weight: 600; font-size: 11px; }
     .fp-marker-note { color: var(--c-6b7686); font-size: 12px; }
     /* Next Steps / Key Questions — bordered card rows, same visual language as Findings/IOCs but
        their own class (not .finding, which is now a dense-table grid with fixed columns). */
@@ -4010,7 +4014,12 @@
         <option value="duplicate">Duplicate of another finding</option>
         <option value="other">Other</option>
       </select>
-    </h2><div id="false-positive">—</div></section>
+    </h2><div id="false-positive">—</div>
+      <div id="learnedPatternsWrap" style="display:none;margin-top:14px">
+        <h3 style="font-size:13px;margin:0 0 4px;color:var(--c-e6e9ef)">Learned patterns <span style="font-size:11px;font-weight:400;color:var(--c-9aa4b2)">— recurring dismissals fed to synthesis: new look-alikes are surfaced at <em>lower confidence unless corroborated</em> (not excluded)</span></h3>
+        <div id="learnedPatterns"></div>
+      </div>
+    </section>
     <style>
       #sec-playbook .pb-badge{font-size:12px;color:var(--c-9aa4b2);font-weight:normal;margin-left:8px}
       .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
@@ -12648,6 +12657,26 @@
       fetch(`/cases/${caseId}/false-positive`).then(r => r.json()).then(renderFalsePositives).catch(() => {});
     }
 
+    // Learned dismissal patterns (#65): read-only view of the recurring reasoned dismissals that synthesis
+    // uses to DOWN-WEIGHT (not exclude) new look-alike activity. Sorted by recurrence.
+    const LP_REASON_LABEL = { "known-good-tool": "known-good tool", "authorized-test": "authorized test", "detection-misfire": "detection misfire", "duplicate": "duplicate", "other": "other" };
+    function renderLearnedPatterns(patterns) {
+      const wrap = document.getElementById("learnedPatternsWrap");
+      const el = document.getElementById("learnedPatterns");
+      if (!wrap || !el) return;
+      const list = Array.isArray(patterns) ? patterns.slice().sort((a, b) => (b.count || 0) - (a.count || 0)) : [];
+      if (!list.length) { wrap.style.display = "none"; el.innerHTML = ""; return; }
+      wrap.style.display = "";
+      el.innerHTML = list.map(p =>
+        `<div class="lp-row"><span class="lp-sig">${esc(p.signature || "")}</span>` +
+        `<span class="fp-marker-reason">${esc(LP_REASON_LABEL[p.reason] || p.reason || "")}</span>` +
+        `<span class="lp-count" title="Dismissed ${p.count}× on this case">×${Number(p.count) || 1}</span></div>`
+      ).join("");
+    }
+    function loadLearnedPatterns(caseId) {
+      fetch(`/cases/${caseId}/learned-patterns`).then(r => r.ok ? r.json() : []).then(renderLearnedPatterns).catch(() => {});
+    }
+
     // Event delegation for the dynamically-rendered mark-FP / un-mark buttons.
     document.addEventListener("click", (e) => {
       const caseId = document.getElementById("caseId").value.trim();
@@ -14019,6 +14048,7 @@
       loadEnrichToggle(caseId);
       loadAnonToggle(caseId);
       loadFalsePositives(caseId);
+      loadLearnedPatterns(caseId);
       loadScope(caseId);
       loadConfidenceControl(caseId);
       loadCorrProfile(caseId);
@@ -14159,6 +14189,7 @@
         else if (msg.type === "push_token_changed") loadPushToken(caseId);
         else if (msg.type === "importers_changed") { if (document.getElementById("stab-importers")) loadImporters(); }
         else if (msg.type === "false_positive_changed") loadFalsePositives(caseId);
+        else if (msg.type === "learned_patterns_changed") loadLearnedPatterns(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
           document.getElementById("scopeStart").value = isoToUtcInput(scope.start);

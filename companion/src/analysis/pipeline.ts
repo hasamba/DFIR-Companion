@@ -27,6 +27,8 @@ import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
 import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
+import { buildLearnedPatternsBlock } from "./learnedPatterns.js";
+import type { LearnedPatternStore } from "./learnedPatternStore.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
 import { MATCHABLE_FIELDS } from "./taggerRules.js";
@@ -1359,6 +1361,10 @@ export interface PipelineOptions {
   superTimelineStore?: SuperTimelineStore;
   // Client-confirmed false-positive findings/IOCs to exclude from synthesis.
   falsePositiveStore?: FalsePositiveStore;
+  // Learned dismissal patterns (issue #65): recurring reasoned dismissals distilled into a per-case
+  // ledger. When set, synthesis feeds a "PREVIOUSLY DISMISSED PATTERNS" block so NEW activity resembling
+  // one is surfaced with LOWER confidence unless corroborated (complements falsePositiveStore's EXCLUDE).
+  learnedPatternStore?: LearnedPatternStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
   // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
@@ -4572,6 +4578,14 @@ export class AnalysisPipeline {
     // Rabbit-hole detection (#13): authorized-test / known-good-tool markers are RETAINED as shaping
     // context (a sanctioned pentest during the window is signal, not just noise), not merely erased.
     const authorizedContextBlock = buildAuthorizedContextBlock(markers);
+    // Learn from dismissals (#65): recurring reasoned dismissals → a "PREVIOUSLY DISMISSED PATTERNS" block
+    // that DOWN-WEIGHTS (not excludes) new look-alike activity. Distinct from the two blocks above: those
+    // act on EXACT current markers; this generalizes. Env-tunable recurrence floor. Best-effort/optional.
+    let learnedPatternsBlock = "";
+    if (this.opts.learnedPatternStore) {
+      const minCount = Number(process.env.DFIR_LEARNED_PATTERN_MIN_COUNT) || undefined;
+      learnedPatternsBlock = buildLearnedPatternsBlock(await this.opts.learnedPatternStore.load(caseId), minCount);
+    }
     // Compact, corroborated context (compromised assets + threat-intel verdicts + KEV hits)
     // so the model grounds findings/attacker-path in structure instead of inferring blind.
     const kevCatalog = await this.getKevCatalog();
@@ -4657,7 +4671,7 @@ export class AnalysisPipeline {
       return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(scopedEvents, fit, rarityOf); promptEvents = selection.events; }
 
@@ -4706,6 +4720,7 @@ export class AnalysisPipeline {
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +
       (falsePositiveBlock ? `${falsePositiveBlock}\n\n` : "") +
       (authorizedContextBlock ? `${authorizedContextBlock}\n\n` : "") +
+      (learnedPatternsBlock ? `${learnedPatternsBlock}\n\n` : "") +
       `Running notes: ${state.lastSummary || "(none)"}\n\nReturn the JSON conclusions.`;
 
     const synthStart = Date.now();
