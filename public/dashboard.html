@@ -4125,8 +4125,47 @@
         <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
         <button class="ev-bulk-btn" onclick="clearTaggerTags()" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
         <button class="ev-bulk-btn" onclick="toggleTaggerRules()" title="View / edit the tagging rules (YAML)">Edit rules</button>
+        <button id="taggerSuggestToggle" class="ev-bulk-btn" onclick="toggleTaggerSuggest()" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
         <span id="taggerMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
       </div>
+      <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
+      <div id="taggerSuggestWrap" hidden>
+      <!-- describe a rule in plain English; AI drafts it for review. -->
+      <div id="taggerSuggestPane" style="margin-bottom:8px">
+        <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">
+          ✨ Describe a rule in plain English — the AI drafts a rule you can preview, edit, and add.
+          <span style="color:var(--c-ff9800)">⚠ AI-generated — review what it matches before adding.</span>
+        </div>
+        <textarea id="taggerSuggestInput" spellcheck="true" placeholder="e.g. flag any time the Windows security event log is cleared"
+          style="width:100%;min-height:44px;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <button id="taggerSuggestBtn" class="ev-bulk-btn" onclick="suggestTaggerRule()" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
+          <span id="taggerSuggestMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
+        <div id="taggerSuggestResult" hidden style="margin-top:6px">
+          <div id="taggerSuggestExplain" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:4px"></div>
+          <textarea id="taggerSuggestYaml" spellcheck="false"
+            style="width:100%;min-height:140px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <button class="ev-bulk-btn" onclick="previewTaggerRule()" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
+            <button class="ev-bulk-btn" onclick="addSuggestedTaggerRule()" title="Add this rule to the ruleset">Add rule</button>
+            <button class="ev-bulk-btn" onclick="discardSuggestedTaggerRule()">Discard</button>
+            <span id="taggerSuggestResultMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+          </div>
+          <div id="taggerSuggestMatches" hidden style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--c-2b3242);border-radius:6px;padding:6px;font-size:11px;font-family:monospace;color:var(--c-9aa4b2)"></div>
+        </div>
+      </div>
+      <!-- Active rules with per-rule remove + reset-to-defaults. -->
+      <div id="taggerRuleList" style="margin-bottom:8px">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <strong style="font-size:12px;color:var(--c-9aa4b2)">Active rules</strong>
+          <button class="ev-bulk-btn" onclick="refreshTaggerRuleList()" title="Reload the rule list">↻</button>
+          <button class="ev-bulk-btn" onclick="resetTaggerRules()" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
+          <span id="taggerRuleListMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
+        <div id="taggerRuleRows" style="font-size:12px"></div>
+      </div>
+      </div><!-- /taggerSuggestWrap -->
       <div id="taggerRulesPane" hidden style="margin-bottom:8px">
         <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
         <textarea id="taggerRulesText" spellcheck="false" style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
@@ -6006,6 +6045,164 @@
       } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Tagger failed: " + e.message; }
     }
 
+    // ── NL → rule (PR #112 follow-up) ──────────────────────────────────────────
+    async function suggestTaggerRule() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const desc = document.getElementById("taggerSuggestInput").value.trim();
+      const msg = document.getElementById("taggerSuggestMsg");
+      if (!caseId) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Connect to a case first."; return; }
+      if (!desc) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Describe the rule first."; return; }
+      const btn = document.getElementById("taggerSuggestBtn");
+      btn.disabled = true;
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Drafting… (one AI call)";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/suggest-rule`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description: desc }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) {
+          const hint = /501/.test(String(r.status)) ? " — AI provider not configured (Settings → AI)" : "";
+          msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Suggest error: " + (d.error || r.status) + hint; return;
+        }
+        const result = document.getElementById("taggerSuggestResult");
+        const explain = document.getElementById("taggerSuggestExplain");
+        const yaml = document.getElementById("taggerSuggestYaml");
+        if (d.kind === "decline") {
+          result.hidden = true;
+          msg.style.color = "var(--c-ff9800)"; msg.textContent = "Can't make a rule: " + d.reason;
+          return;
+        }
+        msg.textContent = "";
+        explain.textContent = d.explanation || "";
+        yaml.value = d.ruleYaml || "";
+        document.getElementById("taggerSuggestResultMsg").textContent = "";
+        result.hidden = false;
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Suggest failed: " + e.message; }
+      finally { btn.disabled = false; }
+    }
+
+    async function previewTaggerRule() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const ruleYaml = document.getElementById("taggerSuggestYaml").value;
+      const msg = document.getElementById("taggerSuggestResultMsg");
+      const matchBox = document.getElementById("taggerSuggestMatches");
+      matchBox.hidden = true; matchBox.innerHTML = "";
+      if (!caseId) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Connect to a case first."; return; }
+      msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "Checking…";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/preview`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ruleYaml }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Invalid rule: " + (d.error || r.status); return; }
+        msg.style.color = d.matched > 0 ? "var(--c-9aa4b2)" : "var(--c-ff9800)";
+        msg.textContent = `Would match ${d.matched} event(s) in this case${d.scope ? " (scope: " + d.scope + ")" : ""}.`;
+        // Show the actual matching events (a capped sample) so the analyst can see WHAT it covers.
+        const sample = d.sample || [];
+        if (sample.length) {
+          const header = document.createElement("div");
+          header.style.cssText = "color:var(--c-e6e6e6);margin-bottom:4px";
+          header.textContent = `Matching events${d.matched > sample.length ? ` (showing first ${sample.length} of ${d.matched})` : ""}:`;
+          matchBox.appendChild(header);
+          sample.forEach((ev) => {
+            const row = document.createElement("div");
+            row.style.cssText = "padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+            const ts = (ev.timestamp || "").replace("T", " ").replace(/\.\d+Z$/, "Z");
+            row.textContent = `${ts}  ${ev.asset ? "[" + ev.asset + "] " : ""}${ev.description || ev.id}`;
+            row.title = ev.description || ev.id;
+            matchBox.appendChild(row);
+          });
+          matchBox.hidden = false;
+        }
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Check failed: " + e.message; }
+    }
+
+    // Toggle the AI rule-authoring + rule-management pane (collapsed by default; opened from the toolbar).
+    function toggleTaggerSuggest() {
+      const wrap = document.getElementById("taggerSuggestWrap");
+      if (!wrap) return;
+      wrap.hidden = !wrap.hidden;
+      if (!wrap.hidden) refreshTaggerRuleList();
+    }
+
+    async function addSuggestedTaggerRule() {
+      const ruleYaml = document.getElementById("taggerSuggestYaml").value;
+      const msg = document.getElementById("taggerSuggestResultMsg");
+      msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "Adding…";
+      try {
+        const r = await fetch(`/tagger/rules/add`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ruleYaml }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Add error: " + (d.error || r.status); return; }
+        msg.style.color = "var(--c-4caf50)"; msg.textContent = `Added rule "${d.id}" — ${d.ruleCount} rule(s) total.`;
+        discardSuggestedTaggerRule();
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Add failed: " + e.message; }
+    }
+
+    function discardSuggestedTaggerRule() {
+      document.getElementById("taggerSuggestResult").hidden = true;
+      document.getElementById("taggerSuggestYaml").value = "";
+      document.getElementById("taggerSuggestInput").value = "";
+      const matchBox = document.getElementById("taggerSuggestMatches");
+      if (matchBox) { matchBox.hidden = true; matchBox.innerHTML = ""; }
+    }
+
+    async function refreshTaggerRuleList() {
+      const rows = document.getElementById("taggerRuleRows");
+      const msg = document.getElementById("taggerRuleListMsg");
+      if (!rows) return;
+      try {
+        const r = await fetch(`/tagger/rules`);
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = d.error || ("error " + r.status); return; }
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `${d.ruleCount} rule(s) · source: ${d.source}`;
+        const readonly = d.source === "env";
+        rows.innerHTML = "";
+        (d.rules || []).forEach((rule) => {
+          const row = document.createElement("div");
+          row.style.cssText = "display:flex;gap:6px;align-items:center;padding:2px 0;border-bottom:1px solid var(--c-2b3242)";
+          const label = document.createElement("span");
+          label.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+          label.textContent = `${rule.id}${rule.severity ? " · " + rule.severity : ""}${rule.description ? " — " + rule.description : ""}`;
+          row.appendChild(label);
+          if (!readonly) {
+            const btn = document.createElement("button");
+            btn.className = "ev-bulk-btn"; btn.textContent = "✕";
+            btn.title = "Remove this rule";
+            btn.onclick = () => removeTaggerRule(rule.id);
+            row.appendChild(btn);
+          }
+          rows.appendChild(row);
+        });
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "list failed: " + e.message; }
+    }
+
+    async function removeTaggerRule(ruleId) {
+      if (!confirm(`Remove the rule "${ruleId}"? (Reset to defaults restores all shipped rules.)`)) return;
+      const msg = document.getElementById("taggerRuleListMsg");
+      try {
+        const r = await fetch(`/tagger/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Remove error: " + (d.error || r.status); return; }
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Remove failed: " + e.message; }
+    }
+
+    async function resetTaggerRules() {
+      if (!confirm("Discard ALL rule customizations (AI-added rules, manual edits, and removals) and restore the shipped default rules?")) return;
+      const msg = document.getElementById("taggerRuleListMsg");
+      try {
+        const r = await fetch(`/tagger/rules/reset`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Reset error: " + (d.error || r.status); return; }
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Reset failed: " + e.message; }
+    }
+
     async function clearTaggerTags() {
       const caseId = superCaseId();
       if (!caseId) return;
@@ -6035,6 +6232,7 @@
         document.getElementById("taggerRulesSource").textContent =
           (d.source || "default") + (d.error ? ` (current file invalid: ${d.error})` : ` — ${d.ruleCount} rule(s)`);
       } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Failed to load rules: " + e.message; }
+      refreshTaggerRuleList();
     }
 
     async function saveTaggerRules() {

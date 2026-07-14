@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import {
   SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT, EXEC_SUMMARY_PROMPT,
   HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, GAP_HYPOTHESIS_PROMPT, MEMORY_NEXTSTEP_PROMPT, QUERY_TRANSLATE_PROMPT,
+  TAGGER_RULE_PROMPT,
 } from "../src/analysis/pipeline.js";
 import { RECONCILE_PROMPT } from "../src/analysis/secondOpinion.js";
 
@@ -25,6 +26,7 @@ const files: Array<[string, string, string]> = [
   ["gap-hypothesis.txt", GAP_HYPOTHESIS_PROMPT, "DFIR_AI_GAPHYP_PROMPT_FILE"],
   ["memory-next-step.txt", MEMORY_NEXTSTEP_PROMPT, "DFIR_AI_MEMNEXT_PROMPT_FILE"],
   ["query-translate.txt", QUERY_TRANSLATE_PROMPT, "DFIR_AI_QUERYXLATE_PROMPT_FILE"],
+  ["tagger-rule.txt", TAGGER_RULE_PROMPT, "DFIR_AI_TAGGERRULE_PROMPT_FILE"],
   ["reconcile.txt", RECONCILE_PROMPT, "DFIR_AI_RECONCILE_PROMPT_FILE"],
 ];
 

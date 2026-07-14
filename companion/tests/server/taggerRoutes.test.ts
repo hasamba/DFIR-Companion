@@ -11,6 +11,7 @@ import { TagsStore } from "../../src/analysis/tags.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { TaggerStore } from "../../src/analysis/taggerStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { SuggestOutcome } from "../../src/analysis/taggerRuleSuggest.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
@@ -156,5 +157,98 @@ describe("POST /cases/:id/tagger/clear", () => {
     const tags = (await request(app()).get("/cases/c1/tags")).body as Array<{ label: string; author: string }>;
     expect(tags).toHaveLength(1);
     expect(tags[0]).toMatchObject({ label: "key-evidence", author: "alice" });
+  });
+});
+
+function appAi(suggest: (caseId: string, desc: string) => Promise<SuggestOutcome>) {
+  const fakePipeline = {
+    hasAiProvider: () => true,
+    suggestTaggerRule: suggest,
+  } as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline;
+  return createApp(store, {
+    stateStore, tagsStore, taggerStore,
+    superTimelineStore: new SuperTimelineStore(store),
+    pipeline: fakePipeline,
+    aiConfigured: true,
+  });
+}
+
+describe("POST /cases/:id/tagger/suggest-rule", () => {
+  it("is 501 when no AI provider is configured", async () => {
+    const res = await request(app()).post("/cases/c1/tagger/suggest-rule").send({ description: "flag log clears" });
+    expect(res.status).toBe(501);
+  });
+
+  it("returns a rule outcome from the pipeline", async () => {
+    const outcome: SuggestOutcome = {
+      kind: "rule", ruleId: "logon", explanation: "e",
+      ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n",
+    };
+    const res = await request(appAi(async () => outcome)).post("/cases/c1/tagger/suggest-rule").send({ description: "x" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ kind: "rule", ruleId: "logon" });
+  });
+
+  it("400s on an empty description", async () => {
+    const res = await request(appAi(async () => ({ kind: "decline", reason: "n/a" }))).post("/cases/c1/tagger/suggest-rule").send({ description: "  " });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /cases/:id/tagger/preview", () => {
+  it("counts matches and returns a sample of matching events without writing tags or mutating state", async () => {
+    const ruleYaml = "svc:\n  any:\n    - { field: message, contains: '7045' }\n  tags: ['t']\n";
+    const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml });
+    expect(res.status).toBe(200);
+    expect(res.body.matched).toBe(1);
+    // the sample lists the actual matching event (e1), with its identifying fields
+    expect(Array.isArray(res.body.sample)).toBe(true);
+    expect(res.body.sample).toHaveLength(1);
+    expect(res.body.sample[0]).toMatchObject({ id: "e1" });
+    expect(res.body.sample[0]).toHaveProperty("timestamp");
+    expect(res.body.sample[0]).toHaveProperty("description");
+    const tags = (await request(app()).get("/cases/c1/tags")).body as unknown[];
+    expect(tags).toHaveLength(0);
+  });
+
+  it("400s on an invalid rule YAML", async () => {
+    const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml: "bad:\n  any:\n    - { field: nope, contains: 'x' }\n  tags: ['t']\n" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/nope/);
+  });
+});
+
+describe("POST /tagger/rules/add", () => {
+  it("merges the rule and GET reflects source=user with both rules", async () => {
+    const ruleYaml = "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n";
+    const res = await request(app()).post("/tagger/rules/add").send({ ruleYaml });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe("logon");
+    expect(res.body.ruleCount).toBe(2);
+    const get = await request(app()).get("/tagger/rules");
+    expect(get.body.rules.map((r: { id: string }) => r.id).sort()).toEqual(["logon", "svc"]);
+  });
+});
+
+describe("DELETE /tagger/rules/:ruleId", () => {
+  it("removes a rule (200) and 404s for an unknown id", async () => {
+    await request(app()).post("/tagger/rules/add").send({ ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n" });
+    const del = await request(app()).delete("/tagger/rules/svc");
+    expect(del.status).toBe(200);
+    expect(del.body.ruleCount).toBe(1);
+    const missing = await request(app()).delete("/tagger/rules/nope");
+    expect(missing.status).toBe(404);
+  });
+});
+
+describe("POST /tagger/rules/reset", () => {
+  it("restores the shipped default ruleset", async () => {
+    await request(app()).post("/tagger/rules/add").send({ ruleYaml: "logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n" });
+    expect((await request(app()).get("/tagger/rules")).body.source).toBe("user");
+    const reset = await request(app()).post("/tagger/rules/reset");
+    expect(reset.status).toBe(200);
+    const get = await request(app()).get("/tagger/rules");
+    expect(get.body.source).toBe("default");
+    expect(get.body.ruleCount).toBe(1);
   });
 });

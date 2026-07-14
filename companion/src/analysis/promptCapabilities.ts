@@ -41,6 +41,14 @@ export const PROMPT_CAPABILITIES: readonly PromptCapability[] = [
     // evidenceRequests→ guidance #11 second-look loop (delta.evidenceRequests drives the raw re-query).
     markers: ["hypotheses", "confidenceReason", "relatedFindingIds", "logSource", "evidenceRequests"],
   },
+  {
+    name: "TAGGERRULE",
+    file: "tagger-rule.txt",
+    envVar: "DFIR_AI_TAGGERRULE_PROMPT_FILE",
+    // ruleId / decline / severity are the JSON keys the feature parses; an ejected file that drops
+    // them is stale and would silently break NL rule suggestion.
+    markers: ["ruleId", "decline", "severity"],
+  },
 ];
 
 // The required markers absent from `text` (case-sensitive substring match). Empty = no drift.
