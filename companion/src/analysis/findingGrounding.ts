@@ -13,12 +13,21 @@
 
 import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity, NextStep } from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
+import { SEVERITY_RANK } from "./forensicGate.js";
+import { extractCveIds } from "./kev.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
 // A grounded but single-source (one tool, one host, no corroborating IOC/graph) finding is capped here —
 // it may be real, but it can't claim high confidence on one uncorroborated observation.
 export const SINGLE_SOURCE_CONFIDENCE_CAP = 65;
+// A finding that rests ONLY on raw hunt-collection artifacts (every supporting event is Info telemetry —
+// no tool adjudicated it, no intel/KEV lift) is capped here (issue #61): it's a lead someone still has to
+// triage, not a confirmed detection. Lower than the single-source cap because nothing has verdicted it.
+export const HUNT_ARTIFACT_CONFIDENCE_CAP = 55;
+// Rank at/above which a supporting event counts as an adjudicated "detection" (verdict-first) rather than
+// raw telemetry — the same Low+ cut iocProvenance.ts uses for detection-vs-telemetry.
+const DETECTION_RANK = SEVERITY_RANK.Low;
 
 function appendReason(existing: string | undefined, note: string): string {
   const base = (existing ?? "").trim();
@@ -30,6 +39,9 @@ export interface GroundingInput {
   scopedEvents: readonly ForensicEvent[];      // in-scope events, carrying relatedFindingIds (reverse links)
   iocs: readonly IOC[];
   graphLinkedEventIds: ReadonlySet<string>;     // event ids that participate in an evidence-graph edge
+  // CVE ids (upper-cased) present in the case that MATCH the CISA KEV catalog (issue #61). A finding is
+  // `kevLinked` when it references one of these. Optional — omit/empty when no KEV catalog is loaded.
+  kevCveIds?: ReadonlySet<string>;
 }
 
 // The IOC ids that carry at least one malicious/suspicious intel verdict — the finding-level "intel
@@ -42,9 +54,29 @@ function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
   return out;
 }
 
+// A finding is KEV-linked when any CVE it references — in its own title/description, its supporting
+// events' text, or its related IOC values — is in the case's KEV-matched set. Empty set ⇒ never linked.
+function findingIsKevLinked(
+  f: Finding,
+  supporting: readonly ForensicEvent[],
+  iocById: ReadonlyMap<string, IOC>,
+  kevCveIds: ReadonlySet<string>,
+): boolean {
+  if (!kevCveIds.size) return false;
+  const texts: string[] = [f.title, f.description];
+  for (const e of supporting) { texts.push(e.description); if (e.message) texts.push(e.message); }
+  for (const id of f.relatedIocs ?? []) { const i = iocById.get(id); if (i) texts.push(i.value); }
+  for (const t of texts) {
+    for (const cve of extractCveIds(t)) if (kevCveIds.has(cve)) return true;
+  }
+  return false;
+}
+
 export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   const { findings, scopedEvents, iocs, graphLinkedEventIds } = input;
+  const kevCveIds = input.kevCveIds ?? new Set<string>();
   const scopedById = new Map(scopedEvents.map((e) => [e.id, e] as const));
+  const iocById = new Map(iocs.map((i) => [i.id, i] as const));
   const intelIocs = intelFlaggedIocIds(iocs);
 
   return findings.map((f) => {
@@ -65,7 +97,13 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     const distinctHosts = new Set(supporting.map((e) => e.asset).filter((a): a is string => !!a)).size;
     const graphLinked = supporting.some((e) => graphLinkedEventIds.has(e.id));
     const intelSources = (f.relatedIocs ?? []).filter((id) => intelIocs.has(id)).length;
-    const corroboration: FindingCorroboration = { distinctTools, distinctHosts, intelSources, graphLinked };
+    // Issue #61 signals: verdict-first = any supporting event is a graded (Low+) detection a tool
+    // adjudicated; hunt-artifact-only = grounded but EVERY supporting event is raw Info telemetry;
+    // KEV-linked = references an actively-exploited CVE.
+    const verdictFirst = supporting.some((e) => (SEVERITY_RANK[e.severity] ?? 0) >= DETECTION_RANK);
+    const huntArtifactOnly = supporting.length > 0 && !verdictFirst;
+    const kevLinked = findingIsKevLinked(f, supporting, iocById, kevCveIds);
+    const corroboration: FindingCorroboration = { distinctTools, distinctHosts, intelSources, graphLinked, verdictFirst, huntArtifactOnly, kevLinked };
 
     // Rewrite relatedEventIds to the resolved supporting set so the forward link is consistent and
     // auditable (adds the reverse-linked backfill events; drops hallucinated ids).
@@ -75,14 +113,29 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     let confidenceReason = f.confidenceReason;
     let ungrounded = false;
 
+    // KEV is an independent corroboration signal (an external catalog confirms active exploitation),
+    // so it exempts a finding from the single-source cap alongside 2+ tools / intel / graph linkage.
+    const corroborated = distinctTools >= 2 || intelSources > 0 || graphLinked || kevLinked;
+
     if (supporting.length === 0) {
       ungrounded = true;
       confidence = Math.min(confidence ?? UNGROUNDED_CONFIDENCE_CAP, UNGROUNDED_CONFIDENCE_CAP);
       confidenceReason = appendReason(confidenceReason, "capped: no cited evidence in scope — treat as a hypothesis, not a fact");
-    } else if (distinctTools <= 1 && distinctHosts <= 1 && intelSources === 0 && !graphLinked) {
-      if ((confidence ?? 100) > SINGLE_SOURCE_CONFIDENCE_CAP) {
-        confidence = SINGLE_SOURCE_CONFIDENCE_CAP;
-        confidenceReason = appendReason(confidenceReason, "capped: single-source, uncorroborated");
+    } else {
+      if (!corroborated && distinctHosts <= 1) {
+        if ((confidence ?? 100) > SINGLE_SOURCE_CONFIDENCE_CAP) {
+          confidence = SINGLE_SOURCE_CONFIDENCE_CAP;
+          confidenceReason = appendReason(confidenceReason, "capped: single-source, uncorroborated");
+        }
+      }
+      // Hunt-artifact penalty (#61): rests only on raw collection artifacts with no detection verdict,
+      // no intel, and no KEV lift — a triage lead, not a confirmed detection. Applied independently so
+      // it can lower a finding even when 2+ raw-telemetry tools "corroborate" the same unadjudicated data.
+      if (huntArtifactOnly && intelSources === 0 && !kevLinked) {
+        if ((confidence ?? 100) > HUNT_ARTIFACT_CONFIDENCE_CAP) {
+          confidence = HUNT_ARTIFACT_CONFIDENCE_CAP;
+          confidenceReason = appendReason(confidenceReason, "capped: rests only on raw hunt-collection artifacts — no detection verdict; triage before acting");
+        }
       }
     }
 
@@ -200,6 +253,9 @@ export function corroborationLabel(f: Finding): string {
   const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
   if (c.intelSources > 0) parts.push("intel ✓");
   if (c.graphLinked) parts.push("graph-linked");
-  const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked;
-  return `${parts.join(" / ")}${corroborated ? "" : " — uncorroborated"}`;
+  if (c.kevLinked) parts.push("KEV ✓");
+  if (c.verdictFirst) parts.push("tool-confirmed");
+  const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || !!c.kevLinked;
+  const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked ? " — unconfirmed lead" : "";
+  return `${parts.join(" / ")}${corroborated ? "" : " — uncorroborated"}${huntCaution}`;
 }

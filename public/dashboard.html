@@ -10054,8 +10054,19 @@
         const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
         if (c.intelSources > 0) parts.push("intel ✓");
         if (c.graphLinked) parts.push("graph-linked");
-        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked;
-        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${corroborated ? "" : ' style="color:var(--c-e0a458,#e0a458)"'}>${esc(parts.join(" / "))}${corroborated ? "" : " — uncorroborated"}</span></div>`);
+        // Issue #61 provenance signals, shown as badges with plain-English tooltips: KEV-linked
+        // (actively exploited) and tool-confirmed (a tool adjudicated it) are positive; unconfirmed-lead
+        // (raw collection, no verdict) is a caution. Titles are static, safe HTML — not user data.
+        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || c.kevLinked;
+        const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked;
+        const badges = [];
+        if (c.kevLinked) badges.push(`<span title="A CVE in this finding is on CISA's Known Exploited Vulnerabilities (KEV) list — confirmed exploited in the wild. Counts as independent corroboration.">🎯 KEV</span>`);
+        if (c.verdictFirst) badges.push(`<span title="Backed by at least one tool-adjudicated detection (a graded alert), not just raw collected data.">⚑ tool-confirmed</span>`);
+        if (huntCaution) badges.push(`<span title="Rests only on raw collected artifacts that no tool flagged — an unconfirmed lead to triage, not a confirmed detection. Confidence capped at 55.">🐇 unconfirmed lead</span>`);
+        const suffix = (!huntCaution && !corroborated) ? " — uncorroborated" : "";
+        const warn = huntCaution || !corroborated;
+        const badgeHtml = badges.length ? " / " + badges.join(" / ") : "";
+        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${warn ? ' style="color:var(--c-e0a458,#e0a458)"' : ""}>${esc(parts.join(" / "))}${badgeHtml}${esc(suffix)}</span></div>`);
       }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
