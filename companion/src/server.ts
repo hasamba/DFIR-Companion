@@ -79,6 +79,7 @@ import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rocky
 import { YetiProvider } from "./enrichment/yeti.js";
 import { OpenCtiProvider } from "./enrichment/opencti.js";
 import { ReverseDnsProvider } from "./enrichment/reverseDns.js";
+import { LookalikeDomainProvider } from "./enrichment/lookalikeDomain.js";
 import { RdapProvider } from "./enrichment/rdap.js";
 import { GeoIpProvider } from "./enrichment/geoip.js";
 import { ShodanProvider } from "./enrichment/shodan.js";
@@ -2650,6 +2651,9 @@ export function buildEnrichmentProviders(): EnrichmentProvider[] {
   // opt-in per case (default OFF), so nothing is looked up off-box without analyst approval.
   // Base/endpoint overridable via env for self-hosted/paid backends or an air-gapped mirror.
   providers.push(new ReverseDnsProvider());
+  // Offline lookalike / typosquat domain check — local scope (nothing leaves the box), so it is
+  // enabled by default and flags domain IOCs that imitate a bundled brand list (+ env extras).
+  providers.push(new LookalikeDomainProvider());
   providers.push(new RdapProvider({ baseUrl: process.env.DFIR_RDAP_URL }));
   providers.push(new GeoIpProvider({ baseUrl: process.env.DFIR_GEOIP_URL, apiKey: process.env.DFIR_GEOIP_KEY }));
   // Shodan host lookup (hosted domains / open ports / services / CVEs) reuses the existing
