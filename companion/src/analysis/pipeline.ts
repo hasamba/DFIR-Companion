@@ -13,7 +13,7 @@ import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
 import type { CaptureMetadata } from "../types.js";
 import type { StateStore } from "./stateStore.js";
 import type { InvestigationState, InvestigationQuestion, ForensicEvent, Severity, TimelineEntry } from "./stateTypes.js";
-import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, stripAiExtractedFrom, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
+import { deltaSchema, askSchema, execSummarySchema, explainEventSchema, remediationPlanSchema, fpSimilaritySchema, hypothesisReviewSchema, stripAiExtractedFrom, type AskAnswer, type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { buildMitigationsResult } from "./attackMitigations.js";
 import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
@@ -181,7 +181,7 @@ import { estimateTokens, inputTokenBudget, batchByBudget, fitItemsToBudget } fro
 import type { AiControlStore } from "./aiControl.js";
 import type { NotebookStore } from "./notebookStore.js";
 import type { HypothesisStore } from "./hypothesisStore.js";
-import { sanitizeHypotheses } from "./hypothesis.js";
+import { sanitizeHypotheses, sanitizeHypothesisReviews, type HypothesisReviewItem } from "./hypothesis.js";
 import { ocrRedactImage, type OcrRunner } from "./ocrRedact.js";
 
 // Write a redacted screenshot copy to DFIR_OCR_DEBUG_DIR for visual inspection. The redacted
@@ -686,7 +686,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -866,6 +866,43 @@ export const FP_SIMILARITY_PROMPT = [
   "id. Never include the anchor item. If nothing else matches, return an empty array.",
   "",
   'Respond as JSON: { "candidateIds": ["<id>", ...] }',
+].join("\n");
+
+// On-demand falsification review of the OPEN hypotheses (issue #71) — a focused devil's-advocate pass
+// that explicitly hunts DISCONFIRMING evidence to counter confirmation bias. One text-only call; EPHEMERAL.
+// The recommended status is ADVISORY (the analyst owns the verdict), so the prompt must not claim to change it.
+export const HYPOTHESIS_REVIEW_PROMPT = [
+  "You are a DFIR analyst performing a FALSIFICATION REVIEW of the OPEN investigative hypotheses for ONE",
+  "case, using ONLY the evidence provided below (compromised assets, threat-intel verdicts, attacker path,",
+  "findings, forensic timeline). Your job is to fight CONFIRMATION BIAS: for each hypothesis, weigh the",
+  "evidence for AND — most importantly — actively look for evidence AGAINST it.",
+  "",
+  "For EACH hypothesis listed under OPEN HYPOTHESES TO REVIEW (reference it by its EXACT id):",
+  "- supportingEvidence: plain-English bullets for the evidence that SUPPORTS the hypothesis (or [] if none).",
+  "- refutingEvidence: plain-English bullets for the evidence that REFUTES or WEAKENS it — the disconfirming",
+  "  lens. Note absent evidence you WOULD expect if the hypothesis were true (e.g. 'no phishing email in the",
+  "  mail logs despite an inbox-rule change'). Return [] only if you genuinely find nothing against it.",
+  "- recommendedStatus: your ADVISORY verdict — 'supported' (evidence clearly confirms), 'refuted' (evidence",
+  "  clearly contradicts), or 'unknown' (inconclusive / needs collection). This is a RECOMMENDATION for the",
+  "  analyst; you are NOT changing the status. Use 'open' only if it should keep being actively tested as-is.",
+  "- rationale: one short paragraph justifying the recommendation, weighing support against refutation.",
+  "- relatedEventIds: the EXACT ids of the case events your bullets cite. Never invent an id.",
+  "",
+  "Ground everything ONLY in the supplied evidence — do NOT invent events, hosts, or files. Judge each",
+  "hypothesis by how well it survives disconfirming evidence, not by how much supports it.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({
+    reviews: [{
+      hypothesisId: "<the exact id shown>",
+      title: "<the hypothesis title>",
+      supportingEvidence: ["evidence for it"],
+      refutingEvidence: ["evidence against it, incl. expected-but-absent evidence"],
+      recommendedStatus: "supported | refuted | unknown | open",
+      rationale: "why, weighing support vs refutation",
+      relatedEventIds: ["<event id>"],
+    }],
+  }, null, 2),
 ].join("\n");
 
 // Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
@@ -1267,6 +1304,7 @@ export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECON
 export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
 export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
 export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY", FP_SIMILARITY_PROMPT);
+export const getHypothesisReviewPrompt = (): string => resolvePrompt("HYPREVIEW", HYPOTHESIS_REVIEW_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -4277,6 +4315,67 @@ export class AnalysisPipeline {
     return withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getRemediationPrompt(), userPrompt, images: [] }, "remediation");
       return remediationPlanSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // On-demand hypothesis falsification review (issue #71). A focused, human-readable devil's-advocate
+  // pass over the OPEN hypotheses: for each, the plain-English evidence FOR and AGAINST it plus an
+  // ADVISORY recommended status. One text-only AI call; EPHEMERAL — no state change, and crucially it
+  // NEVER mutates a hypothesis's status (the analyst-freeze contract); the recommendation is surfaced for
+  // the analyst to apply. Returns { reviews: [] } with no AI call when there are no open hypotheses.
+  async hypothesisReview(caseId: string): Promise<{ reviews: HypothesisReviewItem[] }> {
+    if (!this.opts.hypothesisStore) throw new Error("hypotheses not configured");
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("hypothesis review");
+    const loaded = await this.opts.stateStore.load(caseId);
+
+    const allHypotheses = await this.opts.hypothesisStore.load(caseId);
+    // Review OPEN, non-exhausted hypotheses (analyst- or synthesis-authored). Resolved/exhausted ones
+    // are already settled, so re-litigating them wastes tokens and invites status churn.
+    const open = allHypotheses.filter((h) => h.status === "open" && !h.exhausted);
+    if (!open.length) return { reviews: [] };
+
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
+    const validEventIds = new Set(scopedEvents.map((e) => e.id));
+
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(scopedEvents, max);
+    const renderEvent = (e: ForensicEvent) =>
+      `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+    const findingsText = loaded.findings.slice(0, 150).map((f) => `[${f.id}] [${f.severity}] ${f.title}`).join("\n") || "(none)";
+    const contextBlock = buildSynthesisContext(loaded, scopedEvents, await this.getKevCatalog());
+
+    // Render the open hypotheses with the evidence already linked to them, so the model reviews the
+    // analyst's/synthesis's current picture rather than starting cold.
+    const hypothesesText = open.map((h) => {
+      const parts = [`[${h.id}] ${h.title}`];
+      if (h.expectedOutcome) parts.push(`    decided by: ${h.expectedOutcome}`);
+      if (h.relatedEventIds.length) parts.push(`    currently-supporting events: ${h.relatedEventIds.join(", ")}`);
+      if (h.contradictingEventIds.length) parts.push(`    known contradicting events: ${h.contradictingEventIds.join(", ")}`);
+      return parts.join("\n");
+    }).join("\n");
+
+    // Trim the timeline so the whole prompt fits the model context.
+    const overhead = estimateTokens(getHypothesisReviewPrompt())
+      + estimateTokens(contextBlock + (loaded.attackerPath || "") + findingsText + hypothesesText) + 300;
+    const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+    if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
+    const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+
+    const userPrompt =
+      contextBlock +
+      `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+      `FINDINGS:\n${findingsText}\n\n` +
+      `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
+      `OPEN HYPOTHESES TO REVIEW:\n${hypothesesText}\n\n` +
+      `Review each open hypothesis for supporting AND refuting evidence, and return the JSON.`;
+
+    const knownHypotheses = new Map(open.map((h) => [h.id, h.title] as const));
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHypothesisReviewPrompt(), userPrompt, images: [] }, "hypothesis-review");
+      const result = hypothesisReviewSchema.parse(parsed);
+      return { reviews: sanitizeHypothesisReviews(result.reviews, knownHypotheses, validEventIds) };
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
