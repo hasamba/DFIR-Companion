@@ -1017,3 +1017,181 @@ describe("parseVelociraptorJson — IOC provenance", () => {
     expect(iocA?.sourceAggKeys?.[0]).not.toEqual(iocB?.sourceAggKeys?.[0]);
   });
 });
+
+describe("parseVelociraptorJson — USN change-journal rows carry the operation (Reason)", () => {
+  // A Windows.Forensics.Usn row: the Reason array IS the "what happened".
+  function usnRow(reason: string[], ospath: string): object {
+    return { _Source: "Windows.Forensics.Usn", Timestamp: "2025-12-05T03:12:59Z", OSPath: ospath, Reason: reason, Usn: 327155712, MFTId: 70579 };
+  }
+
+  it("puts the USN Reason in the description instead of a path-only event", () => {
+    const r = parseVelociraptorJson(JSON.stringify([usnRow(["DATA_EXTEND", "FILE_CREATE"], "C:\\evil.exe")]));
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.description).toContain("DATA_EXTEND, FILE_CREATE"); // the operation, joined
+    expect(e.description).toContain("C:\\evil.exe");             // still names the file
+    expect(e.description).toContain("[Windows.Forensics.Usn]");  // artifact provenance
+    expect(e.path).toBe("C:\\evil.exe");
+  });
+
+  it("keeps a CREATE and a DELETE on the same path as SEPARATE events (Reason is in the agg key)", () => {
+    const rows = [usnRow(["FILE_CREATE"], "C:\\a\\x.txt"), usnRow(["FILE_DELETE", "CLOSE"], "C:\\a\\x.txt")];
+    const r = parseVelociraptorJson(JSON.stringify(rows), { aggregate: true });
+    expect(r.events).toHaveLength(2); // would have collapsed to 1 before (Reason wasn't in the key)
+    const reasons = r.events.map((e) => e.description).join(" | ");
+    expect(reasons).toContain("FILE_CREATE");
+    expect(reasons).toContain("FILE_DELETE");
+  });
+
+  it("tolerates a Reason emitted as a bare string", () => {
+    const row = { _Source: "Windows.Forensics.Usn", Timestamp: "2025-12-05T03:12:59Z", OSPath: "C:\\b.txt", Reason: "FILE_CREATE", Usn: 1 };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.description).toContain("FILE_CREATE");
+  });
+});
+
+describe("parseVelociraptorJson — MFT rows expand to a labeled MACB timeline", () => {
+  // A Windows.NTFS.MFT entry with distinct $SI timestamps: born long ago, modified/accessed later.
+  function mftRow(): object {
+    return {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 42, OSPath: "C:\\Users\\v\\report.docx", FileName: "report.docx",
+      Created0x10: "2024-01-01T00:00:00Z", LastModified0x10: "2025-06-01T00:00:00Z",
+      LastRecordChange0x10: "2025-06-01T00:00:00Z", LastAccess0x10: "2025-06-02T00:00:00Z",
+    };
+  }
+
+  it("emits one event per DISTINCT timestamp, each labeled with its MACB attributes", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow()]), { aggregate: true });
+    // three distinct times: born (2024-01-01), modified+changed (2025-06-01), accessed (2025-06-02)
+    expect(r.events).toHaveLength(3);
+    const byTime = new Map(r.events.map((e) => [e.timestamp.slice(0, 10), e.description]));
+    expect(byTime.get("2024-01-01")).toContain("$SI:...b"); // born only
+    expect(byTime.get("2025-06-01")).toContain("$SI:m.c."); // modified + record-changed share a time
+    expect(byTime.get("2025-06-02")).toContain("$SI:.a.."); // accessed
+    for (const e of r.events) expect(e.path).toBe("C:\\Users\\v\\report.docx");
+  });
+
+  it("surfaces a modification that the old creation-only event would have hidden", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow()]));
+    const times = r.events.map((e) => e.timestamp.slice(0, 10)).sort();
+    expect(times).toContain("2025-06-01"); // the modification is now on the timeline
+    expect(times).toContain("2025-06-02"); // and the access
+  });
+
+  it("collapses a file whose timestamps are all equal into a single event", () => {
+    const row = {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 7, OSPath: "C:\\x", FileName: "x",
+      Created0x10: "2025-01-01T00:00:00Z", LastModified0x10: "2025-01-01T00:00:00Z",
+      LastRecordChange0x10: "2025-01-01T00:00:00Z", LastAccess0x10: "2025-01-01T00:00:00Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("$SI:macb"); // all four share the one timestamp
+  });
+
+  it("skips 1601/epoch 'unset' MFT timestamps rather than dating events to the year 1601", () => {
+    const row = {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 9, OSPath: "C:\\y", FileName: "y",
+      Created0x10: "2025-03-03T00:00:00Z", LastModified0x10: "1601-01-01T00:00:00Z",
+      LastAccess0x10: "1601-01-01T00:00:00Z", LastRecordChange0x10: "1601-01-01T00:00:00Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp.slice(0, 4)).toBe("2025");
+  });
+});
+
+describe("parseVelociraptorJson — forensic artifacts lead with the action, not a bare path", () => {
+  const one = (row: object) => parseVelociraptorJson(JSON.stringify([row])).events[0];
+
+  it("browser history → Visited <url> (title + count), not the History DB file path", () => {
+    const e = one({
+      _Source: "Windows.Applications.Chrome.History", visited_url: "https://evil.example.com/x",
+      title: "Evil", visit_count: 4, visit_time: "2026-07-02T11:47:02Z",
+      OSPath: "C:\\Users\\v\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History",
+    });
+    expect(e.description).toContain("Visited");
+    expect(e.description).toContain("https://evil.example.com/x");
+    expect(e.description).toContain("(4×)");
+    expect(e.description).not.toContain("Default\\History"); // the DB file path is gone
+  });
+
+  it("shellbags → Folder browsed: <folder>, not the raw BagMRU registry key", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Shellbags", KeyPath: "Software\\Microsoft\\Windows\\Shell\\BagMRU",
+      Slot: "0", FullPath: "Computers and Devices -> vmware-host -> Apps", _RawData: "FAAfWA==",
+      ModTime: "2026-07-02T18:47:35Z",
+    });
+    expect(e.description).toContain("Folder browsed");
+    expect(e.description).toContain("Computers and Devices -> vmware-host -> Apps");
+    expect(e.description).not.toContain("BagMRU");
+  });
+
+  it("UserAssist → Ran (UserAssist): <program> with the run count", () => {
+    const e = one({
+      _Source: "Windows.Registry.UserAssist", Name: "C:\\Tools\\mimikatz.exe",
+      NumberOfExecutions: 3, LastExecution: "2026-07-02T12:00:00Z", User: "v",
+    });
+    expect(e.description).toContain("Ran (UserAssist)");
+    expect(e.description).toContain("mimikatz.exe");
+    expect(e.description).toContain("(3×)");
+  });
+
+  it("AppCompatCache → Execution evidence (Shimcache): <binary path>, not a field dump", () => {
+    const e = one({
+      _Source: "Windows.Registry.AppCompatCache", Position: 2, ExecutionFlag: 1,
+      Path: "C:\\Temp\\evil.exe", ModificationTime: "2026-04-29T23:23:31Z", ControlSet: "ControlSet001",
+    });
+    expect(e.description).toContain("Execution evidence (Shimcache)");
+    expect(e.description).toContain("C:\\Temp\\evil.exe");
+    expect(e.description).not.toContain("Position=");
+    expect(e.path).toBe("C:\\Temp\\evil.exe");
+  });
+
+  it("Amcache InventoryApplication → Installed program (Amcache): <name v ver>", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Amcache/InventoryApplication", Name: "7-Zip 19.00",
+      Version: "19.00", Publisher: "Igor Pavlov", InstallDate: "12/05/2025 00:00:00",
+      Timestamp: "2025-12-05T02:44:30Z",
+    });
+    expect(e.description).toContain("Installed program (Amcache)");
+    expect(e.description).toContain("7-Zip 19.00");
+    expect(e.timestamp.slice(0, 4)).toBe("2025"); // ISO Timestamp, not the US InstallDate string
+  });
+
+  it("Amcache InventoryApplicationFile → Program file present (Amcache): <path> + SHA1 ioc", () => {
+    const r = parseVelociraptorJson(JSON.stringify([{
+      _Source: "Windows.Forensics.Amcache/InventoryApplicationFile", Name: "7z.exe",
+      OriginalFileName: "7z.exe", BinaryType: "pe32_i386", FullPath: "c:\\windows\\installer\\7z.exe",
+      SHA1: "e8dcddb302f01d51da3bcbfa6707d025a896aa57", Timestamp: "2025-12-05T02:44:30Z",
+    }]));
+    const e = r.events[0];
+    expect(e.description).toContain("Program file present (Amcache)");
+    expect(e.description).toContain("c:\\windows\\installer\\7z.exe");
+    expect(r.iocs.some((i) => i.type === "hash" && i.value === "e8dcddb302f01d51da3bcbfa6707d025a896aa57")).toBe(true);
+  });
+
+  it("Prefetch → Executed (prefetch) (N×): <executable>, not the .pf file path", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Prefetch", Executable: "MIMIKATZ.EXE", RunCount: 6,
+      ExecutablePath: "\\DEVICE\\HARDDISKVOLUME4\\TEMP\\MIMIKATZ.EXE",
+      LastRunTimes: ["2026-07-02T12:16:39Z"], OSPath: "C:\\Windows\\Prefetch\\MIMIKATZ.EXE-3B54.pf",
+    });
+    expect(e.description).toContain("Executed (prefetch)");
+    expect(e.description).toContain("(6×)");
+    expect(e.description).toContain("MIMIKATZ.EXE");
+    expect(e.description).not.toContain(".pf");
+    expect(e.timestamp.slice(0, 10)).toBe("2026-07-02");
+  });
+
+  it("LNK → Shortcut to the target path, not the nested LNK structure", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Lnk",
+      SourceFile: { OSPath: "C:\\Users\\v\\Recent\\hosts.lnk" },
+      ShellLinkHeader: { Headersize: 76 },
+      StringData: { TargetPath: "C:\\Windows\\System32\\drivers\\etc\\hosts" },
+    });
+    expect(e.description).toContain("Shortcut");
+    expect(e.description).toContain("C:\\Windows\\System32\\drivers\\etc\\hosts");
+  });
+});
