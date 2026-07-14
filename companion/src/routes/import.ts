@@ -25,6 +25,8 @@ import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
+import { autoTagNewEvents } from "../analysis/taggerAuto.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
@@ -63,6 +65,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     dispatchImport, demoteForensicForCase, resynthesizeInBackground,
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
   } = ctx;
+
+  // Automatic content-based tagger fired right after each import's super-timeline append (see
+  // analysis/taggerAuto.ts): tag just the newly-imported events. Best-effort + gated on TAGGER_AUTO.
+  const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
+    autoTagNewEvents(
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
+      caseId, added,
+    );
 
   // Poll interval reported by GET /drop-status. Reconstructed from the same env expression createApp
   // uses (DFIR_DROP_POLL_S, clamped 2..600s) — deterministic, so it matches the watcher's value.
@@ -259,7 +269,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -447,7 +457,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.

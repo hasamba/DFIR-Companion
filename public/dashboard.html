@@ -809,12 +809,33 @@
     .hunt-run-res { padding: 8px 10px; border-top: 1px solid var(--c-2a2f3a); }
     .hunt-refresh { background: var(--c-2a2f3a); border: 0; color: var(--c-cbd3df); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
     .hunt-refresh:hover { color: #fff; }
-    /* Timeline table layout — checkbox · star · icons | timestamp | tags+message */
+    /* Timeline table layout — checkbox · star · icons | severity | timestamp | tags+message.
+       The forensic timeline uses the same bordered-card row language as Findings / IOCs: each event
+       is its own rounded card with a severity-coloured left rail, a dedicated severity column
+       (coloured square + label), and a calm monospace timestamp. Scoped to #forensicTimeline so the
+       super-timeline (which reuses .ev-row) keeps its own flat layout. */
     #forensicTimeline { container-type: inline-size; }
     .ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--c-1a1f28); padding: 3px 0; }
+    #forensicTimeline .ev-row {
+      border: 1px solid var(--c-2a2f3a); border-left: 3px solid var(--c-2a2f3a); border-radius: 6px;
+      background: var(--c-11151c); padding: 4px 10px; margin-bottom: 4px;
+    }
+    #forensicTimeline .ev-row:hover { background: var(--c-11151c); border-color: var(--c-3a4050); }
     .ev-row:hover { background: var(--c-0d1117); }
     .ev-row.ev-selected { background: var(--c-142038); }
+    #forensicTimeline .ev-row.ev-selected { background: var(--c-142038); }
     .ev-row.ev-focused { outline: 2px solid var(--c-6aa9ff); outline-offset: -2px; border-radius: 3px; }
+    /* Severity left-rail (border-left colour) — distinct from .ev-new's green inset box-shadow, so a
+       newly-imported high-severity row shows both cues without conflict. */
+    #forensicTimeline .ev-row.sevr-Critical { border-left-color: var(--c-ff5c5c); }
+    #forensicTimeline .ev-row.sevr-High     { border-left-color: var(--c-ff9f43); }
+    #forensicTimeline .ev-row.sevr-Medium   { border-left-color: var(--c-ffd93b); }
+    #forensicTimeline .ev-row.sevr-Low      { border-left-color: var(--c-6bcb77); }
+    #forensicTimeline .ev-row.sevr-Info     { border-left-color: var(--c-6aa9ff); }
+    /* Severity column: coloured square + label, colour driven by the .sev-<level> class. */
+    .ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
+    .ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
+    .ev-header-sev { width: 92px; margin-right: 6px; flex-shrink: 0; }
     .ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
     /* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
        icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
@@ -833,7 +854,7 @@
     .ev-geo { background: none; border: none; cursor: pointer; padding: 0 4px; color: var(--c-6b7280); display: inline-flex; align-items: center; }
     .ev-geo:hover { color: var(--c-6aa9ff); }
     .ev-geo svg { width: 12px; height: 12px; }
-    .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; align-self: center; }
+    .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; align-self: center; color: var(--c-9aa4b2); }
     .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
     .ev-origin { color: var(--c-7e8aa0); white-space: nowrap; font-size: 11px; }
     .ev-more-btn { background: none; border: none; color: var(--c-6aa9ff); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
@@ -843,7 +864,7 @@
     .ev-details-toggle { background: none; border: 1px solid var(--c-2a4a6b); border-radius: 3px; color: var(--c-6aa9ff); font-size: 11px; padding: 1px 5px; cursor: pointer; margin-top: 3px; }
     .ev-details-panel { margin-top: 4px; padding: 6px 8px; background: var(--c-0d1117, #0d1117); border-left: 2px solid var(--c-2a4a6b); border-radius: 2px; font-size: 11px; color: var(--c-c9d1d9); }
     .ev-details-panel > * + * { margin-top: 4px; }
-    .ev-header-row { display: flex; align-items: center; padding: 2px 0 5px; border-bottom: 1px solid var(--c-2a2f3a); margin-bottom: 1px; font-size: 11px; color: var(--c-6b7280); }
+    .ev-header-row { display: flex; align-items: center; padding: 0 11px 6px 13px; margin-bottom: 1px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c-9aa4b2); }
     .ev-header-ctrl { width: 178px; margin-right: 6px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
     .ev-header-time { width: 192px; flex-shrink: 0; }
     .tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
@@ -4106,6 +4127,61 @@
         <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (this page)">☆ Starred only</button>
       </div>
       <div id="superTimelineMsg" style="font-size:12px;color:var(--c-ff6b6b);margin:4px 0"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
+        <strong style="font-size:12px;color:var(--c-9aa4b2)">🏷 Content tagger</strong>
+        <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
+        <button class="ev-bulk-btn" onclick="clearTaggerTags()" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
+        <button class="ev-bulk-btn" onclick="toggleTaggerRules()" title="View / edit the tagging rules (YAML)">Edit rules</button>
+        <button id="taggerSuggestToggle" class="ev-bulk-btn" onclick="toggleTaggerSuggest()" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
+        <span id="taggerMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+      </div>
+      <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
+      <div id="taggerSuggestWrap" hidden>
+      <!-- describe a rule in plain English; AI drafts it for review. -->
+      <div id="taggerSuggestPane" style="margin-bottom:8px">
+        <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">
+          ✨ Describe a rule in plain English — the AI drafts a rule you can preview, edit, and add.
+          <span style="color:var(--c-ff9800)">⚠ AI-generated — review what it matches before adding.</span>
+        </div>
+        <textarea id="taggerSuggestInput" spellcheck="true" placeholder="e.g. flag any time the Windows security event log is cleared"
+          style="width:100%;min-height:44px;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <button id="taggerSuggestBtn" class="ev-bulk-btn" onclick="suggestTaggerRule()" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
+          <span id="taggerSuggestMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
+        <div id="taggerSuggestResult" hidden style="margin-top:6px">
+          <div id="taggerSuggestExplain" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:4px"></div>
+          <textarea id="taggerSuggestYaml" spellcheck="false"
+            style="width:100%;min-height:140px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <button class="ev-bulk-btn" onclick="previewTaggerRule()" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
+            <button class="ev-bulk-btn" onclick="addSuggestedTaggerRule()" title="Add this rule to the ruleset">Add rule</button>
+            <button class="ev-bulk-btn" onclick="discardSuggestedTaggerRule()">Discard</button>
+            <span id="taggerSuggestResultMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+          </div>
+          <div id="taggerSuggestMatches" hidden style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--c-2b3242);border-radius:6px;padding:6px;font-size:11px;font-family:monospace;color:var(--c-9aa4b2)"></div>
+        </div>
+      </div>
+      <!-- Active rules with per-rule remove + reset-to-defaults. -->
+      <div id="taggerRuleList" style="margin-bottom:8px">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <strong style="font-size:12px;color:var(--c-9aa4b2)">Active rules</strong>
+          <button class="ev-bulk-btn" onclick="refreshTaggerRuleList()" title="Reload the rule list">↻</button>
+          <button class="ev-bulk-btn" onclick="resetTaggerRules()" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
+          <span id="taggerRuleListMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
+        <div id="taggerRuleRows" style="font-size:12px"></div>
+      </div>
+      </div><!-- /taggerSuggestWrap -->
+      <div id="taggerRulesPane" hidden style="margin-bottom:8px">
+        <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
+        <textarea id="taggerRulesText" spellcheck="false" style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+          <button class="ev-bulk-btn" onclick="saveTaggerRules()" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
+          <button class="ev-bulk-btn" onclick="toggleTaggerRules()">Close</button>
+          <span id="taggerRulesMsg" style="font-size:12px"></span>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <label style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"><input type="checkbox" id="stSelectAll" title="Select every row on this page" /> All</label>
         <span id="stSelCount" style="font-size:12px;color:var(--c-9aa4b2)"></span>
@@ -5952,6 +6028,234 @@
     let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
     let lastSuperData = null;       // last super-timeline query response (for client-side re-render on tag/comment/star change)
     const superCaseId = () => document.getElementById("caseId").value.trim();
+
+    // ── Content-based tagger (Timesketch tagger analyzer, ported) ────────────────────────────────
+    // Run the rules over the whole case, tagging matching events; report per-rule match counts.
+    async function runTagger() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      const msg = document.getElementById("taggerMsg");
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Running tagger…";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/run`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Tagger error: " + (d.error || r.status); return; }
+        const hits = (d.perRule || []).filter(x => x.matched > 0).sort((a, b) => b.matched - a.matched);
+        const top = hits.slice(0, 6).map(x => `${x.id}: ${x.matched}`).join(", ");
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `Tagged ${d.totalMatched} event(s), +${d.tagsWritten} tag(s)`
+          + (d.mutatedCount ? `, ${d.mutatedCount} severity/MITRE update(s)` : "")
+          + ` [scope: ${d.scope}]` + (top ? " — " + top + (hits.length > 6 ? ", …" : "") : "");
+        if (typeof loadTags === "function") loadTags(caseId);
+        if (typeof loadSuperTimeline === "function") loadSuperTimeline(caseId);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Tagger failed: " + e.message; }
+    }
+
+    // ── NL → rule (PR #112 follow-up) ──────────────────────────────────────────
+    async function suggestTaggerRule() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const desc = document.getElementById("taggerSuggestInput").value.trim();
+      const msg = document.getElementById("taggerSuggestMsg");
+      if (!caseId) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Connect to a case first."; return; }
+      if (!desc) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Describe the rule first."; return; }
+      const btn = document.getElementById("taggerSuggestBtn");
+      btn.disabled = true;
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Drafting… (one AI call)";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/suggest-rule`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description: desc }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) {
+          const hint = /501/.test(String(r.status)) ? " — AI provider not configured (Settings → AI)" : "";
+          msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Suggest error: " + (d.error || r.status) + hint; return;
+        }
+        const result = document.getElementById("taggerSuggestResult");
+        const explain = document.getElementById("taggerSuggestExplain");
+        const yaml = document.getElementById("taggerSuggestYaml");
+        if (d.kind === "decline") {
+          result.hidden = true;
+          msg.style.color = "var(--c-ff9800)"; msg.textContent = "Can't make a rule: " + d.reason;
+          return;
+        }
+        msg.textContent = "";
+        explain.textContent = d.explanation || "";
+        yaml.value = d.ruleYaml || "";
+        document.getElementById("taggerSuggestResultMsg").textContent = "";
+        result.hidden = false;
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Suggest failed: " + e.message; }
+      finally { btn.disabled = false; }
+    }
+
+    async function previewTaggerRule() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const ruleYaml = document.getElementById("taggerSuggestYaml").value;
+      const msg = document.getElementById("taggerSuggestResultMsg");
+      const matchBox = document.getElementById("taggerSuggestMatches");
+      matchBox.hidden = true; matchBox.innerHTML = "";
+      if (!caseId) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Connect to a case first."; return; }
+      msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "Checking…";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/preview`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ruleYaml }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Invalid rule: " + (d.error || r.status); return; }
+        msg.style.color = d.matched > 0 ? "var(--c-9aa4b2)" : "var(--c-ff9800)";
+        msg.textContent = `Would match ${d.matched} event(s) in this case${d.scope ? " (scope: " + d.scope + ")" : ""}.`;
+        // Show the actual matching events (a capped sample) so the analyst can see WHAT it covers.
+        const sample = d.sample || [];
+        if (sample.length) {
+          const header = document.createElement("div");
+          header.style.cssText = "color:var(--c-e6e6e6);margin-bottom:4px";
+          header.textContent = `Matching events${d.matched > sample.length ? ` (showing first ${sample.length} of ${d.matched})` : ""}:`;
+          matchBox.appendChild(header);
+          sample.forEach((ev) => {
+            const row = document.createElement("div");
+            row.style.cssText = "padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+            const ts = (ev.timestamp || "").replace("T", " ").replace(/\.\d+Z$/, "Z");
+            row.textContent = `${ts}  ${ev.asset ? "[" + ev.asset + "] " : ""}${ev.description || ev.id}`;
+            row.title = ev.description || ev.id;
+            matchBox.appendChild(row);
+          });
+          matchBox.hidden = false;
+        }
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Check failed: " + e.message; }
+    }
+
+    // Toggle the AI rule-authoring + rule-management pane (collapsed by default; opened from the toolbar).
+    function toggleTaggerSuggest() {
+      const wrap = document.getElementById("taggerSuggestWrap");
+      if (!wrap) return;
+      wrap.hidden = !wrap.hidden;
+      if (!wrap.hidden) refreshTaggerRuleList();
+    }
+
+    async function addSuggestedTaggerRule() {
+      const ruleYaml = document.getElementById("taggerSuggestYaml").value;
+      const msg = document.getElementById("taggerSuggestResultMsg");
+      msg.style.color = "var(--c-9aa4b2)"; msg.textContent = "Adding…";
+      try {
+        const r = await fetch(`/tagger/rules/add`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ruleYaml }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Add error: " + (d.error || r.status); return; }
+        msg.style.color = "var(--c-4caf50)"; msg.textContent = `Added rule "${d.id}" — ${d.ruleCount} rule(s) total.`;
+        discardSuggestedTaggerRule();
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Add failed: " + e.message; }
+    }
+
+    function discardSuggestedTaggerRule() {
+      document.getElementById("taggerSuggestResult").hidden = true;
+      document.getElementById("taggerSuggestYaml").value = "";
+      document.getElementById("taggerSuggestInput").value = "";
+      const matchBox = document.getElementById("taggerSuggestMatches");
+      if (matchBox) { matchBox.hidden = true; matchBox.innerHTML = ""; }
+    }
+
+    async function refreshTaggerRuleList() {
+      const rows = document.getElementById("taggerRuleRows");
+      const msg = document.getElementById("taggerRuleListMsg");
+      if (!rows) return;
+      try {
+        const r = await fetch(`/tagger/rules`);
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = d.error || ("error " + r.status); return; }
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `${d.ruleCount} rule(s) · source: ${d.source}`;
+        const readonly = d.source === "env";
+        rows.innerHTML = "";
+        (d.rules || []).forEach((rule) => {
+          const row = document.createElement("div");
+          row.style.cssText = "display:flex;gap:6px;align-items:center;padding:2px 0;border-bottom:1px solid var(--c-2b3242)";
+          const label = document.createElement("span");
+          label.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+          label.textContent = `${rule.id}${rule.severity ? " · " + rule.severity : ""}${rule.description ? " — " + rule.description : ""}`;
+          row.appendChild(label);
+          if (!readonly) {
+            const btn = document.createElement("button");
+            btn.className = "ev-bulk-btn"; btn.textContent = "✕";
+            btn.title = "Remove this rule";
+            btn.onclick = () => removeTaggerRule(rule.id);
+            row.appendChild(btn);
+          }
+          rows.appendChild(row);
+        });
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "list failed: " + e.message; }
+    }
+
+    async function removeTaggerRule(ruleId) {
+      if (!confirm(`Remove the rule "${ruleId}"? (Reset to defaults restores all shipped rules.)`)) return;
+      const msg = document.getElementById("taggerRuleListMsg");
+      try {
+        const r = await fetch(`/tagger/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Remove error: " + (d.error || r.status); return; }
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Remove failed: " + e.message; }
+    }
+
+    async function resetTaggerRules() {
+      if (!confirm("Discard ALL rule customizations (AI-added rules, manual edits, and removals) and restore the shipped default rules?")) return;
+      const msg = document.getElementById("taggerRuleListMsg");
+      try {
+        const r = await fetch(`/tagger/rules/reset`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok || d.error) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Reset error: " + (d.error || r.status); return; }
+        refreshTaggerRuleList();
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Reset failed: " + e.message; }
+    }
+
+    async function clearTaggerTags() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      if (!confirm("Remove every tag applied by the tagger? (Your manual analyst tags are kept.)")) return;
+      const msg = document.getElementById("taggerMsg");
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Clear error: " + (d.error || r.status); return; }
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `Removed ${d.removed} tagger tag(s).`;
+        if (typeof loadTags === "function") loadTags(caseId);
+        if (typeof loadSuperTimeline === "function") loadSuperTimeline(caseId);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Clear failed: " + e.message; }
+    }
+
+    async function toggleTaggerRules() {
+      const pane = document.getElementById("taggerRulesPane");
+      if (!pane.hidden) { pane.hidden = true; return; }
+      pane.hidden = false;
+      const msg = document.getElementById("taggerRulesMsg");
+      msg.textContent = "";
+      try {
+        const r = await fetch(`/tagger/rules`);
+        const d = await r.json();
+        document.getElementById("taggerRulesText").value = d.text || "";
+        document.getElementById("taggerRulesSource").textContent =
+          (d.source || "default") + (d.error ? ` (current file invalid: ${d.error})` : ` — ${d.ruleCount} rule(s)`);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Failed to load rules: " + e.message; }
+      refreshTaggerRuleList();
+    }
+
+    async function saveTaggerRules() {
+      const msg = document.getElementById("taggerRulesMsg");
+      const text = document.getElementById("taggerRulesText").value;
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Saving…";
+      try {
+        const r = await fetch(`/tagger/rules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Rejected: " + (d.error || r.status); return; }
+        msg.style.color = "#6bcB77";
+        msg.textContent = `Saved — ${d.ruleCount} rule(s). Run tagger to apply.`;
+        document.getElementById("taggerRulesSource").textContent = `user — ${d.ruleCount} rule(s)`;
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Save failed: " + e.message; }
+    }
 
     // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
     // counts / star state update after a tag/comment/star change — without a server round-trip. The
@@ -8326,7 +8630,26 @@
         const parts = Object.keys(LABELS).filter(k => (sc[k] || 0) > 0).map(k => `${sc[k]} ${LABELS[k]}`);
         if (parts.length) evidenceMix = `<div class="sm-perf" style="margin-top:4px" title="How many events of each selection class the model saw — the evidence mix behind these conclusions (#4)">🧩 saw ${esc(parts.join(' · '))}</div>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
+      // Coverage audit (#62): how many in-window events the model actually read vs left out, and why.
+      // A muted line normally; amber when a chunk was dropped for the size limit, so the analyst can see
+      // the conclusions rest on a subset (and consider narrowing the scope).
+      let coverage = '';
+      const cv = m.coverage;
+      if (cv && typeof cv === 'object' && cv.inWindow > 0) {
+        const omitted = (cv.omittedBudget || 0) + (cv.omittedLegitimate || 0);
+        let txt = `📊 Considered <strong>${cv.considered.toLocaleString()}</strong> of ${cv.inWindow.toLocaleString()} in-window events`;
+        if (omitted > 0) {
+          const bits = [];
+          if (cv.omittedBudget > 0) bits.push(`${cv.omittedBudget.toLocaleString()} size limit`);
+          if (cv.omittedLegitimate > 0) bits.push(`${cv.omittedLegitimate.toLocaleString()} filtered`);
+          txt += ` (${omitted.toLocaleString()} omitted: ${bits.join(', ')})`;
+        }
+        if (cv.omittedHighSeverity > 0) txt += ` · ${cv.omittedHighSeverity} high-severity recovered by the safety net`;
+        if (cv.promptTokensEstimate > 0) txt += ` · ~${Math.round(cv.promptTokensEstimate / 1000)}k tokens`;
+        const warn = cv.omittedBudget > 0;
+        coverage = `<div class="sm-perf" style="margin-top:4px${warn ? ';color:var(--c-ffd93b)' : ''}" title="How much of the in-scope timeline the AI actually read this run (#62). Events omitted for the size limit are still in the case; any Critical/High among them is still covered by the deterministic safety-net backfill.">${txt}</div>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${coverage}${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
     }
 
     // --- Correlation profile (per-case cross-source event merge window) -------------------------
@@ -10006,8 +10329,19 @@
         const parts = [`${c.distinctTools} tool${c.distinctTools === 1 ? "" : "s"}`, `${c.distinctHosts} host${c.distinctHosts === 1 ? "" : "s"}`];
         if (c.intelSources > 0) parts.push("intel ✓");
         if (c.graphLinked) parts.push("graph-linked");
-        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked;
-        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${corroborated ? "" : ' style="color:var(--c-e0a458,#e0a458)"'}>${esc(parts.join(" / "))}${corroborated ? "" : " — uncorroborated"}</span></div>`);
+        // Issue #61 provenance signals, shown as badges with plain-English tooltips: KEV-linked
+        // (actively exploited) and tool-confirmed (a tool adjudicated it) are positive; unconfirmed-lead
+        // (raw collection, no verdict) is a caution. Titles are static, safe HTML — not user data.
+        const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || c.kevLinked;
+        const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked;
+        const badges = [];
+        if (c.kevLinked) badges.push(`<span title="A CVE in this finding is on CISA's Known Exploited Vulnerabilities (KEV) list — confirmed exploited in the wild. Counts as independent corroboration.">🎯 KEV</span>`);
+        if (c.verdictFirst) badges.push(`<span title="Backed by at least one tool-adjudicated detection (a graded alert), not just raw collected data.">⚑ tool-confirmed</span>`);
+        if (huntCaution) badges.push(`<span title="Rests only on raw collected artifacts that no tool flagged — an unconfirmed lead to triage, not a confirmed detection. Confidence capped at 55.">🐇 unconfirmed lead</span>`);
+        const suffix = (!huntCaution && !corroborated) ? " — uncorroborated" : "";
+        const warn = huntCaution || !corroborated;
+        const badgeHtml = badges.length ? " / " + badges.join(" / ") : "";
+        rows.push(`<div class="fev-row"><span class="fev-k">Corroboration</span><span class="fev-v"${warn ? ' style="color:var(--c-e0a458,#e0a458)"' : ""}>${esc(parts.join(" / "))}${badgeHtml}${esc(suffix)}</span></div>`);
       }
       const byVal = new Map((iocs || []).map(i => [String(i.value).trim().toLowerCase(), i.value]));
       const vals = new Set();
@@ -12813,8 +13147,9 @@
 
       const headerRow = `<div class="ev-header-row">`
         + `<div class="ev-header-ctrl"><input type="checkbox" class="ev-checkbox" id="evSelectAll" ${allSelected ? "checked" : ""} title="Select / deselect all visible events" /></div>`
+        + `<div class="ev-header-sev">Severity${sortArrows("severity")}</div>`
         + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
-        + `<div style="flex:1">Message<span class="tl-sevsort-label">severity</span>${sortArrows("severity")}</div>`
+        + `<div style="flex:1">Message</div>`
         + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" onchange="tlPageSize=+this.value;renderTimelineEvents(lastFt)">${pageSizeOpts}</select></div>`
         + `</div>`;
 
@@ -12860,7 +13195,7 @@
           mitre: tlShow("mitre", tld), findings: tlShow("findings", tld), evidence: tlShow("evidence", tld),
         });
 
-        return `<div class="ev-row${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
+        return `<div class="ev-row sevr-${esc(e.severity)}${isSelected ? " ev-selected" : ""}${isNew ? " ev-new" : ""}" data-evid="${escAttr(id)}">`
           + `<div class="ev-col-ctrl">`
           + `<input type="checkbox" class="ev-checkbox ev-row-cb" data-evid="${escAttr(id)}" ${isSelected ? "checked" : ""} title="Select event" />`
           + (tlShow("icons", tld)
@@ -12869,7 +13204,8 @@
                 + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')">${ICON_GEO}</button>` : "")
               : "")
           + `</div>`
-          + `<div class="ev-col-time"><span class="sev-${esc(e.severity)}">${span}</span></div>`
+          + `<div class="ev-col-sev sev-${esc(e.severity)}" title="Severity: ${escAttr(e.severity || "unrated")}"><span class="ev-sq"></span>${esc(e.severity || "")}</div>`
+          + `<div class="ev-col-time">${span}</div>`
           + `<div class="ev-col-content">`
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")

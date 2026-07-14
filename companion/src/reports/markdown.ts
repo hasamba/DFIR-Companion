@@ -13,6 +13,7 @@ import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timeline
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
+import { coverageLabel, type SynthesisCoverage } from "../analysis/synthMeta.js";
 import { collectSummary } from "../analysis/collectDirective.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -282,6 +283,15 @@ function attackPhases(state: InvestigationState, lines: string[]): void {
 // (every source dark) is the classic signature of cleared logs / a stopped collector; a PARTIAL gap is
 // a single-tool coverage blindspot. Deterministic, no AI — a lead, not proof of tampering. Thresholds:
 // DFIR_GAP_MIN_MINUTES / DFIR_GAP_DENSITY_FACTOR / DFIR_GAP_ACTIVE_HOURS.
+// Synthesis coverage footnote (#62) — how much of the in-scope timeline the AI actually read on the
+// last synthesis run. Opt-in via DFIR_REPORT_SYNTH_COVERAGE (the report writer passes null when the
+// flag is off or no coverage was recorded), so it never appears unless the operator asked for it.
+function synthesisCoverageNote(coverage: SynthesisCoverage | null | undefined, lines: string[]): void {
+  if (!coverage || coverage.inWindow <= 0) return;
+  lines.push("### 3.4 Synthesis coverage", "");
+  lines.push(`_${coverageLabel(coverage)}. Events omitted for the prompt size limit remain in the case; any Critical/High among them is still covered by the deterministic safety-net backfill._`, "");
+}
+
 function timelineCoverage(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.3 Timeline coverage", "");
   lines.push(`_${GAP_CAVEAT}_`, "");
@@ -958,6 +968,7 @@ export function renderMarkdownReport(
   kevCatalog?: KevCatalog,
   hypotheses?: Hypothesis[],
   secondLookLeads: string[] = [],   // #11 deferred: unresolved second-look collection leads
+  coverage?: SynthesisCoverage | null,   // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -991,6 +1002,7 @@ export function renderMarkdownReport(
       narrativeTimeline(state, lines);
       attackPhases(state, lines);
       timelineCoverage(state, lines);
+      synthesisCoverageNote(coverage, lines);
       timelineAnomalies(state, lines);
     },
     investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads),

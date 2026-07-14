@@ -26,6 +26,7 @@ import { registerAnonymizationRoutes } from "./routes/anonymization.js";
 import { registerTimelineRoutes } from "./routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
 import { registerFindingsRoutes } from "./routes/findings.js";
+import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
@@ -102,6 +103,8 @@ import { NotebookStore } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
+import { TaggerStore } from "./analysis/taggerStore.js";
+import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
@@ -287,6 +290,9 @@ export interface AppOptions {
   // Super-timeline: the complete record of every imported event (a superset of the forensic timeline).
   // Every normal import dual-writes its newly-added events here; the forensic timeline stays curated.
   superTimelineStore?: SuperTimelineStore;
+  // Content-based event tagger (Timesketch-style tags.yaml): the rule file store. Powers manual
+  // "Run tagger" + rule editing (routes/tagger.ts) and the automatic post-import run (pipeline).
+  taggerStore?: TaggerStore;
   // Per-case forensic-timeline severity cut (machine/analyst preference — NOT snapshotted). After every
   // import dual-writes into the super-timeline, sub-threshold (Info-by-default) events are demoted OUT of
   // the forensic timeline so the AI only synthesizes graded signal. onForensicGate pings live dashboard
@@ -537,6 +543,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
     options.stateLock ? options.stateLock.runExclusive(caseId, fn) : fn();
 
+  // Automatic content-based tagger: after an import dual-writes its new events into the super-timeline,
+  // tag just those events (Timesketch tagger analyzer, ported). Best-effort + non-fatal + gated on
+  // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
+  const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
+    autoTagNewEvents(
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, onTags: options.onTags, onState: options.onState, logLine },
+      caseId, added,
+    );
+
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
   // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
   // (like the capture-recency marker in routes/captures.ts) — durable history lives in the
@@ -746,6 +761,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerTimelineRoutes(app, ctx);
   registerAnalysisGraphRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
+  registerTaggerRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
@@ -1140,7 +1156,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (options.superTimelineStore) {
           const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
           const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
         }
         // Now demote sub-threshold events out of the forensic timeline (they live on in the super-
         // timeline). Compute the import-meta diff on the POST-demote state so "+N events" counts only
@@ -1670,6 +1686,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           }));
           await options.superTimelineStore!.append(caseId, events);
           options.onSuperTimeline?.(caseId);   // live dashboards refresh as super-only events stream in
+          await autoTagImported(caseId, events);
           importedAny = true;   // report success even though nothing hit the forensic timeline
         } else {
           await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity, veloUrl });
@@ -1717,7 +1734,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           if (options.superTimelineStore) {
             const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
             const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-            if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+            if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
           }
           // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
           // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -1807,6 +1824,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }));
       const superAdded = await options.superTimelineStore.append(caseId, events);
       options.onSuperTimeline?.(caseId);
+      await autoTagImported(caseId, events);
       // Super-only imports never touch the forensic timeline, so the forensic diff below is always 0 —
       // report the SUPER-TIMELINE count instead so "+N events" reflects what actually landed.
       resynthesizeInBackground(caseId);
@@ -1828,7 +1846,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (!opts.superOnly && options.superTimelineStore) {
           const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
           const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
         }
         // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta diff
         // on the POST-demote state so "+N events" counts only graded signal.
@@ -1890,7 +1908,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (options.superTimelineStore) {
           const superDiff = diffTimeline(stateBefore.forensicTimeline, afterImport.forensicTimeline);
           const added = addedForensicEvents(afterImport.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } }
+          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
         }
         const s = await demoteForensicForCase(caseId);
         const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
@@ -2760,6 +2778,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
   // Dashboard view presets (#142) — GLOBAL like report templates, its own subdir beside cases/.
   const dashboardViewStore = new DashboardViewStore(join(dirname(casesRoot), "dashboard-views"));
+  // Content-based event tagger: dashboard-edited rules persist here; the bundled data/tags.yaml is
+  // the fallback default (resolved inside TaggerStore), and TAGGER_RULES_FILE overrides both.
+  const taggerStore = new TaggerStore(join(dirname(casesRoot), "tagger", "tags.yaml"));
   // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
   // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
   // forbids creating files directly in a drive root. A subdir is always creatable + writable.
@@ -2970,6 +2991,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     reportTemplateStore,
     reportTemplateControlStore,
     dashboardViewStore,
+    taggerStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
     activityLogStore,
     onActivity: (caseId) => hub.broadcastTo(caseId, { type: "activity_changed" }),

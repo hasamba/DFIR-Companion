@@ -52,6 +52,9 @@ COPY --from=companion-build /app/companion/node_modules ./node_modules
 COPY --from=companion-build /app/companion/package.json ./package.json
 # Dashboard + static assets — served from ../../public relative to dist/server.js.
 COPY public /app/public
+# Bundled offline datasets (MITRE ATT&CK groups, country centroids, D3FEND map, default tagger
+# ruleset) — resolved via ../../data relative to dist/analysis/*.js, i.e. /app/companion/data.
+COPY companion/data ./data
 # Pre-built browser add-on (the entrypoint copies it to /out so you can "Load unpacked").
 COPY --from=extension-build /app/extension/dist /opt/dfir-extension/dist
 COPY --from=extension-build /app/extension/dfir-companion-extension.zip /opt/dfir-extension/dfir-companion-extension.zip

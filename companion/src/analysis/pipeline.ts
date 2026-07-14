@@ -29,6 +29,8 @@ import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
+import { MATCHABLE_FIELDS } from "./taggerRules.js";
+import { suggestedRuleResponseSchema, sanitizeSuggestedRule, type SuggestOutcome } from "./taggerRuleSuggest.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
@@ -49,7 +51,7 @@ import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } fr
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "./importMeta.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
-import type { SynthMetaStore } from "./synthMeta.js";
+import { buildSynthesisCoverage, type SynthMetaStore, type SynthesisCoverage } from "./synthMeta.js";
 import { AiCostStore, bucketForLabel } from "./aiCost.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
@@ -107,7 +109,7 @@ import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisCo
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
-import type { KevCatalog } from "./kev.js";
+import { extractCveIds, matchKevEntries, type KevCatalog } from "./kev.js";
 import {
   huntSuggestionsResponseSchema,
   sanitizeHuntSuggestions,
@@ -684,7 +686,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -700,11 +702,68 @@ function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC"
   return fallback;
 }
 
+// Natural-language → ONE content-tagger rule (PR #112 follow-up). The model receives the analyst's
+// description and returns a JSON object describing a single rule, or a `decline` string when the
+// request can't be expressed as a single-event field-match rule. The rule is validated by
+// compileRuleset before it is ever offered to save (see taggerRuleSuggest.ts).
+// NOTE: declared here (not beside QUERY_TRANSLATE_PROMPT) because BUILTIN_PROMPT_BY_NAME below reads
+// its value eagerly at module load — a later declaration would hit the temporal dead zone.
+export const TAGGER_RULE_PROMPT = [
+  "You are a DFIR detection engineer. Convert the analyst's PLAIN-ENGLISH request into ONE content-tagger",
+  "rule for the DFIR-Companion event tagger. A rule matches a SINGLE forensic/timeline event by its fields",
+  "and, when it matches, applies tags / MITRE techniques / a raised severity.",
+  "",
+  "A rule is a JSON object with:",
+  "- one or more CONDITION blocks: `any` (OR — ≥1 must match), `all` (AND — every one must match),",
+  "  `none` (NOT — none may match). At least one condition across any/all/none is required.",
+  "- at least one ACTION: `tags` (string[]), `mitre` (ATT&CK id string[]), `severity`, `view` (string).",
+  "- an optional `description` (string).",
+  "",
+  "Each CONDITION is `{ field, <one operator> }` where exactly ONE operator is present:",
+  "- contains: string | string[]   (case-insensitive substring; a list is OR)",
+  "- equals:   string | string[]   (case-insensitive exact match)",
+  "- regex:    string   (optional `flags`, e.g. 'i')   (JS regex against the field)",
+  "- exists:   true | false   (field present-and-non-empty / absent)",
+  "",
+  "MATCHABLE FIELDS (an unknown field is INVALID — use only these; the exact list is in the user message):",
+  "description, message, asset, path, artifactName, processName, parentName, sha256, md5, srcIp, dstIp,",
+  "veloUrl, severity, action, sources, mitreTechniques, relatedFindingIds, provenance, port, pid, count.",
+  "",
+  "severity is one of: Critical, High, Medium, Low, Info.",
+  "",
+  "IMPORTANT RULES:",
+  "- Author a GENERIC rule. Do NOT hardcode this case's specific IPs, hostnames, or hashes — write a rule",
+  "  that would be reusable across investigations (match on artifact/event-id/path/filename patterns).",
+  "- If the request CANNOT be expressed as a single-event field-match rule — e.g. it needs counting,",
+  "  time-windows, thresholds, or correlating multiple events — do NOT invent a rule. Instead return",
+  "  `{ \"decline\": \"<one-sentence reason>\" }` and nothing else.",
+  "- Choose a short snake_case `ruleId` describing the rule.",
+  "- `explanation`: one or two sentences on exactly what the rule matches and what it does.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) in EXACTLY one of these two shapes:",
+  JSON.stringify({
+    ruleId: "windows_security_log_cleared",
+    explanation: "Matches events whose message shows Security event ID 1102 or 'audit log was cleared'; tags them log-cleared and defense-evasion and raises severity to High.",
+    rule: {
+      description: "Windows Security event log cleared (Security 1102)",
+      any: [{ field: "message", contains: ["1102", "audit log was cleared"] }],
+      tags: ["log-cleared", "defense-evasion"],
+      mitre: ["T1070.001"],
+      severity: "High",
+    },
+  }, null, 2),
+  "OR, when it cannot be expressed as a rule:",
+  JSON.stringify({ decline: "This needs counting logons within a time window, which a single-event content rule can't express." }, null, 2),
+].join("\n");
+
+export const getTaggerRulePrompt = (): string => resolvePrompt("TAGGERRULE", TAGGER_RULE_PROMPT);
+
 // The built-in prompt text for each capability the drift check knows about (see promptCapabilities.ts),
 // keyed by resolvePrompt name. Exported so the rot-guard test can assert each built-in still contains
 // its own required markers (if a rewrite drops one, the drift check silently rots — the test catches it).
 export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
   SYNTH: SYNTHESIS_PROMPT,
+  TAGGERRULE: TAGGER_RULE_PROMPT,
 };
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
@@ -3956,6 +4015,28 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
+  // Convert a plain-English description into ONE content-tagger rule (PR #112 follow-up), or a
+  // decline reason when it can't be expressed as a single-event field-match rule. EPHEMERAL — this
+  // returns a candidate for review; nothing is persisted here (the route's add step saves it). Uses
+  // the strong synthesisProvider like translateQuery — authoring a schema-constrained rule benefits
+  // from the general model over the VQL-tuned velociraptorProvider.
+  async suggestTaggerRule(caseId: string, description: string): Promise<SuggestOutcome> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("tagger rule suggestion");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const userPrompt =
+      `MATCHABLE FIELDS (use ONLY these): ${MATCHABLE_FIELDS.join(", ")}\n\n` +
+      `ANALYST REQUEST: ${description.trim()}\n\n` +
+      `Return the rule as JSON (or a decline).`;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(
+        caseId, loaded, provider,
+        { systemPrompt: getTaggerRulePrompt(), userPrompt, images: [] },
+        "suggest-tagger-rule",
+      );
+      return sanitizeSuggestedRule(suggestedRuleResponseSchema.parse(parsed));
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
   // Hypothesise what an attacker did during the timeline's SILENT periods (issue #96). Builds on the
   // deterministic gap detector: detect the suspicious gaps, then make ONE text-only AI call that reads
   // each gap's bounding events (before/after the silence) and infers the attacker activity that fits.
@@ -4252,10 +4333,11 @@ export class AnalysisPipeline {
     // Then drop events the client confirmed legitimate so the model never derives
     // conclusions from benign activity (the raw events stay in state — reversible).
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterFalsePositiveEvents(
-      filterEventsByScope(state.forensicTimeline, scope),
-      markers,
-    );
+    // Split the two filter stages so the coverage audit (#62) can attribute omissions: `inWindowEvents`
+    // is after the scope filter (out-of-window events dropped); `scopedEvents` is after the additional
+    // false-positive/legitimate filter. The budget cap below drops the rest from the prompt.
+    const inWindowEvents = filterEventsByScope(state.forensicTimeline, scope);
+    const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
 
     // Bound the prompt for large imports (e.g. THOR: hundreds of events + auto-findings).
     // Send the MOST SEVERE events (then most recent) up to a cap, and truncate each
@@ -4480,6 +4562,21 @@ export class AnalysisPipeline {
     const truncatedNote = scopedEvents.length > promptEvents.length
       ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
       : "";
+    // Coverage audit (#62): what the model actually saw this run vs what was left out and why. Computed
+    // here where promptEvents + the token overhead are final. Of the budget-omitted events, the safety-net
+    // backfill (below) still guarantees a finding for any Critical/High, so surface that count too.
+    const shownIds = new Set(promptEvents.map((e) => e.id));
+    const omittedHighSeverity = scopedEvents.filter(
+      (e) => !shownIds.has(e.id) && (e.severity === "Critical" || e.severity === "High"),
+    ).length;
+    const synthCoverage: SynthesisCoverage = buildSynthesisCoverage({
+      totalEvents: state.forensicTimeline.length,
+      inWindow: inWindowEvents.length,
+      scoped: scopedEvents.length,
+      considered: promptEvents.length,
+      omittedHighSeverity,
+      promptTokensEstimate: synthOverhead + estimateTokens(timelineText),
+    });
     // Legend for the "~" context prefix (investigation-guidance #4) — only when at least one context row
     // is present, so it costs nothing on a small case.
     const contextLegend = promptEvents.some((e) => isContext(e.id))
@@ -4646,7 +4743,17 @@ export class AnalysisPipeline {
       const evidenceGraph = buildEvidenceGraph(next);
       const graphLinkedEventIds = new Set(evidenceGraph.edges.flatMap((e) => e.eventIds));
       const inScope = next.forensicTimeline.filter((e) => eligibleIds.has(e.id));
-      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds });
+      // KEV-linked confidence signal (issue #61): the CVEs mentioned in-scope (events + IOCs) that match
+      // the CISA KEV catalog. Empty when no catalog is loaded, so the signal is simply never set then.
+      const kevCatalog = await this.getKevCatalog();
+      let kevCveIds: Set<string> | undefined;
+      if (kevCatalog && kevCatalog.size > 0) {
+        const cveIds = new Set<string>();
+        for (const e of inScope) { extractCveIds(e.description).forEach((id) => cveIds.add(id)); if (e.message) extractCveIds(e.message).forEach((id) => cveIds.add(id)); }
+        for (const i of next.iocs) extractCveIds(i.value).forEach((id) => cveIds.add(id));
+        kevCveIds = new Set(matchKevEntries([...cveIds], kevCatalog).map((m) => m.cveID));
+      }
+      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds, kevCveIds });
       // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
       // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
       // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.
@@ -4753,6 +4860,7 @@ export class AnalysisPipeline {
       eventCount: next.forensicTimeline.length,
       iocCount: next.iocs.length,
       selectionCounts: { ...selection.counts },   // #4: the evidence mix the model saw
+      coverage: synthCoverage,                     // #62: included/omitted coverage audit
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

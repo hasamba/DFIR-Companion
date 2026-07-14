@@ -552,6 +552,7 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
+| `DFIR_REPORT_SYNTH_COVERAGE` | _(off)_ | Set truthy to add a **§3.4 Synthesis coverage** footnote to the report — "considered N of M in-window events (K omitted: budget/filtered)", the token estimate, and how many high-severity omissions the safety-net backfill recovered. The dashboard synth-meta card always shows this line; this flag only controls whether it also appears in the exported report |
 | `DFIR_AI_CONTEXT_TOKENS` | `128000` | Model context window; raise for Claude/Gemini (200k/1M) to send more per call |
 | `DFIR_AI_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
 | `DFIR_AI_AUTO_SYNTHESIZE` | `on` | Re-synthesize during capture: `on` \| `off` |
@@ -801,6 +802,9 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 | `DFIR_GAP_HYPOTHESIS_MAX` | `5` | Max gaps the **Hypothesize gaps** AI call reasons about per run (worst-first); each still gets its shadow-artifact collections |
 | `DFIR_GAP_HYPOTHESIS_CONTEXT` | `8` | Events on each side of a gap fed to the hypothesis prompt as before/after context |
 | `DFIR_DEDUP` | `on` | Skip AI analysis of a screenshot **only when it's byte-identical** to the previous capture (SHA-256 exact match — the screen didn't change). Any difference is analyzed; still stored as evidence either way. Set `off` to analyze **every** screenshot |
+| `TAGGER_AUTO` | `true` | Content-based **event tagger** (Timesketch-style `tags.yaml`): run the ruleset automatically after every import, tagging matching events (and, on the forensic timeline, raising severity / unioning MITRE). Set `false` to only run it manually from the dashboard (Super-Timeline → 🏷 Content tagger → **Run tagger**) |
+| `TAGGER_SCOPE` | `both` | Which timeline the tagger runs over: `forensic` (curated timeline only), `super` (raw super-timeline only, tags only — never mutates severity/MITRE), or `both`. Tags are keyed by event id, so they filter in **both** timelines regardless |
+| `TAGGER_RULES_FILE` | _(unset)_ | Absolute path to a custom rule file, overriding the dashboard-edited file and the bundled default (`companion/data/tags.yaml`). Edit rules in-app via Super-Timeline → 🏷 Content tagger → **Edit rules** |
 
 Example `.env` (two-tier OpenRouter setup):
 
