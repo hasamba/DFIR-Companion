@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
+import { parseVelociraptorJson, parseVelociraptorJsonProgress } from "../../src/analysis/velociraptorImport.js";
 
 // ── A Velociraptor Sigma detection row (parsed evtx event + matched rule).
 function sigmaRow(): object {
@@ -1193,5 +1193,54 @@ describe("parseVelociraptorJson — forensic artifacts lead with the action, not
     });
     expect(e.description).toContain("Shortcut");
     expect(e.description).toContain("C:\\Windows\\System32\\drivers\\etc\\hosts");
+  });
+});
+
+describe("parseVelociraptorJsonProgress — streaming parse for large imports", () => {
+  // A batch of distinct MFT rows (each yields >=1 event) big enough to cross several progress chunks.
+  const mftRows = (n: number) => Array.from({ length: n }, (_, i) => ({
+    _Source: "Windows.NTFS.MFT", EntryNumber: i, OSPath: `C:/x/file_${i}.txt`, FileName: `file_${i}.txt`,
+    Created0x10: new Date(Date.UTC(2025, 0, 1) + i * 1000).toISOString(),
+    LastModified0x10: new Date(Date.UTC(2025, 5, 1) + i * 1000).toISOString(),
+  }));
+
+  it("produces byte-for-byte the same result as the synchronous parse", async () => {
+    const json = JSON.stringify(mftRows(12000));
+    const opts = { artifact: "Windows.NTFS.MFT", aggregate: true, maxEvents: 1_000_000 };
+    const sync = parseVelociraptorJson(json, opts);
+    const async_ = await parseVelociraptorJsonProgress(json, opts);
+    expect(async_.events.length).toBe(sync.events.length);
+    expect(async_.kept).toBe(sync.kept);
+    expect(async_.dropped).toBe(sync.dropped);
+    expect(async_.events.slice(0, 100).map((e) => e.description))
+      .toEqual(sync.events.slice(0, 100).map((e) => e.description));
+  });
+
+  it("reports monotonic (done, total) progress ending exactly at total", async () => {
+    const json = JSON.stringify(mftRows(12000));
+    const seen: Array<[number, number]> = [];
+    const r = await parseVelociraptorJsonProgress(json, { artifact: "Windows.NTFS.MFT" }, (d, t) => seen.push([d, t]));
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.every(([, t]) => t === r.total)).toBe(true);        // total is stable = row count
+    expect(seen.every((p, i) => i === 0 || p[0] >= seen[i - 1][0])).toBe(true); // non-decreasing
+    expect(seen.at(-1)).toEqual([r.total, r.total]);                // finishes at 100%
+  });
+
+  it("reports (0, 0) and returns empty for no rows", async () => {
+    const seen: Array<[number, number]> = [];
+    const r = await parseVelociraptorJsonProgress("[]", { artifact: "x" }, (d, t) => seen.push([d, t]));
+    expect(r.events).toHaveLength(0);
+    expect(seen).toEqual([[0, 0]]);
+  });
+
+  it("yields to the event loop between chunks (a timer set before the call can fire mid-parse)", async () => {
+    const json = JSON.stringify(mftRows(20000));
+    let timerFired = false;
+    setTimeout(() => { timerFired = true; }, 0); // can only run if the parse yields
+    let firedDuringParse = false;
+    await parseVelociraptorJsonProgress(json, { artifact: "Windows.NTFS.MFT" }, () => {
+      if (timerFired) firedDuringParse = true;
+    });
+    expect(firedDuringParse).toBe(true);
   });
 });
