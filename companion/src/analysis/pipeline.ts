@@ -78,7 +78,7 @@ import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
-import { parseVelociraptorJson, type VelociraptorImportOptions } from "./velociraptorImport.js";
+import { parseVelociraptorJson, parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
 import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
@@ -2229,7 +2229,10 @@ export class AnalysisPipeline {
     const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
     let artifact = rawArtifact;
     try { artifact = decodeURIComponent(rawArtifact); } catch { /* malformed %xx — keep the raw label */ }
-    const parsedRaw = parseVelociraptorJson(text, { artifact, ...opts.velociraptor });
+    // Chunked async parse: reports (rowsDone, rowsTotal) as it goes (→ the import job's progress bar
+    // and the "importing X/Y" status) and yields to the event loop between chunks, so a huge MFT/USN
+    // import streams live progress instead of freezing the server on one synchronous pass.
+    const parsedRaw = await parseVelociraptorJsonProgress(text, { artifact, ...opts.velociraptor }, opts.onProgress);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -2243,6 +2246,7 @@ export class AnalysisPipeline {
         ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
       };
     });
+
     const raw = {
       findings: [],
       iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({

@@ -1310,31 +1310,28 @@ function extractRows(text: string): { rows: Row[]; format: string } {
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-export function parseVelociraptorJson(text: string, opts: VelociraptorImportOptions = {}): VelociraptorParseResult {
-  const maxIocs = opts.maxIocs ?? 5000;
-  const { rows, format } = extractRows(text);
-  const total = rows.length;
-  if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, detections: 0, format: "empty", hostname: "" };
-  }
+// Shared mutable accumulators + fallbacks for one parse run. Threaded into mapRowToEvents so the
+// per-row dispatch is identical whether the driver is the synchronous loop or the chunked async one.
+interface VrParseCtx {
+  fallbackArtifact: string;
+  fallbackHost: string;
+  iocSink: Map<string, SiemIoc>;
+  hostTally: Map<string, number>;
+}
 
-  const iocSink = new Map<string, SiemIoc>();
-  const hostTally = new Map<string, number>();
-  const mapped: MappedEvent[] = [];
+// Map ONE raw row to its forensic event(s). Most rows yield a single event; an MFT row yields one per
+// distinct MACB timestamp. Returns the events plus how many detections it produced (so the driver can
+// tally). Pure w.r.t. control flow — no yielding — so both parse drivers share this exact logic.
+function mapRowToEvents(rawRow: Row, ctx: VrParseCtx): { events: MappedEvent[]; detections: number } {
+  const row = normalizeElasticRow(rawRow); // reshape an ES-indexed push back to native form (gated)
+  const artifact = artifactName(row) || ctx.fallbackArtifact;
+  const host = pickHost(row) || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
+  if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
+
+  const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
-
-  const fallbackArtifact = (opts.artifact ?? "").trim();
-  // A single-client FLOW export has no per-row host column — the whole collection is implicitly for
-  // one client — so the resolved hostname is threaded in here to attribute rows that carry no host.
-  const fallbackHost = (opts.hostFallback ?? "").trim();
-
-  for (const rawRow of rows) {
-    const row = normalizeElasticRow(rawRow); // reshape an ES-indexed push back to native form (gated)
-    const artifact = artifactName(row) || fallbackArtifact;
-    const host = pickHost(row) || fallbackHost; // a row's own host always wins; fallback only fills the gap
-    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-
-    const rowSink = new Map<string, SiemIoc>();
+  const out: MappedEvent[] = [];
+  {
     const kind = classify(row, artifact);
     // Most mappers yield one event per row; MFT yields one per DISTINCT MACB timestamp, so the
     // dispatch produces an array (usually length 1). An empty array = the row produced nothing.
@@ -1396,23 +1393,30 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
       if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
-      mergeRowIocs(iocSink, rowSink, m.aggKey);
-      mapped.push(m);
+      mergeRowIocs(ctx.iocSink, rowSink, m.aggKey);
+      out.push(m);
     }
   }
+  return { events: out, detections };
+}
 
+// Aggregate the accumulated mapped events (collapse repeats, apply the severity floor + event cap),
+// then compute represented/dropped counts and the dominant host. Shared tail for both parse drivers.
+function finalizeVrParse(
+  mapped: MappedEvent[], ctx: VrParseCtx, total: number, format: string, detections: number,
+  opts: VelociraptorImportOptions,
+): VelociraptorParseResult {
+  const maxIocs = opts.maxIocs ?? 5000;
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
-  const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-
+  const hostname = [...ctx.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   return {
     events,
-    iocs: [...iocSink.values()].slice(0, maxIocs),
+    iocs: [...ctx.iocSink.values()].slice(0, maxIocs),
     total,
     kept: events.length,
     dropped: Math.max(0, total - represented),
@@ -1421,4 +1425,61 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
     format,
     hostname,
   };
+}
+
+function emptyVrResult(): VelociraptorParseResult {
+  return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, detections: 0, format: "empty", hostname: "" };
+}
+
+function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
+  return {
+    fallbackArtifact: (opts.artifact ?? "").trim(),
+    // A single-client FLOW export has no per-row host column — the whole collection is implicitly for one
+    // client — so the resolved hostname is threaded in here to attribute rows that carry no host.
+    fallbackHost: (opts.hostFallback ?? "").trim(),
+    iocSink: new Map<string, SiemIoc>(),
+    hostTally: new Map<string, number>(),
+  };
+}
+
+// Synchronous parse (unchanged behaviour) — used by the many callers that need a result inline (import
+// preview, detection routing, tests). For a large import prefer parseVelociraptorJsonProgress.
+export function parseVelociraptorJson(text: string, opts: VelociraptorImportOptions = {}): VelociraptorParseResult {
+  const { rows, format } = extractRows(text);
+  if (rows.length === 0) return emptyVrResult();
+  const ctx = newVrCtx(opts);
+  const mapped: MappedEvent[] = [];
+  let detections = 0;
+  for (const rawRow of rows) {
+    const r = mapRowToEvents(rawRow, ctx);
+    for (const m of r.events) mapped.push(m);
+    detections += r.detections;
+  }
+  return finalizeVrParse(mapped, ctx, rows.length, format, detections, opts);
+}
+
+// Async parse for large imports: byte-for-byte the same result as parseVelociraptorJson, but it maps
+// rows in chunks, reports (rowsDone, rowsTotal) after each chunk, and yields to the event loop between
+// chunks — so a multi-hundred-thousand-row parse streams live progress instead of freezing the server.
+export async function parseVelociraptorJsonProgress(
+  text: string, opts: VelociraptorImportOptions = {}, onProgress?: (done: number, total: number) => void,
+): Promise<VelociraptorParseResult> {
+  const { rows, format } = extractRows(text);
+  const total = rows.length;
+  if (total === 0) { onProgress?.(0, 0); return emptyVrResult(); }
+  const ctx = newVrCtx(opts);
+  const mapped: MappedEvent[] = [];
+  let detections = 0;
+  const CHUNK = 5000; // rows per event-loop turn — big enough that the per-chunk yield overhead is negligible
+  for (let i = 0; i < total; i++) {
+    const r = mapRowToEvents(rows[i], ctx);
+    for (const m of r.events) mapped.push(m);
+    detections += r.detections;
+    if ((i + 1) % CHUNK === 0) {
+      onProgress?.(i + 1, total);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  onProgress?.(total, total);
+  return finalizeVrParse(mapped, ctx, total, format, detections, opts);
 }
