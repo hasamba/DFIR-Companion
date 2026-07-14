@@ -51,7 +51,7 @@ import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } fr
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "./importMeta.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
-import type { SynthMetaStore } from "./synthMeta.js";
+import { buildSynthesisCoverage, type SynthMetaStore, type SynthesisCoverage } from "./synthMeta.js";
 import { AiCostStore, bucketForLabel } from "./aiCost.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
@@ -4333,10 +4333,11 @@ export class AnalysisPipeline {
     // Then drop events the client confirmed legitimate so the model never derives
     // conclusions from benign activity (the raw events stay in state — reversible).
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
-    const scopedEvents = filterFalsePositiveEvents(
-      filterEventsByScope(state.forensicTimeline, scope),
-      markers,
-    );
+    // Split the two filter stages so the coverage audit (#62) can attribute omissions: `inWindowEvents`
+    // is after the scope filter (out-of-window events dropped); `scopedEvents` is after the additional
+    // false-positive/legitimate filter. The budget cap below drops the rest from the prompt.
+    const inWindowEvents = filterEventsByScope(state.forensicTimeline, scope);
+    const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
 
     // Bound the prompt for large imports (e.g. THOR: hundreds of events + auto-findings).
     // Send the MOST SEVERE events (then most recent) up to a cap, and truncate each
@@ -4561,6 +4562,21 @@ export class AnalysisPipeline {
     const truncatedNote = scopedEvents.length > promptEvents.length
       ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
       : "";
+    // Coverage audit (#62): what the model actually saw this run vs what was left out and why. Computed
+    // here where promptEvents + the token overhead are final. Of the budget-omitted events, the safety-net
+    // backfill (below) still guarantees a finding for any Critical/High, so surface that count too.
+    const shownIds = new Set(promptEvents.map((e) => e.id));
+    const omittedHighSeverity = scopedEvents.filter(
+      (e) => !shownIds.has(e.id) && (e.severity === "Critical" || e.severity === "High"),
+    ).length;
+    const synthCoverage: SynthesisCoverage = buildSynthesisCoverage({
+      totalEvents: state.forensicTimeline.length,
+      inWindow: inWindowEvents.length,
+      scoped: scopedEvents.length,
+      considered: promptEvents.length,
+      omittedHighSeverity,
+      promptTokensEstimate: synthOverhead + estimateTokens(timelineText),
+    });
     // Legend for the "~" context prefix (investigation-guidance #4) — only when at least one context row
     // is present, so it costs nothing on a small case.
     const contextLegend = promptEvents.some((e) => isContext(e.id))
@@ -4844,6 +4860,7 @@ export class AnalysisPipeline {
       eventCount: next.forensicTimeline.length,
       iocCount: next.iocs.length,
       selectionCounts: { ...selection.counts },   // #4: the evidence mix the model saw
+      coverage: synthCoverage,                     // #62: included/omitted coverage audit
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

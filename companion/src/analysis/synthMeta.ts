@@ -30,6 +30,70 @@ const secondLookSchema = z.object({
 
 export type SecondLookMeta = z.infer<typeof secondLookSchema>;
 
+// Synthesis coverage audit (issue #62): how much of the case the LAST real synthesis run actually put
+// in front of the model, and what it left out and why. The model can only read a bounded slice of a
+// large timeline (selectSynthesisEvents caps at DFIR_AI_SYNTH_MAX_EVENTS / the token budget), so the
+// analyst needs to see "considered N of M" and the reason breakdown to trust the conclusions. All
+// counts are derived deterministically at the synthesis call site. Optional/lenient — absent on old
+// files and on runs recorded before this existed.
+const synthesisCoverageSchema = z.object({
+  inWindow: z.number().catch(0),             // events inside the scope window — the denominator ("of M")
+  considered: z.number().catch(0),           // events the model actually read ("N")
+  omittedBudget: z.number().catch(0),        // in-window, non-legitimate events dropped by the size/token cap
+  omittedLegitimate: z.number().catch(0),    // in-window events filtered out as false-positive / legitimate
+  omittedScope: z.number().catch(0),         // events dropped for being OUTSIDE the scope window
+  omittedHighSeverity: z.number().catch(0),  // of the budget-omitted, how many are Critical/High (the safety-net backfill still covers these)
+  promptTokensEstimate: z.number().catch(0), // ~size of the assembled synthesis prompt, in tokens
+});
+
+export type SynthesisCoverage = z.infer<typeof synthesisCoverageSchema>;
+
+/**
+ * Build a coverage snapshot from the raw per-stage event counts (pure). `totalEvents` is the whole
+ * forensic timeline; `inWindow` is after the scope filter; `scoped` is after the false-positive/
+ * legitimate filter; `considered` is what the model actually saw. Omissions are attributed to their
+ * stage and clamped to non-negative (defensive against out-of-order inputs).
+ */
+export function buildSynthesisCoverage(input: {
+  totalEvents: number;
+  inWindow: number;
+  scoped: number;
+  considered: number;
+  omittedHighSeverity: number;
+  promptTokensEstimate: number;
+}): SynthesisCoverage {
+  const nn = (n: number): number => (n > 0 ? n : 0);
+  return {
+    inWindow: nn(input.inWindow),
+    considered: nn(input.considered),
+    omittedScope: nn(input.totalEvents - input.inWindow),
+    omittedLegitimate: nn(input.inWindow - input.scoped),
+    omittedBudget: nn(input.scoped - input.considered),
+    omittedHighSeverity: nn(input.omittedHighSeverity),
+    promptTokensEstimate: nn(input.promptTokensEstimate),
+  };
+}
+
+/**
+ * One-line human summary for the dashboard card / report footnote, e.g.
+ * "Analysis considered 287 of 412 in-window events (125 omitted: 120 size limit, 5 filtered) · 8
+ * high-severity recovered by the safety net · ~61k prompt tokens". Omits each clause that is zero.
+ */
+export function coverageLabel(c: SynthesisCoverage): string {
+  let s = `Analysis considered ${c.considered} of ${c.inWindow} in-window event${c.inWindow === 1 ? "" : "s"}`;
+  const omitted = c.omittedBudget + c.omittedLegitimate;
+  if (omitted > 0) {
+    const parts: string[] = [];
+    if (c.omittedBudget > 0) parts.push(`${c.omittedBudget} size limit`);
+    if (c.omittedLegitimate > 0) parts.push(`${c.omittedLegitimate} filtered`);
+    s += ` (${omitted} omitted: ${parts.join(", ")})`;
+  }
+  if (c.omittedHighSeverity > 0) s += ` · ${c.omittedHighSeverity} high-severity recovered by the safety net`;
+  if (c.omittedScope > 0) s += ` · ${c.omittedScope} outside scope window`;
+  if (c.promptTokensEstimate > 0) s += ` · ~${Math.round(c.promptTokensEstimate / 1000)}k prompt tokens`;
+  return s;
+}
+
 export const synthMetaSchema = z.object({
   lastSynthesizedAt: z.string().catch(""),
   lastDiff: z.object({
@@ -45,6 +109,8 @@ export const synthMetaSchema = z.object({
   // model actually saw this run (anchor / earliest / context / corroborated / technique / rare / spread),
   // so the analyst can see the evidence mix behind the conclusions. Optional/lenient; absent on old files.
   selectionCounts: z.record(z.string(), z.number()).optional().catch(undefined),
+  // Synthesis coverage audit (#62): what the model saw vs what was left out, and why.
+  coverage: synthesisCoverageSchema.nullable().optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
@@ -56,6 +122,7 @@ export interface SynthPerfMetrics {
   eventCount: number;
   iocCount: number;
   selectionCounts?: Record<string, number>;   // #4: per-class counts of the events the model saw
+  coverage?: SynthesisCoverage;               // #62: included/omitted coverage audit for this run
 }
 
 export class SynthMetaStore {

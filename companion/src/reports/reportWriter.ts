@@ -48,7 +48,7 @@ import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
-import type { SynthMetaStore } from "../analysis/synthMeta.js";
+import type { SynthMetaStore, SynthesisCoverage } from "../analysis/synthMeta.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -94,6 +94,15 @@ export class ReportWriter {
   private async loadSecondLookLeads(caseId: string): Promise<string[]> {
     if (!this.synthMeta) return [];
     try { return (await this.synthMeta.load(caseId)).secondLook?.leads ?? []; } catch { return []; }
+  }
+
+  // Synthesis coverage footnote (#62) — OPT-IN via DFIR_REPORT_SYNTH_COVERAGE. Off by default (the
+  // footnote adds internal methodology detail not every report should carry); returns null unless the
+  // flag is truthy and a coverage snapshot was recorded on the last run.
+  private async loadCoverage(caseId: string): Promise<SynthesisCoverage | null> {
+    const flag = (process.env.DFIR_REPORT_SYNTH_COVERAGE ?? "").trim().toLowerCase();
+    if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
+    try { return (await this.synthMeta.load(caseId)).coverage ?? null; } catch { return null; }
   }
 
   // Resolve the report template selected for the case (issue #60). Falls back to the default
@@ -391,9 +400,10 @@ export class ReportWriter {
     kevCatalog?: KevCatalog,
     hypotheses?: Hypothesis[],
     secondLookLeads?: string[],
+    coverage?: SynthesisCoverage | null,
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -425,7 +435,8 @@ export class ReportWriter {
     const graph = applyAssetOverrides(buildAssetGraph(state), overrides);
     const kevCatalog = await this.loadKevCatalog();
     const secondLookLeads = await this.loadSecondLookLeads(caseId);
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads);
+    const coverage = await this.loadCoverage(caseId);
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
