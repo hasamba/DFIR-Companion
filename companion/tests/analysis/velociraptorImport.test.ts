@@ -1100,3 +1100,98 @@ describe("parseVelociraptorJson — MFT rows expand to a labeled MACB timeline",
     expect(r.events[0].timestamp.slice(0, 4)).toBe("2025");
   });
 });
+
+describe("parseVelociraptorJson — forensic artifacts lead with the action, not a bare path", () => {
+  const one = (row: object) => parseVelociraptorJson(JSON.stringify([row])).events[0];
+
+  it("browser history → Visited <url> (title + count), not the History DB file path", () => {
+    const e = one({
+      _Source: "Windows.Applications.Chrome.History", visited_url: "https://evil.example.com/x",
+      title: "Evil", visit_count: 4, visit_time: "2026-07-02T11:47:02Z",
+      OSPath: "C:\\Users\\v\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History",
+    });
+    expect(e.description).toContain("Visited");
+    expect(e.description).toContain("https://evil.example.com/x");
+    expect(e.description).toContain("(4×)");
+    expect(e.description).not.toContain("Default\\History"); // the DB file path is gone
+  });
+
+  it("shellbags → Folder browsed: <folder>, not the raw BagMRU registry key", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Shellbags", KeyPath: "Software\\Microsoft\\Windows\\Shell\\BagMRU",
+      Slot: "0", FullPath: "Computers and Devices -> vmware-host -> Apps", _RawData: "FAAfWA==",
+      ModTime: "2026-07-02T18:47:35Z",
+    });
+    expect(e.description).toContain("Folder browsed");
+    expect(e.description).toContain("Computers and Devices -> vmware-host -> Apps");
+    expect(e.description).not.toContain("BagMRU");
+  });
+
+  it("UserAssist → Ran (UserAssist): <program> with the run count", () => {
+    const e = one({
+      _Source: "Windows.Registry.UserAssist", Name: "C:\\Tools\\mimikatz.exe",
+      NumberOfExecutions: 3, LastExecution: "2026-07-02T12:00:00Z", User: "v",
+    });
+    expect(e.description).toContain("Ran (UserAssist)");
+    expect(e.description).toContain("mimikatz.exe");
+    expect(e.description).toContain("(3×)");
+  });
+
+  it("AppCompatCache → Execution evidence (Shimcache): <binary path>, not a field dump", () => {
+    const e = one({
+      _Source: "Windows.Registry.AppCompatCache", Position: 2, ExecutionFlag: 1,
+      Path: "C:\\Temp\\evil.exe", ModificationTime: "2026-04-29T23:23:31Z", ControlSet: "ControlSet001",
+    });
+    expect(e.description).toContain("Execution evidence (Shimcache)");
+    expect(e.description).toContain("C:\\Temp\\evil.exe");
+    expect(e.description).not.toContain("Position=");
+    expect(e.path).toBe("C:\\Temp\\evil.exe");
+  });
+
+  it("Amcache InventoryApplication → Installed program (Amcache): <name v ver>", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Amcache/InventoryApplication", Name: "7-Zip 19.00",
+      Version: "19.00", Publisher: "Igor Pavlov", InstallDate: "12/05/2025 00:00:00",
+      Timestamp: "2025-12-05T02:44:30Z",
+    });
+    expect(e.description).toContain("Installed program (Amcache)");
+    expect(e.description).toContain("7-Zip 19.00");
+    expect(e.timestamp.slice(0, 4)).toBe("2025"); // ISO Timestamp, not the US InstallDate string
+  });
+
+  it("Amcache InventoryApplicationFile → Program file present (Amcache): <path> + SHA1 ioc", () => {
+    const r = parseVelociraptorJson(JSON.stringify([{
+      _Source: "Windows.Forensics.Amcache/InventoryApplicationFile", Name: "7z.exe",
+      OriginalFileName: "7z.exe", BinaryType: "pe32_i386", FullPath: "c:\\windows\\installer\\7z.exe",
+      SHA1: "e8dcddb302f01d51da3bcbfa6707d025a896aa57", Timestamp: "2025-12-05T02:44:30Z",
+    }]));
+    const e = r.events[0];
+    expect(e.description).toContain("Program file present (Amcache)");
+    expect(e.description).toContain("c:\\windows\\installer\\7z.exe");
+    expect(r.iocs.some((i) => i.type === "hash" && i.value === "e8dcddb302f01d51da3bcbfa6707d025a896aa57")).toBe(true);
+  });
+
+  it("Prefetch → Executed (prefetch) (N×): <executable>, not the .pf file path", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Prefetch", Executable: "MIMIKATZ.EXE", RunCount: 6,
+      ExecutablePath: "\\DEVICE\\HARDDISKVOLUME4\\TEMP\\MIMIKATZ.EXE",
+      LastRunTimes: ["2026-07-02T12:16:39Z"], OSPath: "C:\\Windows\\Prefetch\\MIMIKATZ.EXE-3B54.pf",
+    });
+    expect(e.description).toContain("Executed (prefetch)");
+    expect(e.description).toContain("(6×)");
+    expect(e.description).toContain("MIMIKATZ.EXE");
+    expect(e.description).not.toContain(".pf");
+    expect(e.timestamp.slice(0, 10)).toBe("2026-07-02");
+  });
+
+  it("LNK → Shortcut to the target path, not the nested LNK structure", () => {
+    const e = one({
+      _Source: "Windows.Forensics.Lnk",
+      SourceFile: { OSPath: "C:\\Users\\v\\Recent\\hosts.lnk" },
+      ShellLinkHeader: { Headersize: 76 },
+      StringData: { TargetPath: "C:\\Windows\\System32\\drivers\\etc\\hosts" },
+    });
+    expect(e.description).toContain("Shortcut");
+    expect(e.description).toContain("C:\\Windows\\System32\\drivers\\etc\\hosts");
+  });
+});

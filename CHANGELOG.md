@@ -22,7 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **VolWeb adapter + manual tool override** — the extension now auto-detects VolWeb alongside the existing six consoles, and the popup shows the detected tool with a dropdown to force a different adapter (or none) for the current tab.
 
 ### Changed
-- **MFT & USN timeline events now say what happened** — Velociraptor `Windows.Forensics.Usn` events now carry the change operation (`FILE_CREATE` / `FILE_DELETE` / `DATA_EXTEND` / `RENAME_*` …) in the description and aggregation key, so a create and a delete on the same path no longer collapse into one path-only row. `Windows.NTFS.MFT` entries now expand into a labeled MACB timeline — one event per distinct `$SI`/`$FN` timestamp, tagged `$SI:m.c.` / `$FN:...b` (m=modified, a=accessed, c=MFT-record changed, b=born/created) — so a file *modified* or *accessed* during the incident appears on the timeline instead of only its (often irrelevant) creation time. Files whose timestamps are all equal still collapse to a single event.
+- **Velociraptor timeline events now say what happened, not just a filename** — forensic artifacts that used to render as a bare path (the row's own DB file, or a raw registry key) now lead with the action they record and the correct subject:
+  - `Windows.Forensics.Usn` → the change operation (`FILE_CREATE` / `FILE_DELETE` / `DATA_EXTEND` / `RENAME_*` …), folded into the aggregation key so a create and a delete on the same path stay distinct events.
+  - `Windows.NTFS.MFT` → a labeled MACB timeline: one event per distinct `$SI`/`$FN` timestamp, tagged `$SI:m.c.` / `$FN:...b` (m=modified, a=accessed, c=MFT-record changed, b=born/created), so a file *modified* or *accessed* during the incident appears — not only its creation time. Files whose timestamps are all equal still collapse to one event.
+  - `Chrome`/`Edge` history → `Visited "<title>" — <url> (N×)` (was: the History DB file path).
+  - `Shellbags` → `Folder browsed: <folder path>` (was: the raw `BagMRU` registry key).
+  - `UserAssist` → `Ran (UserAssist): <program> (N×)` (was: the raw counter value name).
+  - `AppCompatCache` → `Execution evidence (Shimcache): <binary>` (was: a `Position=…/Path=…` field dump).
+  - `Amcache` → `Installed program (Amcache): <name v>` / `Program file present (Amcache): <path>` (+ SHA1 IOC).
+  - `Prefetch` → `Executed (prefetch): <executable> (N×)` (was: the `.pf` file path).
+  - `Lnk` → `Shortcut (LNK) → <target path>` (was: the nested LNK structure).
 - **Forensic Timeline redesign** — timeline events now use the same bordered-card row language as Findings and IOCs: each event is its own rounded card with a severity-coloured left rail, a dedicated Severity column (coloured square + label), and a calm monospace timestamp, under an uppercase column header. The super-timeline is unchanged.
 
 ### Fixed
