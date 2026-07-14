@@ -59,6 +59,17 @@ describe("sanitizeSuggestedRule", () => {
     if (out.kind === "decline") expect(out.reason).toMatch(/not_a_real_field|valid rule/i);
   });
 
+  it("declines when the generated rule is too large", () => {
+    const parsed = suggestedRuleResponseSchema.parse({
+      ruleId: "huge",
+      explanation: "x",
+      rule: { any: [{ field: "message", contains: "a".repeat(8001) }], tags: ["t"] },
+    });
+    const out = sanitizeSuggestedRule(parsed);
+    expect(out.kind).toBe("decline");
+    if (out.kind === "decline") expect(out.reason).toMatch(/too large/i);
+  });
+
   it("declines when the model returns no rule and no decline text", () => {
     const parsed = suggestedRuleResponseSchema.parse({ ruleId: "", explanation: "" });
     const out = sanitizeSuggestedRule(parsed);
