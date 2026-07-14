@@ -4099,6 +4099,22 @@
         <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (this page)">☆ Starred only</button>
       </div>
       <div id="superTimelineMsg" style="font-size:12px;color:var(--c-ff6b6b);margin:4px 0"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
+        <strong style="font-size:12px;color:var(--c-9aa4b2)">🏷 Content tagger</strong>
+        <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
+        <button class="ev-bulk-btn" onclick="clearTaggerTags()" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
+        <button class="ev-bulk-btn" onclick="toggleTaggerRules()" title="View / edit the tagging rules (YAML)">Edit rules</button>
+        <span id="taggerMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
+      </div>
+      <div id="taggerRulesPane" hidden style="margin-bottom:8px">
+        <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
+        <textarea id="taggerRulesText" spellcheck="false" style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+          <button class="ev-bulk-btn" onclick="saveTaggerRules()" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
+          <button class="ev-bulk-btn" onclick="toggleTaggerRules()">Close</button>
+          <span id="taggerRulesMsg" style="font-size:12px"></span>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <label style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"><input type="checkbox" id="stSelectAll" title="Select every row on this page" /> All</label>
         <span id="stSelCount" style="font-size:12px;color:var(--c-9aa4b2)"></span>
@@ -5945,6 +5961,75 @@
     let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
     let lastSuperData = null;       // last super-timeline query response (for client-side re-render on tag/comment/star change)
     const superCaseId = () => document.getElementById("caseId").value.trim();
+
+    // ── Content-based tagger (Timesketch tagger analyzer, ported) ────────────────────────────────
+    // Run the rules over the whole case, tagging matching events; report per-rule match counts.
+    async function runTagger() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      const msg = document.getElementById("taggerMsg");
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Running tagger…";
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/run`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Tagger error: " + (d.error || r.status); return; }
+        const hits = (d.perRule || []).filter(x => x.matched > 0).sort((a, b) => b.matched - a.matched);
+        const top = hits.slice(0, 6).map(x => `${x.id}: ${x.matched}`).join(", ");
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `Tagged ${d.totalMatched} event(s), +${d.tagsWritten} tag(s)`
+          + (d.mutatedCount ? `, ${d.mutatedCount} severity/MITRE update(s)` : "")
+          + ` [scope: ${d.scope}]` + (top ? " — " + top + (hits.length > 6 ? ", …" : "") : "");
+        if (typeof loadTags === "function") loadTags(caseId);
+        if (typeof loadSuperTimeline === "function") loadSuperTimeline(caseId);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Tagger failed: " + e.message; }
+    }
+
+    async function clearTaggerTags() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      if (!confirm("Remove every tag applied by the tagger? (Your manual analyst tags are kept.)")) return;
+      const msg = document.getElementById("taggerMsg");
+      try {
+        const r = await fetch(`/cases/${caseId}/tagger/clear`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Clear error: " + (d.error || r.status); return; }
+        msg.style.color = "var(--c-9aa4b2)";
+        msg.textContent = `Removed ${d.removed} tagger tag(s).`;
+        if (typeof loadTags === "function") loadTags(caseId);
+        if (typeof loadSuperTimeline === "function") loadSuperTimeline(caseId);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Clear failed: " + e.message; }
+    }
+
+    async function toggleTaggerRules() {
+      const pane = document.getElementById("taggerRulesPane");
+      if (!pane.hidden) { pane.hidden = true; return; }
+      pane.hidden = false;
+      const msg = document.getElementById("taggerRulesMsg");
+      msg.textContent = "";
+      try {
+        const r = await fetch(`/tagger/rules`);
+        const d = await r.json();
+        document.getElementById("taggerRulesText").value = d.text || "";
+        document.getElementById("taggerRulesSource").textContent =
+          (d.source || "default") + (d.error ? ` (current file invalid: ${d.error})` : ` — ${d.ruleCount} rule(s)`);
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Failed to load rules: " + e.message; }
+    }
+
+    async function saveTaggerRules() {
+      const msg = document.getElementById("taggerRulesMsg");
+      const text = document.getElementById("taggerRulesText").value;
+      msg.style.color = "var(--c-9aa4b2)";
+      msg.textContent = "Saving…";
+      try {
+        const r = await fetch(`/tagger/rules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Rejected: " + (d.error || r.status); return; }
+        msg.style.color = "#6bcB77";
+        msg.textContent = `Saved — ${d.ruleCount} rule(s). Run tagger to apply.`;
+        document.getElementById("taggerRulesSource").textContent = `user — ${d.ruleCount} rule(s)`;
+      } catch (e) { msg.style.color = "var(--c-ff6b6b)"; msg.textContent = "Save failed: " + e.message; }
+    }
 
     // Re-render the currently-loaded super-timeline page from cache so its inline tag pills / comment
     // counts / star state update after a tag/comment/star change — without a server round-trip. The
