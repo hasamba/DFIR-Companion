@@ -10,7 +10,6 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { CaptureMetadata } from "../../src/types.js";
 import { AiCostStore } from "../../src/analysis/aiCost.js";
 import { AnonControlStore } from "../../src/analysis/anonControl.js";
-import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -935,44 +934,5 @@ describe("pipeline import — IOC extractedFrom", () => {
 
     const domainIoc = state.iocs.find((i) => i.value === "evil.example.com");
     expect(domainIoc?.extractedFrom).toEqual(["so1e1"]);
-  });
-});
-
-describe("importVelociraptor — forensic severity gate at merge time", () => {
-  it("routes Info telemetry to the super-timeline only; forensic keeps graded signal", async () => {
-    const superStore = new SuperTimelineStore(caseStore);
-    const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", validDelta),
-      stateStore,
-      superTimelineStore: superStore,
-      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-    });
-
-    // 5 Info-level MFT rows (each → >=1 Info event) + 1 YARA detection (→ High).
-    const rows = [
-      ...Array.from({ length: 5 }, (_, i) => ({
-        _Source: "Windows.NTFS.MFT", EntryNumber: i, OSPath: `C:/x/f_${i}.txt`, FileName: `f_${i}.txt`,
-        Created0x10: `2025-01-0${i + 1}T00:00:00Z`, LastModified0x10: `2025-02-0${i + 1}T00:00:00Z`,
-      })),
-      { _Source: "Windows.Detection.Yara.Glob", Rule: "APT_Evil", OSPath: "C:/tmp/evil.exe",
-        HashSHA256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899" },
-    ];
-
-    await pipeline.importVelociraptor("c1", JSON.stringify(rows), {
-      label: "0001_mixed.json", idPrefix: "v1", importedAt: "2026-05-28T10:00:00.000Z",
-      forensicMinSeverity: "Low", // gate opt-in (the file/drop seam passes this)
-    });
-
-    const state = await stateStore.load("c1");
-    // Forensic timeline: ONLY the High YARA detection — no Info MFT events.
-    expect(state.forensicTimeline.length).toBe(1);
-    expect(state.forensicTimeline[0].severity).toBe("High");
-    expect(state.forensicTimeline.every((e) => e.severity !== "Info")).toBe(true);
-
-    // Super-timeline: the COMPLETE record — the Info MFT events AND the detection.
-    const superEvents = (await superStore.query("c1", {})).events;
-    expect(superEvents.length).toBeGreaterThan(state.forensicTimeline.length);
-    expect(superEvents.some((e) => e.severity === "Info")).toBe(true);
-    expect(superEvents.some((e) => e.description.includes("APT_Evil"))).toBe(true);
   });
 });

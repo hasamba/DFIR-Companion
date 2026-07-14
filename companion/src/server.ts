@@ -1043,16 +1043,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "evtxxml": return pipeline.importEvtxXml(caseId, text, base);
       case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
       case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
-      // Gate Info telemetry OUT of the forensic timeline at merge time (resolved per-case gate, default
-      // Low), so a huge MFT/USN file/drop import never floods case state and then stalls on the
-      // post-import demote. Only wired here (the file/drop seam); the live hunt/external paths pass no
-      // gate and rely on demoteForensicForCase. No gate store (tests) → unset → legacy all-to-forensic.
-      case "velociraptor": return (async () => {
-        const forensicMinSeverity = options.forensicGateControlStore
-          ? resolveForensicMinSeverity((await options.forensicGateControlStore.load(caseId)).minSeverity, process.env.DFIR_FORENSIC_MIN_SEVERITY)
-          : undefined;
-        return pipeline.importVelociraptor(caseId, text, { ...base, forensicMinSeverity });
-      })();
+      case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
       case "securityonion": return pipeline.importSecurityOnion(caseId, text, base);
       case "socrates": return pipeline.importSocrates(caseId, text, base);
       case "network": return pipeline.importNetwork(caseId, text, base);
