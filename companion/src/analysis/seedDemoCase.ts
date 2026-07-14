@@ -3,6 +3,7 @@
 // server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
 import { writeFile, mkdir, appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import type { ForensicEvent } from "./stateTypes.js";
 
 export const DEMO_CASE_ID_DEFAULT = "demo";
 
@@ -14,7 +15,7 @@ export interface SeedDemoOptions {
 export interface SeedDemoResult {
   caseId: string;
   caseDir: string;
-  stats: { findings: number; iocs: number; events: number };
+  stats: { findings: number; iocs: number; events: number; superTimelineEvents: number };
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -411,6 +412,44 @@ export async function seedDemoCase(
     ...beaconCheckIns,
   ];
 
+  // ── Super-Timeline (raw host-triage artifact feed) ───────────────────────────
+  // A separate, import-only store (analysis/superTimelineStore.ts) never touched by synthesis —
+  // it's the un-curated companion to forensicTimeline above: raw tool-native rows (EVTX/Sysmon/
+  // Velociraptor messages) rather than analyst-curated findings-linked events. Deliberately NOT
+  // pre-tagged/pre-escalated so the content tagger (data/tags.yaml, Super-Timeline → Run tagger)
+  // has real work to do out of the box; spans the same May 15-22 incident window and hosts as
+  // forensicTimeline above so the two views tell one consistent story.
+  const superTimeline: ForensicEvent[] = [
+    { id: "st001", timestamp: ts(15, 8, 30), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WEB01", sources: ["EVTX"], description: "Apache access log entries", message: "Apache mod_cgi path traversal probe pattern observed against /cgi-bin/.%2e/" },
+    { id: "st002", timestamp: ts(15, 9, 48), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["EVTX"], processName: "powershell.exe", parentName: "cmd.exe", description: "PowerShell EngineState log", message: "powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcA" },
+    { id: "st003", timestamp: ts(15, 9, 49), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT", path: "c:\\windows\\temp\\svchost32.exe", sha256: SHA_BEACON, description: "MFT entry — new file", message: "$MFT record: C:\\Windows\\Temp\\svchost32.exe created, 84 KB, no digital signature" },
+    { id: "st004", timestamp: ts(15, 10, 15), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["EVTX"], description: "TaskScheduler operational log", message: "TaskScheduler 106: Task Scheduler successfully completed task \"\\MicrosoftEdgeUpdateCore\" , instance \"{a1b2c3d4}\" , action \"C:\\Users\\jsmith\\AppData\\Roaming\\update.dll\"" },
+    { id: "st005", timestamp: ts(15, 10, 15), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT", path: "c:\\users\\jsmith\\appdata\\roaming\\update.dll", sha256: SHA_DROPPER, description: "MFT entry — new file", message: "$MFT record: C:\\Users\\jsmith\\AppData\\Roaming\\update.dll created, 38 KB" },
+    { id: "st006", timestamp: ts(15, 10, 16), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["EVTX"], description: "Registry Run key write", path: "hkcu\\software\\microsoft\\windows\\currentversion\\run\\edgeupdatecore", message: "Registry SetValue: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\EdgeUpdateCore = rundll32.exe C:\\Users\\jsmith\\AppData\\Roaming\\update.dll,Start" },
+    { id: "st007", timestamp: ts(16, 8, 22), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], description: "Security 4624 — network logon", message: "Security-Auditing 4624: An account was successfully logged on. Logon Type:\t\t3 Account Name: jsmith Source Network Address: 10.10.10.45" },
+    { id: "st008", timestamp: ts(16, 8, 23), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], description: "Security 7045 — service installed", message: "Service Control Manager 7045: A service was installed in the system. Service Name: PSEXESVC Service File Name: %SystemRoot%\\PSEXESVC.exe" },
+    { id: "st009", timestamp: ts(16, 8, 23), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["Velociraptor"], artifactName: "Windows.Network.Netstat", processName: "PSEXESVC.exe", parentName: "services.exe", description: "PSEXESVC network share access", message: "SMB session to \\\\DC01\\ADMIN$ established under PSEXESVC context" },
+    { id: "st010", timestamp: ts(16, 8, 43), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT", path: "c:\\windows\\temp\\m64.exe", sha256: SHA_MIMIKATZ, md5: MD5_MIMIKATZ, description: "MFT entry — new file", message: "$MFT record: C:\\Windows\\Temp\\m64.exe created, 1.2 MB, unsigned" },
+    { id: "st011", timestamp: ts(16, 8, 45), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["Sysmon"], processName: "m64.exe", parentName: "PSEXESVC.exe", description: "Sysmon EID 10 — process access", message: "Sysmon 10: ProcessAccess SourceImage: C:\\Windows\\Temp\\m64.exe TargetImage: C:\\Windows\\System32\\lsass.exe GrantedAccess: 0x1FFFFF" },
+    { id: "st012", timestamp: ts(16, 9, 5), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["Velociraptor"], artifactName: "Windows.System.Services", description: "Kerberoasting target discovery (SPN sweep)", message: "LDAP query for servicePrincipalName=* returned 12 accounts (Kerberoasting target discovery)" },
+    { id: "st013", timestamp: ts(16, 10, 0), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "FS01", sources: ["EVTX"], description: "Security 7045 — service installed", message: "Service Control Manager 7045: A service was installed in the system. Service Name: PSEXESVC Service File Name: %SystemRoot%\\PSEXESVC.exe" },
+    { id: "st014", timestamp: ts(16, 10, 12), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], processName: "wevtutil.exe", parentName: "PSEXESVC.exe", description: "Security 1102 — audit log cleared", message: "Security-Auditing 1102: The audit log was cleared. Subject: SYSTEM. Command: wevtutil cl Security" },
+    { id: "st015", timestamp: ts(16, 10, 13), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], processName: "sc.exe", parentName: "PSEXESVC.exe", description: "EDR sensor tamper", message: "System log: CSFalconService stopped by SYSTEM via 'sc stop CSFalconService' — real-time protection disabled" },
+    { id: "st016", timestamp: ts(16, 9, 22), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "FS01", sources: ["EVTX"], description: "Security 5140 — network share object accessed", message: "Security-Auditing 5140: A network share object was accessed. Share Name: \\\\*\\C$ Source Address: 10.10.20.15" },
+    { id: "st017", timestamp: ts(17, 15, 45), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "FS01", sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT", path: "c:\\windows\\temp\\backup\\data.7z", description: "MFT entry — new file", message: "$MFT record: C:\\Windows\\Temp\\backup\\data.7z created, 2.3 GB" },
+    { id: "st018", timestamp: ts(18, 2, 30), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "FS01", sources: ["Zeek"], srcIp: "10.10.20.30", dstIp: "185.220.101.47", port: 21, description: "Zeek ftp.log entry", message: "FTP connection attempt to 185.220.101.47:21 blocked by perimeter firewall policy GFW-DENY-FTP-OUT" },
+    { id: "st019", timestamp: ts(19, 21, 30), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], description: "System 7040 — VSS service stopped", message: "Service Control Manager 7040: The start type of the Volume Shadow Copy service was changed from auto start to disabled" },
+    { id: "st020", timestamp: ts(19, 21, 32), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], processName: "vssadmin.exe", parentName: "cmd.exe", description: "Command-line execution log", message: "Sysmon 1: CommandLine: vssadmin delete shadows /all /quiet" },
+    { id: "st021", timestamp: ts(19, 22, 15), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT", path: "c:\\windows\\temp\\encrypt.exe", sha256: SHA_RANSOM, description: "MFT entry — new file", message: "$MFT record: C:\\Windows\\Temp\\encrypt.exe created, 512 KB, unsigned" },
+    { id: "st022", timestamp: ts(20, 7, 5), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WEB01", sources: ["EVTX"], description: "Security 4624 — RDP logon", message: "Security-Auditing 4624: An account was successfully logged on. Logon Type:\t\t10 Account Name: svc-admin" },
+    { id: "st023", timestamp: ts(20, 7, 6), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WEB01", sources: ["EVTX"], port: 3389, description: "TerminalServices-RemoteConnectionManager operational log", message: "TerminalServices-RemoteConnectionManager 1149: RDP-Tcp session established from 10.10.20.40" },
+    { id: "st024", timestamp: ts(15, 9, 47), severity: "Low", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN-JSMITH", sources: ["Sysmon"], processName: "cmd.exe", parentName: "EXCEL.EXE", description: "Sysmon EID 1 — process create", message: "Sysmon 1: ParentImage: C:\\...\\EXCEL.EXE Image: C:\\Windows\\System32\\cmd.exe CommandLine: cmd.exe /c powershell.exe -NoProfile -WindowStyle Hidden" },
+    // Benign baseline rows — deliberately match none of the tagger rules, so a real run also
+    // shows non-matches instead of tagging 100% of the timeline.
+    { id: "st025", timestamp: ts(15, 7, 0), severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "FS01", sources: ["EVTX"], description: "Scheduled Windows Update check", message: "Microsoft-Windows-WindowsUpdateClient: Installation successful for update KB5041234" },
+    { id: "st026", timestamp: ts(15, 6, 30), severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01", sources: ["EVTX"], description: "Routine backup job", message: "Backup Exec: Nightly full backup of \\\\DC01\\SYSVOL completed successfully" },
+  ];
+
   const investigation = {
     caseId,
     updatedAt: "2026-05-22T14:00:00.000Z",
@@ -516,6 +555,10 @@ export async function seedDemoCase(
   };
 
   await write(join(caseDir, "state", "investigation.json"), investigation);
+
+  // Written directly (not via SuperTimelineStore) to match how every other state file in this
+  // function is seeded — there's no existing store content to dedupe/cap against on a fresh case.
+  await write(join(caseDir, "state", "super-timeline.json"), superTimeline);
 
   // ── state files ────────────────────────────────────────────────────────────
   await write(join(caseDir, "state", "scope.json"), {
@@ -744,6 +787,7 @@ export async function seedDemoCase(
       findings: findings.length,
       iocs: iocs.length,
       events: forensicTimeline.length,
+      superTimelineEvents: superTimeline.length,
     },
   };
 }

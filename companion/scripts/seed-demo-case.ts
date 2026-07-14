@@ -32,6 +32,7 @@ seedDemoCase(casesRoot, { caseId, force })
     console.log(`  Findings:        ${stats.findings}`);
     console.log(`  IOCs:            ${stats.iocs}`);
     console.log(`  Forensic events: ${stats.events}`);
+    console.log(`  Super-timeline:  ${stats.superTimelineEvents}`);
     console.log(`\nStart the server and open the dashboard, then connect to case "${id}".`);
     console.log(`  npm run dev`);
   })
