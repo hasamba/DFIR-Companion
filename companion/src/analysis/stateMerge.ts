@@ -174,6 +174,11 @@ export function mergeDelta(
     relatedFindingIds: [...e.relatedFindingIds],
     sourceScreenshots: [...e.sourceScreenshots],
   }));
+  // Index by id for O(1) dedup lookup. A linear `forensicTimeline.find(...)` per incoming event is
+  // O(n²) and melts down on large deterministic imports (e.g. a full MFT/USN with DFIR_MAX_EVENTS
+  // raised to hundreds of thousands → ~10¹¹ comparisons, minutes-to-hours of blocked CPU). The map is
+  // kept in sync on every push so newly-added events dedup against each other too.
+  const byId = new Map<string, ForensicEvent>(forensicTimeline.map((e) => [e.id, e]));
   for (const incoming of delta.forensicEvents ?? []) {
     // Hard guard: a weak model may narrate the analyst operating the tool
     // ("Velociraptor Response and Monitoring session continued") as an event.
@@ -183,7 +188,7 @@ export function mergeDelta(
     // leaves already-UTC / naive times untouched) so the whole timeline is one timezone.
     const ts = toUtcIso(incoming.timestamp);
     const endTs = incoming.endTimestamp !== undefined ? toUtcIso(incoming.endTimestamp) : undefined;
-    const existing = forensicTimeline.find((e) => e.id === incoming.id);
+    const existing = byId.get(incoming.id);
     if (existing) {
       existing.timestamp = ts || existing.timestamp;
       existing.description = incoming.description;
@@ -209,7 +214,7 @@ export function mergeDelta(
       if (incoming.dstIp) existing.dstIp = incoming.dstIp;
       if (incoming.port !== undefined) existing.port = incoming.port;
     } else {
-      forensicTimeline.push({
+      const created: ForensicEvent = {
         id: incoming.id,
         timestamp: ts,
         description: incoming.description,
@@ -234,7 +239,9 @@ export function mergeDelta(
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
         ...(incoming.port !== undefined ? { port: incoming.port } : {}),
-      });
+      };
+      forensicTimeline.push(created);
+      byId.set(incoming.id, created);
     }
   }
   // Re-anchor mis-dated stray events (a year-less syslog/CSV line the AI import guessed into the wrong
