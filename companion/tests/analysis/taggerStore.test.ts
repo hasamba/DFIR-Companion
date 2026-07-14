@@ -137,6 +137,15 @@ describe("TaggerStore edits (add/remove/reset)", () => {
     expect(active.rules.map((r) => r.id)).toEqual(["logon"]);
   });
 
+  it("removeRule on the last remaining rule empties the ruleset (persists \"\", not falls back to default)", async () => {
+    const res = await store.removeRule("svc"); // svc is the only rule, no prior addRuleYaml
+    expect(res.removed).toBe(true);
+    expect(res.ruleCount).toBe(0);
+    const active = await store.load();
+    expect(active.source).toBe("user");
+    expect(active.rules).toEqual([]);
+  });
+
   it("removeRule on an absent id reports removed=false and leaves the count unchanged", async () => {
     const res = await store.removeRule("does-not-exist");
     expect(res.removed).toBe(false);
