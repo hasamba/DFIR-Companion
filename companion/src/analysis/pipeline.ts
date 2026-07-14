@@ -29,6 +29,8 @@ import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { backfillHighSeverityFindings } from "./highSeverityFindings.js";
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
+import { MATCHABLE_FIELDS } from "./taggerRules.js";
+import { suggestedRuleResponseSchema, sanitizeSuggestedRule, type SuggestOutcome } from "./taggerRuleSuggest.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "./synthThinking.js";
 import { detectTimelineGaps, backfillSilenceGapFindings, gapEnvOptions } from "./gapDetect.js";
 import {
@@ -684,7 +686,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -700,11 +702,68 @@ function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC"
   return fallback;
 }
 
+// Natural-language → ONE content-tagger rule (PR #112 follow-up). The model receives the analyst's
+// description and returns a JSON object describing a single rule, or a `decline` string when the
+// request can't be expressed as a single-event field-match rule. The rule is validated by
+// compileRuleset before it is ever offered to save (see taggerRuleSuggest.ts).
+// NOTE: declared here (not beside QUERY_TRANSLATE_PROMPT) because BUILTIN_PROMPT_BY_NAME below reads
+// its value eagerly at module load — a later declaration would hit the temporal dead zone.
+export const TAGGER_RULE_PROMPT = [
+  "You are a DFIR detection engineer. Convert the analyst's PLAIN-ENGLISH request into ONE content-tagger",
+  "rule for the DFIR-Companion event tagger. A rule matches a SINGLE forensic/timeline event by its fields",
+  "and, when it matches, applies tags / MITRE techniques / a raised severity.",
+  "",
+  "A rule is a JSON object with:",
+  "- one or more CONDITION blocks: `any` (OR — ≥1 must match), `all` (AND — every one must match),",
+  "  `none` (NOT — none may match). At least one condition across any/all/none is required.",
+  "- at least one ACTION: `tags` (string[]), `mitre` (ATT&CK id string[]), `severity`, `view` (string).",
+  "- an optional `description` (string).",
+  "",
+  "Each CONDITION is `{ field, <one operator> }` where exactly ONE operator is present:",
+  "- contains: string | string[]   (case-insensitive substring; a list is OR)",
+  "- equals:   string | string[]   (case-insensitive exact match)",
+  "- regex:    string   (optional `flags`, e.g. 'i')   (JS regex against the field)",
+  "- exists:   true | false   (field present-and-non-empty / absent)",
+  "",
+  "MATCHABLE FIELDS (an unknown field is INVALID — use only these; the exact list is in the user message):",
+  "description, message, asset, path, artifactName, processName, parentName, sha256, md5, srcIp, dstIp,",
+  "veloUrl, severity, action, sources, mitreTechniques, relatedFindingIds, provenance, port, pid, count.",
+  "",
+  "severity is one of: Critical, High, Medium, Low, Info.",
+  "",
+  "IMPORTANT RULES:",
+  "- Author a GENERIC rule. Do NOT hardcode this case's specific IPs, hostnames, or hashes — write a rule",
+  "  that would be reusable across investigations (match on artifact/event-id/path/filename patterns).",
+  "- If the request CANNOT be expressed as a single-event field-match rule — e.g. it needs counting,",
+  "  time-windows, thresholds, or correlating multiple events — do NOT invent a rule. Instead return",
+  "  `{ \"decline\": \"<one-sentence reason>\" }` and nothing else.",
+  "- Choose a short snake_case `ruleId` describing the rule.",
+  "- `explanation`: one or two sentences on exactly what the rule matches and what it does.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) in EXACTLY one of these two shapes:",
+  JSON.stringify({
+    ruleId: "windows_security_log_cleared",
+    explanation: "Matches events whose message shows Security event ID 1102 or 'audit log was cleared'; tags them log-cleared and defense-evasion and raises severity to High.",
+    rule: {
+      description: "Windows Security event log cleared (Security 1102)",
+      any: [{ field: "message", contains: ["1102", "audit log was cleared"] }],
+      tags: ["log-cleared", "defense-evasion"],
+      mitre: ["T1070.001"],
+      severity: "High",
+    },
+  }, null, 2),
+  "OR, when it cannot be expressed as a rule:",
+  JSON.stringify({ decline: "This needs counting logons within a time window, which a single-event content rule can't express." }, null, 2),
+].join("\n");
+
+export const getTaggerRulePrompt = (): string => resolvePrompt("TAGGERRULE", TAGGER_RULE_PROMPT);
+
 // The built-in prompt text for each capability the drift check knows about (see promptCapabilities.ts),
 // keyed by resolvePrompt name. Exported so the rot-guard test can assert each built-in still contains
 // its own required markers (if a rewrite drops one, the drift check silently rots — the test catches it).
 export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
   SYNTH: SYNTHESIS_PROMPT,
+  TAGGERRULE: TAGGER_RULE_PROMPT,
 };
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
@@ -3953,6 +4012,28 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getQueryTranslatePrompt(), userPrompt, images: [] }, "translate-query");
       const { interpretation, queries } = queryTranslationResponseSchema.parse(parsed);
       return { interpretation: sanitizeInterpretation(interpretation), queries: sanitizeQueryTranslations(queries, targets) };
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // Convert a plain-English description into ONE content-tagger rule (PR #112 follow-up), or a
+  // decline reason when it can't be expressed as a single-event field-match rule. EPHEMERAL — this
+  // returns a candidate for review; nothing is persisted here (the route's add step saves it). Uses
+  // the strong synthesisProvider like translateQuery — authoring a schema-constrained rule benefits
+  // from the general model over the VQL-tuned velociraptorProvider.
+  async suggestTaggerRule(caseId: string, description: string): Promise<SuggestOutcome> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("tagger rule suggestion");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const userPrompt =
+      `MATCHABLE FIELDS (use ONLY these): ${MATCHABLE_FIELDS.join(", ")}\n\n` +
+      `ANALYST REQUEST: ${description.trim()}\n\n` +
+      `Return the rule as JSON (or a decline).`;
+    return withRetry(async () => {
+      const parsed = await this.analyzeRestored(
+        caseId, loaded, provider,
+        { systemPrompt: getTaggerRulePrompt(), userPrompt, images: [] },
+        "suggest-tagger-rule",
+      );
+      return sanitizeSuggestedRule(suggestedRuleResponseSchema.parse(parsed));
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
