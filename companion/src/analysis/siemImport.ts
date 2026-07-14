@@ -95,6 +95,15 @@ type Row = Record<string, unknown>;
 
 const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 
+// Safety cap on emitted events, shared by every importer. Overridable via DFIR_MAX_EVENTS
+// (must be a positive integer to take effect; unset/invalid/non-positive values keep the
+// default so a typo or DFIR_MAX_EVENTS=0 can't silently reintroduce the cap analysts meant to lift).
+const DEFAULT_MAX_EVENTS = 2000;
+export function maxEventsDefault(): number {
+  const n = Number(process.env.DFIR_MAX_EVENTS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_EVENTS;
+}
+
 // ───────────────────────────── small value helpers ─────────────────────────────
 
 export function isObject(v: unknown): v is Row {
@@ -977,7 +986,7 @@ export function createEventAggregator(
   opts: { aggregate?: boolean; minSeverity?: Severity; maxEvents?: number } = {},
 ): EventAggregator {
   const aggregate = opts.aggregate ?? true;
-  const maxEvents = opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000);
+  const maxEvents = opts.maxEvents ?? maxEventsDefault();
   const floorRank = opts.minSeverity ? SEVERITY_RANK[opts.minSeverity] : Infinity;
 
   const byKey = new Map<string, SiemEvent>();
@@ -1082,7 +1091,7 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

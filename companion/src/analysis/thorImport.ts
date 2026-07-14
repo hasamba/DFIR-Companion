@@ -9,6 +9,7 @@
 // below. Only scored findings (Alert/Warning/Notice from real scan modules) survive.
 
 import type { Severity } from "./stateTypes.js";
+import { maxEventsDefault } from "./siemImport.js";
 
 // Modules that report scan lifecycle / app status, not host findings — dropped by default.
 const LIFECYCLE_MODULES = new Set(["Init", "Startup", "Control", "ThorDB", "Report"]);
@@ -138,7 +139,7 @@ const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 
 export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}): ThorParseResult {
   const dropInfo = opts.dropInfo ?? true;
   const dropLifecycle = opts.dropLifecycleModules ?? true;
-  const maxEvents = opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000);
+  const maxEvents = opts.maxEvents ?? maxEventsDefault();
 
   const lines = jsonText.split(/\r\n|\r|\n/).map((l) => l.trim()).filter(Boolean);
   let total = 0;

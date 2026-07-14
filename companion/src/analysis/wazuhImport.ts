@@ -28,6 +28,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -229,7 +230,7 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   // Best-effort dominant host: most-common agent.name across ALL mapped events.

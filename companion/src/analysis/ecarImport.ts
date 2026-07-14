@@ -41,6 +41,7 @@ import {
   type SiemEvent,
   type SiemIoc,
   type SiemParseResult,
+  maxEventsDefault,
 } from "./siemImport.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -333,7 +334,7 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? (Number(process.env.DFIR_MAX_EVENTS) || 2000),
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

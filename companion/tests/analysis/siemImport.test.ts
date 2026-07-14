@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, type SiemIoc } from "../../src/analysis/siemImport.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, maxEventsDefault, type SiemIoc } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -574,5 +574,43 @@ describe("row-scoped IOC provenance (aggKey plumbing)", () => {
     const iocs: SiemIoc[] = [{ type: "domain", value: "x.com", sourceAggKeys: ["agg-1", "agg-missing"] }];
     const eventIdByAggKey = new Map([["agg-1", "e001"]]);
     expect(resolveExtractedFrom(iocs, eventIdByAggKey)[0].extractedFrom).toEqual(["e001"]);
+  });
+});
+
+describe("maxEventsDefault", () => {
+  const ORIGINAL = process.env.DFIR_MAX_EVENTS;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.DFIR_MAX_EVENTS;
+    else process.env.DFIR_MAX_EVENTS = ORIGINAL;
+  });
+
+  it("falls back to 2000 when unset", () => {
+    delete process.env.DFIR_MAX_EVENTS;
+    expect(maxEventsDefault()).toBe(2000);
+  });
+
+  it("honors a positive override", () => {
+    process.env.DFIR_MAX_EVENTS = "50000";
+    expect(maxEventsDefault()).toBe(50000);
+  });
+
+  it("floors a fractional override", () => {
+    process.env.DFIR_MAX_EVENTS = "150.9";
+    expect(maxEventsDefault()).toBe(150);
+  });
+
+  it("falls back to 2000 for 0 instead of treating it as unlimited", () => {
+    process.env.DFIR_MAX_EVENTS = "0";
+    expect(maxEventsDefault()).toBe(2000);
+  });
+
+  it("falls back to 2000 for a negative value", () => {
+    process.env.DFIR_MAX_EVENTS = "-5";
+    expect(maxEventsDefault()).toBe(2000);
+  });
+
+  it("falls back to 2000 for an unparseable value", () => {
+    process.env.DFIR_MAX_EVENTS = "20oo";
+    expect(maxEventsDefault()).toBe(2000);
   });
 });
