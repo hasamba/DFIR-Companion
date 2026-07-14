@@ -111,9 +111,9 @@ describe("corroborationLabel", () => {
   it("marks a single-tool finding uncorroborated", () => {
     expect(corroborationLabel(f({ corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false } }))).toMatch(/uncorroborated/);
   });
-  it("surfaces a KEV badge and a hunt-artifact caution", () => {
+  it("surfaces a KEV badge and an unconfirmed-lead caution", () => {
     expect(corroborationLabel(f({ corroboration: { distinctTools: 2, distinctHosts: 1, intelSources: 0, graphLinked: false, kevLinked: true } }))).toMatch(/KEV/);
-    expect(corroborationLabel(f({ corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false, huntArtifactOnly: true } }))).toMatch(/hunt-artifact/i);
+    expect(corroborationLabel(f({ corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 0, graphLinked: false, huntArtifactOnly: true } }))).toMatch(/unconfirmed lead/i);
   });
 });
 

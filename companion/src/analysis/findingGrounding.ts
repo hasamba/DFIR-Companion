@@ -254,7 +254,8 @@ export function corroborationLabel(f: Finding): string {
   if (c.intelSources > 0) parts.push("intel ✓");
   if (c.graphLinked) parts.push("graph-linked");
   if (c.kevLinked) parts.push("KEV ✓");
+  if (c.verdictFirst) parts.push("tool-confirmed");
   const corroborated = c.distinctTools >= 2 || c.intelSources > 0 || c.graphLinked || !!c.kevLinked;
-  const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked ? " — hunt-artifact only" : "";
+  const huntCaution = c.huntArtifactOnly && c.intelSources === 0 && !c.kevLinked ? " — unconfirmed lead" : "";
   return `${parts.join(" / ")}${corroborated ? "" : " — uncorroborated"}${huntCaution}`;
 }
