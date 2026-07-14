@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaggerStore, compileText } from "../../src/analysis/taggerStore.js";
@@ -82,12 +82,6 @@ describe("TaggerStore", () => {
   });
 });
 
-import { mkdtemp, writeFile, rm, access } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { TaggerStore } from "../../src/analysis/taggerStore.js";
-
 describe("TaggerStore edits (add/remove/reset)", () => {
   let dir: string, userPath: string, defaultPath: string, store: TaggerStore;
   const DEFAULT = "svc:\n  any:\n    - { field: message, contains: ['7045'] }\n  tags: ['persistence']\n";
@@ -150,6 +144,12 @@ describe("TaggerStore edits (add/remove/reset)", () => {
     const res = await store.removeRule("does-not-exist");
     expect(res.removed).toBe(false);
     expect(res.ruleCount).toBe(1);
+  });
+
+  it("removeRule treats a prototype-chain key (e.g. 'toString') as absent", async () => {
+    const res = await store.removeRule("toString");
+    expect(res.removed).toBe(false);
+    expect(res.ruleCount).toBe(1); // 'svc' untouched
   });
 
   it("resetToDefault deletes the user file and falls back to the bundled default", async () => {

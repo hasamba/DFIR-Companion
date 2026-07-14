@@ -127,6 +127,10 @@ export class TaggerStore {
     }
   }
 
+  // addRuleYaml/removeRule/resetToDefault do an UNLOCKED read-modify-write on the shared rules file,
+  // matching the existing PUT /tagger/rules behavior — concurrent edits could interleave and one may
+  // clobber the other. Acceptable for a single-analyst local tool; not wired to a lock deliberately.
+
   /**
    * Merge one rule (a single-entry YAML map of id → rule) into the active ruleset. Validates the new
    * rule compiles, de-collides its id against existing ids, and persists via the validated save()
@@ -152,12 +156,11 @@ export class TaggerStore {
   async removeRule(id: string): Promise<{ removed: boolean; ruleCount: number }> {
     this.assertEditable();
     const map = await this.loadRawMap();
-    if (!(id in map)) {
+    if (!Object.hasOwn(map, id)) {
       const current = await this.load();
       return { removed: false, ruleCount: current.rules.length };
     }
-    const next: Record<string, unknown> = { ...map };
-    delete next[id];
+    const { [id]: _removed, ...next } = map;
     // An empty map serializes to "{}"; persist "" instead so the store reads back an empty ruleset.
     const text = Object.keys(next).length ? stringifyYaml(next) : "";
     const compiled = await this.save(text);
