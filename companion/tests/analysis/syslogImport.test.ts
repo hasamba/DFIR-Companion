@@ -92,4 +92,23 @@ describe("parseSyslog", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("Low");
   });
+
+  it("flags a successful SSH login after a burst of failures from the same IP (T1110.001)", () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const ss = String(10 + i).padStart(2, "0");
+      lines.push(`May 16 13:40:${ss} web01 sshd[900${i}]: Failed password for invalid user admin from 203.0.113.9 port 4100${i} ssh2`);
+    }
+    lines.push("May 16 13:41:00 web01 sshd[9100]: Accepted password for admin from 203.0.113.9 port 41099 ssh2");
+    const r = parseSyslog(lines.join("\n"), { assumeYear: 2024 });
+    const success = r.events.find((e) => e.mitreTechniques.includes("T1110.001"));
+    expect(success, "expected a brute-force-success event").toBeTruthy();
+    expect(success?.severity).toBe("Medium");
+    expect(success?.description).toMatch(/succeeded after \d+ failed attempts from 203\.0\.113\.9/);
+  });
+
+  it("does NOT flag an ordinary accepted login with no preceding failures", () => {
+    const r = parseSyslog(ACCEPT, { assumeYear: 2024 });
+    expect(r.events.every((e) => !e.mitreTechniques.includes("T1110.001"))).toBe(true);
+  });
 });

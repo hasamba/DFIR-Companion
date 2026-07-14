@@ -27,9 +27,10 @@
 // tag (see importDetect.ts), so an ASA export never reaches here.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+import { aggregateEvents, addIoc, cleanIp, oneLine, worst, type MappedEvent, type SiemIoc, type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
+import { parseSshAuth, markSshBruteForce, type SshAuthEvent } from "./sshBruteForce.js";
 
 export interface SyslogImportOptions {
   aggregate?: boolean;
@@ -159,7 +160,12 @@ export function looksLikeSyslog(text: string): boolean {
 export function mapSyslogLine(line: string, year: number, sink: Map<string, SiemIoc>): MappedEvent | null {
   const p = parseSyslogLine(line, year);
   if (!p) return null;
+  return mapParsedSyslog(p, sink);
+}
 
+// Map an already-parsed syslog record to a forensic event (collecting IOCs). Split out so parseSyslog
+// can parse each line once and reuse the ParsedSyslog for both event mapping and sshd auth correlation.
+function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEvent {
   // IOCs from the free-text message: public IPs + http(s) URLs (and each URL's host as a domain).
   for (const ip of p.message.match(IPV4_RE) ?? []) {
     const clean = cleanIp(ip);
@@ -197,13 +203,33 @@ export function parseSyslog(text: string, opts: SyslogImportOptions = {}): Syslo
   const maxIocs = opts.maxIocs ?? 5000;
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const sshAuth: SshAuthEvent<number>[] = []; // sshd auth outcomes, keyed by their index in `mapped`
   let total = 0;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
-    const m = mapSyslogLine(line, year, sink);
-    if (m) { total++; mapped.push(m); }
+    const p = parseSyslogLine(line, year);
+    if (!p) continue;
+    const m = mapParsedSyslog(p, sink);
+    total++;
+    const idx = mapped.push(m) - 1;
+    // Collect sshd login successes/failures for the brute-force-success correlation below.
+    if (/^sshd\b/i.test(p.app)) {
+      const auth = parseSshAuth(p.message);
+      if (auth) sshAuth.push({ key: idx, ms: Date.parse(p.timestamp) || 0, ip: auth.ip, result: auth.result });
+    }
+  }
+
+  // A successful SSH login preceded by a burst of failures from the same IP = brute force that landed
+  // (T1110.001). Escalate that accepted event to Medium and keep it a DISTINCT aggregation group (its
+  // digit-masked key would otherwise fold it in with benign accepted logins).
+  for (const hit of markSshBruteForce(sshAuth)) {
+    const e = mapped[hit.key];
+    e.severity = worst(e.severity, "Medium");
+    if (!e.mitre.includes("T1110.001")) e.mitre.push("T1110.001");
+    e.description = `${e.description} — SSH login succeeded after ${hit.failures} failed attempts from ${hit.ip} (possible brute-force success)`.slice(0, 600);
+    e.aggKey = `${e.aggKey}|bruteforce|${hit.ip}`.slice(0, 400);
   }
 
   const { events, groups } = aggregateEvents(mapped, {
