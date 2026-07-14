@@ -4409,6 +4409,10 @@
     let tlPage = 0;                           // current timeline page (0-based)
     let tlPageSize = 50;                      // rows per page; user-selectable
     let _tlKeepPage = false;                  // pagination buttons set this to avoid resetting to page 0
+    let iocPage = 0;                          // current IOC page (0-based) — client-side paging, mirrors the timeline
+    let iocPageSize = 100;                     // IOCs per page; user-selectable (0 = All)
+    let _iocKeepPage = false;                 // pagination buttons set this to avoid resetting to page 0
+    let _lastRenderedIocs = [];               // exact array last passed to renderIocs, so pagination can re-render the same data
 
     // --- Search/filter helpers (mirror companion/src/analysis/searchFilter.ts) ---------
     function _evMatchesSearch(e, q) {
@@ -12616,9 +12620,24 @@
       return [...iocs].sort((a, b) =>
         (a.type || "").localeCompare(b.type || "") || (a.value || "").localeCompare(b.value || "", undefined, { sensitivity: "base" }));
     }
+    // Client-side IOC pagination controls (mirror the forensic-timeline pager). Step keeps the current
+    // page across the re-render (_iocKeepPage); a page-size change jumps back to the first page.
+    function iocPageStep(delta) {
+      iocPage = Math.max(0, iocPage + delta);
+      _iocKeepPage = true;
+      renderIocs(_lastRenderedIocs);
+    }
+    function iocSetPageSize(n) {
+      iocPageSize = n;
+      iocPage = 0;
+      renderIocs(_lastRenderedIocs);
+    }
     function renderIocs(iocsRaw) {
       const el = document.getElementById("iocs");
       if (!el) return;
+      _lastRenderedIocs = iocsRaw || [];        // cache exact data so pagination can re-render the same list
+      if (!_iocKeepPage) iocPage = 0;           // any non-pagination re-render (import, filter, state push) resets to page 1
+      _iocKeepPage = false;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       renderIocTypeFilter(iocs);
       renderIocExcludeRules((lastState && lastState.iocExcludeRules) || []);
@@ -12649,12 +12668,21 @@
       // wants to catch, so this stays its own opt-out rather than being folded into "signal only".
       if (hideSystemPaths) visible = visible.filter(i => !isSystemPathIoc(i));
       const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;
+      // Client-side pagination (mirrors the forensic timeline) — slice the filtered set into pages.
+      const totalFiltered = visible.length;
+      const iocTotalPages = iocPageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / iocPageSize)) : 1;
+      if (iocPage >= iocTotalPages) iocPage = iocTotalPages - 1;
+      if (iocPage < 0) iocPage = 0;
+      const iocStart = iocPageSize > 0 ? iocPage * iocPageSize : 0;
+      const iocEnd = iocPageSize > 0 ? Math.min(iocStart + iocPageSize, totalFiltered) : totalFiltered;
+      const pageVisible = iocPageSize > 0 ? visible.slice(iocStart, iocEnd) : visible;
       // Mirror the forensic/super timeline badges: "(N of M IOCs)" when a filter narrows the list,
       // else just the total — plus the flagged count, which always reflects the FULL unfiltered set.
       const cnt = document.getElementById("iocFlaggedCount");
       if (cnt) {
         const scope = visible.length === iocs.length ? `${iocs.length} IOC${iocs.length !== 1 ? "s" : ""}` : `${visible.length} of ${iocs.length} IOCs`;
-        cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""})`;
+        const pageSuffix = (iocPageSize > 0 && totalFiltered > iocPageSize) ? ` — page ${iocPage + 1} of ${iocTotalPages}` : "";
+        cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""}${pageSuffix})`;
       }
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
@@ -12665,17 +12693,29 @@
         updateIocBulkBar();
         return;
       }
-      const allIds = visible.map(i => i.id);
+      // Select-all is page-scoped (matches the forensic timeline): the header checkbox reflects only the
+      // rows actually rendered on this page, since the select-all click handler acts on the rendered rows.
+      const allIds = pageVisible.map(i => i.id);
       const allSel = allIds.length > 0 && allIds.every(id => selectedIocs.has(id));
       const someSel = allIds.some(id => selectedIocs.has(id));
       const countLabel = visible.length === iocs.length
         ? `${visible.length} IOC${visible.length !== 1 ? "s" : ""}`
         : `${visible.length} of ${iocs.length} IOC${iocs.length !== 1 ? "s" : ""} shown`;
+      // Page-size selector (right column of the header) + Prev/Next bar — reuse the timeline pager styles.
+      const iocPageSizes = [50, 100, 250, 500, 0];
+      const iocPageSizeOpts = iocPageSizes.map(n =>
+        `<option value="${n}"${iocPageSize === n ? " selected" : ""}>${n === 0 ? "All" : n}</option>`).join("");
+      const iocPaginationBar = (iocPageSize > 0 && totalFiltered > iocPageSize) ? `<div class="tl-page-bar">`
+        + `<button class="tl-page-btn" onclick="iocPageStep(-1)" ${iocPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<span class="tl-page-info">${iocStart + 1}–${iocEnd} of ${totalFiltered}</span>`
+        + `<button class="tl-page-btn" onclick="iocPageStep(1)" ${iocPage >= iocTotalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `</div>` : "";
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
-        + `<span>Type</span><span>${countLabel}</span><span></span>`
+        + `<span>Type</span><span>${countLabel}</span>`
+        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" onchange="iocSetPageSize(+this.value)">${iocPageSizeOpts}</select></span>`
         + `</div>`;
-      const rows = visible.map(i => {
+      const rows = pageVisible.map(i => {
         const isNew = newIocKeys.has(i.value);
         const isSel = selectedIocs.has(i.id);
         const isFp = fpVals.has(String(i.value).trim().toLowerCase());
@@ -12698,7 +12738,7 @@
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
           + `</div>`;
       }).join("");
-      el.innerHTML = headerRow + rows;
+      el.innerHTML = headerRow + iocPaginationBar + rows;
       const selAll = document.getElementById("iocSelectAll");
       if (selAll && someSel && !allSel) selAll.indeterminate = true;
       updateIocBulkBar();
