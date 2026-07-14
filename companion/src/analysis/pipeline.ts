@@ -79,6 +79,7 @@ import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImp
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
 import { parseVelociraptorJson, parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
+import { demoteBelowSeverity } from "./forensicGate.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
 import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
@@ -2220,6 +2221,11 @@ export class AnalysisPipeline {
       importedAt: string;
       velociraptor?: VelociraptorImportOptions;
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
+      // When set, gate at MERGE time: super-timeline gets everything, only events rank >= this enter the
+      // forensic timeline (so a huge MFT/USN file import never floods case state, then stalls on a demote).
+      // Set only by the file/drop import path; the live hunt/external paths leave it unset and let the
+      // route's demoteForensicForCase apply the gate afterwards (unchanged behaviour).
+      forensicMinSeverity?: Severity;
       veloUrl?: string;          // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
       onProgress?: (done: number, total: number) => void;
     },
@@ -2237,15 +2243,33 @@ export class AnalysisPipeline {
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
     const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
+    const allEvents: ForensicEvent[] = parsed.events.map((e, i) => {
       const { aggKey, ...rest } = e;
       const id = `${opts.idPrefix}e${i + 1}`;
       if (aggKey) eventIdByAggKey.set(aggKey, id);
       return {
         ...rest, id, sources: rest.sources?.length ? rest.sources : ["Velociraptor"],
+        relatedFindingIds: [], sourceScreenshots: [opts.label],
         ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
       };
     });
+
+    // Forensic severity gate AT MERGE TIME (opt-in via opts.forensicMinSeverity — set by the file/drop
+    // import path, resolved from the per-case forensic gate). When gated: the super-timeline is the
+    // complete record so it gets EVERY event here, and only graded signal (rank >= the gate) enters the
+    // forensic timeline. Info telemetry — the bulk of an MFT/USN import, often hundreds of thousands of
+    // rows — goes to the super-timeline ONLY and never floods case state (which previously produced a
+    // ~350MB forensic timeline, a post-import "demote" that could stall, and a super-timeline where every
+    // row showed "promoted"). When NOT gated (live hunt / external / bundle imports), behaviour is
+    // unchanged: all events enter the forensic timeline and the route's demoteForensicForCase gates after.
+    let forensicEvents: ForensicEvent[] = allEvents;
+    if (opts.forensicMinSeverity) {
+      if (this.opts.superTimelineStore && allEvents.length) {
+        await this.opts.superTimelineStore.append(caseId, allEvents);
+      }
+      forensicEvents = demoteBelowSeverity(allEvents, opts.forensicMinSeverity).kept;
+    }
+
     const raw = {
       findings: [],
       iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
