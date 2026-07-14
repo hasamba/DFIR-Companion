@@ -20,9 +20,9 @@ export interface ExtractionFixture {
   name: string;
   modality: "csv" | "log";
   input: string;
-  canned: string;
+  canned: string;            // MockProvider response (Phase-1 deterministic runs); ignored in --real mode
   golden: GoldenEvent[];
-  thresholds?: Thresholds;
+  thresholds?: Thresholds;   // per-fixture override; else DEFAULT_THRESHOLDS (mock) / REAL_THRESHOLDS (--real)
 }
 
 export interface SynthesisFixture {
@@ -68,6 +68,35 @@ export const EXTRACTION_FIXTURES: ExtractionFixture[] = [
       { keywords: ["brute force", "root"], mitreTechniques: ["T1110"], asset: "srv" },
     ],
   },
+  {
+    name: "powershell-encoded-csv",
+    modality: "csv",
+    input: [
+      "Timestamp,Host,ParentImage,Image,CommandLine",
+      "2026-06-01T09:15:00Z,WS02,C:\\Windows\\System32\\WINWORD.EXE,C:\\Windows\\System32\\powershell.exe,powershell -nop -w hidden -enc SQEXpAGkAZQBz",
+    ].join("\n"),
+    canned: delta([
+      { id: "e1", timestamp: "2026-06-01T09:15:00Z", description: "WINWORD spawned encoded PowerShell on WS02 (macro execution)", severity: "High", mitreTechniques: ["T1059.001"], asset: "WS02" },
+    ]),
+    golden: [
+      { timestamp: "2026-06-01T09:15:00Z", keywords: ["powershell", "ws02"], mitreTechniques: ["T1059.001"], asset: "WS02" },
+    ],
+  },
+  {
+    name: "proxy-exfil-log",
+    modality: "log",
+    input: [
+      "2026-06-01T13:00:00Z 10.1.1.5 CONNECT mega.nz:443 bytes_out=1048576 user=svc_backup",
+      "2026-06-01T13:00:05Z 10.1.1.5 CONNECT mega.nz:443 bytes_out=2097152 user=svc_backup",
+      "2026-06-01T13:00:10Z 10.1.1.5 GET update.microsoft.com/patch bytes_out=512 user=SYSTEM",
+    ].join("\n"),
+    canned: delta([
+      { id: "e1", timestamp: "2026-06-01T13:00:00Z", description: "Large outbound transfer to mega.nz from 10.1.1.5 (svc_backup) — likely exfiltration", severity: "High", mitreTechniques: ["T1567.002"], asset: "10.1.1.5" },
+    ]),
+    golden: [
+      { keywords: ["mega.nz", "exfil"], mitreTechniques: ["T1567.002"] },
+    ],
+  },
 ];
 
 export const SYNTHESIS_FIXTURES: SynthesisFixture[] = [
@@ -85,6 +114,20 @@ export const SYNTHESIS_FIXTURES: SynthesisFixture[] = [
       ],
       iocs: [], mitreTechniques: [{ id: "T1486", name: "Data Encrypted for Impact" }],
       threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "ransomware case",
+    }),
+  },
+  {
+    name: "lateral-movement-timeline",
+    seedEvents: [
+      ev({ id: "s1", timestamp: "2026-06-01T08:00:00Z", description: "PsExec service install on FS01 from WS02", severity: "High", mitreTechniques: ["T1021.002"], asset: "FS01" }),
+      ev({ id: "s2", timestamp: "2026-06-01T08:05:00Z", description: "Admin logon (type 3) to DC01 using harvested creds", severity: "Critical", mitreTechniques: ["T1078.002"], asset: "DC01" }),
+    ],
+    canned: JSON.stringify({
+      findings: [
+        { id: "f1", severity: "High", confidence: 75, confidenceReason: "service install + source host", title: "Lateral movement via PsExec", description: "WS02 → FS01 over SMB", relatedIocs: [], mitreTechniques: ["T1021.002"], status: "open", relatedEventIds: ["s1"] },
+      ],
+      iocs: [], mitreTechniques: [{ id: "T1021.002", name: "SMB/Windows Admin Shares" }],
+      threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "lateral movement case",
     }),
   },
 ];

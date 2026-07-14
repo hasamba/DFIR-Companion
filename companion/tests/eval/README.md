@@ -2,12 +2,14 @@
 
 Automated way to tell whether a prompt change improves or regresses extraction/synthesis quality.
 
-## Status: Phase 1 (CI-safe foundation)
+## Status: Phase 1 + Phase 2
 
-The original issue asked for a single harness with "CI-friendly exit codes" that runs real extraction/synthesis and computes precision/recall. That can't be one thing: meaningful precision/recall needs **real** model calls, which cost tokens and are flaky/slow — they can't gate every PR. So the harness is split:
+The original issue asked for a single harness with "CI-friendly exit codes" that runs real extraction/synthesis and computes precision/recall. That can't be one thing: meaningful precision/recall needs **real** model calls, which cost tokens and are flaky/slow — they can't gate every PR. So the harness runs in two modes off the *same* runners, scorer, and fixtures:
 
-- **Phase 1 (this):** the pure **scorer** + a **MockProvider** harness + golden fixtures + a CLI runner. Deterministic, zero-cost, runs in normal CI. Gates the *plumbing and the scoring math*.
-- **Phase 2 (planned):** a `--real` mode that swaps `makeEvalPipeline`'s MockProvider for the env-configured `buildProvider()` (gated on `DFIR_AI_KEY`) and points the same runners at a ≥5-case golden screenshot/CSV/log set. Runs manually or nightly, **non-blocking**, with tolerance thresholds. The scorer and fixture shapes below are the stable contract Phase 2 builds on.
+- **Phase 1 — mock (CI-gating):** every fixture is driven by a `MockProvider` built from its canned response. Deterministic, zero-cost, runs in normal CI. Gates the *plumbing and the scoring math*.
+- **Phase 2 — `--real` (non-blocking):** the env-configured provider (`realProviderOrNull()` → `buildProvider()`) scores the **current prompt's actual output** against the golden expectations — the real regression signal. Gated on `DFIR_AI_*`: if no provider is configured it **skips (exit 0)**, so it never breaks CI. Uses relaxed `REAL_THRESHOLDS` (recall-weighted) because a real model won't reproduce a golden set exactly. Run it manually or on a nightly/labeled workflow; it is **not** in `npm test`.
+
+Screenshot goldens (`analyzeWindow`) are deliberately not committed — real case screenshots are sensitive. The committed golden set is synthetic CSV/log/synthesis, which exercises prompt quality without shipping evidence. A future step can point `--real` at a local screenshot directory via env.
 
 ## Files
 
@@ -23,12 +25,18 @@ The original issue asked for a single harness with "CI-friendly exit codes" that
 ## Run
 
 ```bash
+# Phase 1 — deterministic (MockProvider), safe to gate PRs
 npm run eval             # both extraction + synthesis
 npm run eval:extraction  # precision/recall per fixture
 npm run eval:synthesis   # coverage / hallucination per fixture
+
+# Phase 2 — real provider (needs DFIR_AI_PROVIDER / DFIR_AI_KEY in env or .env); non-blocking
+npm run eval:real
+npm run eval:real:extraction
+npm run eval:real:synthesis
 ```
 
-Exit code `0` = all pass, `1` = a gate failed, `2` = a runner error.
+Exit code `0` = all pass (or `--real` skipped for no provider), `1` = a gate failed, `2` = a runner error.
 
 ## Scoring model
 
