@@ -109,6 +109,14 @@ describe("TaggerStore edits (add/remove/reset)", () => {
     expect(active.rules.map((r) => r.id).sort()).toEqual(["logon", "svc"]);
   });
 
+  it("addRuleYaml creates the rules directory if it does not exist", async () => {
+    // point the store at a NESTED path whose parent dir is absent
+    const nestedStore = new TaggerStore(join(dir, "missing-subdir", "tags.yaml"), [defaultPath]);
+    const res = await nestedStore.addRuleYaml("logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n");
+    expect(res.ruleCount).toBeGreaterThanOrEqual(1);
+    expect((await nestedStore.load()).source).toBe("user");
+  });
+
   it("addRuleYaml de-collides an id that already exists", async () => {
     const yaml = "svc:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n";
     const res = await store.addRuleYaml(yaml);

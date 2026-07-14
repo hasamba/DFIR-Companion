@@ -9,7 +9,7 @@
 // Invalid YAML / an invalid ruleset THROWS (never a partial load): the manual-run route surfaces the
 // error; the auto-run pipeline hook catches it and skips (a broken hand-edit must not break imports).
 
-import { readFile, access, rm } from "node:fs/promises";
+import { readFile, access, rm, mkdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,6 +104,7 @@ export class TaggerStore {
    */
   async save(yamlText: string): Promise<CompiledRuleset> {
     const compiled = compileText(yamlText); // throws on invalid — nothing is written
+    await mkdir(dirname(this.userRulesPath), { recursive: true }); // atomicWrite won't create parents
     await atomicWrite(this.userRulesPath, yamlText);
     return compiled;
   }
