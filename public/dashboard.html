@@ -4020,6 +4020,18 @@
         <div id="learnedPatterns"></div>
       </div>
     </section>
+    <section id="sec-source-trust" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Source Trust <span class="ev-sub">how much each tool's evidence is weighted — steers which tool's wording wins a cross-source merge and caps confidence for low-trust-only findings (#66)</span></h2>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Override a source's trust (0–1) for THIS case — e.g. a hunt that was noisy on this engagement. Blank = use the built-in default. Applies on the next synthesis.</p>
+      <div id="sourceTrustList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 16px">—</div>
+      <div style="margin-top:10px"><button id="sourceTrustSaveBtn" type="button">Save trust overrides</button><span id="sourceTrustMsg" style="margin-left:8px;font-size:11px;color:var(--c-9aa4b2)"></span></div>
+    </section>
+    <style>
+    .st-row { display:flex; align-items:center; gap:8px; font-size:12px; }
+    .st-name { color:var(--c-e6e9ef); flex:1; }
+    .st-def { color:var(--c-6b7280); font-size:11px; }
+    .st-row input { width:56px; background:var(--c-1e2330); color:var(--c-e6e6e6); border:1px solid var(--c-2a2f3a); border-radius:4px; padding:2px 4px; }
+    </style>
     <style>
       #sec-playbook .pb-badge{font-size:12px;color:var(--c-9aa4b2);font-weight:normal;margin-left:8px}
       .pb-toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
@@ -12677,6 +12689,40 @@
       fetch(`/cases/${caseId}/learned-patterns`).then(r => r.ok ? r.json() : []).then(renderLearnedPatterns).catch(() => {});
     }
 
+    // Source trust (#66): show each known source's default weight with an editable per-case override.
+    let sourceTrustDefaults = {};
+    function renderSourceTrust(payload) {
+      sourceTrustDefaults = (payload && payload.defaults) || {};
+      const overrides = (payload && payload.overrides) || {};
+      const el = document.getElementById("sourceTrustList");
+      if (!el) return;
+      const keys = Object.keys(sourceTrustDefaults).sort((a, b) => (sourceTrustDefaults[b] - sourceTrustDefaults[a]) || a.localeCompare(b));
+      el.innerHTML = keys.map(k =>
+        `<div class="st-row"><span class="st-name">${esc(k)}</span>` +
+        `<span class="st-def" title="Built-in default">${sourceTrustDefaults[k].toFixed(2)}</span>` +
+        `<input type="number" min="0" max="1" step="0.05" data-src="${escAttr(k)}" placeholder="${sourceTrustDefaults[k].toFixed(2)}" value="${overrides[k] != null ? overrides[k] : ""}" /></div>`
+      ).join("");
+    }
+    function loadSourceTrust(caseId) {
+      fetch(`/cases/${caseId}/source-trust`).then(r => r.ok ? r.json() : null).then(p => { if (p) renderSourceTrust(p); }).catch(() => {});
+    }
+    document.getElementById("sourceTrustSaveBtn").addEventListener("click", function(e) {
+      e.stopPropagation();
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("sourceTrustMsg");
+      if (!caseId) { msg.textContent = "open a case first"; return; }
+      const overrides = {};
+      document.querySelectorAll("#sourceTrustList input[data-src]").forEach(inp => {
+        const v = inp.value.trim();
+        if (v !== "") { const n = Number(v); if (n >= 0 && n <= 1) overrides[inp.getAttribute("data-src")] = n; }
+      });
+      msg.textContent = "saving…";
+      fetch(`/cases/${caseId}/source-trust`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ overrides }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(p => { renderSourceTrust(p); msg.textContent = "saved — applies on next synthesis"; })
+        .catch(err => { msg.textContent = "failed: " + err.message + " — restart the companion server if this 404s"; });
+    });
+
     // Event delegation for the dynamically-rendered mark-FP / un-mark buttons.
     document.addEventListener("click", (e) => {
       const caseId = document.getElementById("caseId").value.trim();
@@ -14049,6 +14095,7 @@
       loadAnonToggle(caseId);
       loadFalsePositives(caseId);
       loadLearnedPatterns(caseId);
+      loadSourceTrust(caseId);
       loadScope(caseId);
       loadConfidenceControl(caseId);
       loadCorrProfile(caseId);
@@ -14190,6 +14237,7 @@
         else if (msg.type === "importers_changed") { if (document.getElementById("stab-importers")) loadImporters(); }
         else if (msg.type === "false_positive_changed") loadFalsePositives(caseId);
         else if (msg.type === "learned_patterns_changed") loadLearnedPatterns(caseId);
+        else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
           document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
@@ -16302,6 +16350,7 @@
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-false-positive", label: "False Positives" },
+      { id: "sec-source-trust", label: "Source Trust" },
       { id: "sec-hypotheses",   label: "Hypotheses" },
       { id: "sec-super-timeline", label: "Super-Timeline" },
       { id: "sec-notebook",     label: "Analyst Notebook" },

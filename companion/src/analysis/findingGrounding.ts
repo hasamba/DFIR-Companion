@@ -15,6 +15,7 @@ import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity, NextS
 import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
+import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -28,6 +29,11 @@ export const HUNT_ARTIFACT_CONFIDENCE_CAP = 55;
 // Rank at/above which a supporting event counts as an adjudicated "detection" (verdict-first) rather than
 // raw telemetry — the same Low+ cut iocProvenance.ts uses for detection-vs-telemetry.
 const DETECTION_RANK = SEVERITY_RANK.Low;
+// Per-source trust (#66): a finding whose best supporting source is below this trust (e.g. supported only
+// by a generic log or a noisy artifact row) can't claim high confidence. Applied as a CAP — this pass only
+// ever LOWERS confidence, so trust never boosts a high-trust finding, it only reins in a low-trust one.
+export const LOW_TRUST_THRESHOLD = 0.7;
+export const LOW_TRUST_CONFIDENCE_CAP = 55;
 
 function appendReason(existing: string | undefined, note: string): string {
   const base = (existing ?? "").trim();
@@ -42,6 +48,7 @@ export interface GroundingInput {
   // CVE ids (upper-cased) present in the case that MATCH the CISA KEV catalog (issue #61). A finding is
   // `kevLinked` when it references one of these. Optional — omit/empty when no KEV catalog is loaded.
   kevCveIds?: ReadonlySet<string>;
+  sourceTrust?: SourceTrustMap;                 // #66: per-source trust; absent → no trust-based capping
 }
 
 // The IOC ids that carry at least one malicious/suspicious intel verdict — the finding-level "intel
@@ -73,7 +80,7 @@ function findingIsKevLinked(
 }
 
 export function groundAndScoreFindings(input: GroundingInput): Finding[] {
-  const { findings, scopedEvents, iocs, graphLinkedEventIds } = input;
+  const { findings, scopedEvents, iocs, graphLinkedEventIds, sourceTrust } = input;
   const kevCveIds = input.kevCveIds ?? new Set<string>();
   const scopedById = new Map(scopedEvents.map((e) => [e.id, e] as const));
   const iocById = new Map(iocs.map((i) => [i.id, i] as const));
@@ -136,6 +143,18 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
           confidence = HUNT_ARTIFACT_CONFIDENCE_CAP;
           confidenceReason = appendReason(confidenceReason, "capped: rests only on raw hunt-collection artifacts — no detection verdict; triage before acting");
         }
+      }
+    }
+
+    // Low-trust cap (#66): if the finding's BEST supporting source is below the trust threshold (e.g. it
+    // rests only on a generic log or a noisy artifact row), it can't claim high confidence — cap it. Runs
+    // in addition to the caps above (a low-trust single-source finding takes the lower of the two). Only
+    // when a trust map is supplied and evidence exists; only ever lowers.
+    if (sourceTrust && supporting.length > 0) {
+      const bestTrust = Math.max(...supporting.map((e) => trustForSources(e.sources, sourceTrust)));
+      if (bestTrust < LOW_TRUST_THRESHOLD && (confidence ?? 100) > LOW_TRUST_CONFIDENCE_CAP) {
+        confidence = LOW_TRUST_CONFIDENCE_CAP;
+        confidenceReason = appendReason(confidenceReason, `capped: low-trust source(s) only (max trust ${bestTrust.toFixed(2)})`);
       }
     }
 

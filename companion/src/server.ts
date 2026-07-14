@@ -103,6 +103,7 @@ import { PinnedFindingsStore } from "./analysis/pinnedFindings.js";
 import { NotebookStore } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
+import { SourceTrustStore } from "./analysis/sourceTrustStore.js";
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { TaggerStore } from "./analysis/taggerStore.js";
@@ -287,6 +288,9 @@ export interface AppOptions {
   // synthesis as a confidence-lowering block. onLearnedPatterns pings dashboard clients to re-fetch.
   learnedPatternStore?: LearnedPatternStore;
   onLearnedPatterns?: (caseId: string) => void;
+  // Per-case source-trust overrides (issue #66). onSourceTrust pings dashboard clients to re-fetch.
+  sourceTrustStore?: SourceTrustStore;
+  onSourceTrust?: (caseId: string) => void;
   // Analyst-defined attacker-presence time windows (dwell-time feature). onDwellWindow pings live
   // dashboard clients over the WS to re-fetch after a mutation, mirroring onHypotheses.
   dwellWindowStore?: DwellWindowStore;
@@ -2770,6 +2774,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
     learnedPatternStore: new LearnedPatternStore(params.store), // #65 feed learned dismissal patterns into synthesis
+    sourceTrustStore: new SourceTrustStore(params.store),   // #66 per-source trust weights for merge + confidence
     playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
     importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
@@ -2913,6 +2918,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const notebookStore = new NotebookStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const learnedPatternStore = new LearnedPatternStore(store);
+  const sourceTrustStore = new SourceTrustStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
   const forensicGateControlStore = new ForensicGateControlStore(store);
@@ -3041,6 +3047,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onHypotheses: (caseId) => hub.broadcastTo(caseId, { type: "hypotheses_changed" }),
     learnedPatternStore,
     onLearnedPatterns: (caseId) => hub.broadcastTo(caseId, { type: "learned_patterns_changed" }),
+    sourceTrustStore,
+    onSourceTrust: (caseId) => hub.broadcastTo(caseId, { type: "source_trust_changed" }),
     dwellWindowStore,
     onDwellWindow: (caseId) => hub.broadcastTo(caseId, { type: "dwell_window_changed" }),
     superTimelineStore,
