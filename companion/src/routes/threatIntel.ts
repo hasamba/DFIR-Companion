@@ -7,6 +7,7 @@ import { EnrichControlStore, resolveEnabledProviders } from "../enrichment/enric
 import { enrichIocs } from "../enrichment/enrichService.js";
 import { mergeEnrichedSubset } from "../analysis/iocBulkOps.js";
 import { deriveIocProvenance } from "../analysis/iocProvenance.js";
+import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { buildIocProvenanceChains } from "../analysis/iocProvenanceChain.js";
 import { parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
@@ -123,6 +124,25 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
       }
       return res.status(200).json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Composite IOC risk score (#63): { iocId: { score, factors } }. Full fidelity — pulls the KEV
+  // catalog, the NSRL known-good set, and the IOC-whitelist rules from their stores when wired, so
+  // whitelisted/NSRL hits correctly read as `benign`. Powers the dashboard risk badge + risk filter.
+  app.get("/cases/:id/ioc-risk", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    try {
+      if (!(await store.caseExists(req.params.id))) {
+        return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+      }
+      const state = await options.stateStore.load(req.params.id);
+      const kevCatalog = options.kevStore ? await options.kevStore.loadCatalog() : undefined;
+      const nsrlHashes = options.nsrlStore ? await options.nsrlStore.load() : new Set<string>();
+      const whitelistRules = options.iocWhitelistStore ? await options.iocWhitelistStore.load() : [];
+      return res.status(200).json(scoreIocsFromState(state, { kevCatalog, nsrlHashes, whitelistRules }));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

@@ -525,4 +525,19 @@ describe("renderMarkdownReport", () => {
       expect(md).toContain("country-level");
     });
   });
+
+  describe("IOC composite risk column (#63)", () => {
+    it("renders a Risk column with the tier + top factor", () => {
+      const s = emptyState("c1");
+      s.iocs.push({ id: "i1", type: "ip", value: "9.9.9.9", firstSeen: "t0", enrichments: [
+        { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
+        { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
+      ] });
+      s.forensicTimeline.push({ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "C2 to 9.9.9.9",
+        severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], srcIp: "9.9.9.9", sources: ["EDR", "FW"] });
+      const md = renderMarkdownReport(s);
+      expect(md).toContain("| ID | Type | Value | First seen | Sources | Risk |");
+      expect(md).toContain("**critical**");
+    });
+  });
 });

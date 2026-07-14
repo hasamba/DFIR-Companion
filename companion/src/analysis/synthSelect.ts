@@ -4,6 +4,7 @@ import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
 import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset, classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
+import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -290,7 +291,20 @@ export function buildSynthesisContext(
   // automatic run over a noisy multi-host timeline doesn't anchor its narrative on a benign host.
   const concentrationBlock = buildSignalConcentrationDigest(rankHosts({ ...state, forensicTimeline: scopedEvents }));
 
+  // Composite IOC risk (#63): surface the actionable critical/high indicators (verdict + severity +
+  // corroboration + KEV) so the model prioritises them. Whitelist/NSRL aren't wired here (no store
+  // access) — those only produce `benign`, which this block excludes anyway.
+  const iocRisk = scoreIocs(state.iocs, scopedEvents, { hostNames, kevCatalog });
+  const topRisk = state.iocs
+    .map((i) => ({ i, r: iocRisk[i.id] }))
+    .filter((x) => x.r && (x.r.score === "critical" || x.r.score === "high"))
+    .sort((a, b) => RISK_TIER_RANK[b.r.score] - RISK_TIER_RANK[a.r.score]);
+  const riskBlock = topRisk.length
+    ? `HIGH-RISK INDICATORS (composite score — act on these first):\n${topRisk.slice(0, 15).map((x) => `- [${x.r.score}] ${x.i.value} (${x.i.type}) — ${x.r.factors.slice(0, 2).join("; ")}`).join("\n")}\n\n`
+    : "";
+
   let block = "";
+  if (riskBlock) block += riskBlock;
   if (concentrationBlock) block += concentrationBlock;
   if (connectiveBlock) block += connectiveBlock;
   if (assetLines.length) block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;

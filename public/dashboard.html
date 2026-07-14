@@ -879,6 +879,13 @@
     .ioc-prov-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; }
     .ioc-prov-detection { background: var(--c-0d1b2e); color: var(--c-6aa9ff); border: 1px solid var(--c-2a3a52); }
     .ioc-prov-telemetry { background: var(--c-1a1f28); color: var(--c-6b7280); border: 1px solid var(--c-3a4050); }
+    /* Composite IOC risk badge (#63) — severity-keyed colours; benign/low recede. */
+    .ioc-risk-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+    .ioc-risk-critical { background: var(--c-2a0d0d); color: var(--c-ff6b6b); border: 1px solid var(--c-5a2a2a); }
+    .ioc-risk-high { background: var(--c-211405); color: var(--c-ff9f43); border: 1px solid var(--c-5a3a1a); }
+    .ioc-risk-medium { background: var(--c-1f1c05); color: var(--c-ffd93b); border: 1px solid var(--c-4a441a); }
+    .ioc-risk-low { background: var(--c-1a1f28); color: var(--c-6b7280); border: 1px solid var(--c-3a4050); }
+    .ioc-risk-benign { background: var(--c-0d1a12); color: var(--c-6bcb77); border: 1px solid var(--c-1e3a24); }
     .ioc-noise-chk { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--c-9aa4b2); cursor: pointer; }
     .ioc-noise-chk input { cursor: pointer; }
     /* IOC multi-select + bulk action bar */
@@ -3772,7 +3779,7 @@
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" onclick="event.stopPropagation()"><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" onsubmit="return false" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><select class="corrob-sel" id="riskIocs" title="Risk lens (#63) — show only IOCs at or above a composite risk tier (verdict + severity + corroboration + KEV). A lens; nothing is deleted." onclick="event.stopPropagation()"><option value="0">🎚 any risk</option><option value="2">◆ medium+</option><option value="3">◆ high+</option><option value="4">◆ critical</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" onclick="event.stopPropagation()"><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" onsubmit="return false" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
@@ -8982,7 +8989,7 @@
           scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
           scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
           scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
-          scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload();
+          scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
           loadSuperTimeline(caseId);
         })
         .catch(() => document.getElementById("status").textContent = "scope failed — restart the companion server to load the latest endpoints.");
@@ -9860,6 +9867,36 @@
         return ` <span class="ioc-prov-badge ioc-prov-detection" title="Detection-linked: this IOC appears in a graded (Low or higher) event — not just Info telemetry">detection-linked</span>`;
       }
       return ` <span class="ioc-prov-badge ioc-prov-telemetry" title="Telemetry-only: this IOC appears only in Info telemetry, not in any graded detection event">telemetry-only</span>`;
+    }
+
+    // Composite IOC risk (#63): { iocId: { score, factors } }, derived server-side from verdict +
+    // severity + corroboration + KEV + NSRL/whitelist. Bulk-fetched per case connect like provenance.
+    let iocRisk = {};
+    let iocRiskTimer = null;
+    let riskIocsFilter = parseInt(localStorage.getItem("dfir.risk.iocs") || "0", 10) || 0;   // min risk RANK to show (0 = any); set by the risk lens
+    const RISK_RANK = { critical: 4, high: 3, medium: 2, low: 1, benign: 0 };
+    function loadIocRisk(caseId) {
+      fetch(`/cases/${caseId}/ioc-risk`).then(r => r.json()).then(m => {
+        iocRisk = (m && typeof m === "object") ? m : {};
+        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+      }).catch(() => {});
+    }
+    function scheduleIocRiskReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(iocRiskTimer);
+      iocRiskTimer = setTimeout(() => loadIocRisk(caseId), 800);
+    }
+    function iocRiskRankOf(iocId) {
+      const r = iocRisk[iocId];
+      return r && r.score in RISK_RANK ? RISK_RANK[r.score] : -1;   // -1 = not yet scored (excluded by a tier filter)
+    }
+    // Colored risk badge with the factors as a tooltip. Benign/low recede; medium+ signal.
+    function iocRiskBadge(iocId) {
+      const r = iocRisk[iocId];
+      if (!r || !(r.score in RISK_RANK)) return "";
+      const tip = (r.factors || []).join(" · ") || r.score;
+      return ` <span class="ioc-risk-badge ioc-risk-${esc(r.score)}" title="Composite risk (#63): ${escAttr(tip)}">${esc(r.score)}</span>`;
     }
 
     // IOC provenance CHAIN (#247): { iocId: { extraction, extractionTruncated, enrichment, findings } },
@@ -12258,6 +12295,7 @@
       if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
       if (iocProvenanceFilter !== "all") visible = visible.filter(i => iocProvenanceOf(i.id) === iocProvenanceFilter);   // provenance lens
+      if (riskIocsFilter > 0) visible = visible.filter(i => iocRiskRankOf(i.id) >= riskIocsFilter);   // risk lens (#63)
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
       // per-browser): "Hide FP/no-intel" drops confirmed-false-positive + checked-nothing-found
       // IOCs; "Signal only" narrows further to IOCs that are flagged, corroborated by 2+ tools, or
@@ -12287,7 +12325,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div style='color:var(--c-9aa4b2)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || noiseFiltersActive) && iocs.length > 0
+          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
             ? `<div style='color:var(--c-9aa4b2)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div style='color:var(--c-9aa4b2)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -12321,7 +12359,7 @@
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
           + `<span class="ioc-main-cell">`
-          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
           + `</div>`;
@@ -13541,6 +13579,7 @@
       loadSwimlane(caseId);
       loadIocSources(caseId);
       loadIocProvenance(caseId);
+      loadIocRisk(caseId);
       loadIocProvenanceChains(caseId);
       loadComments(caseId);
       loadActivityLog(caseId);
@@ -13624,7 +13663,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -14837,6 +14876,19 @@
       wire("corrobFindings", () => corrobFindings,
         (v) => { corrobFindings = v; localStorage.setItem("dfir.corrob.findings", String(v)); },
         () => { if (lastState) { _tlKeepPage = true; render(lastState); } });
+      // Risk lens (#63) — dedicated handler (accepts tier 2/3/4, which `wire` doesn't).
+      const riskSel = document.getElementById("riskIocs");
+      if (riskSel) {
+        riskSel.value = String(riskIocsFilter);
+        riskSel.classList.toggle("active", riskIocsFilter > 0);
+        riskSel.addEventListener("change", () => {
+          const v = parseInt(riskSel.value, 10);
+          riskIocsFilter = (v >= 2 && v <= 4) ? v : 0;
+          localStorage.setItem("dfir.risk.iocs", String(riskIocsFilter));
+          riskSel.classList.toggle("active", riskIocsFilter > 0);
+          if (lastState) renderIocs(lastState.iocs || []);
+        });
+      }
     })();
 
     // IOC noise-reduction controls (#218-ish): sync initial UI state from the persisted preference
