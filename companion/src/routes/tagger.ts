@@ -146,8 +146,9 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Dry-run a candidate rule over the case's scoped events and report how many it would match. No AI,
-  // no tags written, no state mutated. Body: { ruleYaml } (a single-entry rule map). 400 on invalid.
+  // Dry-run a candidate rule over the case's scoped events and report how many it would match PLUS a
+  // capped sample of the matching events (so the analyst can see WHAT it covers, not just a count).
+  // No AI, no tags written, no state mutated. Body: { ruleYaml } (a single-entry rule map). 400 on invalid.
   app.post("/cases/:id/tagger/preview", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "tagger not configured" });
     const ruleYaml = typeof req.body?.ruleYaml === "string" ? req.body.ruleYaml : "";
@@ -160,7 +161,19 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         : [];
       const events = selectScopedEvents(scope, state.forensicTimeline, superEvents);
       const result = runTagger(events, ruleset);
-      return res.status(200).json({ matched: result.totalMatched, scope });
+      // A capped, trimmed view of the matching events for the dashboard preview list.
+      const PREVIEW_SAMPLE_CAP = 100;
+      const byId = new Map(events.map((e) => [e.id, e]));
+      const sample = result.perEvent.slice(0, PREVIEW_SAMPLE_CAP).map((m) => {
+        const e = byId.get(m.eventId);
+        return {
+          id: m.eventId,
+          timestamp: e?.timestamp ?? "",
+          asset: e?.asset ?? "",
+          description: (e?.description ?? "").slice(0, 200),
+        };
+      });
+      return res.status(200).json({ matched: result.totalMatched, scope, sample });
     } catch (err) {
       return res.status(400).json({ error: (err as Error).message });
     }

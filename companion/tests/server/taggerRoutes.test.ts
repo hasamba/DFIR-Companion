@@ -196,11 +196,17 @@ describe("POST /cases/:id/tagger/suggest-rule", () => {
 });
 
 describe("POST /cases/:id/tagger/preview", () => {
-  it("counts matches without writing tags or mutating state (no AI needed)", async () => {
+  it("counts matches and returns a sample of matching events without writing tags or mutating state", async () => {
     const ruleYaml = "svc:\n  any:\n    - { field: message, contains: '7045' }\n  tags: ['t']\n";
     const res = await request(app()).post("/cases/c1/tagger/preview").send({ ruleYaml });
     expect(res.status).toBe(200);
     expect(res.body.matched).toBe(1);
+    // the sample lists the actual matching event (e1), with its identifying fields
+    expect(Array.isArray(res.body.sample)).toBe(true);
+    expect(res.body.sample).toHaveLength(1);
+    expect(res.body.sample[0]).toMatchObject({ id: "e1" });
+    expect(res.body.sample[0]).toHaveProperty("timestamp");
+    expect(res.body.sample[0]).toHaveProperty("description");
     const tags = (await request(app()).get("/cases/c1/tags")).body as unknown[];
     expect(tags).toHaveLength(0);
   });
