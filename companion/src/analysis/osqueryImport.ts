@@ -32,6 +32,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { reconTechniques } from "./reconTechniques.js";
@@ -177,7 +178,7 @@ export function parseOsqueryLog(text: string, opts: OsqueryImportOptions = {}): 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

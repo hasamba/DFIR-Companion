@@ -41,6 +41,7 @@ import {
   type SiemEvent,
   type SiemIoc,
   type SiemParseResult,
+  maxEventsDefault,
 } from "./siemImport.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -50,7 +51,7 @@ type Row = Record<string, unknown>;
 export interface EcarImportOptions {
   aggregate?: boolean;   // collapse repetitive identical events into one counted row. Default true.
   minSeverity?: Severity; // drop events below this floor. Default undefined = keep everything.
-  maxEvents?: number;    // safety cap on emitted events (most-severe first). Default 2000.
+  maxEvents?: number;    // safety cap on emitted events (most-severe first). Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxIocs?: number;      // safety cap on emitted IOCs. Default 5000.
 }
 
@@ -333,7 +334,7 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

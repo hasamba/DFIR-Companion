@@ -26,6 +26,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -275,7 +276,7 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const format = sawCape && sawFalcon ? "mixed" : sawCape ? "capev2" : sawFalcon ? "falcon" : "empty";

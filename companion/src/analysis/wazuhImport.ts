@@ -28,6 +28,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -39,7 +40,7 @@ export interface WazuhImportOptions {
   minSeverity?: Severity;
   // Drop alerts whose rule.level is below this value. Default 3 (suppress pure noise).
   minLevel?: number;
-  // Safety cap on emitted events. Default 2000.
+  // Safety cap on emitted events. Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
@@ -229,7 +230,7 @@ export function parseWazuhAlerts(text: string, opts: WazuhImportOptions = {}): W
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   // Best-effort dominant host: most-common agent.name across ALL mapped events.

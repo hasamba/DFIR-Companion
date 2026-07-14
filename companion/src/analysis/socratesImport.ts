@@ -23,6 +23,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 import { parseNetworkLogs } from "./networkImport.js";
 
@@ -215,7 +216,7 @@ function mapSigma(row: Row, sink: Map<string, SiemIoc>): MappedEvent {
 }
 
 export function parseSocrates(text: string, opts: SocratesImportOptions = {}): SocratesParseResult {
-  const maxEvents = opts.maxEvents ?? 2000;
+  const maxEvents = opts.maxEvents ?? maxEventsDefault();
   const maxIocs = opts.maxIocs ?? 5000;
   const { records } = extractRecords(text);
   const total = records.length;

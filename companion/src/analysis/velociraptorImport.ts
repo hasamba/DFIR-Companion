@@ -45,6 +45,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 // A row from a Velociraptor artifact that shells out to Chainsaw and streams its rows back as
 // VQL (e.g. a custom "run chainsaw" artifact) carries Chainsaw's flat Sigma-mapping shape
@@ -1127,7 +1128,7 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

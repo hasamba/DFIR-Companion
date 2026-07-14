@@ -22,7 +22,9 @@
 // siemImport's aggregation + IOC sink.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult } from "./siemImport.js";
+import { aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+  maxEventsDefault,
+} from "./siemImport.js";
 
 export interface CiscoAsaImportOptions {
   aggregate?: boolean;
@@ -175,7 +177,7 @@ export function parseCiscoAsaLog(text: string, opts: CiscoAsaImportOptions = {})
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
 

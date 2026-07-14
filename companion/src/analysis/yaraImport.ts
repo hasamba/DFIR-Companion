@@ -18,7 +18,9 @@
 // hash meta → hash IOC. Pure, no AI. Reuses siemImport's helpers.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult } from "./siemImport.js";
+import { aggregateEvents, addIoc, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+  maxEventsDefault,
+} from "./siemImport.js";
 
 export interface YaraImportOptions {
   aggregate?: boolean;
@@ -167,7 +169,7 @@ export function parseYaraOutput(text: string, opts: YaraImportOptions = {}): Sie
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
 

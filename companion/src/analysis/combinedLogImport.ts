@@ -48,7 +48,9 @@
 // here (that cap is shared code, not specific to this format).
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, mergeRowIocs, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult } from "./siemImport.js";
+import { aggregateEvents, addIoc, mergeRowIocs, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+  maxEventsDefault,
+} from "./siemImport.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -186,7 +188,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
 

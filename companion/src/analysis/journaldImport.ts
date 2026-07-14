@@ -31,6 +31,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -188,7 +189,7 @@ export function parseJournald(text: string, opts: JournaldImportOptions = {}): J
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);

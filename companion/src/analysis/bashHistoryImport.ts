@@ -12,6 +12,7 @@
 import {
   addIoc, aggregateEvents, cleanIp, hasPlausibleTld,
   type MappedEvent, type SiemImportOptions, type SiemIoc, type SiemParseResult,
+  maxEventsDefault,
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
 import { reconTechniques } from "./reconTechniques.js";
@@ -181,7 +182,7 @@ export function parseShellHistoryFile(text: string, opts: BashHistoryImportOptio
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const maxIocs = opts.maxIocs ?? 5000;

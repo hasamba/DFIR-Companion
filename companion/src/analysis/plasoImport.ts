@@ -26,6 +26,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -205,7 +206,7 @@ export function parsePlasoCsv(text: string, opts: PlasoImportOptions = {}): Plas
   const { events, groups } = aggregateEvents(mappedGen(), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -246,7 +247,7 @@ export async function parsePlasoFromLines(
   const agg = createEventAggregator({
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   for await (const cols of records) {
     total++;

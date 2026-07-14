@@ -47,6 +47,7 @@ import {
   type MappedEvent,
   type SiemEvent,
   type SiemIoc,
+  maxEventsDefault,
 } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -802,7 +803,7 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -867,7 +868,7 @@ function parseMemoryFindevilCsv(text: string, opts: MemoryImportOptions): Memory
   const sink = new Map<string, SiemIoc>();
   const mapped = mapFindevil(findevilRows, sink);
   const { events, groups } = aggregateEvents(mapped, {
-    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? 2000,
+    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -928,7 +929,7 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   }
 
   const { events, groups } = aggregateEvents(mapped, {
-    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? 2000,
+    aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -1121,7 +1122,7 @@ function parseMemoryMemprocfsTimeline(text: string, opts: MemoryImportOptions): 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate:   opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents:   opts.maxEvents ?? 2000,
+    maxEvents:   opts.maxEvents ?? maxEventsDefault(),
   });
   const maxIocs = opts.maxIocs ?? 5000;
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
@@ -1191,7 +1192,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: opts.maxEvents ?? 2000,
+    maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
