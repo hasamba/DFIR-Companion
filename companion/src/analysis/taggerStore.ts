@@ -9,11 +9,11 @@
 // Invalid YAML / an invalid ruleset THROWS (never a partial load): the manual-run route surfaces the
 // error; the auto-run pipeline hook catches it and skips (a broken hand-edit must not break imports).
 
-import { readFile, access } from "node:fs/promises";
+import { readFile, access, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { compileRuleset, type CompiledRuleset } from "./taggerRules.js";
 
@@ -44,6 +44,15 @@ function defaultCandidatePaths(): string[] {
 
 async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
+}
+
+/** Append `_2`, `_3`, … to `base` until it is not in `taken`. */
+function uniqueKey(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) {
+    const candidate = `${base}_${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 export class TaggerStore {
@@ -97,6 +106,70 @@ export class TaggerStore {
     const compiled = compileText(yamlText); // throws on invalid — nothing is written
     await atomicWrite(this.userRulesPath, yamlText);
     return compiled;
+  }
+
+  /** True when an operator env override (TAGGER_RULES_FILE) owns the ruleset (read-only from our side). */
+  isEnvOverride(): boolean {
+    return this.envPath() !== undefined;
+  }
+
+  /** Parse the active ruleset into its raw id → rule map (for structural edits). Empty → {}. */
+  private async loadRawMap(): Promise<Record<string, unknown>> {
+    const active = await this.readActive();
+    if (!active.text.trim()) return {};
+    const doc = parseYaml(active.text);
+    return doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : {};
+  }
+
+  private assertEditable(): void {
+    if (this.isEnvOverride()) {
+      throw new Error("rules are managed by an operator override (TAGGER_RULES_FILE); editing is disabled");
+    }
+  }
+
+  /**
+   * Merge one rule (a single-entry YAML map of id → rule) into the active ruleset. Validates the new
+   * rule compiles, de-collides its id against existing ids, and persists via the validated save()
+   * path. Returns the (possibly de-collided) id and the new total rule count.
+   */
+  async addRuleYaml(singleEntryText: string): Promise<{ id: string; ruleCount: number }> {
+    this.assertEditable();
+    const doc = parseYaml(singleEntryText);
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      throw new Error("expected a single rule (a YAML map of id → rule)");
+    }
+    const entries = Object.entries(doc as Record<string, unknown>);
+    if (entries.length !== 1) throw new Error(`expected exactly one rule, got ${entries.length}`);
+    const [rawId, rule] = entries[0];
+    compileRuleset({ [rawId]: rule }); // throws on an invalid rule BEFORE we touch the file
+    const map = await this.loadRawMap();
+    const id = uniqueKey(rawId, new Set(Object.keys(map)));
+    const compiled = await this.save(stringifyYaml({ ...map, [id]: rule }));
+    return { id, ruleCount: compiled.rules.length };
+  }
+
+  /** Remove one rule by id. Returns removed=false (and the unchanged count) when the id is absent. */
+  async removeRule(id: string): Promise<{ removed: boolean; ruleCount: number }> {
+    this.assertEditable();
+    const map = await this.loadRawMap();
+    if (!(id in map)) {
+      const current = await this.load();
+      return { removed: false, ruleCount: current.rules.length };
+    }
+    const next: Record<string, unknown> = { ...map };
+    delete next[id];
+    // An empty map serializes to "{}"; persist "" instead so the store reads back an empty ruleset.
+    const text = Object.keys(next).length ? stringifyYaml(next) : "";
+    const compiled = await this.save(text);
+    return { removed: true, ruleCount: compiled.rules.length };
+  }
+
+  /** Delete the user rule file so the active ruleset falls back to the bundled default. No-op if absent. */
+  async resetToDefault(): Promise<{ ruleCount: number }> {
+    this.assertEditable();
+    await rm(this.userRulesPath, { force: true });
+    const compiled = await this.load();
+    return { ruleCount: compiled.rules.length };
   }
 }
 

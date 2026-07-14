@@ -81,3 +81,86 @@ describe("TaggerStore", () => {
     expect(loaded.rules[0].id).toBe("env_rule");
   });
 });
+
+import { mkdtemp, writeFile, rm, access } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { TaggerStore } from "../../src/analysis/taggerStore.js";
+
+describe("TaggerStore edits (add/remove/reset)", () => {
+  let dir: string, userPath: string, defaultPath: string, store: TaggerStore;
+  const DEFAULT = "svc:\n  any:\n    - { field: message, contains: ['7045'] }\n  tags: ['persistence']\n";
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "dfir-tagger-store-edit-"));
+    userPath = join(dir, "user-tags.yaml");
+    defaultPath = join(dir, "default-tags.yaml");
+    await writeFile(defaultPath, DEFAULT);
+    store = new TaggerStore(userPath, [defaultPath]);
+    delete process.env.TAGGER_RULES_FILE;
+  });
+  afterEach(async () => {
+    delete process.env.TAGGER_RULES_FILE;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("addRuleYaml merges a new rule and returns the new count", async () => {
+    const yaml = "logon:\n  any:\n    - { field: message, contains: 'logged on' }\n  tags: ['logon']\n";
+    const res = await store.addRuleYaml(yaml);
+    expect(res.id).toBe("logon");
+    expect(res.ruleCount).toBe(2);
+    const active = await store.load();
+    expect(active.source).toBe("user");
+    expect(active.rules.map((r) => r.id).sort()).toEqual(["logon", "svc"]);
+  });
+
+  it("addRuleYaml de-collides an id that already exists", async () => {
+    const yaml = "svc:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n";
+    const res = await store.addRuleYaml(yaml);
+    expect(res.id).toBe("svc_2");
+    expect(res.ruleCount).toBe(2);
+  });
+
+  it("addRuleYaml rejects an invalid rule without persisting", async () => {
+    const bad = "bad:\n  any:\n    - { field: not_a_field, contains: 'x' }\n  tags: ['t']\n";
+    await expect(store.addRuleYaml(bad)).rejects.toThrow(/not_a_field/);
+    await expect(access(userPath)).rejects.toBeTruthy();
+  });
+
+  it("removeRule drops a rule and reports removed=true", async () => {
+    await store.addRuleYaml("logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n");
+    const res = await store.removeRule("svc");
+    expect(res.removed).toBe(true);
+    expect(res.ruleCount).toBe(1);
+    const active = await store.load();
+    expect(active.rules.map((r) => r.id)).toEqual(["logon"]);
+  });
+
+  it("removeRule on an absent id reports removed=false and leaves the count unchanged", async () => {
+    const res = await store.removeRule("does-not-exist");
+    expect(res.removed).toBe(false);
+    expect(res.ruleCount).toBe(1);
+  });
+
+  it("resetToDefault deletes the user file and falls back to the bundled default", async () => {
+    await store.addRuleYaml("logon:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n");
+    expect((await store.load()).source).toBe("user");
+    const res = await store.resetToDefault();
+    expect(res.ruleCount).toBe(1);
+    expect((await store.load()).source).toBe("default");
+  });
+
+  it("resetToDefault is a no-op when no user file exists", async () => {
+    const res = await store.resetToDefault();
+    expect(res.ruleCount).toBe(1);
+    expect((await store.load()).source).toBe("default");
+  });
+
+  it("refuses edits when TAGGER_RULES_FILE (operator override) is set", async () => {
+    process.env.TAGGER_RULES_FILE = defaultPath;
+    await expect(store.addRuleYaml("x:\n  any:\n    - { field: message, contains: 'x' }\n  tags: ['t']\n")).rejects.toThrow(/operator override/i);
+    await expect(store.removeRule("svc")).rejects.toThrow(/operator override/i);
+    await expect(store.resetToDefault()).rejects.toThrow(/operator override/i);
+  });
+});
