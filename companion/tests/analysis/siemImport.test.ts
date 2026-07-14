@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, maxEventsDefault, type SiemIoc } from "../../src/analysis/siemImport.js";
+import { parseSiemExport, extractRecords, isSuspiciousCmd, cleanIp, textIocs, mergeRowIocs, resolveExtractedFrom, maxEventsDefault, logonRisk, type SiemIoc } from "../../src/analysis/siemImport.js";
 
 // ── Representative Windows Event Log records (Elastic _source shape) ─────────────
 const LOGON_4624 = {
@@ -36,6 +36,62 @@ const SYSMON_PROC = {
 function elastic(...sources: object[]): string {
   return JSON.stringify({ data: sources.map((s) => ({ _index: "win-2017", _type: "winevtx", _source: s })) });
 }
+
+// 4624 fixtures for the logon-type risk overlay.
+const logon4624 = (logonType: string, ip: string, user = "svc") => ({
+  "@timestamp": "2017-03-20T07:00:00.000Z", log_name: "Security", computer_name: "WINDMILLDC",
+  event_id: 4624, level: "Information",
+  event_data: { TargetUserName: user, TargetDomainName: "WINDMILL", LogonType: logonType, IpAddress: ip },
+});
+
+describe("logonRisk — logon-type grading", () => {
+  it("decodes the type name and leaves an ordinary internal network logon ungraded", () => {
+    const r = logonRisk(3, "10.10.200.11");
+    expect(r.typeName).toBe("Network");
+    expect(r.severity).toBeUndefined();
+    expect(r.mitre).toEqual([]);
+  });
+
+  it("grades external RDP (type 10 from a public IP) Medium with T1021.001", () => {
+    const r = logonRisk(10, "203.0.113.9");
+    expect(r.typeName).toBe("RemoteInteractive/RDP");
+    expect(r.severity).toBe("Medium");
+    expect(r.mitre).toContain("T1021.001");
+  });
+
+  it("tags internal RDP with T1021.001 but does not escalate severity", () => {
+    const r = logonRisk(10, "10.0.0.5");
+    expect(r.mitre).toContain("T1021.001");
+    expect(r.severity).toBeUndefined();
+  });
+
+  it("grades an internet-facing network logon (type 3, public IP) Medium T1078", () => {
+    expect(logonRisk(3, "203.0.113.9")).toMatchObject({ severity: "Medium", mitre: ["T1078"] });
+  });
+
+  it("grades NetworkCleartext (8) and NewCredentials (9) Medium", () => {
+    expect(logonRisk(8, "")).toMatchObject({ severity: "Medium", mitre: ["T1078"] });
+    expect(logonRisk(9, "")).toMatchObject({ severity: "Medium", mitre: ["T1550.002"] });
+  });
+});
+
+describe("mapWindows — 4624 logon-type overlay end to end", () => {
+  it("escalates an external RDP 4624 to Medium and names the type in the description", () => {
+    const r = parseSiemExport(elastic(logon4624("10", "203.0.113.9", "administrator")));
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toContain("T1021.001");
+    expect(e.description).toMatch(/RemoteInteractive\/RDP from 203\.0\.113\.9/);
+  });
+
+  it("keeps an ordinary internal network 4624 at Low with no technique", () => {
+    const r = parseSiemExport(elastic(logon4624("3", "::ffff:10.10.200.11")));
+    const e = r.events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.mitreTechniques).toEqual([]);
+    expect(e.description).toMatch(/Network from 10\.10\.200\.11/);
+  });
+});
 
 describe("extractRecords — container unwrapping", () => {
   it("unwraps the Elastic/Kibana { data: [{ _source }] } envelope", () => {
