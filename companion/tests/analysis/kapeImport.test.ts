@@ -79,6 +79,27 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
     expect(r.events[0].path).toBe(".\\Users\\bob\\Desktop\\evil.exe");
   });
 
+  it("MFT: flags timestomping when $SI (Created0x10) is backdated before $FN (Created0x30)", () => {
+    const text = csv(
+      ["EntryNumber", "InUse", "ParentPath", "FileName", "Extension", "FileSize", "IsDirectory", "Created0x10", "Created0x30", "LastModified0x10"],
+      [
+        // Backdated + zeroed-sub-second $SI vs full-precision recent $FN → timestomp.
+        ["100", "True", ".\\Windows\\System32", "evil.exe", ".exe", "4096", "False", "2009-07-14 01:14:24.0000000", "2026-06-02 09:15:23.4821330", "2026-06-02 09:15:23.4821330"],
+        // Normal file: $SI ≈ $FN → not flagged.
+        ["101", "True", ".\\Users\\bob", "report.docx", ".docx", "8192", "False", "2026-06-02 09:15:20.1112223", "2026-06-02 09:15:20.1112223", "2026-06-02 09:20:00.0000000"],
+      ],
+    );
+    const r = parseKapeCsv(text);
+    expect(r.artifact).toBe("MFT");
+    const stomped = r.events.find((e) => e.path?.toLowerCase().endsWith("evil.exe"));
+    expect(stomped?.mitreTechniques).toContain("T1070.006");
+    expect(stomped?.severity).toBe("Medium");
+    expect(stomped?.description).toMatch(/timestomping/i);
+    const clean = r.events.find((e) => e.path?.toLowerCase().endsWith("report.docx"));
+    expect(clean?.mitreTechniques ?? []).not.toContain("T1070.006");
+    expect(clean?.severity).toBe("Info");
+  });
+
   it("RecycleBin (RBCmd): deletion event", () => {
     const text = csv(
       ["SourceName", "FileType", "FileName", "FileSize", "DeletedOn"],

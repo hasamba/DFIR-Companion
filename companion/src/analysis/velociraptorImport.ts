@@ -54,6 +54,7 @@ import {
 // as a generic detection() row, which would read no severity from a sibling field and silently
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
+import { detectTimestomp } from "./timestompDetect.js";
 
 type Row = Record<string, unknown>;
 
@@ -745,6 +746,24 @@ const NOISE_KEY = /regex|ignore|imports|exports|sections|resources|directories|v
 // time) — skipped in the key=value fallback so they don't duplicate the prefix / add noise.
 const META_KEY = /^(_ts|_Source|_Artifact|ArtifactName)$/i;
 
+// NTFS timestomp check for an MFT row (Windows.NTFS.MFT). Windows.NTFS.MFT emits both $SI and $FN
+// creation on the SAME row — Created0x10 ($SI) and Created0x30 ($FN), either top-level or nested under
+// SITimestamps/FNTimestamps — so we compare them inline (no cross-event grouping). On a hit: bump the
+// row's severity to Medium, add T1070.006, and append the reason. Reads the RAW strings (not pickTime,
+// which drops the sub-second precision the truncation signal needs). Directories are skipped (noise).
+function applyTimestomp(row: Row, m: MappedEvent): void {
+  const isDir = getCI(row, "IsDir");
+  if (isDir === true || str(isDir).toLowerCase() === "true") return;
+  const si = str(getCI(row, "Created0x10")) || str(getPath(row, "SITimestamps.Created0x10"));
+  const fn = str(getCI(row, "Created0x30")) || str(getPath(row, "FNTimestamps.Created0x30"));
+  if (!si || !fn) return;
+  const v = detectTimestomp(si, fn);
+  if (!v) return;
+  m.severity = worst(m.severity, v.severity);
+  for (const id of v.mitre) if (!m.mitre.includes(id)) m.mitre.push(id);
+  m.description = `${m.description} — ${v.note}`.slice(0, 1200);
+}
+
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const { sha256, md5 } = collectRowIocs(row, sink);
   scrapeEvidence(row, sink); // URLs/IPs/hashes embedded in Message/Line/Content (key-driven extractors miss these)
@@ -769,7 +788,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     .replace(/\d+/g, "#")
     .slice(0, 400);
 
-  return {
+  const m: MappedEvent = {
     timestamp: pickTime(row),
     description,
     severity,
@@ -783,6 +802,8 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     ...(procName ? { processName: baseName(procName) } : {}),
     ...(parentName ? { parentName: baseName(parentName) } : {}),
   };
+  applyTimestomp(row, m); // MFT rows: flag $SI/$FN timestomping (T1070.006, → Medium)
+  return m;
 }
 
 function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {

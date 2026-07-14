@@ -617,6 +617,48 @@ export function kerberosRoastSignal(eid: number, ed: Row): { severity: Severity;
   return { severity: "Medium", mitre: ["T1558.004"] }; // AS-REP roasting
 }
 
+// Windows logon-type codes (4624/4625 `LogonType`) → human name. Mirrors Timesketch's login analyzer
+// LOGON_TYPES, which only tags; we additionally GRADE the risky ones (see logonRisk).
+const LOGON_TYPES: Record<number, string> = {
+  2: "Interactive", 3: "Network", 4: "Batch", 5: "Service", 7: "Unlock",
+  8: "NetworkCleartext", 9: "NewCredentials", 10: "RemoteInteractive/RDP", 11: "CachedInteractive",
+};
+
+// A routable (public) IPv4 source? RFC1918 / loopback / link-local / CGNAT are internal → not a
+// remote-access signal on their own. Non-IPv4 / blank ("-", "::1", "127.0.0.1") count as internal.
+function isPublicIpv4(ip: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip.trim());
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (a === 10 || a === 127 || a === 0) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
+  return true;
+}
+
+// Risk overlay for a successful logon (4624). Decodes the logon type and grades the ones that carry
+// lateral-movement / credential-abuse signal, keyed on the source IP where the internal-vs-external
+// distinction matters. Returns the decoded type name plus an optional severity bump + ATT&CK ids.
+// Conservative on purpose (signal-to-noise): an ordinary interactive / internal-network logon is left
+// at the table's Low and gets NO technique — only the genuinely noteworthy shapes escalate.
+//   • Type 10 RemoteInteractive (RDP)  → T1021.001; Medium when the source IP is public (external RDP).
+//   • Type 3  Network from a PUBLIC IP → T1078; internet-facing network logon (SMB/WinRM/etc.).
+//   • Type 8  NetworkCleartext        → T1078, Medium; credentials sent in cleartext (legacy/basic auth).
+//   • Type 9  NewCredentials          → T1550.002, Medium; runas /netonly — the overpass/pass-the-hash shape.
+export function logonRisk(logonType: number, sourceIp: string): { typeName: string; severity?: Severity; mitre: string[] } {
+  const typeName = LOGON_TYPES[logonType] ?? `type ${logonType}`;
+  const external = isPublicIpv4(sourceIp);
+  switch (logonType) {
+    case 10: return { typeName, severity: external ? "Medium" : undefined, mitre: ["T1021.001"] };
+    case 3: return external ? { typeName, severity: "Medium", mitre: ["T1078"] } : { typeName, mitre: [] };
+    case 8: return { typeName, severity: "Medium", mitre: ["T1078"] };
+    case 9: return { typeName, severity: "Medium", mitre: ["T1550.002"] };
+    default: return { typeName, mitre: [] };
+  }
+}
+
 export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
   const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
   const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
@@ -691,6 +733,20 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     if (roast) {
       severity = worst(severity, roast.severity);
       for (const t of roast.mitre) if (!mitre.includes(t)) mitre.push(t);
+    }
+  }
+  // Logon-type overlay for a successful logon (4624): decode the type into the description (so an
+  // analyst sees "RemoteInteractive/RDP" not "type 10"), and grade the risky ones (external RDP,
+  // internet-facing network logon, cleartext creds, runas /netonly) — see logonRisk.
+  if (!isSysmon && eid === 4624) {
+    const ltRaw = str(getCI(ed, "LogonType")).trim();
+    const lt = Number(ltRaw);
+    if (ltRaw && Number.isFinite(lt)) {
+      const src = cleanIp(str(getCI(ed, "IpAddress")));
+      const r = logonRisk(lt, src);
+      description = `${description} [${r.typeName}${src ? ` from ${src}` : ""}]`.slice(0, 600);
+      if (r.severity) severity = worst(severity, r.severity);
+      for (const t of r.mitre) if (!mitre.includes(t)) mitre.push(t);
     }
   }
 

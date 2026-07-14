@@ -881,6 +881,42 @@ describe("parseVelociraptorJson — bare NTFS/MFT timestamps", () => {
   });
 });
 
+describe("parseVelociraptorJson — NTFS timestomp detection (T1070.006)", () => {
+  it("flags an MFT row whose $SI creation is backdated far before $FN creation", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{
+      OSPath: "C:\\Windows\\System32\\evil.exe", FileName: "evil.exe",
+      Created0x10: "2009-07-14T01:14:24.0000000Z",  // $SI backdated to look like an old system file
+      Created0x30: "2026-06-02T09:15:23.4821330Z",  // $FN keeps the real (recent) creation time
+    }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT" });
+    const hit = r.events.find((e) => e.mitreTechniques.includes("T1070.006"));
+    expect(hit, "expected a timestomp-tagged event").toBeTruthy();
+    expect(hit?.severity).toBe("Medium");
+    expect(hit?.description).toMatch(/timestomping/i);
+  });
+
+  it("does NOT flag a normal MFT row where $SI and $FN creation agree", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{
+      OSPath: "C:\\Users\\bob\\report.docx", FileName: "report.docx",
+      Created0x10: "2026-06-02T09:15:20.1112223Z",
+      Created0x30: "2026-06-02T09:15:20.1112223Z",
+    }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT" });
+    expect(r.events.every((e) => !e.mitreTechniques.includes("T1070.006"))).toBe(true);
+    expect(r.events.every((e) => e.severity === "Info")).toBe(true);
+  });
+
+  it("reads $SI/$FN nested under SITimestamps/FNTimestamps too", () => {
+    const text = JSON.stringify({ "Windows.NTFS.MFT": [{
+      OSPath: "C:\\ProgramData\\svc.dll", FileName: "svc.dll",
+      SITimestamps: { Created0x10: "2012-01-01T00:00:00.0000000Z" },
+      FNTimestamps: { Created0x30: "2026-06-02T09:15:23.4821330Z" },
+    }] });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT" });
+    expect(r.events.some((e) => e.mitreTechniques.includes("T1070.006"))).toBe(true);
+  });
+});
+
 describe("parseVelociraptorJson — timestamp coverage for raw artifacts", () => {
   it("dates a Chrome/Edge history row from visit_time", () => {
     const text = JSON.stringify({ "Windows.Applications.Chrome.History": [{ url: "http://evil.test/x", title: "x", visit_time: "2026-06-04T12:00:00Z", OSPath: "C:\\...\\History" }] });

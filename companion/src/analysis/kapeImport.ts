@@ -29,6 +29,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import { detectTimestomp } from "./timestompDetect.js";
 
 type Row = Record<string, unknown>;
 
@@ -204,10 +205,15 @@ const PROFILES: Profile[] = [
       addFile(sink, path);
       const proc = addProc(sink, fileName);
       const size = firstStr(row, ["FileSize"]);
+      // Timestomp check: MFTECmd emits $SI (Created0x10) and $FN (Created0x30) creation on the same
+      // row. Pass the RAW strings (not ezTime, which drops the sub-second the truncation signal needs).
+      const ts = detectTimestomp(str(getCI(row, "Created0x10")), str(getCI(row, "Created0x30")));
+      let description = `MFT: ${path}${size ? ` (${size} bytes)` : ""}`;
+      if (ts) description = `${description} — ${ts.note}`;
       return {
         timestamp: ezTime(getCI(row, "Created0x10")) || ezTime(getCI(row, "LastModified0x10")),
-        description: `MFT: ${path}${size ? ` (${size} bytes)` : ""}`.slice(0, 600),
-        severity: "Info", mitre: [], aggKey: `mft|${path.toLowerCase()}`,
+        description: description.slice(0, 600),
+        severity: ts ? ts.severity : "Info", mitre: ts ? ts.mitre : [], aggKey: `mft|${path.toLowerCase()}`,
         sources: ["MFT"], path, ...(proc ? { processName: proc } : {}),
       };
     },
