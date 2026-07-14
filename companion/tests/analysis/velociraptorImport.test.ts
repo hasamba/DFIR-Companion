@@ -1017,3 +1017,86 @@ describe("parseVelociraptorJson — IOC provenance", () => {
     expect(iocA?.sourceAggKeys?.[0]).not.toEqual(iocB?.sourceAggKeys?.[0]);
   });
 });
+
+describe("parseVelociraptorJson — USN change-journal rows carry the operation (Reason)", () => {
+  // A Windows.Forensics.Usn row: the Reason array IS the "what happened".
+  function usnRow(reason: string[], ospath: string): object {
+    return { _Source: "Windows.Forensics.Usn", Timestamp: "2025-12-05T03:12:59Z", OSPath: ospath, Reason: reason, Usn: 327155712, MFTId: 70579 };
+  }
+
+  it("puts the USN Reason in the description instead of a path-only event", () => {
+    const r = parseVelociraptorJson(JSON.stringify([usnRow(["DATA_EXTEND", "FILE_CREATE"], "C:\\evil.exe")]));
+    expect(r.events).toHaveLength(1);
+    const e = r.events[0];
+    expect(e.description).toContain("DATA_EXTEND, FILE_CREATE"); // the operation, joined
+    expect(e.description).toContain("C:\\evil.exe");             // still names the file
+    expect(e.description).toContain("[Windows.Forensics.Usn]");  // artifact provenance
+    expect(e.path).toBe("C:\\evil.exe");
+  });
+
+  it("keeps a CREATE and a DELETE on the same path as SEPARATE events (Reason is in the agg key)", () => {
+    const rows = [usnRow(["FILE_CREATE"], "C:\\a\\x.txt"), usnRow(["FILE_DELETE", "CLOSE"], "C:\\a\\x.txt")];
+    const r = parseVelociraptorJson(JSON.stringify(rows), { aggregate: true });
+    expect(r.events).toHaveLength(2); // would have collapsed to 1 before (Reason wasn't in the key)
+    const reasons = r.events.map((e) => e.description).join(" | ");
+    expect(reasons).toContain("FILE_CREATE");
+    expect(reasons).toContain("FILE_DELETE");
+  });
+
+  it("tolerates a Reason emitted as a bare string", () => {
+    const row = { _Source: "Windows.Forensics.Usn", Timestamp: "2025-12-05T03:12:59Z", OSPath: "C:\\b.txt", Reason: "FILE_CREATE", Usn: 1 };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.description).toContain("FILE_CREATE");
+  });
+});
+
+describe("parseVelociraptorJson — MFT rows expand to a labeled MACB timeline", () => {
+  // A Windows.NTFS.MFT entry with distinct $SI timestamps: born long ago, modified/accessed later.
+  function mftRow(): object {
+    return {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 42, OSPath: "C:\\Users\\v\\report.docx", FileName: "report.docx",
+      Created0x10: "2024-01-01T00:00:00Z", LastModified0x10: "2025-06-01T00:00:00Z",
+      LastRecordChange0x10: "2025-06-01T00:00:00Z", LastAccess0x10: "2025-06-02T00:00:00Z",
+    };
+  }
+
+  it("emits one event per DISTINCT timestamp, each labeled with its MACB attributes", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow()]), { aggregate: true });
+    // three distinct times: born (2024-01-01), modified+changed (2025-06-01), accessed (2025-06-02)
+    expect(r.events).toHaveLength(3);
+    const byTime = new Map(r.events.map((e) => [e.timestamp.slice(0, 10), e.description]));
+    expect(byTime.get("2024-01-01")).toContain("$SI:...b"); // born only
+    expect(byTime.get("2025-06-01")).toContain("$SI:m.c."); // modified + record-changed share a time
+    expect(byTime.get("2025-06-02")).toContain("$SI:.a.."); // accessed
+    for (const e of r.events) expect(e.path).toBe("C:\\Users\\v\\report.docx");
+  });
+
+  it("surfaces a modification that the old creation-only event would have hidden", () => {
+    const r = parseVelociraptorJson(JSON.stringify([mftRow()]));
+    const times = r.events.map((e) => e.timestamp.slice(0, 10)).sort();
+    expect(times).toContain("2025-06-01"); // the modification is now on the timeline
+    expect(times).toContain("2025-06-02"); // and the access
+  });
+
+  it("collapses a file whose timestamps are all equal into a single event", () => {
+    const row = {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 7, OSPath: "C:\\x", FileName: "x",
+      Created0x10: "2025-01-01T00:00:00Z", LastModified0x10: "2025-01-01T00:00:00Z",
+      LastRecordChange0x10: "2025-01-01T00:00:00Z", LastAccess0x10: "2025-01-01T00:00:00Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("$SI:macb"); // all four share the one timestamp
+  });
+
+  it("skips 1601/epoch 'unset' MFT timestamps rather than dating events to the year 1601", () => {
+    const row = {
+      _Source: "Windows.NTFS.MFT", EntryNumber: 9, OSPath: "C:\\y", FileName: "y",
+      Created0x10: "2025-03-03T00:00:00Z", LastModified0x10: "1601-01-01T00:00:00Z",
+      LastAccess0x10: "1601-01-01T00:00:00Z", LastRecordChange0x10: "1601-01-01T00:00:00Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp.slice(0, 4)).toBe("2025");
+  });
+});

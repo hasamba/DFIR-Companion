@@ -468,7 +468,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
-type Kind = "sigma" | "yara" | "chainsaw" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "generic";
+type Kind = "sigma" | "yara" | "chainsaw" | "detection" | "eventlog" | "pslist" | "netstat" | "download" | "startup" | "taskscheduler" | "usn" | "mft" | "generic";
 
 function artifactName(row: Row): string {
   return firstStr(row, ["_Source", "Artifact", "_Artifact", "artifact", "Source", "ArtifactName"]);
@@ -511,6 +511,14 @@ function classify(row: Row, artifact: string): Kind {
   if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null) return "startup";
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null)) return "taskscheduler";
+  // Windows.Forensics.Usn — the USN change-journal row: a `Reason` (the filesystem operation:
+  // FILE_CREATE / FILE_DELETE / DATA_EXTEND / RENAME_* …) alongside a Usn/MFTId. Mapped specially so
+  // the operation lands in the description + agg key (mapGeneric drops it → path-only events).
+  if (getCI(row, "Reason") != null && (getCI(row, "Usn") != null || getCI(row, "MFTId") != null)) return "usn";
+  // Windows.NTFS.MFT — an $MFT entry carrying the bare MACB timestamp columns. Expanded to one
+  // labeled event per distinct $SI/$FN timestamp so a file's modification/access (not just its
+  // creation) shows on the timeline.
+  if (getCI(row, "EntryNumber") != null && (getCI(row, "Created0x10") != null || getCI(row, "LastModified0x10") != null)) return "mft";
   return "generic";
 }
 
@@ -806,6 +814,95 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   return m;
 }
 
+// The USN `Reason` (the filesystem operation) as a normalized "FILE_CREATE, DATA_EXTEND" string.
+// Velociraptor emits it as an array on most versions, a bare string on a few — handle both.
+function usnReason(row: Row): string {
+  const r = getCI(row, "Reason");
+  if (Array.isArray(r)) return r.map((x) => str(x).trim()).filter(Boolean).join(", ");
+  return str(r).trim();
+}
+
+// Windows.Forensics.Usn — the USN journal is a change log, so the `Reason` (FILE_CREATE / FILE_DELETE /
+// DATA_EXTEND / RENAME_NEW_NAME …) is the single most important field: it's the "what happened". The
+// generic mapper drops it (falls back to OSPath), producing path-only events, and — because Reason
+// isn't in the agg key either — collapses a CREATE and a DELETE on the same path into one event. Here
+// the operation drives both the description AND the agg key so distinct operations stay distinct.
+function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
+  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "Filename")).trim();
+  const reason = usnReason(row);
+  const label = reason || "change";
+  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${label} — ${oneLine(path)}`.slice(0, 600);
+  if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
+  const aggKey = `vr|usn|${host.toLowerCase()}|${reason.toLowerCase()}|${path.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: [],
+    aggKey,
+    sources: ["Velociraptor"],
+    ...(path ? { path } : {}),
+    ...(host ? { asset: host } : {}),
+  };
+}
+
+// The MACB timestamp columns, grouped by NTFS attribute stream: $STANDARD_INFORMATION (0x10, the
+// commonly-referenced set) and $FILE_NAME (0x30, harder to timestomp). Letters follow the standard
+// bodyfile convention — M=modified, A=accessed, C=MFT-record changed, B=born (created).
+const MFT_SI: [string, string][] = [["M", "LastModified0x10"], ["A", "LastAccess0x10"], ["C", "LastRecordChange0x10"], ["B", "Created0x10"]];
+const MFT_FN: [string, string][] = [["M", "LastModified0x30"], ["A", "LastAccess0x30"], ["C", "LastRecordChange0x30"], ["B", "Created0x30"]];
+
+// Render the present letters of a stream as the fixed-position "macb" token (dots for absent), e.g. a
+// timestamp that is both the modified and born time → "m..b".
+function macbToken(present: Set<string>): string {
+  return ["M", "A", "C", "B"].map((c) => (present.has(c) ? c.toLowerCase() : ".")).join("");
+}
+
+// Windows.NTFS.MFT — one $MFT entry carries up to 8 timestamps (MACB × $SI/$FN). The old behavior
+// emitted a SINGLE event dated at the creation time only, unlabeled, so a file created long ago but
+// MODIFIED during the incident showed only its (irrelevant) birth time — the modification was invisible.
+// Expand to one event per DISTINCT timestamp value, labeled with which attributes share it. Files whose
+// timestamps are all equal (the common case) collapse back to one event, so this doesn't blow up unless
+// the times genuinely differ (which is exactly the forensically-interesting case).
+function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
+  const path = firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "FileName")).trim();
+  // distinct timestamp value → { si: letters, fn: letters }
+  const byTime = new Map<string, { si: Set<string>; fn: Set<string> }>();
+  const add = (stream: "si" | "fn", letter: string, key: string): void => {
+    const t = vrTime(getCI(row, key));
+    if (!t) return;
+    const ms = Date.parse(t);
+    if (!(ms >= MIN_TIME_MS && ms <= MAX_TIME_MS)) return; // skip 1601/epoch "unset" sentinels
+    const slot = byTime.get(t) ?? { si: new Set<string>(), fn: new Set<string>() };
+    slot[stream].add(letter);
+    byTime.set(t, slot);
+  };
+  for (const [letter, key] of MFT_SI) add("si", letter, key);
+  for (const [letter, key] of MFT_FN) add("fn", letter, key);
+
+  const events: MappedEvent[] = [];
+  for (const [t, { si, fn }] of byTime) {
+    const parts: string[] = [];
+    if (si.size) parts.push(`$SI:${macbToken(si)}`);
+    if (fn.size) parts.push(`$FN:${macbToken(fn)}`);
+    const macb = parts.join(" ");
+    let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}`.slice(0, 600);
+    if (host && !description.toLowerCase().includes(host.toLowerCase())) description = `${description} @ ${host}`.slice(0, 600);
+    const aggKey = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`.replace(/\d+/g, "#").slice(0, 400);
+    events.push({
+      timestamp: t,
+      description,
+      severity: "Info",
+      mitre: [],
+      aggKey,
+      sources: ["Velociraptor"],
+      ...(path ? { path } : {}),
+      ...(host ? { asset: host } : {}),
+    });
+  }
+  return events;
+}
+
 function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const name = str(getCI(row, "Name")).trim();
   const exe = firstStr(row, ["Exe", "Image"]);
@@ -1096,19 +1193,28 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
 
     const rowSink = new Map<string, SiemIoc>();
     const kind = classify(row, artifact);
-    let m: MappedEvent | null;
-    if (kind === "yara") { m = mapYara(row, artifact, host, rowSink); detections++; }
-    else if (kind === "sigma") { m = mapSigma(row, host, rowSink); detections++; }
-    else if (kind === "chainsaw") { m = mapFlatChainsawRow(row, host, rowSink); detections++; }
-    else if (kind === "detection") { m = mapDetection(row, artifact, host, rowSink); detections++; }
-    else if (kind === "eventlog") { m = mapEventlog(row, host, rowSink) ?? mapGeneric(row, artifact, host, rowSink); }
-    else if (kind === "pslist") { m = mapPslist(row, host, rowSink); }
-    else if (kind === "netstat") { m = mapNetstat(row, host, rowSink); }
-    else if (kind === "download") { m = mapDownload(row, host, rowSink); }
-    else if (kind === "startup") { m = mapStartup(row, host, rowSink); }
-    else if (kind === "taskscheduler") { m = mapTaskScheduler(row, host, rowSink); }
-    else { m = mapGeneric(row, artifact, host, rowSink); }
-    if (m) {
+    // Most mappers yield one event per row; MFT yields one per DISTINCT MACB timestamp, so the
+    // dispatch produces an array (usually length 1). An empty array = the row produced nothing.
+    let ms: MappedEvent[];
+    if (kind === "yara") { const m = mapYara(row, artifact, host, rowSink); detections++; ms = [m]; }
+    else if (kind === "sigma") { const m = mapSigma(row, host, rowSink); detections++; ms = [m]; }
+    else if (kind === "chainsaw") { const m = mapFlatChainsawRow(row, host, rowSink); detections++; ms = [m]; }
+    else if (kind === "detection") { const m = mapDetection(row, artifact, host, rowSink); detections++; ms = [m]; }
+    else if (kind === "eventlog") { ms = [mapEventlog(row, host, rowSink) ?? mapGeneric(row, artifact, host, rowSink)]; }
+    else if (kind === "pslist") { ms = [mapPslist(row, host, rowSink)]; }
+    else if (kind === "netstat") { ms = [mapNetstat(row, host, rowSink)]; }
+    else if (kind === "download") { ms = [mapDownload(row, host, rowSink)]; }
+    else if (kind === "startup") { ms = [mapStartup(row, host, rowSink)]; }
+    else if (kind === "taskscheduler") { ms = [mapTaskScheduler(row, host, rowSink)]; }
+    else if (kind === "usn") { ms = [mapUsn(row, artifact, host)]; }
+    else if (kind === "mft") { ms = mapMft(row, artifact, host); }
+    else { ms = [mapGeneric(row, artifact, host, rowSink)]; }
+
+    // Row-level values shared by every event this row produced (computed once, not per MACB event).
+    const realArtifact = artifactName(row);
+    const fp = msgFingerprint(rowMessage(row));
+    for (const m of ms) {
+      if (!m) continue;
       // Stamp the produced event with the VQL artifact that emitted it. Done once here (rather than in
       // each map* function) because `artifact` is already resolved in this dispatch loop and every
       // mapper's result flows through — so downstream (dwell-time window, evidence graph) can tell
@@ -1129,7 +1235,6 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       // end. Only a REAL artifact name (from _Source) is shown — never the filename fallback.
       // Skip when mapDetection already led with a DetectRaptor-specific label (detectionLabel()) —
       // that already names the rule pack, so bracketing the full dotted artifact too is redundant.
-      const realArtifact = artifactName(row);
       if (realArtifact && !m.description.includes(realArtifact) && !m.description.startsWith("DetectRaptor ")) {
         m.description = (m.description.startsWith("Velociraptor")
           ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
@@ -1139,7 +1244,6 @@ export function parseVelociraptorJson(text: string, opts: VelociraptorImportOpti
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
-      const fp = msgFingerprint(rowMessage(row));
       if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
       mergeRowIocs(iocSink, rowSink, m.aggKey);
       mapped.push(m);
