@@ -12,10 +12,15 @@ import type { RouteContext } from "./context.js";
  * unioned MITRE, per analysis/tagger.ts. Manual runs and rule editing live here; the automatic
  * post-import run lives in the pipeline.
  *
- *   - GET  /tagger/rules            — the active ruleset (raw YAML + a parsed summary + its source).
- *   - PUT  /tagger/rules            — validate + persist edited rule YAML (400 on an invalid ruleset).
- *   - POST /cases/:id/tagger/run    — run the ruleset over the case; report per-rule match counts.
- *   - POST /cases/:id/tagger/clear  — remove every tagger-authored tag (reversible; analyst tags kept).
+ *   - GET    /tagger/rules               — the active ruleset (raw YAML + a parsed summary + its source).
+ *   - PUT    /tagger/rules               — validate + persist edited rule YAML (400 on an invalid ruleset).
+ *   - POST   /tagger/rules/add           — merge one reviewed rule (single-entry YAML) into the ruleset.
+ *   - DELETE /tagger/rules/:ruleId       — remove one rule by id (any rule; 404 if absent).
+ *   - POST   /tagger/rules/reset         — restore the shipped default ruleset (discard customizations).
+ *   - POST   /cases/:id/tagger/run       — run the ruleset over the case; report per-rule match counts.
+ *   - POST   /cases/:id/tagger/clear     — remove every tagger-authored tag (reversible; analyst tags kept).
+ *   - POST   /cases/:id/tagger/suggest-rule — AI: draft one rule from a plain-English description (ephemeral).
+ *   - POST   /cases/:id/tagger/preview   — dry-run a candidate rule; report its match count (no writes).
  */
 export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
   const { options, hasAiProvider } = ctx;
