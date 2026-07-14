@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -19,6 +19,7 @@ import { IocWhitelistStore } from "../src/analysis/iocWhitelistStore.js";
 import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.js";
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 import { JobManager } from "../src/analysis/jobManager.js";
+import { DropStatusStore } from "../src/analysis/dropStatus.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -1831,6 +1832,40 @@ describe("AI on/off control", () => {
     }
     expect(jobs.some((j) => j.kind === "synthesis")).toBe(true);
   });
+
+  it("tracks a drop-folder auto-import as a job so the Jobs panel shows it (parity with /import)", async () => {
+    // Bug: the evidence drop-folder poller (scanCaseDrops) imported files through the SAME chain as
+    // the Import button, but never registered with the jobManager — so an auto-import ran invisibly,
+    // with nothing in the dashboard Jobs panel, unlike a manual /import. The sweep must register a job.
+    const prevPoll = process.env.DFIR_DROP_POLL_S;
+    process.env.DFIR_DROP_POLL_S = "2"; // minimum settle: seen at poll 1, imported at poll 2 (~4s)
+    try {
+      const root = await mkdtemp(join(tmpdir(), "dfir-dropjob-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      const jobManager = new JobManager();
+      const app = createApp(store, {
+        pipeline: findingPipeline(stateStore), stateStore, jobManager,
+        dropStatusStore: new DropStatusStore(store), // presence ARMS the drop-folder poller
+      });
+      await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      // Drop a deterministic Velociraptor JSON into the case drop folder (imports without AI).
+      const dropDir = join(store.caseDir("c1"), "drop");
+      await mkdir(dropDir, { recursive: true });
+      const velo = JSON.stringify([{ _Source: "Windows.Detection.X", Detection: { Name: "Bad" }, EventTime: "2026-01-01T00:00:00Z", EntryPath: "c:\\x.exe" }]);
+      await writeFile(join(dropDir, "evidence.json"), velo, "utf8");
+
+      let jobs: { kind: string; label?: string }[] = [];
+      for (let i = 0; i < 200 && !jobs.some((j) => j.kind === "import"); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        jobs = jobManager.list("c1");
+      }
+      expect(jobs.some((j) => j.kind === "import" && /drop/i.test(j.label ?? ""))).toBe(true);
+    } finally {
+      if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
+      else process.env.DFIR_DROP_POLL_S = prevPoll;
+    }
+  }, 15000);
 
   it("POST /import fires onImport(caseId) so dashboards can warn cross-case (parity with captures)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-onimport-"));
