@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { runTagger, selectScopedEvents } from "../analysis/tagger.js";
+import { compileText } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import type { RouteContext } from "./context.js";
 
@@ -16,7 +18,7 @@ import type { RouteContext } from "./context.js";
  *   - POST /cases/:id/tagger/clear  — remove every tagger-authored tag (reversible; analyst tags kept).
  */
 export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
-  const { options } = ctx;
+  const { options, hasAiProvider } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
 
   // The active ruleset: raw YAML for the editor + a compact per-rule summary + where it came from
@@ -73,12 +75,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         const superEvents = scope !== "forensic" && options.superTimelineStore
           ? await options.superTimelineStore.all(caseId)
           : [];
-        // Build the scoped evaluation set. For "both", union the forensic timeline with the super
-        // timeline by id (the super timeline is a superset in practice, but a capped one).
-        const events: ForensicEvent[] =
-          scope === "super" ? superEvents
-          : scope === "forensic" ? state.forensicTimeline
-          : dedupeById(state.forensicTimeline, superEvents);
+        const events: ForensicEvent[] = selectScopedEvents(scope, state.forensicTimeline, superEvents);
 
         const applied = await runAndApplyTagger({
           caseId, events, ruleset,
@@ -125,10 +122,81 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
-}
 
-/** Union two event lists by id, keeping the first occurrence (forensic events win over super copies). */
-function dedupeById(a: readonly ForensicEvent[], b: readonly ForensicEvent[]): ForensicEvent[] {
-  const seen = new Set(a.map((e) => e.id));
-  return [...a, ...b.filter((e) => !seen.has(e.id))];
+  // Suggest ONE tagger rule from a plain-English description (PR #112 follow-up). AI-gated. Returns
+  // a candidate for review — nothing is persisted here. Body: { description }.
+  app.post("/cases/:id/tagger/suggest-rule", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for tagger rule suggestion" });
+    const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+    if (!description) return res.status(400).json({ error: "description is required" });
+    try {
+      const outcome = await options.pipeline.suggestTaggerRule(req.params.id, description);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "tagger-suggest-rule",
+        detail: `suggested rule from: "${description.slice(0, 120)}" — ${outcome.kind}`,
+      });
+      return res.status(200).json(outcome);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Dry-run a candidate rule over the case's scoped events and report how many it would match. No AI,
+  // no tags written, no state mutated. Body: { ruleYaml } (a single-entry rule map). 400 on invalid.
+  app.post("/cases/:id/tagger/preview", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "tagger not configured" });
+    const ruleYaml = typeof req.body?.ruleYaml === "string" ? req.body.ruleYaml : "";
+    const { scope } = readTaggerSettings();
+    try {
+      const ruleset = compileText(ruleYaml); // throws on invalid → 400 below
+      const state = await options.stateStore.load(req.params.id);
+      const superEvents = scope !== "forensic" && options.superTimelineStore
+        ? await options.superTimelineStore.all(req.params.id)
+        : [];
+      const events = selectScopedEvents(scope, state.forensicTimeline, superEvents);
+      const result = runTagger(events, ruleset);
+      return res.status(200).json({ matched: result.totalMatched, scope });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Merge one reviewed rule into the ruleset. No AI. Body: { ruleYaml } (single-entry map). 400 on
+  // invalid; the store de-collides the id and validates before persisting.
+  app.post("/tagger/rules/add", async (req: Request, res: Response) => {
+    if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
+    const ruleYaml = typeof req.body?.ruleYaml === "string" ? req.body.ruleYaml : "";
+    try {
+      const { id, ruleCount } = await options.taggerStore.addRuleYaml(ruleYaml);
+      logLine(`[tagger] rule added: ${id} — ${ruleCount} rule(s)`);
+      return res.status(200).json({ id, ruleCount });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Remove one rule by id (any rule, default or added). 404 when the id isn't present.
+  app.delete("/tagger/rules/:ruleId", async (req: Request, res: Response) => {
+    if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
+    try {
+      const { removed, ruleCount } = await options.taggerStore.removeRule(req.params.ruleId);
+      if (!removed) return res.status(404).json({ error: `rule "${req.params.ruleId}" not found` });
+      logLine(`[tagger] rule removed: ${req.params.ruleId} — ${ruleCount} rule(s)`);
+      return res.status(200).json({ ruleCount });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Reset the ruleset to the shipped default (discards all customizations).
+  app.post("/tagger/rules/reset", async (_req: Request, res: Response) => {
+    if (!options.taggerStore) return res.status(501).json({ error: "tagger not configured" });
+    try {
+      const { ruleCount } = await options.taggerStore.resetToDefault();
+      logLine(`[tagger] rules reset to default — ${ruleCount} rule(s)`);
+      return res.status(200).json({ ruleCount });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
 }
