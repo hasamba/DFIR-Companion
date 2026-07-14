@@ -414,3 +414,34 @@ describe("mergeDelta — ioc extractedFrom", () => {
     expect(next.iocs[0].extractedFrom).toBeUndefined();
   });
 });
+
+describe("mergeDelta — forensic timeline dedup by id (map-indexed, O(n))", () => {
+  const mkEvents = (n: number, prefix = "v1e") => Array.from({ length: n }, (_, i) => ({
+    id: `${prefix}${i + 1}`,
+    timestamp: new Date(Date.UTC(2025, 0, 1) + i * 1000).toISOString(),
+    description: `MFT event ${i}`,
+    severity: "Info" as const,
+    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+  }));
+
+  it("keeps distinct ids and dedups a re-import instead of doubling the timeline", () => {
+    let state = emptyState("big");
+    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) } as AnalysisDelta,
+      { windowSequence: -1, timestamp: "2026-01-01T00:00:00.000Z", sourceScreenshots: ["0001_mft.json"] });
+    expect(state.forensicTimeline).toHaveLength(3000);
+    // Re-import the SAME 3000 ids → must dedup (each incoming resolves via the id index, incl. events
+    // pushed earlier in this very merge), not append duplicates.
+    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) } as AnalysisDelta,
+      { windowSequence: -1, timestamp: "2026-01-02T00:00:00.000Z", sourceScreenshots: ["0002_mft.json"] });
+    expect(state.forensicTimeline).toHaveLength(3000);
+    const ids = new Set(state.forensicTimeline.map((e) => e.id));
+    expect(ids.size).toBe(3000); // no duplicate ids survived
+  });
+
+  it("dedups duplicate ids WITHIN a single delta (map updated on push)", () => {
+    const dupBatch = [...mkEvents(2), ...mkEvents(2)]; // ids v1e1,v1e2,v1e1,v1e2
+    const state = mergeDelta(emptyState("dup"), { ...baseDelta, forensicEvents: dupBatch } as AnalysisDelta,
+      { windowSequence: -1, timestamp: "2026-01-01T00:00:00.000Z", sourceScreenshots: ["x.json"] });
+    expect(state.forensicTimeline).toHaveLength(2);
+  });
+});
