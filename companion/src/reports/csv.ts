@@ -1,6 +1,7 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import type { GeoMapData } from "../analysis/geoMap.js";
 
 function cell(value: string): string {
@@ -23,14 +24,16 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment";
+  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors";
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
+  const risk = scoreIocsFromState(state);   // #63 composite risk (verdict + severity + corroboration)
   const rows = state.iocs.map((i) => {
     const intel = (i.enrichments ?? [])
       .map((e) => `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""}`)
       .join(" | ");
     const src = iocSrc[i.id] ?? [];
-    return row([i.id, i.type, i.value, i.firstSeen, src.join("|"), String(src.length), intel]);
+    const r = risk[i.id];
+    return row([i.id, i.type, i.value, i.firstSeen, src.join("|"), String(src.length), intel, r?.score ?? "", (r?.factors ?? []).join(" | ")]);
   });
   return [header, ...rows].join("\n") + "\n";
 }

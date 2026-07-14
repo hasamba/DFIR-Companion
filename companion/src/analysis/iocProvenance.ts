@@ -6,12 +6,12 @@ const LOW_RANK = SEVERITY_RANK.Low;
 
 export type IocProvenance = "detection" | "telemetry";
 
-// For each IOC, the max event severity it appears in (across forensic ∪ super events). Low+ =>
-// "detection" (tied to a graded event); Info-only or unmatched => "telemetry". Distinct from the
-// threat-intel verdict (external knowledge) — this is internal provenance. Pure, derived on read;
-// boundary-aware exact-token match like iocCorroboration (no false substring hits).
-export function deriveIocProvenance(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, IocProvenance> {
-  const out: Record<string, IocProvenance> = {};
+// For each IOC, the MAX event-severity rank it appears in (SEVERITY_RANK: Info 0 … Critical 4), or
+// -1 when no event references it. Boundary-aware exact-token match like iocCorroboration (no false
+// substring hits). Pure, derived on read. This is the shared internal-provenance primitive: both the
+// detection-vs-telemetry classifier (below) and the composite IOC risk score (iocRiskScore.ts) read it.
+export function deriveIocSeverityRank(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, number> {
+  const out: Record<string, number> = {};
   if (iocs.length === 0) return out;
   const index = new Map<string, number>();
   const add = (raw: string | undefined, rank: number): void => {
@@ -28,9 +28,17 @@ export function deriveIocProvenance(iocs: readonly IOC[], events: readonly Foren
   }
   for (const ioc of iocs) {
     const v = ioc.value.trim().toLowerCase();
-    if (v.length < 3) { out[ioc.id] = "telemetry"; continue; }
-    const rank = index.get(v);
-    out[ioc.id] = rank !== undefined && rank >= LOW_RANK ? "detection" : "telemetry";
+    out[ioc.id] = v.length < 3 ? -1 : (index.get(v) ?? -1);
   }
+  return out;
+}
+
+// For each IOC, the max event severity it appears in (across forensic ∪ super events). Low+ =>
+// "detection" (tied to a graded event); Info-only or unmatched => "telemetry". Distinct from the
+// threat-intel verdict (external knowledge) — this is internal provenance.
+export function deriveIocProvenance(iocs: readonly IOC[], events: readonly ForensicEvent[]): Record<string, IocProvenance> {
+  const ranks = deriveIocSeverityRank(iocs, events);
+  const out: Record<string, IocProvenance> = {};
+  for (const ioc of iocs) out[ioc.id] = ranks[ioc.id] >= LOW_RANK ? "detection" : "telemetry";
   return out;
 }

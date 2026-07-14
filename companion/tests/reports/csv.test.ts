@@ -24,8 +24,22 @@ describe("CSV renderers", () => {
 
   it("iocsCsv and timelineCsv produce headers even when empty", () => {
     const state = emptyState("c1");
-    expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen,sources,sourceCount,enrichment");
+    expect(iocsCsv(state).trim()).toBe("id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors");
     expect(timelineCsv(state).trim()).toBe("timestamp,windowSequence,description,sourceScreenshots");
+  });
+
+  it("iocsCsv includes a composite risk score + factors column (#63)", () => {
+    const state = emptyState("c1");
+    state.iocs.push({ id: "i1", type: "ip", value: "9.9.9.9", firstSeen: "t0", enrichments: [
+      { source: "VirusTotal", verdict: "malicious", fetchedAt: "" },
+      { source: "AbuseIPDB", verdict: "malicious", fetchedAt: "" },
+    ] });
+    state.forensicTimeline.push({ id: "e1", timestamp: "2026-01-01T00:00:00Z", description: "C2 to 9.9.9.9",
+      severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], srcIp: "9.9.9.9", sources: ["EDR", "FW"] });
+    const csv = iocsCsv(state);
+    const row = csv.trim().split("\n")[1];
+    expect(row).toContain("critical");
+    expect(row).toContain("corroborated by");
   });
 
   it("forensicTimelineCsv emits a header and rows ordered by event time", () => {

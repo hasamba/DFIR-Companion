@@ -11,6 +11,7 @@ import { detectTimelineGaps, gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDe
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
+import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
 import { coverageLabel, type SynthesisCoverage } from "../analysis/synthMeta.js";
 import { collectSummary } from "../analysis/collectDirective.js";
@@ -583,11 +584,15 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   } else {
     // Corroboration: tools that observed each indicator (derived from the events' sources).
     const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
-    lines.push("| ID | Type | Value | First seen | Sources |", "| --- | --- | --- | --- | --- |");
+    // Composite risk tier per indicator (#63) so the table is actionable at a glance.
+    const iocRisk = scoreIocsFromState(state);
+    lines.push("| ID | Type | Value | First seen | Sources | Risk |", "| --- | --- | --- | --- | --- | --- |");
     for (const i of state.iocs) {
       const src = iocSrc[i.id];
       const srcCell = src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
-      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} |`);
+      const r = iocRisk[i.id];
+      const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
+      lines.push(`| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`);
     }
     lines.push("");
   }
