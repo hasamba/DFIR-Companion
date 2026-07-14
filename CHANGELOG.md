@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Forensic Timeline redesign** — timeline events now use the same bordered-card row language as Findings and IOCs: each event is its own rounded card with a severity-coloured left rail, a dedicated Severity column (coloured square + label), and a calm monospace timestamp, under an uppercase column header. The super-timeline is unchanged.
 
 ### Fixed
+- **Evidence drop-folder auto-imports were invisible in the Jobs panel** — files imported from a case's `drop/` folder ran through the same pipeline as the Import button but never registered a background job, so the dashboard showed no activity while they processed. Each sweep now registers an `import` job (`drop import (N files)`) with live progress, exactly like a manual import.
 - **Tagger rules file wasn't created on first write if its directory didn't exist** — a fresh install could throw `ENOENT` when saving edited content-tagger rules; the directory is now created on demand.
 - **Extension content script failed to load on every page** — `content.js` shared a chunk with `popup.js` and was built as an ES module (`import ...`), which Chrome rejects for a classic content script ("Cannot use import statement outside a module"). The build now compiles content.js and pageHook.js in their own isolated builds so they're always self-contained.
 

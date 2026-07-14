@@ -34,7 +34,7 @@ import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
-import { JobManager } from "./analysis/jobManager.js";
+import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
 import { AnonControlStore } from "./analysis/anonControl.js";
 import { CustomEntitiesStore } from "./analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
@@ -1394,6 +1394,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   async function scanCaseDrops(caseId: string): Promise<void> {
     if (dropScanning.has(caseId)) return;   // a previous sweep of this case is still running
     dropScanning.add(caseId);
+    // Surface the auto-import sweep as a background job (registered below once we know files are
+    // ready) so the dashboard Jobs panel shows drop-folder activity, exactly like a manual /import (#225).
+    let job: RegisteredJob | undefined;
     try {
       const meta = await store.getCaseMeta(caseId).catch(() => null);
       if (meta?.status === "closed" || meta?.status === "archived") return; // don't auto-import into a closed or archived case (parity with /import)
@@ -1404,26 +1407,39 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       dropSeen.set(caseId, nextSeen);
       if (ready.length === 0) return;
 
+      // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the
+      // sweep runs mixed importers that don't thread an abort signal, and a file already imported and
+      // moved to _processed/ can't be un-imported — so there's nothing safe to cancel mid-flight.
+      job = options.jobManager?.register({
+        caseId, kind: "import", label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
+      });
+
       const imported: string[] = [];
       const failed: DropFailure[] = [];
       const pendingRawInputs: PendingRawInput[] = [];
+      let processed = 0;
       for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
         const batch = ready.slice(i, i + DROP_CONCURRENCY);
         await Promise.all(batch.map(async (file) => {
-          const res = await processDropFile(caseId, dropDir, file);
-          if (res.pending) {
-            // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
-            // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
-            pendingRawInputs.push(res.pending);
-            return;
+          try {
+            const res = await processDropFile(caseId, dropDir, file);
+            if (res.pending) {
+              // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
+              // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
+              pendingRawInputs.push(res.pending);
+              return;
+            }
+            if (res.ok) imported.push(file.relpath);
+            else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
+            await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
+            nextSeen.delete(file.relpath); // moved out of the watched area — forget it
+            dropPendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
+          } finally {
+            if (job) options.jobManager?.progress(job.jobId, ++processed, ready.length, basename(file.relpath));
           }
-          if (res.ok) imported.push(file.relpath);
-          else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
-          await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
-          nextSeen.delete(file.relpath); // moved out of the watched area — forget it
-          dropPendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
         }));
       }
+      if (job) options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
 
       if (options.dropStatusStore) {
@@ -1451,6 +1467,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);
         dispatchNotify(milestoneEvent(caseId, `Drop import: ${imported.length} imported, ${failed.length} failed`, lines, new Date().toISOString()));
       }
+    } catch (err) {
+      // A sweep-level failure (listing/meta/store I/O) must terminate the job — a job stuck "running"
+      // forever is a worse UI bug than the original invisibility. No-op if it already finished.
+      if (job) options.jobManager?.fail(job.jobId, err);
+      throw err;
     } finally {
       dropScanning.delete(caseId);
     }
