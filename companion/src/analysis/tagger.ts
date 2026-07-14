@@ -110,3 +110,21 @@ export function applyToForensicEvent(event: ForensicEvent, result: EventTagResul
   }
   return { ...event, severity, mitreTechniques };
 }
+
+/** The tagger's evaluation scope (mirrors readTaggerSettings() in taggerRun.ts). */
+export type TaggerScope = "both" | "forensic" | "super";
+
+/**
+ * Select the events a tagger run/preview should evaluate for a given scope. For "both", union the
+ * forensic timeline with the super timeline by id (forensic wins on overlap). Pure — no I/O.
+ */
+export function selectScopedEvents(
+  scope: TaggerScope,
+  forensic: readonly ForensicEvent[],
+  superEvents: readonly ForensicEvent[],
+): ForensicEvent[] {
+  if (scope === "forensic") return [...forensic];
+  if (scope === "super") return [...superEvents];
+  const seen = new Set(forensic.map((e) => e.id));
+  return [...forensic, ...superEvents.filter((e) => !seen.has(e.id))];
+}

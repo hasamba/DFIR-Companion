@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compileRuleset } from "../../src/analysis/taggerRules.js";
-import { runTagger, raiseSeverity, applyToForensicEvent } from "../../src/analysis/tagger.js";
+import { runTagger, raiseSeverity, applyToForensicEvent, selectScopedEvents } from "../../src/analysis/tagger.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
@@ -96,5 +96,21 @@ describe("applyToForensicEvent", () => {
     const original = ev({ id: "e1", severity: "Critical" });
     const result = { eventId: "e1", tags: [], mitre: [], severity: "Low" as const, ruleIds: ["x"] };
     expect(applyToForensicEvent(original, result).severity).toBe("Critical");
+  });
+});
+
+describe("selectScopedEvents", () => {
+  const f = (id: string) => ({ id, timestamp: "t", description: "d", severity: "Info" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+  const forensic = [f("a"), f("b")];
+  const superEvents = [f("b"), f("c")]; // 'b' overlaps
+
+  it("returns only forensic events for scope 'forensic'", () => {
+    expect(selectScopedEvents("forensic", forensic, superEvents).map((e) => e.id)).toEqual(["a", "b"]);
+  });
+  it("returns only super events for scope 'super'", () => {
+    expect(selectScopedEvents("super", forensic, superEvents).map((e) => e.id)).toEqual(["b", "c"]);
+  });
+  it("unions by id (forensic wins) for scope 'both'", () => {
+    expect(selectScopedEvents("both", forensic, superEvents).map((e) => e.id)).toEqual(["a", "b", "c"]);
   });
 });
