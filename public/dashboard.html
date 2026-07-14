@@ -9616,12 +9616,26 @@
         // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
         const m = evt.detail && evt.detail.match(/import\s*[—\-]\s*(\d+)\/(\d+)/i);
         if (m) { const d = +m[1], t = +m[2]; if (t > 0) showImportProgress(40 + (d / t) * 55); }
+        // Deterministic evidence import/ingest is NOT AI work: it runs even with AI switched off
+        // (resynthesizeInBackground gates the LLM on the per-case toggle server-side). The import
+        // routes only reuse this AI-status channel to drive the progress bar, so relabel their
+        // updates honestly instead of claiming "AI: processing…" while the AI is off. Import
+        // updates are recognisable by the detail text ("importing …" / "<kind> import — N/M");
+        // screenshot extraction + synthesis (genuine AI) keep the AI label. Belt-and-suspenders:
+        // when AI is off, ANY activity on this channel can only be ingest, so treat it as such.
+        const isIngest = !!m || (evt.detail && /^importing\b/i.test(evt.detail)) || !aiEnabled;
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
         else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
           const el = document.getElementById("aiStatus");
           el.className = "ai-analyzing";
           el.textContent = evt.detail;
           el.title = evt.detail;
+        } else if (isIngest) {
+          const el = document.getElementById("aiStatus");
+          el.className = "ai-analyzing";
+          const label = evt.detail || "importing evidence…";
+          el.textContent = label;                                   // no "AI:" prefix — this is deterministic ingest
+          el.title = label + " (deterministic import — not AI)";
         } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
       } else if (evt.status === "idle") {
         hideImportProgress();
