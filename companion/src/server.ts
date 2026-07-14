@@ -2796,7 +2796,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateLock = new StateLock();
-  const stateStore = new StateStoreImpl(store);
+  const stateStore = new StateStoreImpl(store, (caseId, retries) =>
+    warnLine(`[state] ${caseId}: investigation.json save needed ${retries} rename retr${retries === 1 ? "y" : "ies"} — the state dir is contended (antivirus / search indexer / sync client). Consider excluding the cases root from real-time scanning, or raise DFIR_ATOMIC_WRITE_RETRIES.`),
+  );
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
