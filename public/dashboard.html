@@ -970,6 +970,26 @@
     .hyp.exhausted { opacity: 0.7; }
     .hyp-discriminator { font-size: 12px; color: var(--c-9fd0ff, #9fd0ff); margin: 3px 0; }
     .hyp-ach-note { color: var(--c-6b7280); font-size: 10px; font-weight: 400; }
+    /* Falsification review (#71) — ephemeral for/against panel above the hypothesis list. */
+    .hyp-rev-box { border: 1px solid var(--c-2a3146); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--c-141a2a, #141a2a); }
+    .hyp-rev-hdr { font-size: 13px; font-weight: 600; color: var(--c-e6e9ef); margin-bottom: 8px; }
+    .hyp-rev-sub { font-size: 11px; font-weight: 400; color: var(--c-9aa4b2); margin-left: 6px; }
+    .hyp-rev-item { border-top: 1px solid var(--c-2a3146); padding: 9px 0; }
+    .hyp-rev-title { font-size: 13px; font-weight: 600; color: var(--c-e6e9ef); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .hyp-rev-rec { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 1px 7px; }
+    .hyp-rev-rec.supported { color: var(--c-7ee787, #7ee787); border: 1px solid var(--c-2a5a2a, #2a5a2a); }
+    .hyp-rev-rec.refuted { color: var(--c-ff7a7a); border: 1px solid var(--c-5a2a2a, #5a2a2a); }
+    .hyp-rev-rec.unknown, .hyp-rev-rec.open { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); }
+    .hyp-rev-apply { padding: 1px 9px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; cursor: pointer; }
+    .hyp-rev-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 6px 0 0; }
+    @media (max-width: 720px) { .hyp-rev-cols { grid-template-columns: 1fr; } }
+    .hyp-rev-cols b { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c-9aa4b2); }
+    .hyp-rev-for b { color: var(--c-7ee787, #7ee787); }
+    .hyp-rev-against b { color: var(--c-ff7a7a); }
+    .hyp-rev-list { margin: 3px 0 0; padding-left: 18px; font-size: 12px; color: var(--c-c7ced9); }
+    .hyp-rev-list li { margin: 2px 0; }
+    .hyp-rev-none { font-size: 12px; color: var(--c-6b7280); font-style: italic; margin-top: 3px; }
+    .hyp-rev-rat { font-size: 12px; color: var(--c-9aa4b2); margin-top: 6px; font-style: italic; }
     /* Prevalence baseline chips (#15b). */
     .prev-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
     .prev-common { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); }
@@ -4091,8 +4111,9 @@
       </div>
     </section>
     <section id="sec-hypotheses" style="grid-column: 1 / -1" class="collapsed">
-      <h2>Hypotheses<button id="hypGenerateBtn" type="button" title="Run a full synthesis now (forced) — regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved." style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="hypGenMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><span class="ev-sub" id="hypBadge"></span></h2>
+      <h2>Hypotheses<button id="hypGenerateBtn" type="button" title="Run a full synthesis now (forced) — regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved." style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><button id="hypReviewBtn" type="button" title="Falsification review (#71): ask the AI to weigh the evidence FOR and AGAINST each OPEN hypothesis and recommend a status. Advisory only — nothing is changed until you apply it." style="margin-left:6px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">🔎 Review</button><span id="hypGenMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><span class="ev-sub" id="hypBadge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Testable explanations for the observed activity — track each from <em>open</em> to <em>supported</em> / <em>refuted</em> / <em>unknown</em>. Auto-generated whenever synthesis runs (after each import; badged <span class="hyp-src synthesis">auto</span>) and analyst-authored; both survive synthesis and are never wiped. A hypothesis is a lead to test, not a verdict.</p>
+      <div id="hypReviewResults"></div>
       <div id="hypList">—</div>
       <div class="hyp-add-form">
         <input id="hypTitle" placeholder="Hypothesis (a testable claim, e.g. 'Initial access was phishing')" />
@@ -5972,6 +5993,57 @@
           // refresh the rest of the case in case the WS push was missed
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
           loadSynthMeta(caseId);
+        })
+        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; })
+        .finally(() => { btn.disabled = false; });
+    });
+
+    // On-demand falsification review (#71): weigh each OPEN hypothesis's supporting vs. refuting evidence
+    // and recommend a status. ADVISORY — the review NEVER changes a hypothesis; the analyst clicks "Apply"
+    // (a normal PATCH, which marks it analystTouched) to accept a recommendation. Ephemeral: results live
+    // only in the panel until the next review. stopPropagation so the h2 click doesn't collapse the section.
+    const HYP_REVIEW_STATUS_LABEL = { supported: "Supported", refuted: "Refuted", unknown: "Unknown", open: "Keep open" };
+    function renderHypothesisReviews(reviews) {
+      const el = document.getElementById("hypReviewResults");
+      if (!el) return;
+      if (!reviews || !reviews.length) { el.innerHTML = ""; return; }
+      const bullets = (arr, kind) => (arr && arr.length)
+        ? `<ul class="hyp-rev-list ${kind}">` + arr.map(b => `<li>${esc(b)}</li>`).join("") + "</ul>"
+        : `<div class="hyp-rev-none">none found</div>`;
+      el.innerHTML =
+        `<div class="hyp-rev-box"><div class="hyp-rev-hdr">🔎 Falsification review <span class="hyp-rev-sub">evidence for vs. against each open hypothesis — recommendations are advisory; click <em>Apply</em> to accept one</span></div>` +
+        reviews.map(r => {
+          const st = r.recommendedStatus || "unknown";
+          const apply = st === "open" ? "" :
+            `<button class="hyp-rev-apply" onclick="hypApplyReview('${escAttr(r.hypothesisId)}','${escAttr(st)}')" title="Set this hypothesis's status to ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)} (marks it analyst-edited)">Apply → ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</button>`;
+          return `<div class="hyp-rev-item">` +
+            `<div class="hyp-rev-title">${esc(r.title)}<span class="hyp-rev-rec ${esc(st)}">recommends: ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</span>${apply}</div>` +
+            `<div class="hyp-rev-cols"><div class="hyp-rev-for"><b>Supports</b>${bullets(r.supportingEvidence, "for")}</div>` +
+            `<div class="hyp-rev-against"><b>Refutes / weakens</b>${bullets(r.refutingEvidence, "against")}</div></div>` +
+            (r.rationale ? `<div class="hyp-rev-rat">${esc(r.rationale)}</div>` : "") +
+          `</div>`;
+        }).join("") +
+        `</div>`;
+    }
+
+    function hypApplyReview(id, status) {
+      hypPatch(id, { status });
+      // Clear the applied recommendation's Apply affordance by re-rendering after the patch reloads.
+    }
+
+    document.getElementById("hypReviewBtn").addEventListener("click", function(e) {
+      e.stopPropagation();
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("hypGenMsg");
+      const btn = document.getElementById("hypReviewBtn");
+      if (!caseId) { msg.textContent = "open a case first"; return; }
+      btn.disabled = true;
+      msg.textContent = "reviewing hypotheses…";
+      fetch(`/cases/${caseId}/hypothesis-review`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(r => { if (!r.ok) return r.json().then(p => { throw new Error(p.error || ("HTTP " + r.status)); }); return r.json(); })
+        .then(p => {
+          renderHypothesisReviews(p.reviews);
+          msg.textContent = (p.reviews && p.reviews.length) ? "" : "no open hypotheses to review";
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the companion server if this 404s"; })
         .finally(() => { btn.disabled = false; });

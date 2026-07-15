@@ -400,6 +400,67 @@ export function reconsiderHypotheses(
   return { hypotheses: next, changed };
 }
 
+// On-demand falsification review (issue #71). A focused, human-readable devil's-advocate pass over the
+// OPEN hypotheses: for each, the plain-English evidence that SUPPORTS it, the evidence that REFUTES it,
+// and a RECOMMENDED status change. Distinct from the ACH links baked into synthesis (contradictingEventIds
+// are event-id references; these are prose bullets an analyst can read). The recommendation is ADVISORY —
+// the analyst still owns each hypothesis's status (the analystTouched freeze contract), so this is never
+// auto-applied. This is the pure, unit-tested core; the AI call + I/O wrapper live in the pipeline.
+export interface HypothesisReviewItem {
+  hypothesisId: string;
+  title: string;                     // the KNOWN title (not the model's echo, which can drift)
+  supportingEvidence: string[];      // plain-English bullets FOR the hypothesis
+  refutingEvidence: string[];        // plain-English bullets AGAINST it (the disconfirming lens)
+  recommendedStatus: HypothesisStatus; // advisory only — never applied by this module
+  rationale: string;                 // one-paragraph justification for the recommendation
+  relatedEventIds: string[];         // real case event ids the review cites
+}
+
+const MAX_REVIEW_BULLETS = 12;
+const MAX_BULLET_LEN = 500;
+export const HYPOTHESIS_REVIEW_MAX_DEFAULT = 20; // cap on reviews returned in one pass
+
+function sanitizeBullets(arr: readonly unknown[] | undefined): string[] {
+  return [...new Set((arr ?? []).map((s) => String(s ?? "").trim().slice(0, MAX_BULLET_LEN)).filter(Boolean))]
+    .slice(0, MAX_REVIEW_BULLETS);
+}
+
+// Turn a raw model hypothesis-review response into clean, ADVISORY review items. Pure — no I/O, no clock.
+// - drops a review whose hypothesisId is not one of the hypotheses actually under review (no invented targets)
+// - takes the title from the KNOWN hypothesis, ignoring the model's echo (which can drift/rename)
+// - trims/caps/dedupes the support & refute bullets, dropping blanks; caps the bullet count
+// - coerces recommendedStatus to the enum (default "unknown") — ADVISORY, never applied here
+// - filters relatedEventIds to ids that actually exist in the case (no dangling references)
+// - dedupes by hypothesisId (first wins) and caps the number of reviews
+export function sanitizeHypothesisReviews(
+  raw: readonly unknown[] | undefined,
+  knownHypotheses: ReadonlyMap<string, string>,
+  validEventIds: ReadonlySet<string>,
+  max: number = HYPOTHESIS_REVIEW_MAX_DEFAULT,
+): HypothesisReviewItem[] {
+  const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : HYPOTHESIS_REVIEW_MAX_DEFAULT;
+  const seen = new Set<string>();
+  const out: HypothesisReviewItem[] = [];
+  for (const item of raw ?? []) {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const hypothesisId = String(r.hypothesisId ?? "").trim();
+    if (!hypothesisId || !knownHypotheses.has(hypothesisId) || seen.has(hypothesisId)) continue;
+    seen.add(hypothesisId);
+    const status = String(r.recommendedStatus ?? "").trim().toLowerCase();
+    out.push({
+      hypothesisId,
+      title: knownHypotheses.get(hypothesisId) as string,
+      supportingEvidence: sanitizeBullets(r.supportingEvidence as unknown[]),
+      refutingEvidence: sanitizeBullets(r.refutingEvidence as unknown[]),
+      recommendedStatus: VALID_STATUS.has(status) ? (status as HypothesisStatus) : "unknown",
+      rationale: String(r.rationale ?? "").trim().slice(0, MAX_TEXT_LEN),
+      relatedEventIds: dedupeStrings(r.relatedEventIds as string[]).filter((id) => validEventIds.has(id)).slice(0, MAX_LINKS),
+    });
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
 // ACH ranking (investigation-guidance #14). Analysis of Competing Hypotheses ranks by FEWEST
 // contradictions, not most support — the explanation that survives the most disconfirming evidence
 // wins, which is exactly what stops a well-supported-but-wrong red herring from topping the list.

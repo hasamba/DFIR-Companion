@@ -332,6 +332,23 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
+  // On-demand hypothesis falsification review (issue #71) — one text-only AI call that weighs each OPEN
+  // hypothesis's supporting vs. refuting evidence and returns an ADVISORY recommended status. Ephemeral:
+  // it NEVER mutates a hypothesis (the analyst applies any recommendation via the existing PATCH route).
+  app.post("/cases/:id/hypothesis-review", async (req: Request, res: Response) => {
+    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hypothesis review" });
+    if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
+    try {
+      const result = await options.pipeline.hypothesisReview(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "hypothesis-review", detail: `reviewed ${result.reviews.length} open hypothes${result.reviews.length === 1 ? "is" : "es"}`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Generate (or regenerate) a prose narrative timeline for the case (one text-only AI call).
   // Saves the result to state.narrativeTimeline so it persists and appears in the report/dashboard.
   app.post("/cases/:id/narrative", async (req: Request, res: Response) => {

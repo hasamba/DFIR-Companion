@@ -208,3 +208,21 @@ export const explainEventSchema = z.object({
 });
 
 export type ExplainEventResult = z.infer<typeof explainEventSchema>;
+
+// On-demand hypothesis falsification review (issue #71): for each OPEN hypothesis, the plain-English
+// evidence for and against it plus an ADVISORY recommended status. Lenient (.catch everywhere) so a
+// partial/slightly-off model reply still parses; sanitizeHypothesisReviews then drops invented targets,
+// coerces the status, and filters event ids. The recommendation is advisory — never auto-applied.
+export const hypothesisReviewSchema = z.object({
+  reviews: z.array(z.object({
+    hypothesisId: z.string().catch(""),
+    title: z.string().catch(""),
+    supportingEvidence: z.array(z.string()).catch([]),
+    refutingEvidence: z.array(z.string()).catch([]),
+    recommendedStatus: z.enum(["open", "supported", "refuted", "unknown"]).catch("unknown"),
+    rationale: z.string().catch(""),
+    relatedEventIds: z.array(z.string()).catch([]),
+  })).catch([]),
+});
+
+export type HypothesisReviewResponse = z.infer<typeof hypothesisReviewSchema>;
