@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAnalystWorkLog, partitionWorkLog, hasIncidentSignal } from "../../src/analysis/workLogFilter.js";
+import { isAnalystWorkLog, partitionWorkLog, hasIncidentSignal, hasStructuredEvidence } from "../../src/analysis/workLogFilter.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Real lines the user reported as wrongly appearing in the forensic timeline.
@@ -75,6 +75,10 @@ function ev(description: string): ForensicEvent {
     mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
 }
 
+function evWith(description: string, extra: Partial<ForensicEvent>): ForensicEvent {
+  return { ...ev(description), ...extra };
+}
+
 describe("workLogFilter", () => {
   it("flags analyst/tool-usage lines as work log", () => {
     for (const d of WORK_LOG) expect(isAnalystWorkLog(d), d).toBe(true);
@@ -97,5 +101,51 @@ describe("workLogFilter", () => {
     const { keep, removed } = partitionWorkLog(events);
     expect(removed).toHaveLength(WORK_LOG.length);
     expect(keep).toHaveLength(REAL_EVENTS.length);
+  });
+
+  // Issue #67: structured-field gate. A structured evidence field populated by an importer
+  // proves the event correlates a real artifact, so it must survive even when the model
+  // wrote a tool-flavored description that the text-only regex would drop.
+  describe("structured-field gate", () => {
+    it("hasStructuredEvidence detects any populated evidence field", () => {
+      expect(hasStructuredEvidence(evWith("x", { sha256: "a".repeat(64) }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { md5: "b".repeat(32) }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { path: "c:/windows/temp/p.exe" }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { asset: "ALCLIENT04" }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { processName: "rubeus.exe" }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { pid: 4321 }))).toBe(true);
+      expect(hasStructuredEvidence(evWith("x", { mitreTechniques: ["T1059"] }))).toBe(true);
+    });
+
+    it("hasStructuredEvidence is false for empty / whitespace fields", () => {
+      expect(hasStructuredEvidence(ev("x"))).toBe(false);
+      expect(hasStructuredEvidence(evWith("x", { path: "   ", asset: "" }))).toBe(false);
+    });
+
+    it("keeps a tool-worded event that carries a structured field (event overload)", () => {
+      // Text-only path would DROP these (no incident signal in the words)…
+      expect(isAnalystWorkLog("Velociraptor notebook accessed.")).toBe(true);
+      // …but with a structured evidence field the event overload KEEPS them.
+      expect(isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { sha256: "d".repeat(64) }))).toBe(false);
+      expect(isAnalystWorkLog(evWith("Access to VolWeb", { processName: "lsass.exe" }))).toBe(false);
+      expect(isAnalystWorkLog(evWith("Kibana dashboard opened", { mitreTechniques: ["T1003.001"] }))).toBe(false);
+    });
+
+    it("still drops a tool-worded event with no structured fields", () => {
+      expect(isAnalystWorkLog(evWith("Velociraptor notebook accessed.", { asset: "", path: undefined }))).toBe(true);
+      expect(isAnalystWorkLog(ev("Access to Splunk"))).toBe(true);
+    });
+
+    it("partitionWorkLog keeps tool-worded events that carry structured evidence", () => {
+      const events = [
+        ev("Velociraptor notebook accessed."),                                   // dropped
+        evWith("Velociraptor notebook accessed.", { processName: "rubeus.exe" }), // kept via gate
+        ev("Access to Splunk"),                                                   // dropped
+        evWith("Access to VolWeb", { sha256: "e".repeat(64) }),                   // kept via gate
+      ];
+      const { keep, removed } = partitionWorkLog(events);
+      expect(keep).toHaveLength(2);
+      expect(removed).toHaveLength(2);
+    });
   });
 });

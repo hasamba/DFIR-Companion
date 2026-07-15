@@ -182,8 +182,10 @@ export function mergeDelta(
   for (const incoming of delta.forensicEvents ?? []) {
     // Hard guard: a weak model may narrate the analyst operating the tool
     // ("Velociraptor Response and Monitoring session continued") as an event.
-    // Never let tool-usage narration into the forensic timeline.
-    if (isAnalystWorkLog(incoming.description)) continue;
+    // Never let tool-usage narration into the forensic timeline. Pass the whole event so
+    // the structured-field gate (issue #67) can keep tool-worded rows that nonetheless
+    // carry real evidence (a hash, asset, process, path, or MITRE technique).
+    if (isAnalystWorkLog(incoming)) continue;
     // Normalize the artifact's own time to UTC (converts an explicit offset like +02:00 to "…Z";
     // leaves already-UTC / naive times untouched) so the whole timeline is one timezone.
     const ts = toUtcIso(incoming.timestamp);
