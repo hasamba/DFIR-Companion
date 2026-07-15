@@ -12,10 +12,15 @@
 // hash-bearing AI-extracted event still matches a structured THOR event.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
   pidWindowSeconds?: number; // host+pid (process-creation) match tolerance (default 120)
+  // Per-source trust weights (#66): when a group merges events from several tools, the canonical
+  // description is taken from the highest-TRUST contributor (tie-broken by the old length rule), so a
+  // noisy raw-artifact row never wins the shown text over a CrowdStrike/THOR detection of the same fact.
+  sourceTrust?: SourceTrustMap;
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -97,9 +102,14 @@ function realSources(events: ForensicEvent[]): string[] {
 // Merge a group of events (≥1) into one canonical event. The lowest-index event's id is
 // kept (stable); severity is the most severe; evidence/links/sources are unioned. The
 // description is NOT mutated — corroboration is conveyed only via the `sources` field.
-function mergeGroup(events: ForensicEvent[]): ForensicEvent {
+function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): ForensicEvent {
+  // Primary (its description is the canonical shown text): most SEVERE first — a Critical detection's
+  // wording must win over an Info row of the same fact — then highest TRUST (#66: prefer the reliable
+  // tool's phrasing over a noisy artifact row), then the longest description as the final tie-break.
   const primary = [...events].sort((a, b) =>
-    (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || (b.description.length - a.description.length))[0];
+    (SEV_RANK[a.severity] - SEV_RANK[b.severity]) ||
+    (trustForSources(b.sources, trustMap) - trustForSources(a.sources, trustMap)) ||
+    (b.description.length - a.description.length))[0];
   const uniq = <T,>(xs: T[]): T[] => [...new Set(xs)];
   const sources = realSources(events);
   const times = events.map((e) => e.timestamp).filter(Boolean).sort();
@@ -253,7 +263,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     emitted.add(r);
     const members = groups.get(r)!;
     if (members.length > 1) {
-      out.push(mergeGroup(members.map((m) => events[m])));
+      out.push(mergeGroup(members.map((m) => events[m]), opts.sourceTrust));
     } else {
       // Singleton: still strip any legacy corroboration note so old state self-heals.
       const e = events[members[0]];

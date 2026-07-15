@@ -69,6 +69,8 @@ import {
   type SecondOpinion,
 } from "./secondOpinion.js";
 import { correlateEvents } from "./correlate.js";
+import { effectiveTrustMap } from "./sourceTrust.js";
+import type { SourceTrustStore } from "./sourceTrustStore.js";
 import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "./scope.js";
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
@@ -1365,6 +1367,9 @@ export interface PipelineOptions {
   // ledger. When set, synthesis feeds a "PREVIOUSLY DISMISSED PATTERNS" block so NEW activity resembling
   // one is surfaced with LOWER confidence unless corroborated (complements falsePositiveStore's EXCLUDE).
   learnedPatternStore?: LearnedPatternStore;
+  // Per-source trust overrides (issue #66): steers cross-source merge description choice + caps confidence
+  // for low-trust-only findings. Absent → built-in DEFAULT_SOURCE_TRUST only (no per-case override).
+  sourceTrustStore?: SourceTrustStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
   // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
@@ -4430,9 +4435,13 @@ export class AnalysisPipeline {
     const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
     const corrProfile = await this.opts.correlationProfileStore?.load(caseId);
     const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
+    // Per-source trust (#66): the effective map (default ⊕ per-case overrides) steers which tool's wording
+    // wins a cross-source merge below, and caps confidence for low-trust-only findings in grounding later.
+    const trustOverrides = this.opts.sourceTrustStore ? await this.opts.sourceTrustStore.load(caseId) : undefined;
+    const sourceTrust = effectiveTrustMap(trustOverrides);
     const state: InvestigationState = {
       ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds }),
+      forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds, sourceTrust }),
     };
 
     const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
@@ -4871,7 +4880,7 @@ export class AnalysisPipeline {
         for (const i of next.iocs) extractCveIds(i.value).forEach((id) => cveIds.add(id));
         kevCveIds = new Set(matchKevEntries([...cveIds], kevCatalog).map((m) => m.cveID));
       }
-      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds, kevCveIds });
+      const grounded = groundAndScoreFindings({ findings: next.findings, scopedEvents: inScope, iocs: next.iocs, graphLinkedEventIds, kevCveIds, sourceTrust });
       // Intel-verdict gate (investigation-guidance #7): floor an intel-ONLY High/Critical finding (no
       // behavioral corroboration, all its verdict IOCs lone-intel/conflicted) to Medium/≤60 — the
       // northpeak stale-CTI-on-own-server class. Runs after grounding so it sees the corroboration rollup.

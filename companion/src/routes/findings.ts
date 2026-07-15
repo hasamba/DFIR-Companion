@@ -7,6 +7,7 @@ import {
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
 import { patternKey } from "../analysis/prevalence.js";
 import type { LearnedPatternInput } from "../analysis/learnedPatterns.js";
+import { DEFAULT_SOURCE_TRUST } from "../analysis/sourceTrust.js";
 import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
@@ -391,6 +392,31 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       return res.status(200).json(updated);
     } catch (err) {
       return res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Per-source trust (#66). GET returns the built-in DEFAULT map + this case's overrides (the dashboard
+  // renders defaults, lets the analyst override a noisy source for the case). PUT replaces the overrides
+  // (sanitized to [0,1]) and re-synthesizes so the new weights re-apply to merge + confidence.
+  app.get("/cases/:id/source-trust", async (req: Request, res: Response) => {
+    if (!options.sourceTrustStore) return res.status(501).json({ error: "source trust not configured" });
+    try {
+      const overrides = await options.sourceTrustStore.load(req.params.id);
+      return res.status(200).json({ defaults: DEFAULT_SOURCE_TRUST, overrides });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/source-trust", async (req: Request, res: Response) => {
+    if (!options.sourceTrustStore) return res.status(501).json({ error: "source trust not configured" });
+    try {
+      const saved = await options.sourceTrustStore.save(req.params.id, req.body?.overrides ?? req.body ?? {});
+      options.onSourceTrust?.(req.params.id);
+      resynthesizeInBackground(req.params.id); // re-apply the new weights to merge + confidence
+      return res.status(200).json({ defaults: DEFAULT_SOURCE_TRUST, overrides: saved });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
 
