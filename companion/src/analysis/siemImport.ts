@@ -55,6 +55,7 @@ export interface SiemEvent {
   processName?: string;
   parentName?: string;
   pid?: number;
+  commandLine?: string;   // process-creation command line, forwarded to ForensicEvent for chainSignature (#68)
   srcIp?: string;
   dstIp?: string;
   port?: number;
@@ -566,6 +567,7 @@ export interface MappedEvent {
   processName?: string;
   parentName?: string;
   pid?: number;
+  commandLine?: string;   // full command line of a process-creation event (#68 cross-tool correlation)
   // Per-event tool source(s). siem mapping leaves this unset (the pipeline tags the whole
   // import); reused by chainsawImport, which tags each event Chainsaw/EVTX individually.
   sources?: string[];
@@ -798,6 +800,8 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     ...(processName ? { processName } : {}),
     ...(def.kind === "process" && parentName ? { parentName } : {}),
     ...(pid !== undefined ? { pid } : {}),
+    // Command line on process-creation events → chainSignature for cross-tool correlation (#68).
+    ...(def.kind === "process" && str(getCI(ed, "CommandLine")) ? { commandLine: str(getCI(ed, "CommandLine")) } : {}),
   };
 }
 
@@ -1081,6 +1085,7 @@ export function createEventAggregator(
           ...(m.processName ? { processName: m.processName } : {}),
           ...(m.parentName ? { parentName: m.parentName } : {}),
           ...(m.pid !== undefined ? { pid: m.pid } : {}),
+          ...(m.commandLine ? { commandLine: m.commandLine } : {}),
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
           ...(m.srcIp ? { srcIp: m.srcIp } : {}),
           ...(m.dstIp ? { dstIp: m.dstIp } : {}),

@@ -13,10 +13,12 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
+import { computeChainSignature } from "./chainSignature.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
   pidWindowSeconds?: number; // host+pid (process-creation) match tolerance (default 120)
+  cmdlineWindowSeconds?: number; // host+command-line (process-creation) match tolerance (default 60, #68)
   // Per-source trust weights (#66): when a group merges events from several tools, the canonical
   // description is taken from the highest-TRUST contributor (tie-broken by the old length rule), so a
   // noisy raw-artifact row never wins the shown text over a CrowdStrike/THOR detection of the same fact.
@@ -141,6 +143,8 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     processName: primary.processName ?? events.find((e) => e.processName)?.processName,
     parentName: primary.parentName ?? events.find((e) => e.parentName)?.parentName,
     pid: primary.pid ?? events.find((e) => e.pid !== undefined)?.pid,
+    commandLine: primary.commandLine ?? events.find((e) => e.commandLine)?.commandLine,
+    chainSignature: primary.chainSignature ?? events.find((e) => e.chainSignature)?.chainSignature,
     chainCheck: primary.chainCheck ?? events.find((e) => e.chainCheck)?.chainCheck,
     action: primary.action ?? events.find((e) => e.action)?.action,
     srcIp: primary.srcIp ?? events.find((e) => e.srcIp)?.srcIp,
@@ -157,19 +161,31 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
 // Idempotent: re-running on already-merged events is a no-op (a merged event's keys
 // only match itself). Preserves input order and ids for events that don't correlate,
 // so callers/tests that don't rely on correlation see unchanged output.
+// Stamp a chainSignature onto a process-creation event (#68) when it lacks one, so the field is
+// populated even for importers that don't set it and old state self-heals. Idempotent: an event that
+// already carries a signature (or isn't a process creation) is returned unchanged.
+function withSignature(e: ForensicEvent): ForensicEvent {
+  if (e.pid === undefined || e.chainSignature) return e;
+  const sig = computeChainSignature(e);
+  return sig ? { ...e, chainSignature: sig } : e;
+}
+
 export function correlateEvents(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[] {
   const windowMs = (opts.windowSeconds ?? 2) * 1000;
   const n = events.length;
   // Always strip any legacy corroboration note from descriptions, even for a single
   // event, so old polluted state self-heals on the next merge/synthesis.
-  if (n < 2) return events.map((e) => (CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e));
+  if (n < 2) return events.map((e) => withSignature(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e));
+  // Work over a copy with chainSignature populated so step 4 can key on it and every emitted
+  // process-creation event carries the field (satisfying the importer-agnostic path).
+  const evs = events.map(withSignature);
   const dsu = new DSU(n);
 
   // 0) EXACT duplicates → union. Same event time + same description is the same
   // observation — this collapses re-imports of the SAME file (and any event type that
   // lacks a hash/path), so importing a report twice never doubles the timeline.
   const byExact = new Map<string, number>();
-  events.forEach((e, i) => {
+  evs.forEach((e, i) => {
     const k = `${e.timestamp} ${cleanDescription(e.description)}`;
     const prev = byExact.get(k);
     if (prev !== undefined) dsu.union(prev, i);
@@ -182,7 +198,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   //    Events without an action (the common case) all share the "" bucket and correlate
   //    as before, so this is fully backward-compatible.
   const byHash = new Map<string, number>(); // "hash:action" → first index with that pair
-  events.forEach((e, i) => {
+  evs.forEach((e, i) => {
     // Process-CREATION events (those carrying a `pid`) are correlated by host+pid in step 3, NOT by
     // image hash: a process's hash identifies the BINARY, not the activity, and an interpreter's image
     // hash (powershell.exe / cmd.exe / rundll32.exe) is identical across EVERY invocation — so
@@ -204,18 +220,18 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   //    shared process exe or vendor URL would falsely merge distinct same-tool detections, #102);
   //    a structured path matching a text path still corroborates (AI-extracted event ↔ import).
   const byPath = new Map<string, { i: number; structured: boolean }[]>();
-  events.forEach((e, i) => {
+  evs.forEach((e, i) => {
     const p = eventPath(e);
     if (p) (byPath.get(p.path) ?? byPath.set(p.path, []).get(p.path)!).push({ i, structured: p.structured });
   });
   for (const entries of byPath.values()) {
     if (entries.length < 2) continue;
-    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: epoch(events[x.i].timestamp) }))
+    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: epoch(evs[x.i].timestamp) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
       if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
-      if (!corroborates(events[a.i], events[b.i])) continue; // same tool sharing a container path → keep distinct
+      if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
       // Undated events on the same path correlate too (no time to disprove); dated ones
       // must be within the window.
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
@@ -233,19 +249,43 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   // `FILE-BO-01.northstar-branch.local` for the same host — keying on the full string would never match.
   const shortHost = (asset: string): string => asset.split(".")[0].trim().toLowerCase();
   const byPid = new Map<string, number[]>();
-  events.forEach((e, i) => {
+  evs.forEach((e, i) => {
     if (e.pid === undefined || !e.asset) return;
     const key = `${shortHost(e.asset)}|${e.pid}`;
     (byPid.get(key) ?? byPid.set(key, []).get(key)!).push(i);
   });
   for (const idxs of byPid.values()) {
     if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: epoch(events[i].timestamp) }))
+    const dated = idxs.map((i) => ({ i, t: epoch(evs[i].timestamp) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
-      if (!corroborates(events[a.i], events[b.i])) continue;
+      if (!corroborates(evs[a.i], evs[b.i])) continue;
       if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) dsu.union(a.i, b.i);
+    }
+  }
+
+  // 4) Same host + normalized COMMAND LINE within a window → union. Cross-tool corroboration for a
+  //    process CREATION that steps 0–3 miss: Sysmon and the EDR both record the same command but with
+  //    different wording, no shared file hash, and DIFFERENT pids (each tool assigns its own view of the
+  //    creation), so the host+pid step can't link them. The command line + parent + host does. Keyed on
+  //    the time-independent `chainSignature`; corroboration is required (one side carries a source the
+  //    other lacks) so two DISTINCT commands from ONE tool never merge — only genuine cross-tool pairs
+  //    do — and a genuine re-run of the same command later is kept apart by the window. (#68)
+  const cmdWindowMs = (opts.cmdlineWindowSeconds ?? 60) * 1000;
+  const bySig = new Map<string, number[]>();
+  evs.forEach((e, i) => {
+    if (e.pid === undefined || !e.chainSignature) return;
+    (bySig.get(e.chainSignature) ?? bySig.set(e.chainSignature, []).get(e.chainSignature)!).push(i);
+  });
+  for (const idxs of bySig.values()) {
+    if (idxs.length < 2) continue;
+    const dated = idxs.map((i) => ({ i, t: epoch(evs[i].timestamp) }))
+      .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+    for (let k = 1; k < dated.length; k++) {
+      const a = dated[k - 1], b = dated[k];
+      if (!corroborates(evs[a.i], evs[b.i])) continue;
+      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= cmdWindowMs) dsu.union(a.i, b.i);
     }
   }
 
@@ -263,10 +303,10 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
     emitted.add(r);
     const members = groups.get(r)!;
     if (members.length > 1) {
-      out.push(mergeGroup(members.map((m) => events[m]), opts.sourceTrust));
+      out.push(mergeGroup(members.map((m) => evs[m]), opts.sourceTrust));
     } else {
       // Singleton: still strip any legacy corroboration note so old state self-heals.
-      const e = events[members[0]];
+      const e = evs[members[0]];
       out.push(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e);
     }
   }
