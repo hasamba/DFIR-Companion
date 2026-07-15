@@ -215,3 +215,90 @@ describe("applyAcceptedSecondOpinion", () => {
     expect(next.deltas.slice(1)).toEqual(so.deltas.slice(1));
   });
 });
+
+// Issue #69 — deltas key on semanticKey (dominant technique + order-independent noun phrase) rather
+// than the raw title, so a trivial rewording between runs no longer registers as a new delta.
+describe("second-opinion delta keys are stable across wording changes (issue #69)", () => {
+  const KEY = "T1059.001:encoded_powershell";
+  // Same finding, reworded between runs, same semanticKey + severity.
+  const aRun = stateWith({
+    findings: [finding({ id: "f1", title: "Encoded PowerShell execution", severity: "High", semanticKey: KEY })],
+  });
+  const bRun = stateWith({
+    findings: [finding({ id: "g1", title: "PowerShell encoded command", severity: "High", semanticKey: KEY })],
+  });
+
+  it("treats reworded-but-equivalent findings as the SAME finding (no a_only/b_only noise)", () => {
+    const deltas = buildSecondOpinionDeltas(aRun, bRun);
+    expect(deltas.filter((d) => d.kind === "b_only" || d.kind === "a_only")).toHaveLength(0);
+    const so = buildSecondOpinion({ a: aRun, b: bRun, modelA: "a", modelB: "b", now: () => "t" });
+    expect(so.agreementCount).toBe(1); // counted as agreement despite different titles
+  });
+
+  it("still flags a real severity disagreement on the shared semanticKey", () => {
+    const bHi = stateWith({
+      findings: [finding({ id: "g1", title: "PowerShell encoded command", severity: "Critical", semanticKey: KEY })],
+    });
+    const sev = buildSecondOpinionDeltas(aRun, bHi).filter((d) => d.kind === "severity");
+    expect(sev).toHaveLength(1);
+    expect(sev[0].aSeverity).toBe("High");
+    expect(sev[0].bSeverity).toBe("Critical");
+  });
+
+  it("gives the delta a stable id derived from semanticKey, unchanged when the title is reworded", () => {
+    const bReworded = stateWith({
+      findings: [finding({ id: "g1", title: "PS enc command observed", severity: "Critical", semanticKey: KEY })],
+    });
+    const bOriginal = stateWith({
+      findings: [finding({ id: "g1", title: "PowerShell encoded command", severity: "Critical", semanticKey: KEY })],
+    });
+    const id1 = buildSecondOpinionDeltas(aRun, bOriginal).find((d) => d.kind === "severity")!.id;
+    const id2 = buildSecondOpinionDeltas(aRun, bReworded).find((d) => d.kind === "severity")!.id;
+    expect(id1).toBe(id2);
+    expect(id1).toBe("severity:t1059-001-encoded-powershell");
+  });
+
+  it("falls back to the normalized title when a finding lacks a semanticKey (backward compatible)", () => {
+    const aNoKey = stateWith({ findings: [finding({ id: "f1", title: "Legacy finding", severity: "Medium" })] });
+    const bNoKey = stateWith({ findings: [finding({ id: "g1", title: "legacy finding", severity: "Medium" })] });
+    // same normalized title, no semanticKey → matched as the same finding
+    expect(buildSecondOpinionDeltas(aNoKey, bNoKey).filter((d) => d.kind === "b_only" || d.kind === "a_only")).toHaveLength(0);
+  });
+
+  it("dedups an accepted b_only by semanticKey — does not add a duplicate of an existing A finding", () => {
+    // A already has the finding under a different title but the SAME semanticKey; B raised it too.
+    // (Constructed directly so the b_only delta exists to accept.)
+    const bOnly = buildSecondOpinion({ a: stateWith({ findings: [] }), b: bRun, modelA: "a", modelB: "b", now: () => "t" });
+    let so = bOnly;
+    so = setDeltaStatus(so, so.deltas.find((d) => d.kind === "b_only")!.id, "accepted");
+    const out = applyAcceptedSecondOpinion(aRun, so); // aRun already has the same semanticKey
+    expect(out.findings.filter((f) => f.semanticKey === KEY)).toHaveLength(1);
+  });
+
+  // Regression for the LIVE bug: model B's second-opinion findings are a dry-run synthesis and carry
+  // NO stored semanticKey. The matcher must DERIVE the key for them (not read the absent field), or a
+  // differently-worded B finding never matches A and the whole feature is inert in the real flow.
+  it("matches a B finding with NO stored semanticKey to A by the DERIVED key", () => {
+    const a = stateWith({
+      // A went through grounding → has the stored key
+      findings: [finding({ id: "f1", title: "Encoded PowerShell execution", severity: "High", semanticKey: "T1059.001:encoded_powershell", mitreTechniques: ["T1059.001"] })],
+    });
+    const b = stateWith({
+      // B is a dry-run: differently worded, SAME technique, and crucially NO semanticKey field
+      findings: [finding({ id: "g1", title: "PowerShell encoded command", severity: "High", mitreTechniques: ["T1059.001"] })],
+    });
+    const deltas = buildSecondOpinionDeltas(a, b);
+    expect(deltas.filter((d) => d.kind === "a_only" || d.kind === "b_only")).toHaveLength(0);
+    expect(buildSecondOpinion({ a, b, modelA: "a", modelB: "b", now: () => "t" }).agreementCount).toBe(1);
+  });
+
+  // Guard against OVER-collapse: two genuinely different findings that merely share an IP must stay
+  // distinct — the derivation drops the numeric octets so the descriptive words decide identity.
+  it("keeps two different findings that share an IP as separate deltas", () => {
+    const a = stateWith({ findings: [finding({ id: "f1", title: "DNS query resolved to 185.220.101.47", severity: "Medium", mitreTechniques: ["T1071.001"] })] });
+    const b = stateWith({ findings: [finding({ id: "g1", title: "Inbound connection from 185.220.101.47 to beacon", severity: "Medium", mitreTechniques: ["T1071.001"] })] });
+    const deltas = buildSecondOpinionDeltas(a, b);
+    expect(deltas.filter((d) => d.kind === "a_only")).toHaveLength(1);
+    expect(deltas.filter((d) => d.kind === "b_only")).toHaveLength(1);
+  });
+});

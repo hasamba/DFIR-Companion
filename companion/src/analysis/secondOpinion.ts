@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Finding, InvestigationState, Severity, Technique } from "./stateTypes.js";
+import { deriveSemanticKey } from "./semanticKey.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -16,7 +17,7 @@ export type DeltaStatus = "pending" | "accepted" | "rejected";
 export type DeltaRecommendation = "accept_b" | "keep_a" | "review";
 
 export interface SecondOpinionDelta {
-  id: string;                         // stable: `${kind}:${slug(title)}`
+  id: string;                         // stable across runs: `${kind}:${slug(semanticKey|title|techniqueId)}` (#69)
   kind: SecondOpinionDeltaKind;
   title: string;                      // finding title, or the ATT&CK technique id for mitre_* deltas
   aSeverity?: Severity;               // severity/ a_only: model A's severity
@@ -33,63 +34,105 @@ export interface SecondOpinion {
   modelA: string;                     // primary synthesis model label
   modelB: string;                     // second-opinion model label
   summary: string;                    // reconcile-AI overall assessment (default "")
-  agreementCount: number;             // findings BOTH models share (by normalized title)
+  agreementCount: number;             // findings BOTH models share (by matchKey — semanticKey or title)
   deltas: SecondOpinionDelta[];
 }
 
 const norm = (title: string): string => String(title).trim().toLowerCase().replace(/\s+/g, " ");
+
+// The STABLE cross-run identity of a finding (issue #69). Keying deltas by the raw normalized title
+// made a trivial rewording between runs ("Encoded PowerShell execution" vs "PowerShell encoded
+// command") register as a brand-new delta, so second-opinion tracking filled with noise. The
+// semanticKey (dominant technique + order-independent noun phrase) collapses those to one key. Falls
+// back to DERIVING it from the finding (so it works even on the second-opinion dry-run findings,
+// which aren't persisted through grounding and so carry no stored semanticKey). deriveSemanticKey
+// never returns empty (it slugs the title when no salient tokens survive), so this is always defined.
+const matchKey = (f: Finding): string => f.semanticKey?.trim() || deriveSemanticKey(f);
 
 // URL/id-safe slug for a stable delta id. Collapses runs of non-alphanumerics to single dashes.
 function slug(text: string): string {
   return String(text).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
 }
 
-// First occurrence of each normalized title wins (mirrors findingsDiff.byTitle), keeping the
-// displayed finding object so we can carry/merge it.
-function byTitle(findings: readonly Finding[]): Map<string, Finding> {
-  const map = new Map<string, Finding>();
+// A cross-run finding index. A counterpart is matched by semanticKey FIRST (so a reworded title with
+// the same technique+phrase collapses to one finding — the #69 fix) and by normalized title as a
+// fallback (so a same-title finding stays matched even when the two runs mapped it to different
+// dominant techniques — that divergence surfaces separately as mitre deltas, not as finding noise).
+// The side's own list is de-duped by matchKey (first wins), mirroring the previous byTitle behavior.
+interface FindingIndex {
+  all: readonly Finding[];                          // de-duped findings (first per matchKey)
+  match: (f: Finding) => Finding | undefined;       // this side's counterpart to `f`, by semanticKey then title
+}
+
+function indexFindings(findings: readonly Finding[]): FindingIndex {
+  const all: Finding[] = [];
+  const seen = new Set<string>();
+  const bySem = new Map<string, Finding>();
+  const byTitle = new Map<string, Finding>();
   for (const f of findings) {
-    const key = norm(f.title);
-    if (!key || map.has(key)) continue;
-    map.set(key, f);
+    // Key on the DERIVED matchKey, not the stored `semanticKey` field: model B's second-opinion
+    // findings are a dry-run synthesis that never persisted through grounding, so they carry no
+    // stored key. Deriving it here is what lets B's differently-worded findings match A's by
+    // semanticKey at all (#69) — indexing on the stored field silently disabled that.
+    const key = matchKey(f);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    all.push(f);
+    if (!bySem.has(key)) bySem.set(key, f);
+    const t = norm(f.title);
+    if (t && !byTitle.has(t)) byTitle.set(t, f);
   }
-  return map;
+  const match = (f: Finding): Finding | undefined => {
+    const hit = bySem.get(matchKey(f));
+    if (hit) return hit;
+    const t = norm(f.title);
+    return t ? byTitle.get(t) : undefined;
+  };
+  return { all, match };
 }
 
 // Compute the deterministic delta set between model A (primary, saved) and model B (second opinion).
-// b_only: B raised a finding A missed; a_only: A has a finding B dropped; severity: shared title,
+// b_only: B raised a finding A missed; a_only: A has a finding B dropped; severity: matched finding,
 // different severity; mitre_added/removed: ATT&CK techniques present on one side only (by id).
 export function buildSecondOpinionDeltas(a: InvestigationState, b: InvestigationState): SecondOpinionDelta[] {
-  const aF = byTitle(a.findings);
-  const bF = byTitle(b.findings);
+  const aIdx = indexFindings(a.findings);
+  const bIdx = indexFindings(b.findings);
   const deltas: SecondOpinionDelta[] = [];
+  const matchedA = new Set<Finding>();
 
-  for (const [key, bf] of bF) {
-    const af = aF.get(key);
+  for (const bf of bIdx.all) {
+    const af = aIdx.match(bf);
     if (!af) {
-      deltas.push(delta("b_only", bf.title, { finding: bf, bSeverity: bf.severity }));
-    } else if (af.severity !== bf.severity) {
-      deltas.push(delta("severity", af.title, { finding: af, aSeverity: af.severity, bSeverity: bf.severity }));
+      deltas.push(delta("b_only", matchKey(bf), bf.title, { finding: bf, bSeverity: bf.severity }));
+    } else if (!matchedA.has(af)) {
+      matchedA.add(af); // one delta per A finding — a second B finding mapping to it agrees, no delta
+      if (af.severity !== bf.severity) {
+        deltas.push(delta("severity", matchKey(af), af.title, { finding: af, aSeverity: af.severity, bSeverity: bf.severity }));
+      }
     }
   }
-  for (const [key, af] of aF) {
-    if (!bF.has(key)) deltas.push(delta("a_only", af.title, { finding: af, aSeverity: af.severity }));
+  for (const af of aIdx.all) {
+    if (!matchedA.has(af)) deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
   }
 
   const aTech = new Map(a.mitreTechniques.map((t) => [t.id, t]));
   const bTech = new Map(b.mitreTechniques.map((t) => [t.id, t]));
   for (const [id, t] of bTech) {
-    if (!aTech.has(id)) deltas.push(delta("mitre_added", id, { techniqueName: t.name }));
+    if (!aTech.has(id)) deltas.push(delta("mitre_added", id, id, { techniqueName: t.name }));
   }
   for (const [id, t] of aTech) {
-    if (!bTech.has(id)) deltas.push(delta("mitre_removed", id, { techniqueName: t.name }));
+    if (!bTech.has(id)) deltas.push(delta("mitre_removed", id, id, { techniqueName: t.name }));
   }
   return deltas;
 }
 
-function delta(kind: SecondOpinionDeltaKind, title: string, extra: Partial<SecondOpinionDelta>): SecondOpinionDelta {
+// `keyBasis` is the STABLE identity the delta id is slugged from — a finding's matchKey (semanticKey
+// or normalized title) or, for mitre deltas, the technique id. Keying the id off semanticKey rather
+// than the raw title is what keeps the delta stable across a reworded re-run (issue #69). `title`
+// remains the human-readable label rendered to the analyst.
+function delta(kind: SecondOpinionDeltaKind, keyBasis: string, title: string, extra: Partial<SecondOpinionDelta>): SecondOpinionDelta {
   return {
-    id: `${kind}:${slug(title)}`,
+    id: `${kind}:${slug(keyBasis)}`,
     kind,
     title,
     rationale: "",
@@ -99,12 +142,17 @@ function delta(kind: SecondOpinionDeltaKind, title: string, extra: Partial<Secon
   };
 }
 
-// Findings BOTH models produced (intersection of normalized titles) — a simple agreement signal.
+// Findings BOTH models produced — a simple agreement signal. Matched by the same union rule as the
+// deltas (semanticKey then title), counting each A finding at most once.
 function agreementCount(a: InvestigationState, b: InvestigationState): number {
-  const aT = byTitle(a.findings);
-  let n = 0;
-  for (const key of byTitle(b.findings).keys()) if (aT.has(key)) n++;
-  return n;
+  const aIdx = indexFindings(a.findings);
+  const bIdx = indexFindings(b.findings);
+  const matchedA = new Set<Finding>();
+  for (const bf of bIdx.all) {
+    const af = aIdx.match(bf);
+    if (af && !matchedA.has(af)) matchedA.add(af);
+  }
+  return matchedA.size;
 }
 
 export interface BuildSecondOpinionInput {
@@ -225,8 +273,10 @@ export function setAllPendingStatus(so: SecondOpinion, status: DeltaStatus): Sec
 }
 
 // Apply EVERY accepted delta onto a case state. Pure, immutable, IDEMPOTENT (safe to run on every
-// read/synthesis): b_only adds B's finding if absent by title; a_only dismisses A's finding in
+// read/synthesis): b_only adds B's finding if absent by matchKey; a_only dismisses A's finding in
 // place; severity rewrites A's finding severity; mitre_added/removed add/remove the technique.
+// Findings are matched by matchKey (semanticKey, falling back to title — issue #69) so an accepted
+// delta re-applies to the same finding even after a reworded re-synthesis.
 // Used by both the apply route (on the live state) and synthesize() post-processing (durability).
 export function applyAcceptedSecondOpinion(state: InvestigationState, so: SecondOpinion | null): InvestigationState {
   if (!so) return state;
@@ -236,17 +286,21 @@ export function applyAcceptedSecondOpinion(state: InvestigationState, so: Second
   let findings = state.findings;
   let techniques = state.mitreTechniques;
 
+  // The stable key a finding-bearing delta targets: its carried finding's matchKey, falling back to
+  // the delta's normalized title for a (defensive) delta with no finding attached.
+  const deltaKey = (d: SecondOpinionDelta): string => (d.finding ? matchKey(d.finding) : norm(d.title));
+
   for (const d of accepted) {
     if (d.kind === "b_only" && d.finding) {
-      const key = norm(d.title);
-      if (!findings.some((f) => norm(f.title) === key)) {
+      const key = deltaKey(d);
+      if (!findings.some((f) => matchKey(f) === key)) {
         findings = [...findings, { ...d.finding, id: `so:${slug(d.title)}`, status: "open" }];
       }
     } else if (d.kind === "a_only") {
-      findings = mapByTitle(findings, d.title, (f) => ({ ...f, status: "dismissed" as const }));
+      findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, status: "dismissed" as const }));
     } else if (d.kind === "severity" && d.bSeverity) {
       const sev = d.bSeverity;
-      findings = mapByTitle(findings, d.title, (f) => ({ ...f, severity: sev }));
+      findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, severity: sev }));
     } else if (d.kind === "mitre_added") {
       if (!techniques.some((t) => t.id === d.title)) {
         techniques = [...techniques, { id: d.title, name: d.techniqueName || d.title, findingIds: [] } satisfies Technique];
@@ -260,7 +314,6 @@ export function applyAcceptedSecondOpinion(state: InvestigationState, so: Second
   return { ...state, findings, mitreTechniques: techniques };
 }
 
-function mapByTitle(findings: readonly Finding[], title: string, fn: (f: Finding) => Finding): Finding[] {
-  const key = norm(title);
-  return findings.map((f) => (norm(f.title) === key ? fn(f) : f));
+function mapByKey(findings: readonly Finding[], key: string, fn: (f: Finding) => Finding): Finding[] {
+  return findings.map((f) => (matchKey(f) === key ? fn(f) : f));
 }
