@@ -6,6 +6,7 @@ import {
 } from "../analysis/falsePositive.js";
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
 import { patternKey } from "../analysis/prevalence.js";
+import type { LearnedPatternInput } from "../analysis/learnedPatterns.js";
 import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
@@ -152,6 +153,34 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     } catch { /* best-effort — leave fingerprints unset */ }
   };
 
+  // Learn from dismissals (#65): distil each finding/event marker into the accumulating learned-patterns
+  // ledger, so a recurrence generalizes into a synthesis confidence-lowering block. IOC markers are skipped
+  // (a bare IOC value isn't a generalizable prose pattern). Best-effort — a failure must never fail the FP
+  // marking. Read the analyst-facing text (a finding's title-ref, or an event's description label).
+  const recordLearnedPatterns = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
+    if (!options.learnedPatternStore) return;
+    const inputs: LearnedPatternInput[] = markers
+      .filter((m) => m.kind === "finding" || m.kind === "event")
+      .map((m) => ({ text: m.kind === "event" ? (m.label ?? "") : m.ref, reason: m.reason, example: m.label ?? m.ref }))
+      .filter((i) => i.text.trim().length > 0);
+    if (!inputs.length) return;
+    try {
+      for (const input of inputs) await options.learnedPatternStore.record(caseId, input);
+      options.onLearnedPatterns?.(caseId);
+    } catch (err) {
+      console.warn(`[DFIR] learned-pattern record failed for case ${caseId}: ${(err as Error).message}`);
+    }
+  };
+
+  app.get("/cases/:id/learned-patterns", async (req: Request, res: Response) => {
+    if (!options.learnedPatternStore) return res.status(501).json({ error: "learned patterns not configured" });
+    try {
+      return res.status(200).json(await options.learnedPatternStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post("/cases/:id/false-positive", async (req: Request, res: Response) => {
     try {
       const marker = buildFalsePositiveMarker(req.body ?? {});
@@ -172,6 +201,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         if (whitelistInput) await options.iocWhitelistStore.add(whitelistInput);
       }
       options.onFalsePositive?.(req.params.id);
+      await recordLearnedPatterns(req.params.id, [marker]); // #65 accumulate the reasoned dismissal
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
         detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
@@ -214,6 +244,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const next = [...byId.values()];
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
+      await recordLearnedPatterns(req.params.id, built); // #65 accumulate the reasoned dismissals
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
         detail: `${built.length} item(s) marked false-positive`,
