@@ -90,22 +90,68 @@ const PROCESS_NARRATION: RegExp[] = [
   /\banaly[sz]\w*\b[^.]*\b(completed|continued|ongoing|performed|reached|stage)\w*\b/i,
 ];
 
+// The structured evidence fields an importer fills in when it has correlated a real
+// artifact (a hash it computed, the affected asset, the process/pid, a file path, or a
+// mapped MITRE technique). These live on the EVENT OBJECT, not the description text — so
+// the text-only `hasIncidentSignal` can't see them. When any is present the event is real
+// evidence and must survive even if the (model-written) description reads like tool
+// narration ("Velociraptor notebook accessed" on a row that carries processName=rubeus.exe).
+type WorkLogEvent = Readonly<{
+  description: string;
+  sha256?: string;
+  md5?: string;
+  path?: string;
+  asset?: string;
+  processName?: string;
+  parentName?: string;
+  pid?: number;
+  mitreTechniques?: readonly string[];
+}>;
+
+const nonEmpty = (s: string | undefined): boolean => typeof s === "string" && s.trim().length > 0;
+
+// True when an event carries at least one structured evidence field (issue #67 gate).
+export function hasStructuredEvidence(event: WorkLogEvent): boolean {
+  return (
+    nonEmpty(event.sha256) ||
+    nonEmpty(event.md5) ||
+    nonEmpty(event.path) ||
+    nonEmpty(event.asset) ||
+    nonEmpty(event.processName) ||
+    nonEmpty(event.parentName) ||
+    typeof event.pid === "number" ||
+    (event.mitreTechniques?.length ?? 0) > 0
+  );
+}
+
+function matchesWorkLogPattern(description: string): boolean {
+  return TOOL_PATTERNS.some((re) => re.test(description))
+    || PROCESS_NARRATION.some((re) => re.test(description))
+    || NAVIGATION.some((re) => re.test(description));
+}
+
 // True when an event describes analyst/tool usage, investigation-process narration,
 // or tool/UI navigation rather than a real incident event on the system(s) under
 // investigation. A description carrying STRONG incident signal (a malware name, an
 // exe/script path, an IP, a hash, a logon, a Defender/EDR verdict) is NEVER treated as
 // work log — the incident allowlist overrides, so we don't drop real evidence that
 // merely mentions the tool it was seen in.
-export function isAnalystWorkLog(description: string): boolean {
+//
+// Two override gates, both meaning "this is real, keep it":
+//  1. text gate — `hasIncidentSignal` on the description (works with a bare string).
+//  2. structured-field gate (#67) — any populated evidence field on the event object.
+//     Only applies when an event (not a bare string) is passed, e.g. from the merge/
+//     partition paths where importers have already filled sha256/asset/processName/etc.
+export function isAnalystWorkLog(input: string | WorkLogEvent): boolean {
+  const description = typeof input === "string" ? input : input.description;
   if (hasIncidentSignal(description)) return false;
-  return TOOL_PATTERNS.some((re) => re.test(description))
-    || PROCESS_NARRATION.some((re) => re.test(description))
-    || NAVIGATION.some((re) => re.test(description));
+  if (typeof input !== "string" && hasStructuredEvidence(input)) return false;
+  return matchesWorkLogPattern(description);
 }
 
 export function partitionWorkLog(events: ForensicEvent[]): { keep: ForensicEvent[]; removed: ForensicEvent[] } {
   const keep: ForensicEvent[] = [];
   const removed: ForensicEvent[] = [];
-  for (const e of events) (isAnalystWorkLog(e.description) ? removed : keep).push(e);
+  for (const e of events) (isAnalystWorkLog(e) ? removed : keep).push(e);
   return { keep, removed };
 }
