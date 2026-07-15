@@ -158,6 +158,10 @@ export interface Thresholds {
 
 export const DEFAULT_THRESHOLDS: Thresholds = { minPrecision: 0.8, minRecall: 0.8 };
 
+// Relaxed gate for --real (Phase 2) runs: a real model won't reproduce a golden set exactly, so recall
+// (did it find the important events?) is weighted over precision (a little extra noise is tolerable).
+export const REAL_THRESHOLDS: Thresholds = { minPrecision: 0.5, minRecall: 0.7 };
+
 export function passesExtraction(score: ExtractionScore, thresholds: Thresholds = DEFAULT_THRESHOLDS): boolean {
   return score.precision >= thresholds.minPrecision && score.recall >= thresholds.minRecall;
 }
