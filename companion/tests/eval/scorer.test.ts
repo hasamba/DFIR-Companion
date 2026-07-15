@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   eventMatches,
+  techniqueSatisfies,
   scoreExtraction,
   checkSynthesis,
   passesExtraction,
@@ -40,6 +41,38 @@ describe("eventMatches (#64 fuzzy predicate)", () => {
   it("respects a custom tolerance window", () => {
     expect(eventMatches({ timestamp: "2026-06-01T10:00:00Z" }, ev({ id: "e1", timestamp: "2026-06-01T10:20:00Z" }), { toleranceMinutes: 30 })).toBe(true);
   });
+
+  // A real run emitted one event per row of a 10-row brute-force burst instead of one aggregated event.
+  // All 10 satisfy the same golden — finer granularity, not invention — so the 9 the 1:1 matching leaves
+  // unconsumed must NOT be false positives. Genuine noise (matching no golden) still must be.
+  it("does not count finer-grained duplicates of a golden as false positives", () => {
+    const golden: GoldenEvent[] = [{ timestamp: "2026-06-01T10:00:00Z", keywords: ["jdoe"], asset: "WS01" }];
+    const perRow = [1, 2, 3].map((n) =>
+      ev({ id: `e${n}`, timestamp: `2026-06-01T10:00:0${n}Z`, description: "failed logon for jdoe", asset: "WS01" }),
+    );
+    const score = scoreExtraction(golden, perRow);
+    expect(score.truePositives).toBe(1);      // one golden ⇒ at most one TP (recall can't be inflated)
+    expect(score.falsePositives).toBe(0);     // the other two are the same fact, not noise
+    expect(score.precision).toBe(1);
+    expect(score.recall).toBe(1);
+
+    // An event matching no golden is still a false positive.
+    const withNoise = [...perRow, ev({ id: "n1", timestamp: "2026-06-01T10:14:00Z", description: "asmith logged off", asset: "WS03" })];
+    const noisy = scoreExtraction(golden, withNoise);
+    expect(noisy.falsePositives).toBe(1);
+    expect(noisy.extraProduced).toEqual(["n1"]);
+  });
+
+  // A real gpt-4o-mini run tagged an SSH password-guessing burst T1110.001 against a golden asking for
+  // T1110 and scored 0% recall — a strictly MORE precise answer counted as a total miss.
+  it("accepts a produced SUB-technique for a golden parent, but not the reverse", () => {
+    expect(techniqueSatisfies("T1110", "T1110.001")).toBe(true);   // password guessing IS brute force
+    expect(techniqueSatisfies("T1110", "T1110")).toBe(true);
+    expect(techniqueSatisfies("T1110.001", "T1110")).toBe(false);  // parent is less precise than asked
+    expect(techniqueSatisfies("T1110", "T1111")).toBe(false);      // prefix-adjacent ids must not match
+    expect(eventMatches({ mitreTechniques: ["T1110"] }, ev({ id: "e1", mitreTechniques: ["T1110.001"] }))).toBe(true);
+    expect(eventMatches({ mitreTechniques: ["T1110.001"] }, ev({ id: "e1", mitreTechniques: ["T1110"] }))).toBe(false);
+  });
 });
 
 describe("scoreExtraction (#64 precision/recall)", () => {
@@ -68,8 +101,12 @@ describe("scoreExtraction (#64 precision/recall)", () => {
 
   it("does not let duplicate produced events inflate recall past the golden count", () => {
     const s = scoreExtraction([{ keywords: ["logon"] }], [ev({ id: "e1", description: "logon" }), ev({ id: "e2", description: "logon" })]);
-    expect(s.truePositives).toBe(1); // one golden consumes exactly one produced
-    expect(s.falsePositives).toBe(1);
+    expect(s.truePositives).toBe(1); // one golden consumes exactly one produced — recall stays capped
+    // ...and the leftover is NOT a false positive: it satisfies the golden, so it's the same fact restated,
+    // not noise. (FP is "matches no golden" — see scoreExtraction. Previously this asserted 1, which made a
+    // model that split one golden fact across several rows score 10% precision on a correct extraction.)
+    expect(s.falsePositives).toBe(0);
+    expect(s.precision).toBe(1);
   });
 
   it("defines empty cases conventionally (precision/recall = 1)", () => {
