@@ -47,7 +47,7 @@ const SYNTH_B = JSON.stringify({
 
 const RECONCILE = JSON.stringify({
   summary: "Model B surfaces a C2 finding A missed.",
-  verdicts: [{ id: "b_only:b-only-finding", rationale: "Supported by event e1.", recommendation: "accept_b" }],
+  verdicts: [{ id: "b_only:b-finding-only", rationale: "Supported by event e1.", recommendation: "accept_b" }],
 });
 
 // Only the timeline is seeded; model A's findings/MITRE come from the Pass-0 primary re-synthesis.
@@ -118,9 +118,9 @@ describe("Second opinion routes (#116)", () => {
   it("accepting a b_only delta adds the finding to the case (durably) and records the decision", async () => {
     const { app, stateStore } = await makeApp({ enabled: true });
     await request(app).post("/cases/c1/second-opinion").send({});
-    const res = await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "b_only:b-only-finding", accept: true });
+    const res = await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "b_only:b-finding-only", accept: true });
     expect(res.status).toBe(200);
-    expect(res.body.deltas.find((d: { id: string }) => d.id === "b_only:b-only-finding").status).toBe("accepted");
+    expect(res.body.deltas.find((d: { id: string }) => d.id === "b_only:b-finding-only").status).toBe("accepted");
     const state = await stateStore.load("c1");
     expect(state.findings.find((f) => f.title === "B only finding")?.id).toBe("so:b-only-finding");
   });
@@ -129,9 +129,9 @@ describe("Second opinion routes (#116)", () => {
     const { app, stateStore } = await makeApp({ enabled: true });
     await request(app).post("/cases/c1/second-opinion").send({});
     const before = (await stateStore.load("c1")).findings.length;
-    const res = await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "b_only:b-only-finding", accept: false });
+    const res = await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "b_only:b-finding-only", accept: false });
     expect(res.status).toBe(200);
-    expect(res.body.deltas.find((d: { id: string }) => d.id === "b_only:b-only-finding").status).toBe("rejected");
+    expect(res.body.deltas.find((d: { id: string }) => d.id === "b_only:b-finding-only").status).toBe("rejected");
     expect((await stateStore.load("c1")).findings).toHaveLength(before);
   });
 
@@ -157,11 +157,11 @@ describe("Second opinion routes (#116)", () => {
   it("apply-all leaves an already-decided delta untouched", async () => {
     const { app } = await makeApp({ enabled: true });
     await request(app).post("/cases/c1/second-opinion").send({});
-    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "a_only:a-only-finding", accept: false });
+    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: "a_only:finding-only", accept: false });
     const res = await request(app).post("/cases/c1/second-opinion/apply-all").send({ accept: true });
     const byId = (id: string) => res.body.deltas.find((d: { id: string }) => d.id === id).status;
-    expect(byId("a_only:a-only-finding")).toBe("rejected");
-    expect(res.body.deltas.filter((d: { id: string }) => d.id !== "a_only:a-only-finding").every((d: { status: string }) => d.status === "accepted")).toBe(true);
+    expect(byId("a_only:finding-only")).toBe("rejected");
+    expect(res.body.deltas.filter((d: { id: string }) => d.id !== "a_only:finding-only").every((d: { status: string }) => d.status === "accepted")).toBe(true);
   });
 
   it("GET returns the stored record after a run", async () => {

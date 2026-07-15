@@ -73,6 +73,12 @@ export interface Finding {
   connectedness?: number;
   relevanceDiscriminator?: string;
   title: string;
+  // Stable, wording-resilient identity for cross-run matching (issue #69): dominant ATT&CK technique
+  // + an order-independent noun phrase from the title, e.g. "T1059.001:encoded_powershell". Set
+  // post-synthesis by groundAndScoreFindings (deriveSemanticKey); used as the primary second-opinion
+  // delta key so a trivial rewording no longer registers as a new finding. Optional — findings
+  // synthesized before this field existed fall back to the normalized title.
+  semanticKey?: string;
   description: string;
   relatedIocs: string[];        // IOC ids
   sourceScreenshots: string[];  // screenshot filenames

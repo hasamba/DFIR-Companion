@@ -16,6 +16,7 @@ import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
+import { deriveSemanticKey } from "./semanticKey.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -164,6 +165,9 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...rest,
       relatedEventIds,
       corroboration,
+      // Stable cross-run identity (issue #69) — recomputed every synthesis so second-opinion deltas
+      // key on it instead of the raw title. Deterministic from the (idempotent-safe) title + techniques.
+      semanticKey: deriveSemanticKey(f),
       ...(ungrounded ? { ungrounded: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
