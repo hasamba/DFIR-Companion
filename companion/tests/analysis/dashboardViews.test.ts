@@ -81,6 +81,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-adversary",
       "sec-d3fend",
       "sec-false-positive",
+      "sec-source-trust",
       "sec-hypotheses",
       "sec-notebook",
       "sec-case-details",
