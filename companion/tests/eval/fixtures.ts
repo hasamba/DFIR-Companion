@@ -18,6 +18,7 @@
 // nothing at all, and "no events" scores recall 0 for reasons that have nothing to do with the prompt.
 
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { CaptureMetadata } from "../../src/types.js";
 import type { GoldenEvent, Thresholds } from "./scorer.js";
 
 // A delta the MockProvider returns verbatim for an extraction call. Kept as a builder so fixtures read as data.
@@ -41,6 +42,29 @@ export interface SynthesisFixture {
   name: string;
   seedEvents: ForensicEvent[];
   canned: string;
+}
+
+export interface ScreenshotFixture {
+  name: string;
+  captures: CaptureMetadata[]; // synthetic capture metadata; no real image bytes are shipped
+  canned: string;              // MockProvider response — MOCK-ONLY (see SCREENSHOT_FIXTURES note)
+  golden: GoldenEvent[];
+  thresholds?: Thresholds;
+}
+
+// A synthetic browser capture, sized like the real thing. Defaults are the boring path; a fixture overrides
+// only what it asserts on. contentHash is a stand-in string — dedup never runs on a single eval capture.
+function cap(partial: Partial<CaptureMetadata> & { sequenceNumber: number; screenshotFile: string }): CaptureMetadata {
+  return {
+    caseId: "eval",
+    timestamp: "2026-06-01T14:05:00Z",
+    url: "https://velociraptor.local/app/index.html",
+    tabTitle: "Velociraptor",
+    triggerType: "timer",
+    contentHash: `evalhash-${partial.sequenceNumber}`,
+    isDuplicate: false,
+    ...partial,
+  };
 }
 
 function ev(partial: Partial<ForensicEvent> & { id: string; timestamp: string; description: string }): ForensicEvent {
@@ -186,5 +210,33 @@ export const SYNTHESIS_FIXTURES: SynthesisFixture[] = [
       iocs: [], mitreTechniques: [{ id: "T1021.002", name: "SMB/Windows Admin Shares" }],
       threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "lateral movement case",
     }),
+  },
+];
+
+// Screenshot goldens exercise the VISION path (`analyzeWindow`) — the one modality CSV/log fixtures can't
+// reach. MOCK-ONLY BY DESIGN: the MockProvider returns the canned delta and the harness's stub imageLoader
+// supplies placeholder bytes, so this gates the analyzeWindow plumbing + scorer WITHOUT committing any real
+// screenshot. Real vision grading needs committed evidence (sensitive) and stays deferred — the runner
+// skips these in `--real` mode (see README). Note the golden timestamp is the ARTIFACT's OWN time, hours
+// off the capture time, which is exactly the behavior analyzeWindow's prompt exists to enforce.
+export const SCREENSHOT_FIXTURES: ScreenshotFixture[] = [
+  {
+    name: "velociraptor-scheduled-task",
+    captures: [
+      cap({
+        sequenceNumber: 42,
+        screenshotFile: "000042_velociraptor-scheduled-tasks.webp",
+        tabTitle: "Velociraptor — Windows.System.TaskScheduler on WS02",
+        url: "https://velociraptor.local/app/index.html#/collected/C.eval/WS02",
+      }),
+    ],
+    canned: delta([
+      { id: "e1", timestamp: "2026-06-01T02:13:00Z", description: "Scheduled task 'UpdateOrchestratorBackdoor' launches hidden powershell on WS02 (persistence)", severity: "High", mitreTechniques: ["T1053.005"], asset: "WS02" },
+    ]),
+    golden: [
+      // Timestamp is the artifact's own 02:13, NOT the 14:05 capture — keyword + technique + host are the
+      // checkable facts; severity is left unpinned (a defensible judgment call), per the golden discipline above.
+      { timestamp: "2026-06-01T02:13:00Z", keywords: ["powershell"], mitreTechniques: ["T1053.005"], asset: "WS02" },
+    ],
   },
 ];
