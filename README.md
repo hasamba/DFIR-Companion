@@ -560,15 +560,17 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
 | `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
 
-### AI — synthesis (two-tier, optional)
+### AI — text model (two-tier, optional)
 
-If unset, synthesis reuses the extraction model. Recommended: cheap vision model for extraction, strong text model for synthesis.
+The split is **vision vs text**: `DFIR_AI_MODEL` reads screenshots (must be multimodal); the `DFIR_AI_SYNTH_*` model does **all text work** — CSV extraction, log triage, synthesis, ask/explain. If unset, text work reuses `DFIR_AI_MODEL`.
+
+Recommended: cheap vision model for screenshots, strong reasoning model for text. Don't economise on the text model — a weak one fails log triage *silently*, returning no events rather than wrong ones (`npm run eval:real` measures exactly this).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_AI_PROVIDER` | Provider for the one-call synthesis pass |
-| `DFIR_AI_SYNTH_MODEL` | = `DFIR_AI_MODEL` | Synthesis model id (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
-| `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Synthesis API key |
+| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_AI_PROVIDER` | Provider for text work (CSV/log/synthesis) |
+| `DFIR_AI_SYNTH_MODEL` | = `DFIR_AI_MODEL` | Text model id — CSV/log extraction + synthesis (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
+| `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Text-model API key |
 | `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_AI_BASE_URL` | Synthesis base URL |
 
 ### AI — Velociraptor hunt model (optional)

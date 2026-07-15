@@ -2309,7 +2309,7 @@
               <option value="anthropic">anthropic</option>
             </select>
           </div>
-          <div class="sfield"><label>Synth model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
+          <div class="sfield"><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
@@ -3405,7 +3405,7 @@
             </div>
             <div class="wiz-row">
               <div class="wiz-field">
-                <label>Extraction model<span class="wiz-hint">Must support vision (reads screenshots).</span></label>
+                <label>Vision model<span class="wiz-hint">Screenshots only — must support vision. Text work uses the model below.</span></label>
                 <input id="wizModel" placeholder="e.g. gpt-4o-mini" autocomplete="off" />
                 <div id="wizModelHint" class="wiz-modelhint"></div>
               </div>
@@ -3438,7 +3438,7 @@
                 </select>
               </div>
               <div class="wiz-field">
-                <label>Synth model<span class="wiz-hint">DFIR_AI_SYNTH_MODEL — e.g. gpt-4o</span></label>
+                <label>Text model<span class="wiz-hint">DFIR_AI_SYNTH_MODEL — CSV/log extraction + synthesis. Use a strong model. e.g. gpt-4o</span></label>
                 <input id="wizSynthModel" placeholder="e.g. gpt-4o" autocomplete="off" />
               </div>
             </div>
