@@ -29,6 +29,24 @@ describe("nounPhrase", () => {
   it("is case- and punctuation-insensitive", () => {
     expect(nounPhrase("Mimikatz: credential DUMPING!")).toBe(nounPhrase("mimikatz credential dumping"));
   });
+
+  // Volatile-token dropping (#69 live finding): numbers/hashes must not dominate the phrase, else
+  // IP-heavy or hash-heavy titles key on the IP/hash and collapse genuinely-different findings.
+  it("drops pure-numeric tokens (IP octets, event IDs, counts) — descriptive words win", () => {
+    // 185/220/101/47/4698 all dropped; only the words anchor the key
+    expect(nounPhrase("Beacon callback to 185.220.101.47, EventID 4698")).toBe("beacon_callback_eventid");
+  });
+
+  it("drops long hex hash/blob tokens but keeps short letter+digit tokens (dc01, svchost32)", () => {
+    // 32-hex hash dropped; "dc01" (len 4) kept
+    expect(nounPhrase("update.dll on DC01 sha a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6")).toBe("dc01_dll_sha_update");
+  });
+
+  it("keeps two different findings that share an IP distinct (no IP-domination collapse)", () => {
+    const dns = nounPhrase("DNS query resolved to 185.220.101.47");
+    const conn = nounPhrase("Inbound connection from 185.220.101.47 to beacon");
+    expect(dns).not.toBe(conn);
+  });
 });
 
 describe("deriveSemanticKey", () => {

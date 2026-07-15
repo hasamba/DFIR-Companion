@@ -70,18 +70,21 @@ function indexFindings(findings: readonly Finding[]): FindingIndex {
   const bySem = new Map<string, Finding>();
   const byTitle = new Map<string, Finding>();
   for (const f of findings) {
+    // Key on the DERIVED matchKey, not the stored `semanticKey` field: model B's second-opinion
+    // findings are a dry-run synthesis that never persisted through grounding, so they carry no
+    // stored key. Deriving it here is what lets B's differently-worded findings match A's by
+    // semanticKey at all (#69) — indexing on the stored field silently disabled that.
     const key = matchKey(f);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     all.push(f);
-    const sem = f.semanticKey?.trim();
-    if (sem && !bySem.has(sem)) bySem.set(sem, f);
+    if (!bySem.has(key)) bySem.set(key, f);
     const t = norm(f.title);
     if (t && !byTitle.has(t)) byTitle.set(t, f);
   }
   const match = (f: Finding): Finding | undefined => {
-    const sem = f.semanticKey?.trim();
-    if (sem) { const hit = bySem.get(sem); if (hit) return hit; }
+    const hit = bySem.get(matchKey(f));
+    if (hit) return hit;
     const t = norm(f.title);
     return t ? byTitle.get(t) : undefined;
   };

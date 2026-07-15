@@ -274,4 +274,31 @@ describe("second-opinion delta keys are stable across wording changes (issue #69
     const out = applyAcceptedSecondOpinion(aRun, so); // aRun already has the same semanticKey
     expect(out.findings.filter((f) => f.semanticKey === KEY)).toHaveLength(1);
   });
+
+  // Regression for the LIVE bug: model B's second-opinion findings are a dry-run synthesis and carry
+  // NO stored semanticKey. The matcher must DERIVE the key for them (not read the absent field), or a
+  // differently-worded B finding never matches A and the whole feature is inert in the real flow.
+  it("matches a B finding with NO stored semanticKey to A by the DERIVED key", () => {
+    const a = stateWith({
+      // A went through grounding → has the stored key
+      findings: [finding({ id: "f1", title: "Encoded PowerShell execution", severity: "High", semanticKey: "T1059.001:encoded_powershell", mitreTechniques: ["T1059.001"] })],
+    });
+    const b = stateWith({
+      // B is a dry-run: differently worded, SAME technique, and crucially NO semanticKey field
+      findings: [finding({ id: "g1", title: "PowerShell encoded command", severity: "High", mitreTechniques: ["T1059.001"] })],
+    });
+    const deltas = buildSecondOpinionDeltas(a, b);
+    expect(deltas.filter((d) => d.kind === "a_only" || d.kind === "b_only")).toHaveLength(0);
+    expect(buildSecondOpinion({ a, b, modelA: "a", modelB: "b", now: () => "t" }).agreementCount).toBe(1);
+  });
+
+  // Guard against OVER-collapse: two genuinely different findings that merely share an IP must stay
+  // distinct — the derivation drops the numeric octets so the descriptive words decide identity.
+  it("keeps two different findings that share an IP as separate deltas", () => {
+    const a = stateWith({ findings: [finding({ id: "f1", title: "DNS query resolved to 185.220.101.47", severity: "Medium", mitreTechniques: ["T1071.001"] })] });
+    const b = stateWith({ findings: [finding({ id: "g1", title: "Inbound connection from 185.220.101.47 to beacon", severity: "Medium", mitreTechniques: ["T1071.001"] })] });
+    const deltas = buildSecondOpinionDeltas(a, b);
+    expect(deltas.filter((d) => d.kind === "a_only")).toHaveLength(1);
+    expect(deltas.filter((d) => d.kind === "b_only")).toHaveLength(1);
+  });
 });
