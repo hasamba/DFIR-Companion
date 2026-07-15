@@ -9,7 +9,7 @@ The original issue asked for a single harness with "CI-friendly exit codes" that
 - **Phase 1 — mock (CI-gating):** every fixture is driven by a `MockProvider` built from its canned response. Deterministic, zero-cost, runs in normal CI. Gates the *plumbing and the scoring math*.
 - **Phase 2 — `--real` (non-blocking):** the env-configured provider (`realProviderOrNull()` → `buildProvider()`) scores the **current prompt's actual output** against the golden expectations — the real regression signal. Gated on `DFIR_AI_*`: if no provider is configured it **skips (exit 0)**, so it never breaks CI. Uses `REAL_THRESHOLDS` (recall-gated — see *Why `--real` gates on recall* below) because a real model won't reproduce a golden set exactly. Run it manually or on a nightly/labeled workflow; it is **not** in `npm test`.
 
-Screenshot goldens (`analyzeWindow`) are deliberately not committed — real case screenshots are sensitive. The committed golden set is synthetic CSV/log/synthesis, which exercises prompt quality without shipping evidence. A future step can point `--real` at a local screenshot directory via env.
+Screenshots (`analyzeWindow`, the vision path) are covered **mock-only**: a synthetic capture + canned delta drives the plumbing through a stub image, so it gates the analyzeWindow→scorer path without committing any evidence. **Real** vision grading stays deferred — real case screenshots are sensitive, so `--real` skips the screenshot fixtures; a future step can point them at a local screenshot directory via env. The committed golden set (CSV, log, screenshot, synthesis) is entirely synthetic.
 
 ## Files
 
@@ -17,7 +17,7 @@ Screenshot goldens (`analyzeWindow`) are deliberately not committed — real cas
 |------|------|
 | `scorer.ts` | Pure scoring core — no I/O, no clock, no AI. Fuzzy extraction match → precision/recall; synthesis coverage/hallucination/rubric checks. |
 | `scorer.test.ts` | Unit tests for every scorer path. |
-| `harness.ts` | Drives the real pipeline (`analyzeCsv` / `analyzeLog` / `synthesize`) via a MockProvider, maps output to the scorer's shapes. |
+| `harness.ts` | Drives the real pipeline (`analyzeCsv` / `analyzeLog` / `analyzeWindow` / `synthesize`) via a MockProvider, maps output to the scorer's shapes. |
 | `fixtures.ts` | Golden dataset: input + canned model response + expected `GoldenEvent[]` / synthesis seed. |
 | `harness.test.ts` | Integration: fixtures through the pipeline → scorer, asserting thresholds + a deliberate regression. |
 | `run.ts` | CLI runner with a summary report + CI exit codes. |
@@ -68,4 +68,4 @@ Point `--real` at a strong model via `DFIR_AI_MODEL` (it need not be the model u
 
 ## Adding a golden case
 
-Append to `EXTRACTION_FIXTURES` (input + canned delta + `golden`) or `SYNTHESIS_FIXTURES` (seed timeline + canned synthesis delta) in `fixtures.ts`. Keep golden data **synthetic or sanitized** — never snapshot real case evidence.
+Append to `EXTRACTION_FIXTURES` (input + canned delta + `golden`), `SCREENSHOT_FIXTURES` (synthetic captures + canned delta + `golden`, mock-only), or `SYNTHESIS_FIXTURES` (seed timeline + canned synthesis delta) in `fixtures.ts`. Keep golden data **synthetic or sanitized** — never snapshot real case evidence.

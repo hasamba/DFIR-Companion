@@ -11,13 +11,13 @@
 // Exit codes: 0 = all pass (or real-mode skipped), 1 = a gate failed, 2 = a runner error.
 
 import { config as loadDotenv } from "dotenv";
-import { runExtractionFixture, runSynthesisFixture, mockProvider, realProviderOrNull } from "./harness.js";
+import { runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider, realProviderOrNull } from "./harness.js";
 import {
   scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis,
   formatExtractionReport, formatSynthesisReport, REAL_THRESHOLDS,
   type Thresholds,
 } from "./scorer.js";
-import { EXTRACTION_FIXTURES, SYNTHESIS_FIXTURES } from "./fixtures.js";
+import { EXTRACTION_FIXTURES, SCREENSHOT_FIXTURES, SYNTHESIS_FIXTURES } from "./fixtures.js";
 import type { AIProvider } from "../../src/providers/provider.js";
 
 // In mock mode each fixture is driven by its OWN canned response, so the provider is chosen per fixture; in
@@ -32,6 +32,20 @@ async function runExtraction(providerFor: ProviderFor<(typeof EXTRACTION_FIXTURE
     const thresholds = fx.thresholds ?? override;
     console.log(formatExtractionReport(fx.name, score, thresholds));
     allPass = passesExtraction(score, thresholds) && allPass;
+  }
+  return allPass;
+}
+
+// Screenshot fixtures drive the vision path (analyzeWindow). MOCK-ONLY: each is driven by its own canned
+// delta against a stub image, so it gates the plumbing + scorer without shipping evidence. Real vision
+// grading is deferred (see README), so the runner never invokes this in --real mode.
+async function runScreenshots(): Promise<boolean> {
+  let allPass = true;
+  for (const fx of SCREENSHOT_FIXTURES) {
+    const produced = await runScreenshotFixture(fx, mockProvider(fx.canned));
+    const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
+    console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, fx.thresholds));
+    allPass = passesExtraction(score, fx.thresholds) && allPass;
   }
   return allPass;
 }
@@ -75,7 +89,13 @@ async function main(): Promise<void> {
   }
 
   let ok = true;
-  if (mode === "extraction" || mode === "all") ok = (await runExtraction(extractionProvider, override)) && ok;
+  if (mode === "extraction" || mode === "all") {
+    ok = (await runExtraction(extractionProvider, override)) && ok;
+    // Screenshot fixtures are mock-only. In --real mode there's no committed evidence to grade the vision
+    // model against, so skip them (deliberate — see README) rather than run them against a stub image.
+    if (real) console.log("\nscreenshot fixtures: mock-only — skipped in --real mode (see README)");
+    else ok = (await runScreenshots()) && ok;
+  }
   if (mode === "synthesis" || mode === "all") ok = (await runSynthesis(synthesisProvider)) && ok;
   console.log(ok ? "\nEVAL PASSED" : "\nEVAL FAILED");
   process.exit(ok ? 0 : 1);

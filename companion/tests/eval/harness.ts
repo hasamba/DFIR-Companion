@@ -14,7 +14,7 @@ import { buildRuntimePipeline, buildProvider, buildSynthesisProvider } from "../
 import { MockProvider, type AIProvider } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { ProducedEvent, ProducedFinding } from "./scorer.js";
-import type { ExtractionFixture, SynthesisFixture } from "./fixtures.js";
+import type { ExtractionFixture, ScreenshotFixture, SynthesisFixture } from "./fixtures.js";
 
 const IMPORTED_AT = "2026-06-01T00:00:00Z"; // fixed clock input — keeps runs reproducible
 
@@ -74,6 +74,17 @@ export async function runExtractionFixture(fx: ExtractionFixture, provider: AIPr
   const state = fx.modality === "csv"
     ? await pipeline.analyzeCsv(caseId, fx.input, { label: `${fx.name}.csv`, idPrefix: "m1", importedAt: IMPORTED_AT })
     : await pipeline.analyzeLog(caseId, fx.input, { label: `${fx.name}.log`, idPrefix: "l1", importedAt: IMPORTED_AT });
+  return producedEvents(state);
+}
+
+// Run one screenshot fixture through the VISION path (`analyzeWindow`) and return the produced events.
+// MOCK-ONLY in practice: the provider returns the fixture's canned delta and makeEvalPipeline's stub
+// imageLoader supplies placeholder bytes, so no real screenshot is decoded or shipped. This exercises the
+// analyzeWindow plumbing + scorer — the one modality the CSV/log runners can't reach.
+export async function runScreenshotFixture(fx: ScreenshotFixture, provider: AIProvider): Promise<ProducedEvent[]> {
+  const { pipeline, caseId } = await makeEvalPipeline(provider);
+  const captures = fx.captures.map((c) => ({ ...c, caseId })); // bind synthetic captures to the temp case
+  const state = await pipeline.analyzeWindow(caseId, captures);
   return producedEvents(state);
 }
 
