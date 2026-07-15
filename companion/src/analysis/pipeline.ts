@@ -1344,9 +1344,18 @@ export const IMPORTER_PROMPT = [
 export const getImporterPrompt = (): string => resolvePrompt("IMPORTGEN", IMPORTER_PROMPT);
 
 export interface PipelineOptions {
+  // The VISION model: screenshot analysis only (analyzeWindow). Screenshots need an image-capable
+  // model and are the one path a cheap/fast model is genuinely suited to.
   provider?: AIProvider;
-  // Optional stronger model for the holistic synthesis pass. Per-window extraction
-  // can use a cheap model while synthesis (one text-only call) uses a better one.
+  // The TEXT model: every text-only reasoning call — synthesis, ask/explain, memory next-steps, and
+  // (since #66-era model routing) CSV + log extraction. Falls back to `provider` when unset, so a
+  // single-model install is unaffected.
+  //
+  // CSV/log extraction moved here because it is a text-reasoning task, not an OCR one: measured on
+  // the eval harness (`npm run eval:real`), gpt-4o-mini returned ZERO events for a proxy log holding
+  // six large CONNECT-to-mega.nz transfers on every run, while gemini-2.5-pro found it every time on
+  // the identical input through the identical code path. The same silent-miss shows up in the
+  // northpeak benchmark, where a 27k-line proxy log and both web logs yielded zero forensic events.
   synthesisProvider?: AIProvider;
   // Optional DEDICATED model for Velociraptor VQL hunt generation (#70) — many models botch VQL,
   // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
@@ -1720,7 +1729,8 @@ export class AnalysisPipeline {
       signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
     },
   ): Promise<InvestigationState> {
-    const provider = this.requireProvider("CSV analysis");
+    // Text model (same idiom as ask/explain/synthesis): CSV extraction is text reasoning, not OCR.
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("CSV analysis");
     const { headers, rows } = parseCsv(csvText);
     if (rows.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -1792,7 +1802,8 @@ export class AnalysisPipeline {
       signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
     },
   ): Promise<InvestigationState> {
-    const provider = this.requireProvider("log analysis");
+    // Text model (same idiom as ask/explain/synthesis): log triage is text reasoning, not OCR.
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("log analysis");
     const { lines } = parseLogLines(logText);
     if (lines.length === 0) return this.opts.stateStore.load(caseId);
 

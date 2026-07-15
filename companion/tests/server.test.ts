@@ -7,9 +7,10 @@ import sharp from "sharp";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../src/server.js";
 import { _resetDedupCache } from "../src/ingest/captureIngest.js";
-import { AnalysisPipeline } from "../src/analysis/pipeline.js";
+import { AnalysisPipeline, getCsvPrompt, getLogPrompt } from "../src/analysis/pipeline.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { MockProvider } from "../src/providers/provider.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
@@ -28,6 +29,19 @@ async function pngBase64(): Promise<string> {
     create: { width: 16, height: 16, channels: 3, background: { r: 10, g: 20, b: 30 } },
   }).png().toBuffer();
   return buf.toString("base64");
+}
+
+// CSV/log extraction and synthesis both run on the TEXT model (only screenshots use the vision one),
+// so a single canned response can't serve both legs of an import test. Answer by the prompt the
+// pipeline actually sent, which keeps "extraction produced the event, synthesis produced the finding"
+// verifiable as two distinct steps.
+class TextModelStub implements AIProvider {
+  readonly model = "mock-model";
+  constructor(readonly name: string, private readonly canned: { extract: string; synth: string }) {}
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    const isExtraction = req.systemPrompt === getCsvPrompt() || req.systemPrompt === getLogPrompt();
+    return { rawText: isExtraction ? this.canned.extract : this.canned.synth };
+  }
 }
 
 beforeEach(async () => {
@@ -313,20 +327,23 @@ describe("server analysis wiring", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const pipeline = new AnalysisPipeline({
-      // Extraction (per CSV batch) returns a forensic event but no findings…
-      provider: new MockProvider("extract", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "read rows", summary: "",
-        forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "process from CSV row",
-          severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
-      })),
-      // …synthesis turns the timeline into a finding.
-      synthesisProvider: new MockProvider("synth", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "finding from CSV", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
-        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
+      provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
+      // The text model serves both legs: extraction (per CSV batch) returns a forensic event but no
+      // findings… and synthesis turns the timeline into a finding.
+      synthesisProvider: new TextModelStub("text", {
+        extract: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+          timelineNote: "read rows", summary: "",
+          forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "process from CSV row",
+            severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
+        }),
+        synth: JSON.stringify({
+          findings: [{ id: "f1", severity: "High", title: "finding from CSV", description: "d",
+            relatedIocs: [], mitreTechniques: [], status: "open" }],
+          iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+        }),
+      }),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
@@ -387,18 +404,21 @@ describe("server analysis wiring", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("extract", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "read lines", summary: "",
-        forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "event from log line",
-          severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
-      })),
-      synthesisProvider: new MockProvider("synth", JSON.stringify({
-        findings: [{ id: "f1", severity: "High", title: "finding from log", description: "d",
-          relatedIocs: [], mitreTechniques: [], status: "open" }],
-        iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
+      provider: new MockProvider("vision", "{}"), // screenshots only — unused by this test
+      synthesisProvider: new TextModelStub("text", {
+        extract: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+          timelineNote: "read lines", summary: "",
+          forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "event from log line",
+            severity: "Medium", mitreTechniques: [], relatedFindingIds: [] }], // Medium: isolates this test from the high-severity backfill
+        }),
+        synth: JSON.stringify({
+          findings: [{ id: "f1", severity: "High", title: "finding from log", description: "d",
+            relatedIocs: [], mitreTechniques: [], status: "open" }],
+          iocs: [], mitreTechniques: [], attackerPath: "path", summary: "s",
+          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+        }),
+      }),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });

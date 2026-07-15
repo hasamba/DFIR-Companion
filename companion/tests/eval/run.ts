@@ -65,7 +65,9 @@ async function main(): Promise<void> {
       console.log("eval --real: no AI provider configured (set DFIR_AI_PROVIDER / DFIR_AI_KEY) — skipped.");
       process.exit(0);
     }
-    console.log(`eval --real: provider ${provider.name}, model ${process.env.DFIR_AI_MODEL ?? "(default)"}\n`);
+    // Report the TEXT model — that's what realProviderOrNull() resolves and what these fixtures grade.
+    const model = process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL ?? "(default)";
+    console.log(`eval --real: provider ${provider.name}, model ${model}\n`);
     extractionProvider = synthesisProvider = () => provider;
     override = REAL_THRESHOLDS;
   } else {

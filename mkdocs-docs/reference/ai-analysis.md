@@ -40,7 +40,7 @@ DFIR Companion supports multiple AI backends:
 Configure via the Setup Wizard or in `.env`. All AI calls are made server-side — API keys never go to the browser.
 
 !!! tip "Using a local model?"
-    Screenshot extraction needs a **multimodal** (vision) model. Text-only models still work for CSV/log import, synthesis, and all other text-only AI features. Use the two-tier setup (`DFIR_AI_MODEL` for extraction, `DFIR_AI_SYNTH_MODEL` for synthesis) to pair a cheap vision model with a stronger reasoning model.
+    Only screenshot reading needs a **multimodal** (vision) model — that's `DFIR_AI_MODEL`. Everything else (CSV/log import, synthesis, and all other text-only AI features) runs on `DFIR_AI_SYNTH_MODEL`, so a text-only model is fine there. Use the two-tier setup (`DFIR_AI_MODEL` = cheap vision for screenshots, `DFIR_AI_SYNTH_MODEL` = strong reasoning for everything else) — a weak text model fails log triage silently, returning no events at all rather than wrong ones.
 
 ---
 

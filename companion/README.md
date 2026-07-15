@@ -63,8 +63,8 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_KEY` | Provider API key (blank for auth-less local proxy) |
 | `DFIR_AI_BASE_URL` | Override API base URL (for LiteLLM or OpenAI-compatible endpoints) |
 | `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
-| **AI — synthesis (optional two-tier)** | — |
-| `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for findings/MITRE/attacker path (unset = reuses extraction model) |
+| **AI — text model (optional two-tier)** | — |
+| `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for ALL text work — CSV extraction, log triage, findings/MITRE/attacker path (unset = reuses `DFIR_AI_MODEL`). `DFIR_AI_MODEL` itself is the vision model: screenshots only. |
 | **AI — Velociraptor VQL generation** | — |
 | `DFIR_AI_VELO_PROVIDER` / `_MODEL` / `_KEY` | Dedicated model for VQL hunts (many models botch VQL) |
 | **AI — second LLM opinion** | — |

@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { buildRuntimePipeline, buildProvider } from "../../src/server.js";
+import { buildRuntimePipeline, buildProvider, buildSynthesisProvider } from "../../src/server.js";
 import { MockProvider, type AIProvider } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { ProducedEvent, ProducedFinding } from "./scorer.js";
@@ -30,9 +30,14 @@ export function mockProvider(canned: string): MockProvider {
 }
 
 // The env-configured real provider (Phase-2 runs), or undefined when none is configured — callers skip
-// gracefully so a missing key never fails CI. Mirrors scripts/verify-ai.ts. dotenv is loaded by the runner.
+// gracefully so a missing key never fails CI. dotenv is loaded by the runner.
+//
+// Deliberately the TEXT model (`buildSynthesisProvider()`, i.e. DFIR_AI_SYNTH_MODEL falling back to
+// DFIR_AI_MODEL), not `buildProvider()`: every path these fixtures exercise — analyzeCsv, analyzeLog,
+// synthesize — runs on the text model in production. Grading the vision model here would score a model
+// production never uses for this work.
 export function realProviderOrNull(): AIProvider | undefined {
-  return buildProvider();
+  return buildSynthesisProvider() ?? buildProvider();
 }
 
 // Build a fresh, isolated pipeline backed by a temp case, driven by the given provider.
