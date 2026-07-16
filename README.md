@@ -235,9 +235,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 **Deterministic tradecraft grading** — across the Windows/Sysmon, ECAR and memory importers, process command lines are graded against a rule set harvested from over 110 real intrusions (The DFIR Report, 2020–2026, and Huntress "Rapid Response" reports): high-confidence tradecraft → **High** with the correct ATT&CK technique (Defender/AV disable incl. registry `Start=4`/`SystemSettingsAdminFlows.exe` T1562.001, recovery inhibition T1490, LSA/UAC tampering T1112/T1548.002, credential dumping `dcsync`/`secretsdump`/`lsassy`/`reg save …\security`/NTDS-via-`wbadmin backup`/browser-credential-file copy T1003.x/T1555.003, reverse-tunnel C2 `ssh -R`/plink/QEMU-SSH-backdoor T1572, Impacket lateral movement T1047/T1021.002, malicious service creation T1543.003, hidden accounts T1564.002, privileged-group additions T1098.007, Linux `chattr +i` T1222.002, bulk EventLog wipe via `.NET EventLogSession` T1070.001, silent remote MSI install T1218.007, `curl|bash` fetch-execute T1059.004, cloud exfil rclone/restic/Elastic-ingest T1567.002/T1041, RMM/C2 tooling T1219/T1071), dual-use → **Medium**; pure host/domain discovery (nltest trusts, AdFind/BloodHound, scanners, AV/share enum) is tagged but never escalated, so the enumeration phase shows in the MITRE table without false findings.
 
-- **SSH brute-force-success detection** (ATT&CK T1110.001) — the syslog importer correlates sshd auth lines and flags a successful login that follows a burst of failures (default ≥5 within 60 min) from the same source IP → Medium, with the failure count and IP in the description
-- **Windows logon-type risk grading** — successful-logon (4624) events decode the logon-type code into a readable name (e.g. "RemoteInteractive/RDP from 203.0.113.9") and grade risky shapes — external RDP (type 10 from a public IP) and internet-facing network logons (type 3) → Medium (T1021.001/T1078), plus NetworkCleartext/NewCredentials → Medium — across the SIEM/EVTX, Chainsaw, and Velociraptor paths
-- **NTFS timestomp detection** (ATT&CK T1070.006) — MFT imports (Velociraptor or MFTECmd) compare a file's `$SI`/`$FN` creation times and flag likely timestomping as Medium when `$SI` is backdated ahead of `$FN`, or `$SI`'s sub-second precision is zeroed while `$FN`'s isn't
+- **SSH brute-force-success detection** (T1110.001) — flags a successful login following a burst of failed attempts from the same source IP → Medium
+- **Windows logon-type risk grading** — decodes 4624 logon types and grades risky shapes (external RDP, network-cleartext, `runas /netonly`) → Medium
+- **NTFS timestomp detection** (T1070.006) — flags MFT `$SI`/`$FN` timestamp mismatches as likely timestomping → Medium
 
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
@@ -246,35 +246,35 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
 - **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand
-- **KEV / tool-confirmed / unconfirmed-lead badges** — findings also show whether they're independently corroborated by a CISA-KEV actively-exploited CVE, confirmed by a tool-graded detection ("tool-confirmed"), or supported only by raw Info telemetry with no verdict or intel ("unconfirmed lead") — confidence-lowering signals only, never a boost
+- **KEV / tool-confirmed / unconfirmed-lead badges** — flags whether a finding is corroborated by an actively-exploited CVE, a tool-graded detection, or only raw telemetry
 - **Efficient synthesis** — live debounced re-synthesis; skip-if-unchanged; stratified event selection + asset↔IOC digest
-- **Synthesis coverage audit** — the synth-meta card shows how many in-window events a run actually considered vs. omitted (by prompt-size budget, FP filter, or scope window), plus how many budget-omitted events were Critical/High
+- **Synthesis coverage audit** — the synth-meta card shows how many in-window events a run considered vs. omitted, and why
 - **Second LLM opinion** — on-demand QA: different model re-synthesizes case, reconciles disagreements (per-item accept/reject); durable across re-synthesis
-- **AI-assisted content-tagger rules** — describe a content-tagger rule in plain English and the AI drafts a valid rule you can preview (live match count against the open case), edit, and add
+- **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
 - **AI-input anonymization** — reversibly tokenizes IPs/users/hosts/domains/emails/paths, PowerShell encoded-command blobs, and victim SIDs; one-way-redacts secrets (adversary IOCs preserved)
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
-- **Cross-tool command-line correlation** — process-creation events describing the *same* creation but from different tools (Sysmon and an EDR, say) with no shared file hash merge into one timeline row when they share a normalized command line + parent process + host within a window (default 60s), without collapsing distinct kill-chain steps from the same tool
+- **Cross-tool command-line correlation** — merges same process-creation events reported by different tools that share a command line, parent process, and host
 - **Corroboration filter (lens)** — a per-section control in each title bar (Timeline / IOCs / Findings) to show only items observed by **2+ or 3+ distinct tools**, so single-source background noise (internet scanners, benign telemetry) drops away and the multi-source attack path stands out. Each section's lens is independent. A *lens, not a gate* — nothing is removed from state; set back to *any* to see single-source evidence again. Per-browser.
-- **Per-source noise/trust scores** — every event source carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources; overridable per case
+- **Per-source noise/trust scores** — weights sources by reliability for correlation wording and confidence capping; overridable per case
 
 ### Investigation workflow
 - **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
-- **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + case archive exports. Hypotheses also track contradicting evidence, a discriminating host+artifact, and an "exhausted" flag (set once enough linked hunts come back empty), ranked fewest-contradictions-first (ACH-style), so a red herring can't win unopposed
-- **On-demand hypothesis falsification review** — a "Review" button runs a focused for/against pass over open hypotheses (plain-English case for and against each, plus an advisory recommended status) without re-running full synthesis; never mutates a hypothesis until the analyst clicks Apply
+- **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + case archive exports; ACH-style ranking tracks contradicting evidence, a discriminator, and hunt-exhaustion so a red herring can't win unopposed
+- **On-demand hypothesis falsification review** — a "Review" button runs a focused for/against pass over open hypotheses without re-running full synthesis
 - **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
-- **Structured, deployable collection directives** — "collect X from host Y" next-steps and unknown/partial key questions carry a machine-actionable `collect{host,artifact,logSource}` target instead of free prose: a one-click "Collect on `<host>`" button launches the matching Velociraptor artifact when the host is a known case asset, and a later import that satisfies the request is detected automatically so the recommendation stops re-appearing
-- **Evidence Gaps panel** — uncovered kill-chain phases render as structured items with a deterministic host+artifact collection directive (one-click deploy where possible), in a dedicated dashboard panel and report §4.6.2
-- **Zero-yield import warnings** — a large file routed through AI log/CSV triage that produces zero events (the failure mode that can silently drop an incident's recon/exfil front half) surfaces a red warning on the import banner and an Evidence Gaps "blind spot" row, naming the file and suggesting a re-run or manual grep
-- **Second-look loop — bounded raw re-query** — after synthesis, open hypotheses/questions plus model-issued evidence requests are resolved against the *complete* super-timeline (not just the sampled window), promoting matching not-yet-analyzed events and triggering exactly one bounded re-synthesis
-- **Immediate false-positive cascade** — marking a finding/IOC/event false positive synchronously re-evaluates every key question, next-step, and hypothesis that depended on it (badged "stale — re-synthesis queued" / "needs review") instead of waiting for the next async synthesis run
-- **Rabbit-hole detection** — findings are scored connected / disconnected / undetermined against the main corroborated evidence-graph component, so a disconnected finding (a planted red herring, an unrelated benign event) is demoted and badged "possible rabbit hole"
-- **Per-case prevalence baseline + proactive FP-pattern propagation** — tracks how often each normalized activity pattern occurs across a case's timeline (rare events earn a selection seat over common noise) and, after each import, flags new events that reproduce an already-dismissed FP pattern for one-click bulk dismissal
-- **Learn from dismissed findings** — repeated reasoned dismissals of the same activity pattern accumulate into a per-case ledger; new activity resembling a repeatedly-dismissed pattern is surfaced with lowered (not zero) confidence unless independently corroborated
-- **Content-based event tagger** (Timesketch-style `tags.yaml`) — a YAML rule engine (`contains`/`equals`/`regex`/`exists` over any real event field) tags matching events, raises severity, and unions MITRE techniques, running automatically after import or on demand from Super-Timeline → Content tagger
+- **Structured, deployable collection directives** — "collect X" recommendations carry a machine-actionable target; one-click deploy on a known host, with auto-detected import satisfaction
+- **Evidence Gaps panel** — uncovered kill-chain phases render as structured items with a deployable collection directive, in a dashboard panel and report §4.6.2
+- **Zero-yield import warnings** — flags a large AI-triaged file that produced zero events, on the import banner and Evidence Gaps panel
+- **Second-look loop** — after synthesis, resolves open questions against the complete super-timeline and triggers one bounded re-synthesis
+- **Immediate false-positive cascade** — marking a finding/IOC/event FP synchronously re-evaluates dependent questions, next-steps, and hypotheses
+- **Rabbit-hole detection** — findings disconnected from the main evidence graph are demoted and badged "possible rabbit hole"
+- **Per-case prevalence baseline + FP-pattern propagation** — rarity-biased event selection, plus one-click bulk-dismiss for events matching an already-dismissed FP pattern
+- **Learn from dismissed findings** — repeated FP patterns lower (not zero) confidence on similar new activity
+- **Content-based event tagger** (Timesketch-style `tags.yaml`) — rule engine tags events, raises severity, and unions MITRE techniques
 - **Response Playbook** — trackable checklist (status/priority/assignee/due/custom tasks); opt-in IR-templates expand findings into Contain→Investigate→Eradicate→Recover
 - **Triage tags & comments** — label entities + attach notes; live WebSocket sync; survive synthesis
 - **Activity log** — a chronological, filterable record of every security-relevant action taken on a case (imports, mark/unmark false-positive, AI runs, enrichment/anonymization toggles, settings changes, playbook edits, comments/tags, hunt runs, exports)
@@ -284,14 +284,14 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **NSRL known-good hashes** (Settings) — flat hash set or direct SQLite DB query (~160 GB); auto-marks matching events/IOCs false-positive
 - **Payload deobfuscation** — auto-decodes base64 PowerShell (`-enc`, `[Convert]::FromBase64String`); extracts hidden IOCs; shows [Decoded] blocks
 - **CISA KEV integration** (Settings) — cross-reference CVEs against CISA catalog; strong initial-access signal
-- **Composite IOC risk score** — every indicator gets one `critical`/`high`/`medium`/`low`/`benign` tier from a transparent weighted rubric (verdict, corroborating source count, KEV, an own-infrastructure guard, NSRL/whitelist), shown as a colour-keyed badge, an IOC risk filter lens, and a Risk column in the CSV/markdown reports
+- **Composite IOC risk score** — weighted critical/high/medium/low/benign tier per indicator, shown as a badge, filter lens, and report column
 - **IOC corroboration** — ⊕ N badge shows how many tools observed each indicator
 - **IOC provenance** — each IOC classed detection-linked (seen in a Low+ event) vs telemetry-only (Info only), distinct from the threat-intel verdict; per-IOC badge + All/Detection-linked/Telemetry-only filter
 - **IOC provenance chain** — per-IOC 🔗 panel showing extraction event(s), enrichment lookups, and citing findings, each timestamped, with a JSON export. For the Security Onion, combined-log, network, and Velociraptor importers the extraction event is the exact source row that produced the IOC — shown as "linked" (vs "approximate" elsewhere); AI synthesis can't forge this link
 - **IOC flagged-only filter** — hide everything except threat-intel-confirmed indicators
 - **IOC type filter** — faceted dropdown (ip/domain/url/hash/file/process/other) with per-type counts; composes with the flagged-only + search filters
 - **IOC list noise-reduction controls** — three composable display-only filters, default on: hide false-positive/no-intel IOCs, hide OS system-path files, and a "🎯 Signal only" narrow-to-flagged/corroborated/enriched view
-- **IOC list pagination** — pages client-side like the timelines (default 100 per page, selectable 50/100/250/500/All) with Prev/Next controls and a "page X of Y" badge; filters and imports reset to the first page, and select-all is page-scoped while selections persist across pages
+- **IOC list pagination** — pages client-side like the timelines, default 100/page
 - **Exclude filter** — chip-list control (beside the toolbar search) hides timeline events / IOCs / findings matching any of several exclude terms; per-browser
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
@@ -318,7 +318,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Threat-intel enrichment (off by default — opt-in per case)
 - **Sources** — VirusTotal, Hunting.ch (MalwareBazaar/ThreatFox/URLhaus/YARAify), CrowdStrike Falcon TI, AbuseIPDB, MISP, YETI, OpenCTI, RockyRaccoon (process prevalence + anomalous parent/child), CIRCL hashlookup (keyless known-file / known-good hash lookup — cuts false positives)
-- **Lookalike / typosquat domain detection** — an offline "Lookalike Domain" provider flags domain IOCs that imitate a bundled list of commonly-impersonated brands (Microsoft, Google, Okta, PayPal, banks, crypto…) via homoglyph-skeleton (incl. IDN/punycode + Cyrillic/Greek confusables), edit distance, and brand-token impersonation (T1566/T1583.001). Runs entirely on-box, so it's on by default; extend the list via `DFIR_LOOKALIKE_EXTRA_DOMAINS`
+- **Lookalike / typosquat domain detection** — offline provider flags domains impersonating common brands (T1566/T1583.001); on by default
 - **IP infrastructure** — Reverse DNS (PTR hostnames), WHOIS over RDAP (netblock/ASN/abuse-contact), GeoIP (country/city/ASN/org), Shodan host (hosted domains/ports/services/CVEs); the "where from / who owns it / what's hosted" context layer — Reverse DNS/WHOIS/GeoIP are keyless, Shodan reuses `DFIR_SHODAN_KEY`
 - **Local vs external** — MISP/YETI/OpenCTI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
 - **Reachability gate** — health-probe self-hosted instances; auto-resume when online
@@ -329,7 +329,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections, scope bar, clickable evidence links, badges
-- **Background jobs** — a toolbar badge/popover tracks running imports, synthesis, and enrichment (`/api/jobs`); Cancel hard-aborts a long/stuck run; a large parse (e.g. a multi-hundred-thousand-row MFT/USN import) streams live `importing X/Y` progress instead of appearing frozen
+- **Background jobs** — a toolbar badge/popover tracks running imports, synthesis, and enrichment (`/api/jobs`); Cancel hard-aborts a long/stuck run; large imports stream live progress instead of appearing frozen
 - **Dark/light theme** — toggle or OS preference
 - **Forensic timeline rows** — affected host + clickable finding links; report has Host column
 - **Manual add** — record missed events/IOCs (tagged `manual`, survives re-analysis)
@@ -359,10 +359,10 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Ops
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
-- **Case Statistics panel** — a Diagnostics panel showing per-case totals, per-source event breakdown, and import velocity
+- **Case Statistics panel** — per-case totals, source breakdown, and import velocity in Diagnostics
 - **Per-case AI cost tracking** — **Settings → Diagnostics** shows an "AI cost — this case" card: calls, dollar cost, and token counts by Vision/Synthesis/Other and by model, read from the provider's real per-call cost/token counts (never a fabricated `$0.00` when a provider doesn't report it)
-- **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — the default 2000-event-per-import safety cap is overridable for cases that need a full MFT/USN import
-- **Prompt regression / eval harness** — a CI-safe golden-output harness (`npm run eval`) plus a real-provider mode (`npm run eval:real`) for measuring AI extraction/synthesis quality against known-good goldens across model or prompt changes
+- **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — overrides the default 2000-event-per-import safety cap
+- **Prompt regression / eval harness** — CI-safe and real-provider golden-output testing for AI extraction/synthesis quality
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
 - **Chrome extension** — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required
