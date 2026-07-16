@@ -62,6 +62,7 @@ dist-choco/
 # Local planning / process scratch (not part of the shipped project)
 .planning/
 docs/superpowers/
+.superpowers/
 
 # Local exports/backups (e.g. GitHub issues/PR snapshots) — not part of the shipped project.
 docs/backups/
