@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { AssetType } from "../analysis/assetGraph.js";
+import { buildLoginGraph, loginEdgeEvents, DEFAULT_MAX_EDGES } from "../analysis/loginGraph.js";
 import { mergeIocs } from "../analysis/iocMerge.js";
 import type { RouteContext } from "./context.js";
 
@@ -10,6 +11,8 @@ import type { RouteContext } from "./context.js";
  *
  *   Graphs & rankings (options.reportWriter, pure reads):
  *   - GET    /cases/:id/asset-graph              — asset ↔ IoC graph.
+ *   - GET    /cases/:id/login-graph              — directed account→host logon graph (4624/4625, from the super-timeline).
+ *   - GET    /cases/:id/login-graph/edge-events  — the events behind one login-graph edge (lazy drill-down).
  *   - GET    /cases/:id/evidence-graph           — causal evidence chain (process trees + lateral).
  *   - GET    /cases/:id/phases                   — temporal attack phases (activity bursts).
  *   - GET    /cases/:id/beacon-candidates        — regular-interval C2 candidates (#82).
@@ -45,8 +48,9 @@ import type { RouteContext } from "./context.js";
  *
  * Pure structural move out of createApp (see routes/system.ts for the conventions). Every handler
  * reaches its dependency through the STABLE ctx.options field only (reportWriter / assetOverridesStore
- * / onAssetOverrides / dwellWindowStore / onDwellWindow) — no domain-local state, no store to rebuild,
- * and no new RouteContext graduations were needed.
+ * / onAssetOverrides / dwellWindowStore / onDwellWindow, plus superTimelineStore for the two
+ * login-graph reads, which project the RAW super-timeline rather than the report) — no domain-local
+ * state, no store to rebuild, and no new RouteContext graduations were needed.
  *
  * BOUNDARY: the interleaved read projections that happen to sit among these handlers in createApp
  * stay there because they belong to other domains — /cases/:id/adversary-hints (aiSynthesis, #46),
@@ -64,6 +68,43 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.assetGraph(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Timesketch-style directed logon graph: accounts → hosts from 4624/4625 rows in the
+  // SUPER-timeline (the raw complete record — plain Low 4624s never reach the forensic
+  // timeline, and they are exactly what lateral-movement tracing needs). Pure parse + aggregate,
+  // derived on demand, no AI. maxEdges caps by busiest-first with an explicit truncated flag.
+  app.get("/cases/:id/login-graph", async (req: Request, res: Response) => {
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    try {
+      const raw = Number(req.query.maxEdges);
+      const maxEdges = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_EDGES;
+      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
+      return res.status(200).json({ ...buildLoginGraph(events, maxEdges), generatedAt: new Date().toISOString() });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // The events behind ONE login-graph edge — lazy-loaded when the analyst clicks it, so the
+  // graph payload stays lean on 100K-event cases.
+  app.get("/cases/:id/login-graph/edge-events", async (req: Request, res: Response) => {
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    const { account, host, type, outcome } = req.query as Record<string, string | undefined>;
+    if (!account || !host) return res.status(400).json({ error: "account and host are required" });
+    try {
+      const rawLimit = Number(req.query.limit);
+      const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 50;
+      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
+      return res.status(200).json(loginEdgeEvents(events, {
+        account, host,
+        type: type || "Unknown",
+        outcome: outcome === "failed" ? "failed" : "success",
+        limit,
+      }));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
