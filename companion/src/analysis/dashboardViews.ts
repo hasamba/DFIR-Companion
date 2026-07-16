@@ -238,6 +238,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-next-steps",
       "sec-evidence-gaps",
       "sec-findings",
+      "sec-hypotheses",
       "sec-mitre",
       "sec-adversary",
       "sec-d3fend",

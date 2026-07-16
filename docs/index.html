@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.31.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.32.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.31.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.32.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -804,6 +804,18 @@
           <h3>Permanently Delete a Case</h3>
           <p>Remove a case's directory for good from the case lifecycle menu, with an optional ZIP/encrypted archive taken first as a safety net. Refuses to touch a directory that isn't a real case or delete an already-archived case's live folder out from under its archive.</p>
           <span class="tag">v0.31 — case lifecycle</span>
+        </div>
+        <div class="feature-card animate animate-d4">
+          <div class="feature-icon cyan">🧭</div>
+          <h3>Closes the Investigation Loop</h3>
+          <p>Next steps now carry a one-click "Collect on &lt;host&gt;" deploy button, and a later import that answers the question is detected automatically and re-evaluated — no more re-asking what's already been collected. A rabbit-hole detector demotes findings disconnected from the main evidence graph, and ACH-style hypothesis tracking (contradicting evidence, discriminating tests) keeps a red herring from winning unopposed.</p>
+          <span class="tag">investigation-guidance rollout</span>
+        </div>
+        <div class="feature-card animate animate-d5">
+          <div class="feature-icon purple">🎚️</div>
+          <h3>Composite IOC Risk Score</h3>
+          <p>Every indicator now gets one critical/high/medium/low/benign tier from a transparent weighted rubric — verdict, corroborating source count, CISA-KEV status, an own-infrastructure guard, NSRL/whitelist — shown as a colour-keyed badge, a dashboard risk filter, and a Risk column in exported reports.</p>
+          <span class="tag">weighted rubric, not a black box</span>
         </div>
       </div>
     </div>

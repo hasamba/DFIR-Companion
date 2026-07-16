@@ -14,6 +14,8 @@ The top of the dashboard shows:
 - Last import time and how many new events/IOCs it added
 - A severity summary badge (Critical / High / Medium counts)
 
+**Synthesis coverage audit** — the synth-meta card (next to the last-synthesis time) shows how many in-window events a run actually considered vs. omitted (by prompt-size budget, false-positive filter, or scope window), plus how many budget-omitted events were Critical/High — visibility into what a large-timeline synthesis run left out.
+
 ---
 
 ## Findings
@@ -30,6 +32,9 @@ Your primary conclusions. Each finding has:
 - **MITRE techniques** — linked to attack.mitre.org
 - **Supporting events** — click to jump to each event in the timeline
 - **Supporting IOCs** — the indicators that back this finding
+- **Confidence badges** — a finding also shows why it should (or shouldn't) be trusted: **KEV** if independently corroborated by a CISA-KEV actively-exploited CVE, **tool-confirmed** if a tool graded the underlying detection itself, or **unconfirmed lead** if it's supported only by raw Info telemetry with no verdict or threat-intel hit. These are confidence-lowering signals only — never a boost.
+- **Possible rabbit hole** — findings disconnected from the case's main corroborated evidence graph (a planted red herring, an unrelated benign event) are demoted and badged instead of ranking alongside real leads.
+- **Stale — re-synthesis queued** — marking a finding/IOC/event false positive immediately re-evaluates every key question, next step, and hypothesis that depended on it, badging the affected items instead of waiting for the next synthesis run.
 - **🚫 Mark False Positive** — exclude from analysis
 
 Findings sit in a dense table (severity / ID / confidence in real grid columns) with inline icon
@@ -67,6 +72,17 @@ A narrative paragraph written by the AI describing the full attacker journey —
 Shows which **Cyber Kill Chain phases** are covered by the evidence: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objectives.
 
 Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
+
+---
+
+## Evidence Gaps
+
+Uncovered kill-chain phases and unanswered key questions rendered as structured, actionable items rather than a prompt-only text list the model saw but the analyst didn't:
+
+- Each gap carries a deterministic **collect directive** (`host` + `artifact`/`log source`) instead of free prose. When the host is a known case asset, a one-click **"Collect on `<host>`"** button launches the matching Velociraptor artifact directly. A later import that satisfies the request is detected automatically, so the recommendation stops re-appearing and the served question is re-evaluated against the new evidence.
+- **Zero-yield import warnings** — a large file routed through AI log/CSV triage that produced zero events (a failure mode that can silently drop an incident's recon/exfil front half) shows here as a "blind spot" row naming the file, alongside a red warning on the import banner, suggesting a re-run or manual grep.
+
+The same one-click collect directive also appears wherever a next step or key question names a host+artifact to collect.
 
 ---
 
@@ -217,7 +233,11 @@ above). Every indicator extracted from all evidence:
 - File paths
 - Process names
 
-**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below), plus three composable noise-reduction toggles (default on, per-browser): **Hide FP/no-intel** (drops IOCs marked false-positive or with no enrichment result), **Hide OS system paths** (drops `file` IOCs under well-known system-binary directories), and **🎯 Signal only** (narrows to flagged, corroborated, or enriched IOCs).
+**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search, corroboration lens (see below), a **risk score** filter lens (see below), plus three composable noise-reduction toggles (default on, per-browser): **Hide FP/no-intel** (drops IOCs marked false-positive or with no enrichment result), **Hide OS system paths** (drops `file` IOCs under well-known system-binary directories), and **🎯 Signal only** (narrows to flagged, corroborated, or enriched IOCs).
+
+**Composite risk score** — every indicator gets one `critical` / `high` / `medium` / `low` / `benign` tier from a transparent weighted rubric (verdict, corroborating source count, CISA-KEV, an own-infrastructure guard, NSRL/whitelist status), shown as a colour-keyed badge, a risk filter lens, and a Risk column in the CSV/markdown reports.
+
+**Pagination** — the IOC list pages client-side like the timelines (default 100 per page, selectable 50/100/250/500/All) with Prev/Next controls and a "page X of Y" badge, so cases with thousands of IOCs stay responsive. Filters and imports reset to the first page; select-all is page-scoped while selections persist across pages.
 
 **IOC exclude list** — the panel's title bar has a control to permanently remove matching indicators
 from this case: exact-value, suffix, or regex rules, scopable to a specific IOC type (e.g. only
@@ -251,6 +271,8 @@ the investigation log.
 It's a **lens, not a gate** — nothing is dropped from state. Single-source evidence (a Sysmon-only process, a syslog-only logon) still shows at the default "any" setting. Each section's choice is remembered independently.
 
 On the timeline, the lens composes with the **Source** filter: it counts only distinct sources still checked, and while active the Source menu lists only the tools present on corroborated events.
+
+**Source trust** — every event source also carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources. Override a source's trust for the case in Settings.
 
 ---
 
@@ -339,6 +361,10 @@ Status-tracked investigation hypotheses:
 - Promoted from Analyst Notebook notes
 
 Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hypotheses are fed into synthesis to steer the AI's analysis. Hypotheses with evidence links survive re-synthesis.
+
+**ACH-style tracking** — hypotheses also track contradicting evidence, a discriminating host+artifact that would settle the question, and an "exhausted" flag (set once enough linked hunts come back empty). The list is ranked fewest-contradictions-first, the classic Analysis-of-Competing-Hypotheses fix for a red herring winning unopposed.
+
+**Review** button — runs a focused for/against pass over open hypotheses (plain-English case for and against each, plus an advisory recommended status) without re-running full synthesis. Never mutates a hypothesis until you click **Apply**.
 
 ---
 
@@ -445,6 +471,8 @@ A Timesketch-style complete record of **every** imported event, kept separately 
 
 A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.
 
+**Content tagger** — click **Content tagger** in this panel's toolbar to run the content-based event tagger on demand (it also runs automatically after every import). See [Advanced → Content-Based Event Tagger](advanced.md#content-based-event-tagger) for the rule engine and AI-assisted rule authoring.
+
 **Export to Timesketch** — push or download the full super-timeline (forensic timeline + raw
 host-triage artifacts), alongside the existing Forensic Timeline export. Both push into the same
 Timesketch sketch under separate timelines, so neither clobbers the other — see
@@ -460,3 +488,5 @@ Timesketch sketch under separate timelines, so neither clobbers the other — se
 Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason and analyst attribution. Click any item to reinstate it.
 
 Marking an item asks for a **structured reason** (known-good tool / authorized test / detection misfire / duplicate / other) and offers ranked **"find similar items"** suggestions (shared MITRE technique, process, hash, asset, or IOCs) so the same recurring pattern can be dismissed in one pass — deterministic by default, or AI-assisted for less obvious matches. Marking a single IOC can also **one-click-promote** it to the global IOC whitelist so future imports auto-exclude it.
+
+**Learned patterns** — repeated reasoned dismissals of the same activity pattern accumulate into a per-case ledger. New activity resembling a repeatedly-dismissed pattern is surfaced here with lowered (not zero) confidence unless independently corroborated, and the case's prevalence baseline (how often each normalized activity pattern occurs across the timeline) gives rare events a selection seat over common noise during synthesis.

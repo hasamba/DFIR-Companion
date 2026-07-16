@@ -35,6 +35,41 @@ Settings → Per-case → Correlation Profile:
 
 Use Aggressive when you have many tools all logging the same events differently. Use Strict when tools legitimately report the same artifact at different times for different reasons.
 
+**Cross-tool command-line correlation** — process-creation events that describe the *same* creation but come from different tools (e.g. Sysmon and an EDR) with different pids and no shared file hash are merged into one timeline row when they share a normalized command line + parent process + host within a window (default 60s, `cmdlineWindowSeconds`). A same-tool corroboration guard keeps genuinely distinct commands from one tool separate, so kill-chain steps are never collapsed into each other. Deterministic, no AI.
+
+---
+
+## Content-Based Event Tagger
+
+A Timesketch-style rule engine (`tags.yaml`) that matches events on any real field (`contains` / `equals` / `regex` / `exists`) and, on a match, tags the event, raises its severity, and unions in MITRE techniques. Runs automatically after every import, or on demand from **Super-Timeline → Content tagger**.
+
+**AI-assisted rule authoring** — describe a rule in plain English and the AI drafts a valid `tags.yaml` rule you can preview (live match count against the open case), edit, and add. Includes per-rule remove (including shipped defaults) and a reset-to-defaults button. Uses the ejectable prompt `tagger-rule.txt` (`npm run prompts:eject`). AI-gated — falls back cleanly with no provider configured.
+
+---
+
+## Detection Passes
+
+Deterministic, no-AI passes that run automatically during import and grade or tag matching events:
+
+- **SSH brute-force-success detection (ATT&CK T1110.001)** — the syslog importer correlates sshd auth lines and flags a successful login (`Accepted password/publickey`) that follows a burst of failures (default ≥5 within 60 minutes, `DFIR_SSH_BRUTEFORCE_MIN_FAILS` / `DFIR_SSH_BRUTEFORCE_WINDOW_MIN`) from the same source IP as **Medium**, with the failure count and source IP in the description.
+- **Windows logon-type risk grading** — successful-logon (4624) events decode the logon-type code into a readable name (e.g. "RemoteInteractive/RDP from 203.0.113.9") and grade the risky shapes: external RDP (type 10 from a public IP) and internet-facing network logons (type 3) → **Medium** (T1021.001/T1078), plus NetworkCleartext (8) and NewCredentials/`runas /netonly` (9) → **Medium** (T1078/T1550.002). Internal interactive logons stay Low. Applies across the SIEM/EVTX, Chainsaw, and Velociraptor import paths.
+- **Lookalike / typosquat domain detection** — an offline "Lookalike Domain" enrichment provider flags domain IOCs that imitate a bundled list of commonly-impersonated brands (Microsoft, Google, Okta, PayPal, banks, crypto exchanges…) via homoglyph-skeleton matching (including IDN/punycode and Cyrillic/Greek confusables), edit distance, and brand-token impersonation → `suspicious` verdict (T1566/T1583.001). Runs entirely on-box — nothing is sent anywhere — so it's on by default. Add your own domains via `DFIR_LOOKALIKE_EXTRA_DOMAINS`.
+- **NTFS timestomp detection (ATT&CK T1070.006)** — MFT imports (`Windows.NTFS.MFT` via Velociraptor, MFTECmd via KAPE) compare a file's `$STANDARD_INFORMATION` and `$FILE_NAME` creation times on the same row and flag likely timestomping as **Medium**: when `$SI` is backdated more than the threshold before `$FN` (default 10 minutes, `DFIR_TIMESTOMP_THRESHOLD_MINUTES`), or `$SI`'s sub-second precision is zeroed while `$FN`'s isn't. The tag shows on the event in the Forensic/Super Timeline.
+
+---
+
+## Investigation-Guidance Passes
+
+Automated passes that steer the investigation itself, not just grade individual events:
+
+- **Second-look loop** — after synthesis, open hypotheses/questions plus a model-issued list of evidence requests are resolved against the *complete* super-timeline (not just the sampled window), promoting matching not-yet-analyzed events and triggering one bounded re-synthesis — reaching raw rows the sampler never showed the model.
+- **Immediate false-positive cascade** — marking a finding/IOC/event false positive synchronously re-evaluates every key question, next-step, and hypothesis that depended on it, badging them "stale — re-synthesis queued" / "needs review" instead of waiting for the next async synthesis run.
+- **Rabbit-hole detection** — findings are scored connected / disconnected / undetermined against the main corroborated evidence-graph component. A disconnected finding (a planted red herring, an unrelated benign event) is demoted and badged "possible rabbit hole" in the Findings panel instead of ranking alongside real leads.
+- **ACH-style hypotheses** — hypotheses (see [Hypothesis-Driven Mode](#hypothesis-driven-mode)) now track contradicting evidence, a discriminating host+artifact, and an "exhausted" flag (set once enough linked hunts come back empty), and are ranked fewest-contradictions-first — the classic Analysis-of-Competing-Hypotheses fix for a red herring winning unopposed.
+- **Per-case prevalence baseline + FP-pattern propagation** — the case tracks how often each normalized activity pattern occurs across its timeline, so rare events earn a selection seat over common noise during synthesis. After each import, new events that reproduce an already-dismissed false-positive pattern are flagged for one-click bulk dismissal.
+- **Learn from dismissed findings** — repeated reasoned dismissals of the same activity pattern accumulate into a per-case ledger; new activity resembling a repeatedly-dismissed pattern surfaces with lowered (not zero) confidence unless independently corroborated. Shown in the **False Positives** panel.
+- **Per-source noise/trust scores** — every event source carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources. Analysts can override a source's trust per case in the dashboard.
+
 ---
 
 ## State Backups & Restore

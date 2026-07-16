@@ -18,6 +18,7 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - **Screenshot OCR search** — enable/disable local Tesseract OCR indexing of captures
 - **Evidence drop folder** — enable/disable the per-case auto-import watcher, poll interval, and per-file size cap (see [Importing Evidence](importing.md#evidence-drop-folder-auto-import-inbox))
 - **Vim-style timeline navigation** — toggle `j`/`k`/`f`/`i`/`p`/`n`/`?` keyboard shortcuts on the Forensic Timeline, default on (see [Dashboard → Forensic Timeline](dashboard.md#vim-style-keyboard-navigation))
+- **`DFIR_MAX_EVENTS`** (env var) — the per-import event ingestion cap, default 2000. Raise it for cases that need a full MFT/USN import; guarded against 0/negative/NaN silently reinstating the default.
 
 ---
 
@@ -137,6 +138,15 @@ Custom declarative importers:
 
 ---
 
+## Content Tagger
+
+Controls the [content-based event tagger](advanced.md) (`companion/data/tags.yaml`), env-configured (no dashboard fields):
+
+- `TAGGER_AUTO` — run the tagger automatically after every import (default `true`; `false` = manual-only, via Super-Timeline → Content tagger → Run tagger)
+- `TAGGER_SCOPE` — `forensic` | `super` | `both` (default `both`); `super` only tags the super-timeline (never mutates severity/MITRE)
+
+---
+
 ## KEV
 
 CISA Known Exploited Vulnerabilities integration:
@@ -228,6 +238,8 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore
 - **State backup configuration** (retention counts, interval)
+- **Case Statistics** — per-case totals, per-source event breakdown, and import velocity
+- **Large-import reliability** — atomic state-save retry count for big imports is tunable via `DFIR_ATOMIC_WRITE_RETRIES` (default 20, ~8.4s of retries) for setups where antivirus/search indexing can outlast the default retry budget on a large USN/MFT import
 
 !!! tip
     The Diagnostics page is your first stop when something breaks. It shows the AI error count by type — auth errors = wrong key, billing errors = quota exceeded, rate limit = slow down — without ever showing your API key.

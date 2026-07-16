@@ -2181,6 +2181,10 @@
           <div class="sfield"><label>Auto-synthesize debounce (ms)<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE_MS</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE_MS" placeholder="8000" /></div>
         </div>
         <div class="sfield-row">
+          <div class="sfield"><label>Content tagger auto-run<span class="sfield-hint">TAGGER_AUTO (true/false)</span></label><input id="env-TAGGER_AUTO" placeholder="true" /></div>
+          <div class="sfield"><label>Content tagger scope<span class="sfield-hint">TAGGER_SCOPE (forensic/super/both)</span></label><input id="env-TAGGER_SCOPE" placeholder="both" /></div>
+        </div>
+        <div class="sfield-row">
           <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
@@ -2189,8 +2193,16 @@
           <div class="sfield"><label>Screenshot OCR search<span class="sfield-hint">DFIR_OCR_SEARCH — local Tesseract OCR indexing of every capture, searchable from the filter bar; local-only, no AI. Set <code>off</code> to disable if performance is a concern</span></label><input id="env-DFIR_OCR_SEARCH" placeholder="on" /></div>
         </div>
         <div class="sfield-row">
+          <div class="sfield"><label>OCR redaction debug log<span class="sfield-hint">DFIR_OCR_DEBUG — per-screenshot log of which words OCR read and redacted (local log only, never sent to the cloud)</span></label><input id="env-DFIR_OCR_DEBUG" placeholder="off" /></div>
+          <div class="sfield"><label>OCR redaction debug dir<span class="sfield-hint">DFIR_OCR_DEBUG_DIR — also write each redacted screenshot copy here so you can eyeball the black boxes</span></label><input id="env-DFIR_OCR_DEBUG_DIR" placeholder="(off)" /></div>
+        </div>
+        <div class="sfield-row">
           <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Atomic-save retries<span class="sfield-hint">DFIR_ATOMIC_WRITE_RETRIES — retries on a transient Windows lock (AV/indexer/sync client) during the state save's final rename (default 20)</span></label><input id="env-DFIR_ATOMIC_WRITE_RETRIES" placeholder="20" /></div>
+          <div class="sfield"><label>SIEM/EDR import event cap<span class="sfield-hint">DFIR_MAX_EVENTS — safety cap on events emitted by a single SIEM/EDR JSON import (default 2000)</span></label><input id="env-DFIR_MAX_EVENTS" placeholder="2000" /></div>
         </div>
         <div class="settings-group-head">Evidence drop folder (auto-import inbox)</div>
         <div class="sfield-row3">
@@ -2225,10 +2237,38 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Active hours (UTC)<span class="sfield-hint">DFIR_GAP_ACTIVE_HOURS — only flag gaps overlapping these hours, e.g. 8-18; blank = disable expected-hours filter</span></label><input id="env-DFIR_GAP_ACTIVE_HOURS" placeholder="(optional, e.g. 8-18)" /></div>
+          <div class="sfield"><label>Outlier span factor<span class="sfield-hint">DFIR_GAP_OUTLIER_SPAN — filters wrong-clock/wrong-year stray events out of the gap span (default 5; 0 = disable)</span></label><input id="env-DFIR_GAP_OUTLIER_SPAN" placeholder="5" /></div>
+        </div>
+        <div class="settings-group-head">Timeline volume-anomaly detection</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Bucket size (min)<span class="sfield-hint">DFIR_ANOMALY_BUCKET_MINUTES — timeline window size (default 15)</span></label><input id="env-DFIR_ANOMALY_BUCKET_MINUTES" placeholder="15" /></div>
+          <div class="sfield"><label>Spike factor<span class="sfield-hint">DFIR_ANOMALY_SPIKE_FACTOR — × the peer baseline a bucket must exceed to flag (default 5)</span></label><input id="env-DFIR_ANOMALY_SPIKE_FACTOR" placeholder="5" /></div>
+          <div class="sfield"><label>Self factor<span class="sfield-hint">DFIR_ANOMALY_SELF_FACTOR — same, against the asset's own historical baseline (default = spike factor)</span></label><input id="env-DFIR_ANOMALY_SELF_FACTOR" placeholder="5" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Min events per bucket<span class="sfield-hint">DFIR_ANOMALY_MIN_EVENTS — floor before a bucket is considered (default 3)</span></label><input id="env-DFIR_ANOMALY_MIN_EVENTS" placeholder="3" /></div>
+        </div>
+        <div class="settings-group-head">SSH brute-force-success detection (T1110.001)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Min failed attempts<span class="sfield-hint">DFIR_SSH_BRUTEFORCE_MIN_FAILS — failed logins from the same source IP before a success is flagged (default 5)</span></label><input id="env-DFIR_SSH_BRUTEFORCE_MIN_FAILS" placeholder="5" /></div>
+          <div class="sfield"><label>Window (min)<span class="sfield-hint">DFIR_SSH_BRUTEFORCE_WINDOW_MIN — time window the failures must land within (default 60)</span></label><input id="env-DFIR_SSH_BRUTEFORCE_WINDOW_MIN" placeholder="60" /></div>
+        </div>
+        <div class="settings-group-head">NTFS timestomp detection (T1070.006)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Backdating threshold (min)<span class="sfield-hint">DFIR_TIMESTOMP_THRESHOLD_MINUTES — how far $SI creation must precede $FN creation to flag (default 10, matches Timesketch)</span></label><input id="env-DFIR_TIMESTOMP_THRESHOLD_MINUTES" placeholder="10" /></div>
+        </div>
+        <div class="settings-group-head">Lookalike-domain detection</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Extra domains to protect<span class="sfield-hint">DFIR_LOOKALIKE_EXTRA_DOMAINS — comma-separated, in addition to the case's own observed domains, e.g. acmecorp.com,acme-internal.net</span></label><input id="env-DFIR_LOOKALIKE_EXTRA_DOMAINS" placeholder="acmecorp.com,acme-internal.net" /></div>
+        </div>
+        <div class="settings-group-head">Import / forensic-timeline gate</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Forensic-timeline min severity<span class="sfield-hint">DFIR_FORENSIC_MIN_SEVERITY — floor for an imported event to enter the forensic timeline (default Low); lower-severity events still land in the super-timeline. Per-case override: GET/PUT /cases/:id/forensic-gate</span></label><input id="env-DFIR_FORENSIC_MIN_SEVERITY" placeholder="Low" /></div>
         </div>
         <div class="settings-group-head">ATT&amp;CK / Adversary hints</div>
         <div class="sfield-row">
           <div class="sfield"><label>ATT&amp;CK Navigator version<span class="sfield-hint">DFIR_ATTACK_VERSION — version stamped in exported Navigator layers (default tracks current release)</span></label><input id="env-DFIR_ATTACK_VERSION" placeholder="19" /></div>
+          <div class="sfield"><label>D3FEND countermeasures cap<span class="sfield-hint">DFIR_D3FEND_MAX_PER_TECHNIQUE — countermeasures listed per technique (default 12; case-wide rollup keeps the full set)</span></label><input id="env-DFIR_D3FEND_MAX_PER_TECHNIQUE" placeholder="12" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>Min group overlap<span class="sfield-hint">DFIR_ADVERSARY_MIN_OVERLAP — min overlapping techniques to surface a group (default 3)</span></label><input id="env-DFIR_ADVERSARY_MIN_OVERLAP" placeholder="3" /></div>
@@ -2243,11 +2283,19 @@
           <div class="sfield"><label>Known-unknowns max<span class="sfield-hint">DFIR_SYNTH_KNOWN_UNKNOWNS_MAX — coverage-gap bullets injected into synthesis + hunt prompts (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX" placeholder="10" /></div>
           <div class="sfield"><label>Feed adversary hints to synthesis<span class="sfield-hint">DFIR_SYNTH_ADVERSARY_HINTS — on/off; feeds matched threat actors into the synthesis prompt as hypotheses (default off — can bias the model)</span></label><input id="env-DFIR_SYNTH_ADVERSARY_HINTS" placeholder="off" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Learned-pattern recurrence floor<span class="sfield-hint">DFIR_LEARNED_PATTERN_MIN_COUNT — times a dismissed marker must recur before it down-weights new look-alike activity (unset = built-in default)</span></label><input id="env-DFIR_LEARNED_PATTERN_MIN_COUNT" placeholder="(default)" /></div>
+        </div>
         <div class="settings-group-head">Mobile companion</div>
         <div class="sfield-row3">
           <div class="sfield"><label>Max findings<span class="sfield-hint">DFIR_MOBILE_MAX_FINDINGS — findings shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_FINDINGS" placeholder="50" /></div>
           <div class="sfield"><label>Max events<span class="sfield-hint">DFIR_MOBILE_MAX_EVENTS — timeline events shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_EVENTS" placeholder="50" /></div>
           <div class="sfield"><label>Max IOCs<span class="sfield-hint">DFIR_MOBILE_MAX_IOCS — IOCs shown in the mobile PWA (default 100)</span></label><input id="env-DFIR_MOBILE_MAX_IOCS" placeholder="100" /></div>
+        </div>
+        <div class="settings-group-head">Presentation / timeline-replay mode</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Max findings<span class="sfield-hint">DFIR_PRESENT_MAX_FINDINGS — finding slides in the presentation deck/export (default 40)</span></label><input id="env-DFIR_PRESENT_MAX_FINDINGS" placeholder="40" /></div>
+          <div class="sfield"><label>Max events<span class="sfield-hint">DFIR_PRESENT_MAX_EVENTS — timeline-event slides in the presentation deck/export (default 200)</span></label><input id="env-DFIR_PRESENT_MAX_EVENTS" placeholder="200" /></div>
         </div>
         <div class="settings-group-head">Pinned findings (#220)</div>
         <div class="sfield-row">
@@ -2408,6 +2456,10 @@
         <div class="sfield-row">
           <div class="sfield"><label>Gap hypothesis max<span class="sfield-hint">DFIR_GAP_HYPOTHESIS_MAX — max gaps hypothesized per "Hypothesize gaps" call (default 5, worst-first)</span></label><input id="env-DFIR_GAP_HYPOTHESIS_MAX" placeholder="5" /></div>
           <div class="sfield"><label>Gap hypothesis context<span class="sfield-hint">DFIR_GAP_HYPOTHESIS_CONTEXT — events on each side of a gap fed to the hypothesis prompt (default 8)</span></label><input id="env-DFIR_GAP_HYPOTHESIS_CONTEXT" placeholder="8" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Log-extraction template cap<span class="sfield-hint">DFIR_LOG_MAX_TEMPLATES — distinct collapsed log-line templates kept for the AI log-extraction prompt (unset = built-in default)</span></label><input id="env-DFIR_LOG_MAX_TEMPLATES" placeholder="(default)" /></div>
+          <div class="sfield"><label>Report synthesis-coverage footnote<span class="sfield-hint">DFIR_REPORT_SYNTH_COVERAGE — add a "§3.4 Synthesis coverage" footnote to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_SYNTH_COVERAGE" placeholder="off" /></div>
         </div>
       </div>
 
@@ -2623,6 +2675,10 @@
           <div class="sfield"><label>Hunt auto-collect wait (min)<span class="sfield-hint">DFIR_VELO_HUNT_WAIT_MIN — default 10 (clamped 1–1440)</span></label><input id="env-DFIR_VELO_HUNT_WAIT_MIN" placeholder="10" /></div>
           <div class="sfield"><label>Collection timeout (ms)<span class="sfield-hint">DFIR_VELOCIRAPTOR_TIMEOUT_MS</span></label><input id="env-DFIR_VELOCIRAPTOR_TIMEOUT_MS" placeholder="(optional)" /></div>
           <div class="sfield"><label>Max rows<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_ROWS</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_ROWS" placeholder="(optional)" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Hunt-state poll interval (s)<span class="sfield-hint">DFIR_VELO_HUNT_POLL_S — how often a bundle hunt's live state is polled (default 30; clamped 5–300)</span></label><input id="env-DFIR_VELO_HUNT_POLL_S" placeholder="30" /></div>
+          <div class="sfield"><label>Super-timeline event cap<span class="sfield-hint">DFIR_SUPERTIMELINE_MAX — cap for bulk MFT/USN/registry super-timeline imports (default 100000)</span></label><input id="env-DFIR_SUPERTIMELINE_MAX" placeholder="100000" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>Max output — interactive (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_OUTPUT" placeholder="52428800" /></div>
@@ -2858,6 +2914,9 @@
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
 
         <div class="sfield-hint" style="display:block;margin-bottom:16px">Master auto-run kill-switch: <code>DFIR_TOOL_AUTO_RUN=off</code> disables all auto-run (set on the General tab's <code>.env</code>, or your env).</div>
+        <div class="sfield-row" style="margin-bottom:16px">
+          <div class="sfield"><label>Binary spawn retries<span class="sfield-hint">DFIR_TOOL_SPAWN_RETRIES — transient spawn-launch retry count for AV/sync-client locks (default 6)</span></label><input id="env-DFIR_TOOL_SPAWN_RETRIES" placeholder="6" /></div>
+        </div>
 
         <div class="settings-group-head">Custom tools <span style="color:var(--c-7e8aa0);font-weight:400">(add your own — runs on the extensions you choose; output is auto-detected)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 10px">Define any local tool: give it a name, the binary path, a run command (use <code>&lt;target&gt;</code> for the input file and, if it writes a file, <code>&lt;output&gt;</code>), an optional update command, and the file extensions it should handle. The tool's output is fed through the normal importers (auto-detected). Importing or dropping a file with a matching extension will offer to run it.</p>
