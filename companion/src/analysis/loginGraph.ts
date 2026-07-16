@@ -69,3 +69,139 @@ export function isNoiseAccount(account: string): boolean {
   const user = account.split("\\").pop() ?? account;
   return /\$$/.test(user) || /^(DWM|UMFD)-\d+$/i.test(user) || /^ANONYMOUS LOGON$/i.test(user);
 }
+
+// Graph builder. Aggregation model: ONE edge per (account, host, logon type, outcome) — repeated
+// logons fatten the edge's count instead of multiplying edges, and only first/last-seen timestamps
+// are kept on it. The individual events behind an edge are served lazily by loginEdgeEvents() when
+// the analyst clicks it — mirroring Timesketch's list-of-timestamps-on-the-relationship idea
+// without bloating the graph payload. Edge risk is the worst logonRisk() across the edge's events.
+
+export interface LoginGraphNode {
+  id: string;                       // "account:<full-lower>" | "host:<lower>"
+  name: string;                     // display (service domains shortened)
+  type: "account" | "host";
+  isNoise: boolean;                 // machine/$, DWM-*, UMFD-*, ANONYMOUS LOGON (accounts only)
+  eventCount: number;
+}
+
+export interface LoginGraphEdge {
+  source: string;                   // account node id — arrow points account → host
+  target: string;                   // host node id
+  logonType: string;                // decoded name ("Interactive", "type 13", "Unknown")
+  outcome: "success" | "failed";
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  risk: "none" | "medium";          // worst logonRisk() across the edge's events
+}
+
+export interface LoginGraph {
+  nodes: LoginGraphNode[];
+  edges: LoginGraphEdge[];          // sorted by count desc; capped
+  totalEdges: number;               // before the cap — powers "showing X of Y"
+  truncated: boolean;
+}
+
+export const DEFAULT_MAX_EDGES = 500;
+
+export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
+  const nodes = new Map<string, LoginGraphNode>();
+  const edges = new Map<string, LoginGraphEdge>();
+
+  const ensureNode = (type: "account" | "host", full: string): LoginGraphNode => {
+    const id = `${type}:${full.toLowerCase()}`;
+    let n = nodes.get(id);
+    if (!n) {
+      n = {
+        id,
+        name: type === "account" ? displayAccountName(full) : full,
+        type,
+        isNoise: type === "account" && isNoiseAccount(full),
+        eventCount: 0,
+      };
+      nodes.set(id, n);
+    }
+    return n;
+  };
+
+  for (const e of events) {
+    const p = parseLoginEvent(e);
+    if (!p) continue;
+    const n = e.count ?? 1;
+    const acct = ensureNode("account", p.account);
+    const host = ensureNode("host", p.host);
+    acct.eventCount += n;
+    host.eventCount += n;
+
+    const key = `${acct.id}|${host.id}|${p.typeName}|${p.outcome}`;
+    const last = e.endTimestamp ?? e.timestamp;
+    const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
+    const edge = edges.get(key);
+    if (!edge) {
+      edges.set(key, {
+        source: acct.id, target: host.id, logonType: p.typeName, outcome: p.outcome,
+        count: n, firstSeen: e.timestamp, lastSeen: last, risk: risky ? "medium" : "none",
+      });
+    } else {
+      edges.set(key, {
+        ...edge,
+        count: edge.count + n,
+        firstSeen: e.timestamp < edge.firstSeen ? e.timestamp : edge.firstSeen,
+        lastSeen: last > edge.lastSeen ? last : edge.lastSeen,
+        risk: risky ? "medium" : edge.risk,
+      });
+    }
+  }
+
+  const sorted = [...edges.values()].sort((a, b) => b.count - a.count);
+  const kept = sorted.slice(0, maxEdges);
+  const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
+  return {
+    nodes: [...nodes.values()].filter((n) => referenced.has(n.id)),
+    edges: kept,
+    totalEdges: sorted.length,
+    truncated: sorted.length > kept.length,
+  };
+}
+
+export interface LoginEdgeEvent {
+  id: string;
+  timestamp: string;
+  description: string;
+  sourceIp?: string;
+  workstation?: string;
+  count: number;
+}
+
+export interface LoginEdgeEventsQuery {
+  account: string;                  // full account form, case-insensitive
+  host: string;
+  type: string;                     // decoded typeName, e.g. "Interactive"
+  outcome: "success" | "failed";
+  limit: number;
+}
+
+// The events behind ONE edge — lazy-loaded by the dashboard when the analyst clicks it.
+export function loginEdgeEvents(events: readonly ForensicEvent[], q: LoginEdgeEventsQuery): { events: LoginEdgeEvent[]; total: number } {
+  const matched: { e: ForensicEvent; p: ParsedLogon }[] = [];
+  for (const e of events) {
+    const p = parseLoginEvent(e);
+    if (!p) continue;
+    if (p.account.toLowerCase() !== q.account.toLowerCase()) continue;
+    if (p.host.toLowerCase() !== q.host.toLowerCase()) continue;
+    if (p.typeName !== q.type || p.outcome !== q.outcome) continue;
+    matched.push({ e, p });
+  }
+  matched.sort((a, b) => a.e.timestamp.localeCompare(b.e.timestamp));
+  return {
+    total: matched.length,
+    events: matched.slice(0, Math.max(0, q.limit)).map(({ e, p }) => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      description: e.description,
+      ...(p.sourceIp ? { sourceIp: p.sourceIp } : {}),
+      ...(p.workstation ? { workstation: p.workstation } : {}),
+      count: e.count ?? 1,
+    })),
+  };
+}
