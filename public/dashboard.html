@@ -4238,8 +4238,11 @@
         <span class="src-legend st-dd" id="stTagWrap" style="display:none;margin-left:0" title="Filter to events carrying specific tag(s)"><button type="button" class="src-filter-btn" id="stTagBtn">🏷 Tags</button><div class="src-filter-menu" id="stTagMenu" hidden></div></span>
         <button id="stTaggedOnly" class="ev-bulk-btn" title="Show only events carrying at least one tag">☐ Tagged only</button>
         <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (whole timeline)">☆ Starred only</button>
+        <button id="stStarredReport" class="ev-bulk-btn" title="AI report over ONLY the starred events (one AI call) — the TimeSketch starred-events review workflow">✨ Starred report</button>
+        <button id="stViewSummary" class="ev-bulk-btn" title="AI summary of whatever the current filters show (one AI call). Ephemeral — copy it to keep it.">✨ Summarize view</button>
       </div>
       <div id="superTimelineMsg" style="font-size:12px;color:var(--c-ff6b6b);margin:4px 0"></div>
+      <div id="stAiPanel" hidden style="margin:6px 0"></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
         <strong style="font-size:12px;color:var(--c-9aa4b2)">🏷 Content tagger</strong>
         <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
@@ -6739,6 +6742,106 @@
       const b = document.getElementById("stStarredOnly");
       if (b) { b.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; b.classList.toggle("active", superStarredOnly); }
       superPage(0);
+    }
+
+    // --- Starred report + view summary (TimeSketch-style; button-triggered ONLY, never automatic) --
+    let lastStarredReport = null;   // last generated (unsaved) report — what "Save to case" persists
+
+    function stRenderNote(text, isError) {
+      const panel = document.getElementById("stAiPanel");
+      if (!panel) return;
+      panel.hidden = false;
+      panel.innerHTML = `<div style="font-size:12px;color:${isError ? "var(--c-ff9f43)" : "var(--c-9aa4b2)"}">${esc(text)}</div>`;
+    }
+
+    // Render an AI markdown result with Copy (+ Save to case when onSave is provided).
+    function stRenderAiPanel(title, markdown, meta, onSave) {
+      const panel = document.getElementById("stAiPanel");
+      if (!panel) return;
+      panel.hidden = false;
+      panel.innerHTML = `<div class="info-card" style="border-left:3px solid var(--c-6aa9ff)">`
+        + `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">`
+        + `<strong style="font-size:12px">${esc(title)}</strong>`
+        + `<span style="font-size:11px;color:var(--c-9aa4b2)">${esc(meta || "")}</span>`
+        + `<span style="flex:1"></span>`
+        + `<button id="stAiCopy" class="ev-bulk-btn" title="Copy the raw markdown">Copy</button>`
+        + (onSave ? `<button id="stAiSave" class="ev-bulk-btn" title="Save to the case (survives reload; overwrites the previous saved report)">Save to case</button>` : "")
+        + `<button id="stAiClose" class="ev-bulk-btn" title="Close">✕</button>`
+        + `<span id="stAiMsg" style="font-size:11px;color:var(--c-9aa4b2)"></span></div>`
+        + `<div>${mdToHtml(markdown)}</div></div>`;
+      document.getElementById("stAiCopy").onclick = () => {
+        navigator.clipboard.writeText(markdown).then(
+          () => { document.getElementById("stAiMsg").textContent = "copied ✓"; },
+          () => { document.getElementById("stAiMsg").textContent = "copy failed"; });
+      };
+      document.getElementById("stAiClose").onclick = () => { panel.hidden = true; panel.innerHTML = ""; };
+      const save = document.getElementById("stAiSave");
+      if (save) save.onclick = onSave;
+    }
+
+    function saveStarredReport() {
+      const caseId = superCaseId();
+      if (!caseId || !lastStarredReport) return;
+      fetch(`/cases/${caseId}/starred-report`, { method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ markdown: lastStarredReport.markdown, eventCount: lastStarredReport.eventCount }) })
+        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); document.getElementById("stAiMsg").textContent = "saved to case ✓"; })
+        .catch(e => { document.getElementById("stAiMsg").textContent = "save failed: " + e.message; });
+    }
+
+    // On case load: a previously-saved report reappears in the panel (read-only; no Save button).
+    function loadSavedStarredReport(caseId) {
+      const panel = document.getElementById("stAiPanel");
+      if (panel) { panel.hidden = true; panel.innerHTML = ""; }   // clear the previous case's panel
+      lastStarredReport = null;
+      fetch(`/cases/${caseId}/starred-report`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d || !d.markdown) return;
+          const when = d.savedAt ? new Date(d.savedAt).toLocaleString() : "";
+          stRenderAiPanel("✨ Starred events report", d.markdown, `saved${when ? " " + when : ""}${d.eventCount ? ` — ${d.eventCount} starred events` : ""}`, null);
+        })
+        .catch(() => {});
+    }
+
+    function genStarredReport() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      if (!starredEvents.size) {
+        stRenderNote("No starred events yet — star rows (☆) in the timeline first; the report runs over only the starred set.");
+        return;
+      }
+      const btn = document.getElementById("stStarredReport");
+      btn.disabled = true; btn.textContent = "✨ generating…";
+      fetch(`/cases/${caseId}/starred-report`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; })
+        .then(d => {
+          lastStarredReport = d;
+          stRenderAiPanel("✨ Starred events report", d.markdown || "(empty report)",
+            d.truncated ? `${d.usedEvents} of ${d.eventCount} starred events (AI input budget)` : `${d.eventCount} starred event${d.eventCount !== 1 ? "s" : ""}`,
+            saveStarredReport);
+        })
+        .catch(e => stRenderNote(/501/.test(e.message) ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
+        .finally(() => { btn.disabled = false; btn.textContent = "✨ Starred report"; });
+    }
+
+    function genViewSummary() {
+      const caseId = superCaseId();
+      if (!caseId) return;
+      if (lastSuperData && !superTotal) { stRenderNote("Nothing to summarize — the current filters match no events."); return; }
+      const btn = document.getElementById("stViewSummary");
+      btn.disabled = true; btn.textContent = "✨ summarizing…";
+      // Exactly the filter set the timeline query uses, minus pagination (the summary covers the
+      // WHOLE match, not the visible page).
+      const p = new URLSearchParams(superQueryString());
+      p.delete("offset"); p.delete("limit");
+      const body = Object.fromEntries(p.entries());
+      fetch(`/cases/${caseId}/view-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; })
+        .then(d => stRenderAiPanel("✨ View summary", d.markdown || "(empty summary)",
+          d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events (AI input budget)` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
+          null))
+        .catch(e => stRenderNote(/501/.test(e.message) ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
+        .finally(() => { btn.disabled = false; btn.textContent = "✨ Summarize view"; });
     }
 
     // Inline ±window menu anchored to a ⌖ button. Only one is open at a time.
@@ -14294,6 +14397,7 @@
       loadHypotheses(caseId);
       loadSavedTimeframes(caseId);
       loadSuperTimeline(caseId);
+      loadSavedStarredReport(caseId);
       loadPlaybook(caseId);
       starredEvents = new Set(); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
       selectedEvents.clear();
@@ -14973,6 +15077,8 @@
       if (e.target.id === "stBulkTag") { superBulkTag(); return; }
       if (e.target.id === "stTaggedOnly") { toggleSuperTaggedOnly(); return; }
       if (e.target.id === "stStarredOnly") { toggleSuperStarredOnly(); return; }
+      if (e.target.id === "stStarredReport") { genStarredReport(); return; }
+      if (e.target.id === "stViewSummary") { genViewSummary(); return; }
       // Super-timeline: click a tag pill to filter the timeline to that tag.
       const stTag = e.target.closest && e.target.closest(".st-tag-filter");
       if (stTag) {
