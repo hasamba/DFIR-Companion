@@ -69,6 +69,17 @@ describe("GET /cases/:id/login-graph", () => {
     expect(res.body.nodes).toEqual([]);
     expect(res.body.edges).toEqual([]);
   });
+
+  it("falls back to the default cap on maxEdges=0 or negative", async () => {
+    const { app, superTimelineStore } = await harness();
+    await superTimelineStore.append("c1", [ev("e1", LOGON_DESC("CORP\\jdoe", "SRV-01", 2), "SRV-01")]);
+    for (const q of ["maxEdges=0", "maxEdges=-5"]) {
+      const res = await request(app).get(`/cases/c1/login-graph?${q}`);
+      expect(res.status).toBe(200);
+      expect(res.body.edges.length).toBe(1);   // default cap, not zero
+      expect(res.body.truncated).toBe(false);
+    }
+  });
 });
 
 describe("GET /cases/:id/login-graph/edge-events", () => {
@@ -85,5 +96,12 @@ describe("GET /cases/:id/login-graph/edge-events", () => {
     expect(res.body.total).toBe(1);
     expect(res.body.events[0].id).toBe("e1");
     expect(res.body.events[0].sourceIp).toBe("10.0.0.5");
+  });
+
+  it("400s on repeated/array params instead of a data-dependent 500", async () => {
+    const { app, superTimelineStore } = await harness();
+    await superTimelineStore.append("c1", [ev("e1", LOGON_DESC("CORP\\jdoe", "SRV-01", 2), "SRV-01")]);
+    const res = await request(app).get("/cases/c1/login-graph/edge-events?account=a&account=b&host=SRV-01");
+    expect(res.status).toBe(400);
   });
 });

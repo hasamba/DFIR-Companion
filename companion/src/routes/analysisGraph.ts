@@ -62,6 +62,10 @@ import type { RouteContext } from "./context.js";
 export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
 
+  // Narrow a query param to a plain string. Express parses repeated params (?a=1&a=2) as an
+  // ARRAY — a blind `as string` cast would pass truthy guards and TypeError downstream.
+  const s = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
   // The asset ↔ IoC graph (compromised assets and the IoCs that touched each), derived on
   // demand from the current state with the same scope/legitimate filtering as the report.
   app.get("/cases/:id/asset-graph", async (req: Request, res: Response) => {
@@ -80,7 +84,7 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/login-graph", async (req: Request, res: Response) => {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     try {
-      const raw = Number(req.query.maxEdges);
+      const raw = Number(s(req.query.maxEdges));
       const maxEdges = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_EDGES;
       const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
       return res.status(200).json({ ...buildLoginGraph(events, maxEdges), generatedAt: new Date().toISOString() });
@@ -93,10 +97,12 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // graph payload stays lean on 100K-event cases.
   app.get("/cases/:id/login-graph/edge-events", async (req: Request, res: Response) => {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
-    const { account, host, type, outcome } = req.query as Record<string, string | undefined>;
+    // Non-string (repeated/array) params narrow to undefined and hit the 400 below instead
+    // of a data-dependent 500 inside loginEdgeEvents.
+    const account = s(req.query.account), host = s(req.query.host), type = s(req.query.type), outcome = s(req.query.outcome);
     if (!account || !host) return res.status(400).json({ error: "account and host are required" });
     try {
-      const rawLimit = Number(req.query.limit);
+      const rawLimit = Number(s(req.query.limit));
       const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 50;
       const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
       return res.status(200).json(loginEdgeEvents(events, {
