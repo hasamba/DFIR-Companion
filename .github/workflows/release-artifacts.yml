@@ -240,21 +240,39 @@ jobs:
         run: |
           set -euo pipefail
 
-          ACCESS_TOKEN=$(curl -sf -X POST https://oauth2.googleapis.com/token \
-            -d client_id="$CLIENT_ID" \
-            -d client_secret="$CLIENT_SECRET" \
-            -d refresh_token="$REFRESH_TOKEN" \
-            -d grant_type=refresh_token | jq -r '.access_token')
+          # --data-urlencode (not -d) is required: refresh tokens routinely contain "+", which
+          # is the form-encoding escape for a space — sending it raw silently corrupts the token
+          # and the token endpoint returns 400 invalid_grant.
+          TOKEN_RESPONSE=$(curl -s -w '\n%{http_code}' -X POST https://oauth2.googleapis.com/token \
+            --data-urlencode client_id="$CLIENT_ID" \
+            --data-urlencode client_secret="$CLIENT_SECRET" \
+            --data-urlencode refresh_token="$REFRESH_TOKEN" \
+            --data-urlencode grant_type=refresh_token)
+          TOKEN_HTTP_CODE=$(echo "$TOKEN_RESPONSE" | tail -n1)
+          TOKEN_BODY=$(echo "$TOKEN_RESPONSE" | sed '$d')
 
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
-            echo "::error::Could not obtain a Chrome Web Store access token — the refresh token may be invalid/expired."
+          if [ "$TOKEN_HTTP_CODE" != "200" ]; then
+            echo "::error::Chrome Web Store token exchange failed (HTTP $TOKEN_HTTP_CODE): $TOKEN_BODY"
             exit 1
           fi
 
-          ITEM=$(curl -sf -H "Authorization: Bearer $ACCESS_TOKEN" -H "x-goog-api-version: 2" \
-            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID")
+          ACCESS_TOKEN=$(echo "$TOKEN_BODY" | jq -r '.access_token')
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Chrome Web Store token exchange returned no access_token: $TOKEN_BODY"
+            exit 1
+          fi
 
-          LIVE_VERSION=$(echo "$ITEM" | jq -r '.crxVersion // "unknown"')
+          ITEM_RESPONSE=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" -H "x-goog-api-version: 2" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID")
+          ITEM_HTTP_CODE=$(echo "$ITEM_RESPONSE" | tail -n1)
+          ITEM_BODY=$(echo "$ITEM_RESPONSE" | sed '$d')
+
+          if [ "$ITEM_HTTP_CODE" != "200" ]; then
+            echo "::error::Chrome Web Store item lookup failed (HTTP $ITEM_HTTP_CODE): $ITEM_BODY"
+            exit 1
+          fi
+
+          LIVE_VERSION=$(echo "$ITEM_BODY" | jq -r '.crxVersion // "unknown"')
           EXPECTED_VERSION=$(jq -r '.version' extension/manifest.json)
           echo "Chrome Web Store live version: $LIVE_VERSION (expected: $EXPECTED_VERSION)"
 
