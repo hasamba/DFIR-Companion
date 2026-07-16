@@ -4237,7 +4237,7 @@
         <span class="src-legend st-dd" id="stHostWrap" style="display:none;margin-left:0" title="Show or hide events by affected host"><button type="button" class="src-filter-btn" id="stHostBtn">🖥 Hosts</button><div class="src-filter-menu" id="stHostMenu" hidden></div></span>
         <span class="src-legend st-dd" id="stTagWrap" style="display:none;margin-left:0" title="Filter to events carrying specific tag(s)"><button type="button" class="src-filter-btn" id="stTagBtn">🏷 Tags</button><div class="src-filter-menu" id="stTagMenu" hidden></div></span>
         <button id="stTaggedOnly" class="ev-bulk-btn" title="Show only events carrying at least one tag">☐ Tagged only</button>
-        <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (this page)">☆ Starred only</button>
+        <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (whole timeline)">☆ Starred only</button>
       </div>
       <div id="superTimelineMsg" style="font-size:12px;color:var(--c-ff6b6b);margin:4px 0"></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
@@ -5524,7 +5524,7 @@
       return "#9aa4b2";
     }
     function tagPills(type, id) {
-      const list = tagsByTarget.get(targetKey(type, id)) || [];
+      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => t.label !== "starred");
       return list.map(t => {
         const c = tagColor(t.label);
         return `<span class="tag-pill" style="color:${c};border-color:${c}" title="tag by ${escAttr(t.author)}">${esc(t.label)}</span>`;
@@ -5545,6 +5545,8 @@
           let arr = tagsByTarget.get(k); if (!arr) { arr = []; tagsByTarget.set(k, arr); }
           arr.push(t);
         });
+        deriveStarred();               // stars are tags — rebuild the star lookup with every tag load
+        migrateLocalStars(caseId);     // one-time: push legacy localStorage stars up as tags
         if (lastState) render(lastState);     // refresh inline pills
         // A tag change alters the super-timeline's Tags filter facet + tag-filtered results (both now
         // server-driven by tags), so reload it rather than a cache re-render — but only when its section
@@ -6201,7 +6203,7 @@
                                     // (bulk star/tag/promote all act on it), keyed by ("event", id) so it
                                     // unifies with the forensic timeline's tag/star machinery.
     let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
-    let superStarredOnly = false;   // filter: only starred events (client-side, current page only)
+    let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
     let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
     let lastSuperData = null;       // last super-timeline query response (for client-side re-render on tag/comment/star change)
     const superCaseId = () => document.getElementById("caseId").value.trim();
@@ -6469,6 +6471,7 @@
       // (empty = no tag filter = all).
       if (superSelectedLabels.size) p.set("labels", [...superSelectedLabels].join(","));
       if (superTaggedOnly) p.set("tagged", "1");
+      if (superStarredOnly) p.set("starred", "1");
       p.set("offset", String(superOffset));
       p.set("limit", String(ST_PAGE));
       return p.toString();
@@ -6568,12 +6571,11 @@
       if (next) next.disabled = superOffset + ST_PAGE >= superTotal;
       const el = document.getElementById("superTimelineList");
       if (!el) return;
-      // "Starred only" is a CLIENT-side, page-local filter: keep only starred rows of the loaded page
-      // (server-side pagination means we can only see the current page here).
-      const rows = superStarredOnly ? events.filter(e => starredEvents.has(e.id)) : events;
+      // Starred-only is now a SERVER-side filter (starred=1) — the rows here are already filtered.
+      const rows = events;
       if (!rows.length) {
-        el.innerHTML = superStarredOnly && events.length
-          ? "<div style='color:var(--c-9aa4b2);font-size:12px'>No starred events on this page. (Starred-only filters the current page only.)</div>"
+        el.innerHTML = superStarredOnly
+          ? "<div style='color:var(--c-9aa4b2);font-size:12px'>No starred events match the current filters — star rows (☆) to build the review set.</div>"
           : "<div style='color:var(--c-9aa4b2);font-size:12px'>No events yet — import evidence (or run the Super-Timeline Triage bundle) and they'll appear here.</div>";
         updateSuperSelBar(rows);
         return;
@@ -6642,7 +6644,7 @@
     // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
     // Tags box and reloads). Mirrors tagPills() but adds the st-tag-filter affordance.
     function superTagPills(type, id) {
-      const list = tagsByTarget.get(targetKey(type, id)) || [];
+      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => t.label !== "starred");
       return list.map(t => {
         const c = tagColor(t.label);
         return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" style="color:${c};border-color:${c};cursor:pointer" title="Filter the super-timeline to this tag">${esc(t.label)}</span>`;
@@ -6694,11 +6696,9 @@
       if (lastSuperData) updateSuperSelBar(currentSuperRows());
     }
 
-    // The rows currently on screen (honoring the client-side starred-only page filter), used by
-    // select-all + the selection bar so they stay in sync with what's actually rendered.
+    // The rows currently on screen (starred-only is server-side now, so this is just the page).
     function currentSuperRows() {
-      const events = (lastSuperData && Array.isArray(lastSuperData.events)) ? lastSuperData.events : [];
-      return superStarredOnly ? events.filter(e => starredEvents.has(e.id)) : events;
+      return (lastSuperData && Array.isArray(lastSuperData.events)) ? lastSuperData.events : [];
     }
 
     // Select-all: tick/untick every row currently shown on this page.
@@ -6708,16 +6708,13 @@
       refreshSuperRows();
     }
 
-    // Bulk star: star all selected if any is unstarred, else unstar all (mirrors bulkToggleStar).
+    // Bulk star: star all selected if any is unstarred, else unstar all (shared serialized helper).
     function superBulkStar() {
       const caseId = superCaseId();
       const ids = [...superPromote];
-      if (!caseId || !ids.length) { const m = document.getElementById("superTimelineMsg"); if (m) { m.style.color = "var(--c-9aa4b2)"; m.textContent = "tick some events first"; } return; }
-      const anyUnstarred = ids.some(id => !starredEvents.has(id));
-      ids.forEach(id => { if (anyUnstarred) starredEvents.add(id); else starredEvents.delete(id); });
-      saveStarred(caseId);
-      renderTimelineEvents(lastFt);   // the star key is shared with the forensic timeline
-      refreshSuperRows();
+      const m = document.getElementById("superTimelineMsg");
+      if (!caseId || !ids.length) { if (m) { m.style.color = "var(--c-9aa4b2)"; m.textContent = "tick some events first"; } return; }
+      bulkStarIds(caseId, ids, m);
     }
 
     // Bulk tag: reuse the forensic bulk-tag modal (it applies a tag to every id in the list, keyed by
@@ -6736,12 +6733,12 @@
       superPage(0);
     }
 
-    // Toggle "Starred only" (client-side, current page) and re-render the loaded page.
+    // Toggle "Starred only" (server-side starred=1 — filters the WHOLE super-timeline) and reload.
     function toggleSuperStarredOnly() {
       superStarredOnly = !superStarredOnly;
       const b = document.getElementById("stStarredOnly");
       if (b) { b.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; b.classList.toggle("active", superStarredOnly); }
-      refreshSuperRows();
+      superPage(0);
     }
 
     // Inline ±window menu anchored to a ⌖ button. Only one is open at a time.
@@ -7303,8 +7300,13 @@
     // (IP/domain/URL-gated). Deterministic templating from the entity's structured fields — no AI, no
     // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
-    // --- Starred events (per case, localStorage) ---------------------------------
+    // --- Starred events (per case, tag-backed) ---------------------------------
+    // A star IS the reserved analyst tag "starred" on ("event", id) — server-side, shared across
+    // browsers/analysts (TimeSketch's model: its star is the __ts_star label). starredEvents /
+    // starredTagIds are DERIVED from tagsByTarget in loadTags(); legacy localStorage stars are
+    // migrated up once per case, then the key is deleted.
     let starredEvents = new Set();
+    let starredTagIds = new Map();   // eventId -> tag id (needed for DELETE /cases/:id/tags/:tagId)
     let showStarredOnly = false;
     // Transient "show only this set of event ids" filter — set by the Timeline Anomalies
     // "view N events" link (and reusable by any panel that points at a group of events) so the
@@ -7331,18 +7333,59 @@
     function isSystemPathIoc(i) { return i.type === "file" && SYSTEM_PATH_RE.test(String(i.value || "").trim()); }
     let hideSystemPaths = _boolPref("hideSysPaths", true);
     const starredKey = caseId => `dfir_starred_${caseId}`;
-    function loadStarred(caseId) {
-      try { starredEvents = new Set(JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]")); }
-      catch { starredEvents = new Set(); }
+    const starMigrationDone = new Set();   // caseIds migrated this session (guards re-entry)
+
+    // Rebuild the star lookup from the freshly-loaded tags (called by loadTags()).
+    function deriveStarred() {
+      starredEvents = new Set();
+      starredTagIds = new Map();
+      tagsByTarget.forEach(list => list.forEach(t => {
+        if (t.targetType === "event" && t.label === "starred") {
+          starredEvents.add(t.targetId);
+          starredTagIds.set(t.targetId, t.id);
+        }
+      }));
     }
-    function saveStarred(caseId) {
-      try { localStorage.setItem(starredKey(caseId), JSON.stringify([...starredEvents])); } catch {}
+
+    // One-time migration: pre-server-side stars lived in localStorage — push any not already
+    // starred up as "starred" tags (SERIALIZED — TagsStore.add() is read-modify-write, concurrent
+    // POSTs clobber each other), then delete the key so this never runs again.
+    async function migrateLocalStars(caseId) {
+      if (starMigrationDone.has(caseId)) return;
+      starMigrationDone.add(caseId);
+      let legacy = [];
+      try { legacy = JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]"); } catch {}
+      if (!legacy.length) return;
+      const toMigrate = legacy.filter(id => !starredEvents.has(id));
+      try {
+        for (const id of toMigrate) {
+          const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ targetType: "event", targetId: id, author: investigatorName(), label: "starred" }) });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+        }
+        localStorage.removeItem(starredKey(caseId));   // only after every star landed
+        if (toMigrate.length) loadTags(caseId);
+      } catch { starMigrationDone.delete(caseId); }    // retry on the next loadTags
     }
+
     function toggleStar(caseId, id) {
-      if (starredEvents.has(id)) starredEvents.delete(id); else starredEvents.add(id);
-      saveStarred(caseId);
+      const wasStarred = starredEvents.has(id);
+      // Optimistic flip for instant feedback; loadTags() re-derives the truth after the server call.
+      if (wasStarred) starredEvents.delete(id); else starredEvents.add(id);
       renderTimelineEvents(lastFt);
       refreshSuperRows();   // the star may belong to a super-timeline row (shared ("event", id) key)
+      const revert = () => {
+        if (wasStarred) starredEvents.add(id); else starredEvents.delete(id);
+        renderTimelineEvents(lastFt); refreshSuperRows();
+      };
+      const req = wasStarred
+        ? fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id) || "")}`, { method: "DELETE" })
+        : fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ targetType: "event", targetId: id, author: investigatorName(), label: "starred" }) });
+      req.then(r => {
+        if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);   // 404 delete = already gone
+        loadTags(caseId);
+      }).catch(revert);
     }
 
     // --- Multi-select (session-only, cleared on re-render) ----------------------
@@ -7371,12 +7414,35 @@
       }
     }
     function clearIocSelection() { selectedIocs.clear(); if (lastState) renderIocs(lastState.iocs || []); }
+    // Bulk star/unstar N events: any unstarred → star all, else unstar all. SERIALIZED requests —
+    // TagsStore.add() is read-modify-write on tags.json (same reason addTag()'s bulk mode awaits
+    // each call). Optimistic set updates keep the UI live; loadTags() reconciles at the end.
+    async function bulkStarIds(caseId, ids, msgEl) {
+      if (!caseId || !ids.length) return;
+      const anyUnstarred = ids.some(id => !starredEvents.has(id));
+      try {
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i];
+          if (msgEl) { msgEl.style.color = "var(--c-9aa4b2)"; msgEl.textContent = `${anyUnstarred ? "starring" : "unstarring"}… (${i + 1}/${ids.length})`; }
+          if (anyUnstarred && !starredEvents.has(id)) {
+            const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ targetType: "event", targetId: id, author: investigatorName(), label: "starred" }) });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            starredEvents.add(id);
+          } else if (!anyUnstarred && starredTagIds.has(id)) {
+            await fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`, { method: "DELETE" });
+            starredEvents.delete(id);
+          }
+        }
+        if (msgEl) msgEl.textContent = "";
+      } catch (e) {
+        if (msgEl) { msgEl.style.color = "var(--c-ff6b6b)"; msgEl.textContent = "star failed: " + e.message; }
+      }
+      loadTags(caseId);   // reconcile + refresh both timelines (loadTags reloads the super view)
+    }
     function bulkToggleStar() {
       const caseId = document.getElementById("caseId").value.trim();
-      const anyUnstarred = [...selectedEvents].some(id => !starredEvents.has(id));
-      selectedEvents.forEach(id => { if (anyUnstarred) starredEvents.add(id); else starredEvents.delete(id); });
-      saveStarred(caseId);
-      renderTimelineEvents(lastFt);
+      bulkStarIds(caseId, [...selectedEvents], null);
     }
     function openBulkTagModal(ids, targetType) {
       tagTarget = { bulk: true, ids, targetType: targetType || "event" };
@@ -14228,7 +14294,6 @@
       loadSavedTimeframes(caseId);
       loadSuperTimeline(caseId);
       loadPlaybook(caseId);
-      loadStarred(caseId);
       selectedEvents.clear();
       selectedIocs.clear();
       selectedFindings.clear();
