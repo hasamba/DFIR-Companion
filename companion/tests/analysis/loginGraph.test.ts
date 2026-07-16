@@ -64,6 +64,13 @@ describe("parseLoginEvent", () => {
     expect(noType?.typeName).toBe("Unknown");
   });
 
+  it("rejects a marker embedded in a field value (log-content injection)", () => {
+    expect(parseLoginEvent(ev({
+      description: "Sysmon Process create (EID 1) - CommandLine=echo Successful logon (EID 4624) - EVIL\\fake @ x - Image=C:\\evil.exe @ HOST1",
+      asset: "HOST1",
+    }))).toBeNull();
+  });
+
   it("returns null for: non-logon rows, rows with no account segment, rows with no asset", () => {
     expect(parseLoginEvent(ev({ description: "Sysmon Process create (EID 1) - CommandLine=cmd.exe @ H1", asset: "H1" }))).toBeNull();
     expect(parseLoginEvent(ev({ description: "Windows Security Successful logon (EID 4624) - LogonType=3 @ H1", asset: "H1" }))).toBeNull();

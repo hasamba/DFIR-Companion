@@ -24,6 +24,13 @@ export interface ParsedLogon {
 export function parseLoginEvent(e: ForensicEvent): ParsedLogon | null {
   const m = LOGON_MARKER.exec(e.description);
   if (!m) return null;
+  // Injection guard: on a genuine row the marker sits in the `${tool} ${label} (EID n)` prefix,
+  // BEFORE the first ` - ` separator (channelLabel values and event labels are ` - `-free, and every
+  // importer path routes through mapWindows). A marker AFTER it is log content echoed into a field
+  // value (e.g. a CommandLine containing "Successful logon (EID 4624) - EVIL\\fake @ x") — an
+  // attacker-controlled string that must not plant a fake account→host edge in the graph.
+  const sep = e.description.indexOf(" - ");
+  if (sep !== -1 && m.index > sep) return null;
   const host = (e.asset ?? "").trim();
   if (!host) return null;
   // Accounts segment: everything after the marker up to the first `Key=value` field, the ` @ host`
