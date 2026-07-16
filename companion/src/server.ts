@@ -106,6 +106,7 @@ import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "./analysis/sourceTrustStore.js";
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
+import { StarredReportStore } from "./analysis/starredReportStore.js";
 import { TaggerStore } from "./analysis/taggerStore.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
@@ -301,6 +302,10 @@ export interface AppOptions {
   // Super-timeline: the complete record of every imported event (a superset of the forensic timeline).
   // Every normal import dual-writes its newly-added events here; the forensic timeline stays curated.
   superTimelineStore?: SuperTimelineStore;
+  // Saved copy of the TimeSketch-style Starred Events Report (a per-case side file) — POST
+  // /starred-report generates it fresh each time (ephemeral); PUT persists the analyst's chosen
+  // copy here so it survives a reload; GET reads it back.
+  starredReportStore?: StarredReportStore;
   // Content-based event tagger (Timesketch-style tags.yaml): the rule file store. Powers manual
   // "Run tagger" + rule editing (routes/tagger.ts) and the automatic post-import run (pipeline).
   taggerStore?: TaggerStore;
@@ -2929,6 +2934,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const sourceTrustStore = new SourceTrustStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
+  const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const confidenceControlStore = new ConfidenceControlStore(store);
   const playbookStore = new PlaybookStore(store);
@@ -3062,6 +3068,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onDwellWindow: (caseId) => hub.broadcastTo(caseId, { type: "dwell_window_changed" }),
     superTimelineStore,
     onSuperTimeline: (caseId) => hub.broadcastTo(caseId, { type: "super_timeline_changed" }),
+    starredReportStore,
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
     confidenceControlStore,
