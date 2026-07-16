@@ -144,6 +144,7 @@ import {
 } from "./huntOutcomes.js";
 import type { HuntOutcomeStore } from "./huntOutcomeStore.js";
 import type { SuperTimelineStore } from "./superTimelineStore.js";
+import type { SuperQuery, SuperLabelMap } from "./superTimeline.js";
 import {
   memoryNextStepResponseSchema,
   sanitizeMemoryNextSteps,
@@ -691,7 +692,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -942,6 +943,54 @@ export const EXPLAIN_EVENT_PROMPT = [
     evidenceAgainst: "plausible benign explanation (or empty string if clearly malicious)",
     relatedEventIds: ["event ids from the context that support the explanation"],
   }, null, 2),
+].join("\n");
+
+// TimeSketch-style Starred Events Report: a forensic markdown report over ONLY the events the
+// investigator starred (the reserved "starred" tag) while sweeping the super timeline — the
+// TimeSketch starred-events workflow. Button-triggered only; EPHEMERAL (saving is a separate route).
+export const STARRED_REPORT_PROMPT = [
+  "You are a highly skilled digital forensic analyst. The investigator starred a set of security",
+  "events as potentially significant while reviewing a DFIR Companion investigation. Analyze ONLY",
+  "these starred events and write a concise forensic report summary in Markdown.",
+  "",
+  "Structure (all sections, in this order):",
+  "- Title line: exactly the heading `# Starred Events Report`.",
+  "- Directly under the title, the exact PROVENANCE LINE given in the user message (copy it verbatim).",
+  "- **Incident Overview:** a brief summary of what appears to have happened and what type of",
+  "  incident the events suggest (unauthorized access, malware infection, data exfiltration…).",
+  "- **Key Findings:** the most important observations and indicators. Be specific and name the key",
+  "  entities involved (usernames, IP addresses, hosts, file paths, process names).",
+  "- **Timeline of Significant Events (Chronological Order):** briefly outline the sequence of key",
+  "  actions observed in the starred events.",
+  "- **Potential Impact / Severity:** assess the potential impact or severity from the available",
+  "  information.",
+  "- **Recommended Next Steps:** 2-3 concrete next steps for the investigation.",
+  "",
+  "Use bolding (**…**) for key entities and findings. Ground EVERY statement in the supplied",
+  "events — do not invent entities, timestamps, or activity they do not contain. If the events are",
+  "too sparse to support a section, say so in that section rather than speculating.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ markdown: "the full report as raw Markdown (start with the `# Starred Events Report` title line)" }, null, 2),
+].join("\n");
+
+// Quick AI overview of WHATEVER the analyst's current super-timeline filters show ("summarize this
+// view") — TimeSketch's "seen events" summary, adapted to markdown bold. Button-triggered; EPHEMERAL.
+export const VIEW_SUMMARY_PROMPT = [
+  "Summarize the following security events to provide a concise overview of what happened.",
+  "",
+  "Identify the main activity or incident described in the events. If the events suggest a",
+  "security incident, state whether the incident appears to have been successful or not, and",
+  "briefly explain why, based ONLY on the provided information.",
+  "",
+  "Highlight key observables in markdown bold (**…**): IP addresses, domain names, file paths,",
+  "usernames, hostnames, process names, search queries.",
+  "",
+  "Keep it short: a few paragraphs or tight bullets, not a full report. Do not invent entities or",
+  "activity the events do not contain.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ markdown: "the concise overview as raw Markdown" }, null, 2),
 ].join("\n");
 
 // Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
@@ -1310,6 +1359,8 @@ export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPL
 export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
 export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY", FP_SIMILARITY_PROMPT);
 export const getHypothesisReviewPrompt = (): string => resolvePrompt("HYPREVIEW", HYPOTHESIS_REVIEW_PROMPT);
+export const getStarredReportPrompt = (): string => resolvePrompt("STARREDREPORT", STARRED_REPORT_PROMPT);
+export const getViewSummaryPrompt = (): string => resolvePrompt("VIEWSUMMARY", VIEW_SUMMARY_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -1343,6 +1394,15 @@ export const IMPORTER_PROMPT = [
 ].join("\n");
 
 export const getImporterPrompt = (): string => resolvePrompt("IMPORTGEN", IMPORTER_PROMPT);
+
+// Result of the two view-scoped AI summaries (starred report / view summary). `eventCount` is the
+// full deduplicated match; `usedEvents` what actually fit the AI input budget.
+export interface StarredSummaryResult {
+  markdown: string;
+  eventCount: number;
+  usedEvents: number;
+  truncated: boolean;
+}
 
 export interface PipelineOptions {
   // The VISION model: screenshot analysis only (analyzeWindow). Screenshots need an image-capable
@@ -1523,6 +1583,15 @@ export class AnalysisPipeline {
 
   hasAiProvider(): boolean {
     return Boolean(this.opts.provider);
+  }
+
+  // Whether a TEXT/synthesis provider is available — the gate for text-only AI features (starred
+  // report, view summary, …). Mirrors how those methods resolve their provider
+  // (`synthesisProvider ?? provider`): DFIR_AI_SYNTH_PROVIDER falls back to DFIR_AI_PROVIDER, so this
+  // is true whenever EITHER is configured. Distinct from hasAiProvider(), which reflects the VISION
+  // provider (DFIR_AI_PROVIDER only) used for screenshot/OCR analysis.
+  hasSynthesisProvider(): boolean {
+    return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
   }
 
   private requireProvider(purpose: string): AIProvider {
@@ -4309,6 +4378,96 @@ export class AnalysisPipeline {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] }, "exec-summary");
       return execSummarySchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+  }
+
+  // TimeSketch-style Starred Events Report: ONE text-only AI call over ONLY the analyst-starred
+  // events (ids resolved by the route from the reserved "starred" tags — the pipeline has no tags
+  // store). Events resolve from the super-timeline store UNIONed with the forensic timeline
+  // (manual/pushed events may exist only there), deduped by id. Deliberately NO scope / false-
+  // positive filtering: the analyst hand-picked these events. EPHEMERAL — no state change.
+  async starredReport(caseId: string, starredIds: string[]): Promise<StarredSummaryResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("starred report");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const wanted = new Set(starredIds);
+    // FORENSIC copies win the union: imports dual-write the same event ids to both stores, but all
+    // later severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
+    // only — the super copy is frozen at import time, so it must not shadow the re-graded one.
+    // Super-only events (raw host triage never promoted) still resolve via the fill-the-gaps pass.
+    const byId = new Map<string, ForensicEvent>();
+    for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+    if (this.opts.superTimelineStore) {
+      for (const e of await this.opts.superTimelineStore.all(caseId)) if (wanted.has(e.id) && !byId.has(e.id)) byId.set(e.id, e);
+    }
+    const all = sortByEventTime([...byId.values()]);
+    if (!all.length) throw new Error("no starred events");
+
+    // The provenance line is computed HERE (the model copies it verbatim, it never counts events
+    // itself) so the report's stated coverage is always accurate — including when the budget cap
+    // reduced the set.
+    const provenance = (used: number): string => used < all.length
+      ? `[*This report was generated based on the ${used} most significant of ${all.length} (deduplicated) starred events.*]`
+      : `[*This report was generated based on ${all.length} (deduplicated) starred events.*]`;
+
+    const prompt = getStarredReportPrompt();
+    const { events, render } = this.fitViewEvents(all, estimateTokens(prompt) + estimateTokens(provenance(all.length)) + 300);
+
+    const userPrompt =
+      `PROVENANCE LINE (copy verbatim directly under the title): ${provenance(events.length)}\n\n` +
+      `STARRED EVENTS (${events.length} of ${all.length}, chronological):\n` +
+      events.map(render).join("\n") +
+      `\n\nWrite the starred events report as JSON.`;
+
+    const mdSchema = z.object({ markdown: z.string().min(1) });
+    const result = await withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "starred-report");
+      return mdSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    return { markdown: result.markdown, eventCount: all.length, usedEvents: events.length, truncated: events.length < all.length };
+  }
+
+  // Summarize the analyst's CURRENT super-timeline view: the route passes the exact filter set the
+  // dashboard has applied plus the tag label map (tags live outside the pipeline). EPHEMERAL.
+  async viewSummary(caseId: string, filters: SuperQuery, labelMap?: SuperLabelMap): Promise<StarredSummaryResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("view summary");
+    if (!this.opts.superTimelineStore) throw new Error("super-timeline not configured");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const { events: matched } = await this.opts.superTimelineStore.query(
+      caseId, { ...filters, offset: 0, limit: Number.MAX_SAFE_INTEGER }, labelMap);
+    if (!matched.length) throw new Error("no events match the current filters");
+
+    const prompt = getViewSummaryPrompt();
+    const { events, render } = this.fitViewEvents(matched, estimateTokens(prompt) + 300);
+
+    const userPrompt =
+      `EVENTS (${events.length} of ${matched.length} matching the analyst's current filters, chronological):\n` +
+      events.map(render).join("\n") +
+      `\n\nWrite the overview as JSON.`;
+
+    const mdSchema = z.object({ markdown: z.string().min(1) });
+    const result = await withRetry(async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "view-summary");
+      return mdSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    return { markdown: result.markdown, eventCount: matched.length, usedEvents: events.length, truncated: events.length < matched.length };
+  }
+
+  // Shared event-selection for the two view-scoped summaries: cap to the synthesis event budget
+  // (DFIR_AI_SYNTH_MAX_EVENTS, default 300), token-fit against the prompt overhead, keep the most
+  // signal-bearing subset (selectSynthesisEvents) and re-sort it chronologically for the report.
+  private fitViewEvents(all: ForensicEvent[], overheadTokens: number): { events: ForensicEvent[]; render: (e: ForensicEvent) => string } {
+    const render = (e: ForensicEvent): string =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}]` +
+      (e.asset ? ` [${e.asset}]` : "") +
+      ` ${e.description.slice(0, 240)}` +
+      (e.processName ? ` | process: ${e.processName}` : "") +
+      (e.srcIp || e.dstIp ? ` | net: ${[e.srcIp, e.dstIp].filter(Boolean).join(" → ")}` : "");
+    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    let events = selectSynthesisEvents(all, max);
+    const fit = fitItemsToBudget(events, render, Math.max(0, inputTokenBudget() - overheadTokens));
+    if (fit < events.length) events = selectSynthesisEvents(all, fit);
+    return { events: sortByEventTime(events), render };
   }
 
   // Incident-specific remediation plan (#178): a concrete, prioritized action list for the IR team,

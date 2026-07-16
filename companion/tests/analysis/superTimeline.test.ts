@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { superOriginOf, dedupeAppend, capEvents, querySuper } from "../../src/analysis/superTimeline.js";
+import { superOriginOf, dedupeAppend, capEvents, querySuper, STARRED_LABEL } from "../../src/analysis/superTimeline.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string; timestamp: string }): ForensicEvent {
@@ -173,5 +173,57 @@ describe("querySuper", () => {
     expect(r.events.map((e) => e.id)).toEqual(["in1", "in2"]);   // all fixture events share description "d"
     const none = querySuper(events, labels, { from: "2026-06-01T00:00:00Z", to: "2026-06-02T00:00:00Z", search: "nomatch" });
     expect(none.events).toEqual([]);
+  });
+});
+
+describe("querySuper starred filter", () => {
+  const events = [
+    ev({ id: "s1", timestamp: "2026-06-01T09:00:00Z", artifactName: "A" }),
+    ev({ id: "s2", timestamp: "2026-06-01T10:00:00Z", artifactName: "B" }),
+    ev({ id: "s3", timestamp: "2026-06-01T11:00:00Z", artifactName: "A" }),
+  ];
+  const labels = { s1: ["starred"], s2: ["exfil"], s3: ["starred", "exfil"] };
+
+  it("exports the reserved label constant", () => {
+    expect(STARRED_LABEL).toBe("starred");
+  });
+
+  it("starred=true keeps only events carrying the reserved starred label", () => {
+    const r = querySuper(events, labels, { starred: true });
+    expect(r.events.map((e) => e.id)).toEqual(["s1", "s3"]);
+    expect(r.total).toBe(2);
+  });
+
+  it("ANDs with the labels include-filter (starred ∩ exfil)", () => {
+    const r = querySuper(events, labels, { starred: true, labels: ["exfil"] });
+    expect(r.events.map((e) => e.id)).toEqual(["s3"]);
+  });
+
+  it("ANDs with the time window", () => {
+    // from=09:30 leaves s2 (10:00, NOT starred) and s3 (11:00, starred) in-window — so s2 is
+    // excluded by the starred filter alone, proving the AND (not just the time bound) does the work.
+    const r = querySuper(events, labels, { starred: true, from: "2026-06-01T09:30:00Z" });
+    expect(r.events.map((e) => e.id)).toEqual(["s3"]);
+  });
+
+  it("yields zero when nothing is starred", () => {
+    expect(querySuper(events, { s2: ["exfil"] }, { starred: true }).total).toBe(0);
+  });
+
+  it("excludes the starred label from the labelsAvailable facet", () => {
+    const r = querySuper(events, labels, {});
+    expect(r.labelsAvailable).toEqual(["exfil"]);
+  });
+
+  it("taggedOnly ignores the starred pseudo-tag", () => {
+    // s1 carries ONLY a star — that is not a triage tag, so taggedOnly must not match it.
+    const r = querySuper(events, { s1: ["starred"], s2: ["exfil"] }, { taggedOnly: true });
+    expect(r.events.map((e) => e.id)).toEqual(["s2"]);
+  });
+
+  it("starred + taggedOnly compose: a star-only event is still excluded (taggedOnly wins)", () => {
+    // s1 is starred but carries no real triage tag; s3 is starred AND tagged — only s3 survives both.
+    const r = querySuper(events, { s1: ["starred"], s3: ["starred", "exfil"] }, { starred: true, taggedOnly: true });
+    expect(r.events.map((e) => e.id)).toEqual(["s3"]);
   });
 });

@@ -59,10 +59,10 @@ describe("TagsStore", () => {
     await expect(store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", label: "   " })).rejects.toThrow(/label/);
   });
 
-  it("removes a tag by id (true if it existed)", async () => {
+  it("removes a tag by id (returns the removed tag, or null if absent)", async () => {
     const t = await store.add("c1", { targetType: "finding", targetId: "f1", author: "Bob", label: "false-positive" });
-    expect(await store.remove("c1", t.id)).toBe(true);
+    expect(await store.remove("c1", t.id)).toMatchObject({ id: t.id, label: "false-positive" });
     expect(await store.load("c1")).toHaveLength(0);
-    expect(await store.remove("c1", "does-not-exist")).toBe(false);
+    expect(await store.remove("c1", "does-not-exist")).toBeNull();
   });
 });

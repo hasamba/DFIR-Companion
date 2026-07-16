@@ -101,13 +101,14 @@ export class TagsStore {
     return tag;
   }
 
-  // Remove one tag by id; returns true if it existed.
-  async remove(caseId: string, tagId: string): Promise<boolean> {
+  // Remove one tag by id; returns the removed tag (so callers can inspect its label), or null if
+  // no tag with that id existed.
+  async remove(caseId: string, tagId: string): Promise<Tag | null> {
     const tags = await this.load(caseId);
-    const next = tags.filter((t) => t.id !== tagId);
-    if (next.length === tags.length) return false;
-    await this.save(caseId, next);
-    return true;
+    const removed = tags.find((t) => t.id === tagId) ?? null;
+    if (!removed) return null;
+    await this.save(caseId, tags.filter((t) => t.id !== tagId));
+    return removed;
   }
 
   // Remove every tag whose author starts with `prefix` in a single load+save; returns how many were
