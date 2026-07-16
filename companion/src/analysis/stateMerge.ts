@@ -29,6 +29,10 @@ export interface WindowContext {
   windowSequence: number;
   timestamp: string;
   sourceScreenshots: string[];
+  // Analyst IOC merges (#82): duplicate value (lowercased) -> canonical IOC id it was folded
+  // into. Consulted before the exact-value dedup below so a later window re-extracting the same
+  // near-duplicate routes straight onto the canonical IOC instead of recreating the duplicate.
+  iocAliases?: Record<string, string>;
 }
 
 function uniq(values: string[]): string[] {
@@ -72,14 +76,23 @@ export function mergeDelta(
     // comparison let those through as separate rows instead of collapsing into one (matches
     // applyDeobfuscation.ts's dedup, which was already case-insensitive).
     const incomingLower = incoming.value.toLowerCase();
-    const dup = iocs.find((i) => i.value.toLowerCase() === incomingLower);
-    const canonical = dup ? dup.id : padIocId(nextSeq++);
+    // An analyst-recorded alias (#82) takes precedence: a near-duplicate value that doesn't
+    // exact-match anything currently in state.iocs (the merge already dropped the duplicate row)
+    // still routes onto the canonical IOC it was merged into, rather than recreating it.
+    const aliasTarget = ctx.iocAliases?.[incomingLower];
+    const dup = iocs.find((i) => i.value.toLowerCase() === incomingLower || (aliasTarget !== undefined && i.id === aliasTarget));
+    const canonical = dup ? dup.id : (aliasTarget ?? padIocId(nextSeq++));
     if (dup) {
       // Union (not overwrite): the same value can legitimately be extracted from
       // different source events across separate import runs — preserve every link.
       if (incoming.extractedFrom?.length) {
         const existingRefs = dup.extractedFrom ?? [];
         dup.extractedFrom = uniq([...existingRefs, ...incoming.extractedFrom]);
+      }
+      // Routed here via an alias, not an exact-value match: record the incoming value too, so
+      // value-keyed lookups (assetGraph's byValue) resolve it without a second manual merge.
+      if (dup.value.toLowerCase() !== incomingLower && !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)) {
+        dup.aliasValues = [...(dup.aliasValues ?? []), incoming.value];
       }
     } else {
       iocs.push({

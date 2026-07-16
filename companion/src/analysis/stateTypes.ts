@@ -34,6 +34,10 @@ export interface IOC {
   // priority importers via pipeline.ts). Absent/empty ⇒ iocProvenanceChain.ts falls back to
   // matching by value, same as before this field existed.
   extractedFrom?: string[];
+  // Near-duplicate values folded onto this IOC by an analyst merge (#82, iocMerge.ts) — e.g.
+  // "evil.com" merged into "www.evil.com". Kept so value-keyed lookups (assetGraph's byValue,
+  // event sha256/md5/path matching) still resolve the old value onto this canonical IOC.
+  aliasValues?: string[];
 }
 
 // Deterministic corroboration rollup for a finding (investigation-guidance #6), computed post-synthesis

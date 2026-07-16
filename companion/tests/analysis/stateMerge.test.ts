@@ -131,6 +131,24 @@ describe("mergeDelta", () => {
     expect(state.iocs[0].value).toBe("DESKTOP-MNNUHHU.localdomain"); // first-seen casing wins
   });
 
+  it("routes an incoming IOC value onto its analyst-merged canonical id (#82) instead of recreating the duplicate", () => {
+    let state = emptyState("c1");
+    // Simulate a prior merge: only the canonical IOC exists; "evil.com" was folded into it.
+    state.iocs.push({ id: "i002", type: "domain", value: "www.evil.com", firstSeen: "2026-05-28T10:00:00.000Z", aliasValues: ["evil.com"] });
+    state = mergeDelta(state, {
+      ...baseDelta,
+      iocs: [{ id: "i1", type: "domain", value: "evil.com" }],
+      findings: [{ id: "f1", severity: "High", title: "C2", description: "beacon",
+        relatedIocs: ["i1"], mitreTechniques: [], status: "open" }],
+    }, {
+      windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [],
+      iocAliases: { "evil.com": "i002" },
+    });
+    expect(state.iocs).toHaveLength(1); // no duplicate "evil.com" row created
+    expect(state.iocs[0].id).toBe("i002");
+    expect(state.findings[0].relatedIocs).toEqual(["i002"]); // remapped onto the canonical id
+  });
+
   it("drops an incoming IOC that matches a per-case exclude rule — never created, so it can't be enriched", () => {
     const state = {
       ...emptyState("c1"),

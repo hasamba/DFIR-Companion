@@ -118,6 +118,7 @@ import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
 import { recordDeploy, fillOutcome, HUNT_OUTCOME_MAX_DEFAULT, type HuntDeployInput } from "./analysis/huntOutcomes.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
+import { IocAliasStore } from "./analysis/iocAlias.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
@@ -331,6 +332,12 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Entity merging for duplicate IOCs (#82). iocAliasStore persists per-case merge aliases (state/
+  // ioc-aliases.json) so a future re-synthesis routes the merged-away value onto its canonical IOC
+  // instead of recreating it (see pipeline.ts's mergeWithAliases). onIocMerge pings dashboard
+  // clients over the WS to re-fetch when a merge/unmerge happens.
+  iocAliasStore?: IocAliasStore;
+  onIocMerge?: (caseId: string) => void;
   // Confirmed false-positive markers. onFalsePositive pings dashboard
   // clients over the WS so other investigators see the change immediately, before synthesis.
   onFalsePositive?: (caseId: string) => void;
@@ -2783,6 +2790,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     ocrRunner: params.ocrRunner,
     logger: params.logger,
     kevStore: params.kevStore,
+    iocAliasStore: new IocAliasStore(params.store),  // #82: keep analyst IOC merges applied across re-synthesis
   });
 }
 
@@ -2927,6 +2935,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
   const assetOverridesStore = new AssetOverridesStore(store);
+  const iocAliasStore = new IocAliasStore(store);   // #82: analyst IOC merges (survive re-synthesis)
   const synthMetaStore = new SynthMetaStore(store);
   const aiCostStore = new AiCostStore(store);
   const correlationProfileStore = new CorrelationProfileStore(store);
@@ -3063,6 +3072,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
+    iocAliasStore,
+    onIocMerge: (caseId) => hub.broadcastTo(caseId, { type: "ioc_merge_changed" }),
     onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,

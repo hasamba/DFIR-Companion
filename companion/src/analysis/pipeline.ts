@@ -19,7 +19,8 @@ import { loadMitigationsDataset } from "./attackMitigationsData.js";
 import { buildD3fendResult } from "./d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "./d3fendData.js";
 import { buildStateSummary } from "./summary.js";
-import { mergeDelta } from "./stateMerge.js";
+import { mergeDelta, type WindowContext } from "./stateMerge.js";
+import type { IocAliasStore } from "./iocAlias.js";
 import type { StateLock } from "./stateLock.js";
 import { sortByEventTime } from "./forensicSort.js";
 import { applySeverityFloor } from "./severityFloor.js";
@@ -1379,6 +1380,10 @@ export interface PipelineOptions {
   // Per-source trust overrides (issue #66): steers cross-source merge description choice + caps confidence
   // for low-trust-only findings. Absent → built-in DEFAULT_SOURCE_TRUST only (no per-case override).
   sourceTrustStore?: SourceTrustStore;
+  // Analyst IOC merges (#82): duplicate value -> canonical IOC id. When set, every mergeDelta call
+  // resolves it first, so a later import/synthesis re-extracting the merged-away duplicate routes
+  // onto the canonical IOC instead of recreating it. Absent → no alias resolution (pre-#82 behavior).
+  iocAliasStore?: IocAliasStore;
   // Optional investigation time-window — events outside it are excluded.
   scopeStore?: ScopeStore;
   // Per-case anonymization control. When a case has it enabled, the userPrompt is tokenized
@@ -1480,6 +1485,19 @@ export class AnalysisPipeline {
 
   constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+  }
+
+  // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
+  // Every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged
+  // duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
+  private async mergeWithAliases(
+    state: InvestigationState,
+    delta: Parameters<typeof mergeDelta>[1],
+    ctx: WindowContext,
+  ): Promise<InvestigationState> {
+    if (!this.opts.iocAliasStore) return mergeDelta(state, delta, ctx);
+    const { aliases } = await this.opts.iocAliasStore.load(state.caseId);
+    return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
   }
 
   // Serializes the load->merge->save critical section of every import/analyze method per
@@ -1701,7 +1719,7 @@ export class AnalysisPipeline {
       // captured tab titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else generic "screenshot".
       const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
       const tagged = { ...delta, forensicEvents: (delta.forensicEvents ?? []).map((e) => ({ ...e, sources: e.sources?.length ? e.sources : [winSource] })) };
-      const next = mergeDelta(state, tagged, {
+      const next = await this.mergeWithAliases(state, tagged, {
         windowSequence,
         timestamp: analyzable[analyzable.length - 1].timestamp,
         sourceScreenshots: analyzable.map((c) => c.screenshotFile),
@@ -1769,7 +1787,7 @@ export class AnalysisPipeline {
           forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"] })),
         };
 
-        state = mergeDelta(state, renumbered, {
+        state = await this.mergeWithAliases(state, renumbered, {
           windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
           timestamp: opts.importedAt,
           sourceScreenshots: [opts.label], // evidence traceability: the CSV file
@@ -1857,7 +1875,7 @@ export class AnalysisPipeline {
           forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({ ...e, id: `${opts.idPrefix}e${++evSeq}`, sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"] })),
         };
 
-        state = mergeDelta(state, renumbered, {
+        state = await this.mergeWithAliases(state, renumbered, {
           windowSequence: -(b + 1),
           timestamp: opts.importedAt,
           sourceScreenshots: [opts.label],
@@ -1908,7 +1926,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -1968,7 +1986,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2019,7 +2037,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2068,7 +2086,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2117,7 +2135,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
+      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
       await this.opts.stateStore.save(state);
       this.opts.onState?.(state);
       opts.onProgress?.(1, 1);
@@ -2143,7 +2161,7 @@ export class AnalysisPipeline {
         timelineNote: opts.note ?? `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
         forensicEvents: events.map((e) => ({ ...e })),
       });
-      state = mergeDelta(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
+      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
       // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
       // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
       // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
@@ -2205,7 +2223,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2255,7 +2273,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2327,7 +2345,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2378,7 +2396,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2434,7 +2452,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2482,7 +2500,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2530,7 +2548,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2580,7 +2598,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2629,7 +2647,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2690,7 +2708,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2738,7 +2756,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2797,7 +2815,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2846,7 +2864,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2899,7 +2917,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2949,7 +2967,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -2998,7 +3016,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3047,7 +3065,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3097,7 +3115,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3146,7 +3164,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3236,7 +3254,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3287,7 +3305,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3338,7 +3356,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3390,7 +3408,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3440,7 +3458,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3490,7 +3508,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3545,7 +3563,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3595,7 +3613,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3644,7 +3662,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -3694,7 +3712,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      state = mergeDelta(state, delta, {
+      state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,
         sourceScreenshots: [opts.label],
@@ -4773,7 +4791,7 @@ export class AnalysisPipeline {
     // and merged (deduped by value); scope/legitimate still filter them at projection.
     // Threads and the forensic timeline are also preserved.
     const base = { ...state, findings: [], mitreTechniques: [] };
-    const merged = mergeDelta(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
+    const merged = await this.mergeWithAliases(base, delta, { windowSequence: 0, timestamp: ts, sourceScreenshots: [] });
     // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
     const filtered = applyFalsePositive(merged, markers);
 
