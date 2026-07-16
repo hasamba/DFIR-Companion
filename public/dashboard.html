@@ -5524,7 +5524,7 @@
       return "#9aa4b2";
     }
     function tagPills(type, id) {
-      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => t.label !== "starred");
+      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => !(t.label === "starred" && t.targetType === "event"));
       return list.map(t => {
         const c = tagColor(t.label);
         return `<span class="tag-pill" style="color:${c};border-color:${c}" title="tag by ${escAttr(t.author)}">${esc(t.label)}</span>`;
@@ -6644,7 +6644,7 @@
     // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
     // Tags box and reloads). Mirrors tagPills() but adds the st-tag-filter affordance.
     function superTagPills(type, id) {
-      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => t.label !== "starred");
+      const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => !(t.label === "starred" && t.targetType === "event"));
       return list.map(t => {
         const c = tagColor(t.label);
         return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" style="color:${c};border-color:${c};cursor:pointer" title="Filter the super-timeline to this tag">${esc(t.label)}</span>`;
@@ -7416,7 +7416,7 @@
     function clearIocSelection() { selectedIocs.clear(); if (lastState) renderIocs(lastState.iocs || []); }
     // Bulk star/unstar N events: any unstarred → star all, else unstar all. SERIALIZED requests —
     // TagsStore.add() is read-modify-write on tags.json (same reason addTag()'s bulk mode awaits
-    // each call). Optimistic set updates keep the UI live; loadTags() reconciles at the end.
+    // each call). Set updates are reconciled into the UI by the per-tag ws broadcasts and the final loadTags().
     async function bulkStarIds(caseId, ids, msgEl) {
       if (!caseId || !ids.length) return;
       const anyUnstarred = ids.some(id => !starredEvents.has(id));
@@ -7430,7 +7430,8 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             starredEvents.add(id);
           } else if (!anyUnstarred && starredTagIds.has(id)) {
-            await fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`, { method: "DELETE" });
+            const r = await fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`, { method: "DELETE" });
+            if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);   // 404 = already gone
             starredEvents.delete(id);
           }
         }
@@ -7442,7 +7443,7 @@
     }
     function bulkToggleStar() {
       const caseId = document.getElementById("caseId").value.trim();
-      bulkStarIds(caseId, [...selectedEvents], null);
+      bulkStarIds(caseId, [...selectedEvents], document.getElementById("evBulkCount"));
     }
     function openBulkTagModal(ids, targetType) {
       tagTarget = { bulk: true, ids, targetType: targetType || "event" };
@@ -14294,6 +14295,7 @@
       loadSavedTimeframes(caseId);
       loadSuperTimeline(caseId);
       loadPlaybook(caseId);
+      starredEvents = new Set(); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
       selectedEvents.clear();
       selectedIocs.clear();
       selectedFindings.clear();
