@@ -6,6 +6,8 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 // The analyst-saved Starred Events Report (the TimeSketch-style AI summary over starred events).
 // A per-case side file (state/starred-report.json) — NOT in InvestigationState, so synthesis never
 // wipes it. Single-slot: saving overwrites the previous saved report. null = nothing saved yet.
+// Deliberately NOT in SNAPSHOT_STATE_FILES — nothing mutates this file during synthesis/import,
+// so the rollback snapshot adds no protection.
 export interface SavedStarredReport {
   markdown: string;     // the report as raw Markdown
   savedAt: string;      // ISO timestamp of the save
@@ -28,9 +30,8 @@ export class StarredReportStore {
         savedAt: typeof raw.savedAt === "string" ? raw.savedAt : "",
         eventCount: Number(raw.eventCount) || 0,
       };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-      return null;   // malformed file: treat as nothing saved rather than break the case
+    } catch {
+      return null;   // absent or malformed: treat as nothing saved rather than break the case
     }
   }
 
