@@ -92,9 +92,28 @@ describe("saved starred report (GET/PUT /cases/:id/starred-report)", () => {
     const { app } = await harness();
     expect((await request(app).put("/cases/c1/starred-report").send({ markdown: "" })).status).toBe(400);
   });
+
+  it("400 on a whitespace-only markdown body (trims to empty)", async () => {
+    const { app } = await harness();
+    expect((await request(app).put("/cases/c1/starred-report").send({ markdown: "   " })).status).toBe(400);
+  });
 });
 
 describe("POST /cases/:id/view-summary", () => {
+  it("501 when no AI provider is configured", async () => {
+    const { app } = await harness({ ai: false });
+    expect((await request(app).post("/cases/c1/view-summary").send({})).status).toBe(501);
+  });
+
+  // Pins the Express body-absent seam: a POST with NO body at all must not crash the route —
+  // the empty filter set matches the (empty) store, so the pipeline's empty-match 400 comes back.
+  it("400 (not a crash) when posted with no body and nothing in the store", async () => {
+    const { app } = await harness();
+    const r = await request(app).post("/cases/c1/view-summary");
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/no events match/);
+  });
+
   it("summarizes only the events matching the posted filter set", async () => {
     const { app, superStore, provider } = await harness();
     await superStore.append("c1", [

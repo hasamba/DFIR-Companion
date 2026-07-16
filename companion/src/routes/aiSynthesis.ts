@@ -374,6 +374,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // /super-timeline query params). Button-triggered, EPHEMERAL — nothing is stored.
   app.post("/cases/:id/view-summary", async (req: Request, res: Response) => {
     if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for view summary" });
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const b = req.body ?? {};
     const csv = (v: unknown): string[] => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     const filters: SuperQuery = {
@@ -382,8 +383,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       exclude: csv(b.exclude),
       excludeHosts: csv(b.excludeHosts),
       labels: csv(b.labels),
-      taggedOnly: b.tagged === true || b.tagged === "1",
-      starred: b.starred === true || b.starred === "1",
+      taggedOnly: b.tagged === true || b.tagged === "1" || b.tagged === "true",
+      starred: b.starred === true || b.starred === "1" || b.starred === "true",
       search: typeof b.q === "string" ? b.q : undefined,
       excludeText: csv(b.excludeText),
     };
