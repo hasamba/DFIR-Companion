@@ -596,6 +596,14 @@
     .lg-side-panel .lg-ev-row { padding: 5px 0; border-top: 1px solid var(--c-2a2f3a); }
     .lg-panel-btns { display: flex; gap: 6px; margin-top: 8px; }
     .lg-panel-btns button { padding: 3px 9px; font-size: 12px; }
+    /* Legend under the graph — swatches match LG_STYLE's literal node/edge colors. */
+    .lg-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 11px;
+      color: var(--c-9aa4b2); margin-top: 6px; }
+    .lg-leg-item { white-space: nowrap; }
+    .lg-leg-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+      vertical-align: -1px; margin-right: 4px; }
+    .lg-leg-line { display: inline-block; width: 18px; height: 2px; vertical-align: 3px; margin-right: 4px; }
+    .lg-leg-dashed { background: repeating-linear-gradient(90deg, #e05c5c 0 4px, transparent 4px 7px); }
     .lg-truncated { color: var(--c-ffd93b); }
     /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
     #sec-swimlane:fullscreen { background: var(--c-11161d); padding: 16px; overflow: auto; }
@@ -3930,6 +3938,14 @@
           </div>
         </div>
         <div id="loginGraph" class="login-graph"></div>
+        <div class="lg-legend">
+          <span class="lg-leg-item"><span class="lg-leg-swatch" style="background:#e05c5c"></span>account</span>
+          <span class="lg-leg-item"><span class="lg-leg-swatch" style="background:#3a7bd5"></span>host</span>
+          <span class="lg-leg-item"><span class="lg-leg-line" style="background:#8899aa"></span>successful logon</span>
+          <span class="lg-leg-item"><span class="lg-leg-line lg-leg-dashed"></span>failed logon (4625)</span>
+          <span class="lg-leg-item"><span class="lg-leg-line" style="background:#e0a15c"></span>risky logon (external RDP · cleartext · runas /netonly)</span>
+          <span class="lg-leg-item">edge label = logon type (event count) · arrow points account → host</span>
+        </div>
         <div id="lgSidePanel" class="lg-side-panel" style="display:none"></div>
       </div>
     </section>
@@ -15173,6 +15189,8 @@
       if (!q) { lgDimExcept(null); return; }
       const hits = lgCy.elements().filter(el =>
         String(el.data("name") || el.data("label") || "").toLowerCase().includes(q));
+      // Zero matches must read as "nothing matches" (dim ALL) — lgDimExcept(empty) would UNdim all.
+      if (hits.empty()) { lgCy.elements().addClass("lg-dim"); return; }
       lgDimExcept(hits);
     });
     // Deferred render for a section that was collapsed at data-arrival time (zero-size container).
