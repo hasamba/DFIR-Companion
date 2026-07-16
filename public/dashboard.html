@@ -1706,6 +1706,18 @@
       </div>
     </div>
   </div>
+  <div id="mergeOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="mergeTitle">Merge duplicate</h3>
+      <input id="mergeSearch" type="text" placeholder="Filter…" style="width:100%; box-sizing:border-box; margin:6px 0; padding:5px; background:var(--c-0f1115); color:var(--c-e6e6e6); border:1px solid var(--c-2a2f3a); border-radius:6px;" />
+      <div id="mergeCandidates" style="max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; margin-top:4px;"></div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="mergeConfirmBtn" type="button" disabled>Merge</button>
+        <button id="mergeCancelBtn" type="button" style="background:var(--c-2a2f3a);">Cancel</button>
+        <span id="mergeMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
   <div id="importSevOverlay" class="comment-overlay">
     <div class="comment-modal">
       <h3>Minimum severity to import</h3>
@@ -4947,7 +4959,7 @@
         a.compromised && (a.type === "host" || a.type === "account") && assetTypesEnabled.has(a.type));
       const editBtns = (a) =>
         `<button class="asset-rename-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Rename asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">✏</button>`
-        + `<button class="asset-merge-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Merge into another asset (duplicate entity)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
+        + `<button class="asset-merge-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" data-assettype="${escAttr(a.type)}" title="Merge into another asset (duplicate entity)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
         + `<button class="asset-del-btn" data-assetid="${escAttr(a.id)}" title="Suppress asset from graph" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">×</button>`;
       const chip = (a) => `<span class="asset-chip" style="padding-right:2px">${esc(a.name)}${editBtns(a)}</span>`;
       const group = (label, assets) => assets.length
@@ -12805,13 +12817,15 @@
       if (iocMerge) {
         const id = iocMerge.dataset.iocid;
         const cur = iocMerge.dataset.value;
-        const into = prompt(`Merge IOC "${cur}" into which IOC id? (duplicate indicator — folds its enrichments/links onto the target, and future imports re-extracting "${cur}" will route onto it too)`, "");
-        if (!into || !into.trim()) return;
-        fetch(`/cases/${caseId}/ioc-overrides/merge`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: id, into: into.trim() }),
-        }).then(r => r.ok ? null : r.json().then(err => Promise.reject(err.error)))
-          .then(() => { if (lastState) renderIocs(lastState.iocs || []); })
-          .catch(err => alert("Merge failed: " + err));
+        const type = iocMerge.dataset.ioctype;
+        const candidates = dedupeIocsById(_lastRenderedIocs || [])
+          .filter(i => i.id !== id && i.type === type)
+          .map(i => ({ id: i.id, label: i.value }));
+        openMergeModal(`Merge IOC "${cur}" into which ${type}?`, candidates, (into) =>
+          fetch(`/cases/${caseId}/ioc-overrides/merge`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: id, into }),
+          }).then(r => r.ok ? null : r.json().then(err => Promise.reject(err.error)))
+            .then(() => { if (lastState) renderIocs(lastState.iocs || []); }));
         return;
       }
       const un = e.target.closest(".unfp-btn");
@@ -12978,7 +12992,7 @@
           +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction} `
-          +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" title="Merge into another IOC (duplicate indicator)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
+          +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" data-ioctype="${escAttr(i.type)}" title="Merge into another IOC (duplicate indicator)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
           + (i.aliasValues && i.aliasValues.length ? ` <span class="asset-chip" style="opacity:0.7;font-size:10px" title="Values merged onto this IOC">= ${i.aliasValues.map(esc).join(", ")}</span>` : "")
           + `</span>`
           + `</div>`;
@@ -15918,6 +15932,52 @@
     document.getElementById("ceDomainChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceEmailChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
     document.getElementById("ceProviders").addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("ce-prov")) ceAutosaveTargets(); });
+    // ── Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows
+    // a filterable, click-to-select list of same-type candidates instead of asking the analyst to
+    // type an id/value by hand.
+    let mergeTarget = null;   // { candidates: [{id, label}], selectedId, onConfirm(selectedId) }
+    function renderMergeCandidates() {
+      const term = document.getElementById("mergeSearch").value.trim().toLowerCase();
+      const list = mergeTarget.candidates.filter(c => !term || c.label.toLowerCase().includes(term));
+      const el = document.getElementById("mergeCandidates");
+      if (!list.length) { el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px;padding:4px'>No matching candidates.</div>"; return; }
+      el.innerHTML = list.map(c => {
+        const selected = c.id === mergeTarget.selectedId;
+        return `<div class="merge-candidate-row" data-id="${escAttr(c.id)}" style="cursor:pointer;padding:5px 8px;border-radius:6px;border:1px solid ${selected ? "var(--c-6bcb77)" : "var(--c-2a2f3a)"};background:${selected ? "rgba(107,203,119,0.12)" : "transparent"}">${esc(c.label)}</div>`;
+      }).join("");
+    }
+    function openMergeModal(title, candidates, onConfirm) {
+      mergeTarget = { candidates, selectedId: null, onConfirm };
+      document.getElementById("mergeTitle").textContent = title;
+      document.getElementById("mergeSearch").value = "";
+      document.getElementById("mergeMsg").textContent = "";
+      document.getElementById("mergeConfirmBtn").disabled = true;
+      renderMergeCandidates();
+      document.getElementById("mergeOverlay").classList.add("open");
+      document.getElementById("mergeSearch").focus();
+    }
+    function closeMergeModal() {
+      mergeTarget = null;
+      document.getElementById("mergeOverlay").classList.remove("open");
+    }
+    document.getElementById("mergeSearch").addEventListener("input", () => { if (mergeTarget) renderMergeCandidates(); });
+    document.getElementById("mergeCandidates").addEventListener("click", (e) => {
+      const row = e.target.closest(".merge-candidate-row");
+      if (!row || !mergeTarget) return;
+      mergeTarget.selectedId = row.dataset.id;
+      document.getElementById("mergeConfirmBtn").disabled = false;
+      renderMergeCandidates();
+    });
+    document.getElementById("mergeCancelBtn").onclick = closeMergeModal;
+    document.getElementById("mergeConfirmBtn").onclick = () => {
+      if (!mergeTarget || !mergeTarget.selectedId) return;
+      const { selectedId, onConfirm } = mergeTarget;
+      document.getElementById("mergeMsg").textContent = "merging…";
+      Promise.resolve(onConfirm(selectedId))
+        .then(() => closeMergeModal())
+        .catch(err => { document.getElementById("mergeMsg").textContent = "failed: " + err; });
+    };
+
     // ── Asset overrides (rename / add / suppress / link) ───────────────────────────
     document.getElementById("addAssetBtn").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
@@ -15980,14 +16040,15 @@
       } else if (mergeBtn) {
         const id = mergeBtn.dataset.assetid;
         const cur = mergeBtn.dataset.name;
-        const others = (assetGraphData?.assets || []).filter(a => a.id !== id).map(a => `${a.name} (${a.id})`).join("\n");
-        const into = prompt(`Merge "${cur}" into which asset id? (duplicate entity — folds its IOCs/findings onto the target)\n\nOther assets:\n${others}`, "");
-        if (!into || !into.trim()) return;
-        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/merge`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ into: into.trim() }),
-        }).then(r => r.ok ? null : r.json().then(e => Promise.reject(e.error)))
-          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); })
-          .catch(e => alert("Merge failed: " + e));
+        const type = mergeBtn.dataset.assettype;
+        const candidates = (assetGraphData?.assets || [])
+          .filter(a => a.id !== id && a.type === type)
+          .map(a => ({ id: a.id, label: a.name }));
+        openMergeModal(`Merge "${cur}" into which ${type}?`, candidates, (into) =>
+          fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/merge`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ into }),
+          }).then(r => r.ok ? null : r.json().then(e => Promise.reject(e.error)))
+            .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }));
       } else if (unmergeBtn) {
         const id = unmergeBtn.dataset.assetid;
         fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/unmerge`, { method: "POST" })
