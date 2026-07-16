@@ -200,7 +200,9 @@ describe("querySuper starred filter", () => {
   });
 
   it("ANDs with the time window", () => {
-    const r = querySuper(events, labels, { starred: true, from: "2026-06-01T10:30:00Z" });
+    // from=09:30 leaves s2 (10:00, NOT starred) and s3 (11:00, starred) in-window — so s2 is
+    // excluded by the starred filter alone, proving the AND (not just the time bound) does the work.
+    const r = querySuper(events, labels, { starred: true, from: "2026-06-01T09:30:00Z" });
     expect(r.events.map((e) => e.id)).toEqual(["s3"]);
   });
 
@@ -217,5 +219,11 @@ describe("querySuper starred filter", () => {
     // s1 carries ONLY a star — that is not a triage tag, so taggedOnly must not match it.
     const r = querySuper(events, { s1: ["starred"], s2: ["exfil"] }, { taggedOnly: true });
     expect(r.events.map((e) => e.id)).toEqual(["s2"]);
+  });
+
+  it("starred + taggedOnly compose: a star-only event is still excluded (taggedOnly wins)", () => {
+    // s1 is starred but carries no real triage tag; s3 is starred AND tagged — only s3 survives both.
+    const r = querySuper(events, { s1: ["starred"], s3: ["starred", "exfil"] }, { starred: true, taggedOnly: true });
+    expect(r.events.map((e) => e.id)).toEqual(["s3"]);
   });
 });

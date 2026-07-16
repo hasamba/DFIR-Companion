@@ -95,19 +95,17 @@ export function querySuper(events: ForensicEvent[], labelMap: SuperLabelMap, q: 
   // Results apply the origin + host + label filters on top of the time window.
   const matched = inWindow.filter((e) => {
     const origin = superOriginOf(e);
+    const evLabels = labelMap[e.id] ?? [];
     if (originSet && !originSet.has(origin)) return false;
     if (excludeSet && excludeSet.has(origin)) return false;   // unchecked in the dashboard → hidden
     if (excludeHostSet && excludeHostSet.has(superHostOf(e))) return false;   // unchecked host → hidden
-    if (labelSet) {
-      const evLabels = labelMap[e.id] ?? [];
-      if (!evLabels.some((l) => labelSet.has(l))) return false;
-    }
+    if (labelSet && !evLabels.some((l) => labelSet.has(l))) return false;
     // "Tagged only": keep only events carrying at least one REAL triage tag (the reserved starred
     // pseudo-tag doesn't count — starring is not triage labelling).
-    if (q.taggedOnly && !(labelMap[e.id] ?? []).some((l) => l !== STARRED_LABEL)) return false;
+    if (q.taggedOnly && !evLabels.some((l) => l !== STARRED_LABEL)) return false;
     // "Starred only" (the ☆ button): ANDed with every other filter — deliberately NOT folded into
     // the OR-model labels= param, so "tag exfil AND starred" behaves as an analyst expects.
-    if (q.starred && !(labelMap[e.id] ?? []).includes(STARRED_LABEL)) return false;
+    if (q.starred && !evLabels.includes(STARRED_LABEL)) return false;
     // Main dashboard filter bar (search + exclude terms) — same matching as the forensic timeline,
     // so scoping the case narrows the super-timeline too instead of only the forensic view.
     if (q.search && !eventMatchesSearch(e, q.search)) return false;
