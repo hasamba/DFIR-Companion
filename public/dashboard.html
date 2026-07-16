@@ -5017,7 +5017,7 @@
     let lgCy = null;                 // cytoscape instance
     let lgTimer = null;              // debounced reload
     let lgPendingRender = false;     // section was collapsed at render time
-    const LG_VIEW_DEFAULTS = { layout: "spread", edgeStyle: "bezier", dim: 15, showFailed: true, hideNoise: false };
+    const LG_VIEW_DEFAULTS = { layout: "spread", edgeStyle: "bezier", dim: 85, showFailed: true, hideNoise: false };
     let lgView = { ...LG_VIEW_DEFAULTS };
     const lgViewKey = () => "dfir.loginGraphView." + (document.getElementById("caseId").value.trim() || "");
     function loadLgView() {
@@ -5133,8 +5133,8 @@
     }
     function lgApplyDim() {
       if (!lgCy) return;
-      // Slider 0..90 → unselected-element opacity ~1..0.03 (higher = more transparent).
-      lgCy.style().selector(".lg-dim").style("opacity", Math.max(0.03, 1 - lgView.dim / 100 * 6)).update();
+      // Slider 0..90 → unselected-element opacity 1..0.1, linear (higher = more transparent).
+      lgCy.style().selector(".lg-dim").style("opacity", Math.max(0.05, 1 - lgView.dim / 100)).update();
     }
     function lgWireGraphEvents() {
       // Instance-scoped only — lgCy is recreated per render and destroy() unbinds these.
@@ -5201,7 +5201,9 @@
       p.replaceChildren();
       const title = lgEl("div");
       title.append(lgEl("b", null, node.data("name")), lgEl("span", "ev-sub", " " + node.data("type")));
-      p.append(title, lgPanelButtons(node.data("name")));
+      // Pivot on the FULL account/host name (node id minus prefix), not the shortened display
+      // name — "SYSTEM" alone would match far more than "NT AUTHORITY\SYSTEM" (search is case-insensitive).
+      p.append(title, lgPanelButtons(node.id().replace(/^(?:account|host):/, "")));
       p.style.display = "block";
     }
 
@@ -5215,7 +5217,7 @@
         `${d.label}${d.outcome === "failed" ? " · FAILED" : ""} · ${String(d.firstSeen || "").slice(0, 16)} → ${String(d.lastSeen || "").slice(0, 16)}`);
       const list = lgEl("div", null, "Loading events…");
       list.id = "lgEdgeEvents";
-      p.append(title, sub, list, lgPanelButtons(d.sourceName));
+      p.append(title, sub, list, lgPanelButtons(d.sourceFull));   // full account name, not shortened display
       p.style.display = "block";
       const caseId = document.getElementById("caseId").value.trim();
       const qs = new URLSearchParams({ account: d.sourceFull, host: d.targetFull, type: d.logonType, outcome: d.outcome, limit: "50" });
