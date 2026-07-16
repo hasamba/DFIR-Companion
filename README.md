@@ -336,6 +336,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **MITRE techniques** link to [attack.mitre.org](https://attack.mitre.org/)
 - **Asset ↔ IoC graph** — interactive (Host/Account/Service toggles, zoom, fullscreen)
 - **Evidence Chain graph** — process trees + lateral movement across hosts
+- **Login graph** — Timesketch-style interactive account→host logon graph (4624/4625) with layout switching, risk-colored edges and drill-down to events
 - **Timeline Swimlane** — severity/tactic × time; click details, Shift-select for bulk action, PNG export
 - **Reports** — Markdown + HTML + PDF (one-click) + Word (.docx) + CSVs (findings/IOCs/timeline) + JSON state
 - **ATT&CK Navigator layer** — techniques colored by severity; upload to [Navigator](https://mitre-attack.github.io/attack-navigator/)

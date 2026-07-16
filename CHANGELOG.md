@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Login Graph** — new dashboard section: an interactive, Timesketch-style directed graph of Windows logon activity (accounts → hosts from super-timeline 4624/4625 rows). Draggable nodes, five layouts (spread/dagre/circle/concentric/breadthfirst), bezier/taxi edges, selection transparency, live filter, PNG export. Failed logons render as dashed red edges, risky logon shapes (external RDP, cleartext, `runas /netonly`) as orange, and a one-click filter hides machine/system-session account noise. Click an edge for the underlying events; click a node to pivot into the super-timeline. Fully offline (vendored cytoscape.js).
 - **Entity merging for duplicate assets/IOCs** — fold a duplicate asset or IOC onto a canonical node/indicator; reversible, and IOC merges preserve the alias across re-synthesis (closes #82).
 
 ## [0.32.0] - 2026-07-16
