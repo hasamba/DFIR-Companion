@@ -25,15 +25,34 @@ export const assetOverridesSchema = z.object({
   removed: z.array(z.string()).default([]),          // suppressed auto-derived asset ids
   addedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
   removedLinks: z.array(z.object({ asset: z.string(), ioc: z.string() })).default([]),
-}).catch({ renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [] });
+  // Entity merging (#82): duplicate asset id -> canonical asset id it was folded into
+  // (e.g. "HOST01" merged into "host01.corp"). Applied after renames/suppressions, before the
+  // edge set is built, so the duplicate's IOC/finding/event links land on the canonical node.
+  merges: z.record(z.string(), z.string()).default({}),
+}).catch({ renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [], merges: {} });
 
 export type AssetOverrides = z.infer<typeof assetOverridesSchema>;
 
 export function emptyOverrides(): AssetOverrides {
-  return { renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [] };
+  return { renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [], merges: {} };
+}
+
+// Resolve a merge chain (A->B->C) to its final canonical id. Breaks on a cycle (returns the
+// original id unresolved) so a bad edit can never infinite-loop the graph build.
+function resolveCanonical(id: string, merges: Record<string, string>): string {
+  let cur = id;
+  const seen = new Set<string>([cur]);
+  while (merges[cur] !== undefined) {
+    cur = merges[cur];
+    if (seen.has(cur)) return id; // cycle — bail out to the original id
+    seen.add(cur);
+  }
+  return cur;
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+function worseSeverity(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+function uniqStrings(values: string[]): string[] { return [...new Set(values)]; }
 
 // Apply manual overrides to an auto-derived asset graph. Pure — mutates neither argument.
 export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides): AssetGraph {
@@ -57,24 +76,47 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
     }
   }
 
-  // 3. Build final edge set: suppress removedLinks, append addedLinks.
+  // 2b. Entity merging (#82): fold each duplicate node onto its resolved canonical node — union
+  // findingIds/eventCount/maxSeverity, then drop the duplicate. A merge target that doesn't exist
+  // (already suppressed, or a stale id) is skipped, leaving the duplicate as its own node.
+  for (const [dupId] of Object.entries(overrides.merges)) {
+    const dup = assetMap.get(dupId);
+    if (!dup) continue;
+    const canonicalId = resolveCanonical(dupId, overrides.merges);
+    if (canonicalId === dupId) continue;
+    const canonical = assetMap.get(canonicalId);
+    if (!canonical) continue;
+    canonical.findingIds = uniqStrings([...canonical.findingIds, ...dup.findingIds]);
+    canonical.eventCount += dup.eventCount;
+    canonical.maxSeverity = worseSeverity(canonical.maxSeverity, dup.maxSeverity);
+    assetMap.delete(dupId);
+  }
+  const redirect = (assetId: string): string => {
+    const canonical = resolveCanonical(assetId, overrides.merges);
+    return assetMap.has(canonical) ? canonical : assetId;
+  };
+
+  // 3. Build final edge set: suppress removedLinks, append addedLinks, redirecting merged
+  // duplicates' edges onto their canonical asset.
   const iocById = new Map<string, GraphIoc>(graph.iocs.map((i) => [i.id, i]));
   const removedSet = new Set(overrides.removedLinks.map((r) => `${r.asset}|${r.ioc}`));
   const edgeSet = new Set<string>();
   const edges: AssetGraphEdge[] = [];
 
   for (const e of graph.edges) {
+    const asset = redirect(e.asset);
     const key = `${e.asset}|${e.ioc}`;
-    if (!removedSet.has(key) && assetMap.has(e.asset) && !edgeSet.has(key)) {
-      edgeSet.add(key);
-      edges.push(e);
+    if (!removedSet.has(key) && assetMap.has(asset) && !edgeSet.has(`${asset}|${e.ioc}`)) {
+      edgeSet.add(`${asset}|${e.ioc}`);
+      edges.push({ asset, ioc: e.ioc });
     }
   }
   for (const link of overrides.addedLinks) {
-    const key = `${link.asset}|${link.ioc}`;
-    if (!edgeSet.has(key) && assetMap.has(link.asset) && iocById.has(link.ioc)) {
+    const asset = redirect(link.asset);
+    const key = `${asset}|${link.ioc}`;
+    if (!edgeSet.has(key) && assetMap.has(asset) && iocById.has(link.ioc)) {
       edgeSet.add(key);
-      edges.push(link);
+      edges.push({ asset, ioc: link.ioc });
     }
   }
 
@@ -210,6 +252,29 @@ export class AssetOverridesStore {
   async restoreLink(caseId: string, asset: string, ioc: string): Promise<AssetOverrides> {
     const ov = await this.load(caseId);
     const next = { ...ov, removedLinks: ov.removedLinks.filter((l) => !(l.asset === asset && l.ioc === ioc)) };
+    await this.save(caseId, next);
+    return next;
+  }
+
+  // Merge a duplicate asset onto a canonical one (#82): folds its IOC/finding/event links onto
+  // `intoId` on the next graph build (applyAssetOverrides). Rejects merging an asset into itself
+  // or creating a cycle (A merged into B, then B merged into A) — both would leave the graph
+  // undefined, so the store refuses rather than silently corrupting it.
+  async mergeAsset(caseId: string, fromId: string, intoId: string): Promise<AssetOverrides> {
+    if (fromId === intoId) throw new Error("cannot merge an asset into itself");
+    const ov = await this.load(caseId);
+    if (resolveCanonical(intoId, ov.merges) === fromId) throw new Error("merge would create a cycle");
+    const next = { ...ov, merges: { ...ov.merges, [fromId]: intoId } };
+    await this.save(caseId, next);
+    return next;
+  }
+
+  // Un-merge: remove a duplicate id from the merge map so it reappears as its own node.
+  async unmergeAsset(caseId: string, fromId: string): Promise<AssetOverrides> {
+    const ov = await this.load(caseId);
+    const merges = { ...ov.merges };
+    delete merges[fromId];
+    const next = { ...ov, merges };
     await this.save(caseId, next);
     return next;
   }

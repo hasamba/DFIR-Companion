@@ -134,6 +134,60 @@ describe("applyAssetOverrides", () => {
     expect(node?.name).not.toBe("OVERRIDE");
   });
 
+  it("merges a duplicate asset onto its canonical node, folding IOC/finding/event links", () => {
+    const g = baseGraph();
+    const win01 = g.assets.find((a) => a.name === "WIN-01")!;
+    const win02 = g.assets.find((a) => a.name === "WIN-02")!;
+    const result = applyAssetOverrides(g, { ...emptyOverrides(), merges: { [win01.id]: win02.id } });
+    // Duplicate node is gone
+    expect(result.assets.some((a) => a.id === win01.id)).toBe(false);
+    // Canonical node now carries the duplicate's IOC link (i1, via sha256) plus its own (i2)
+    const canonical = result.assets.find((a) => a.id === win02.id)!;
+    expect(canonical.iocIds.sort()).toEqual(["i1", "i2"]);
+    // Canonical severity is the worse of the two (Critical from WIN-01's malware finding)
+    expect(canonical.maxSeverity).toBe("Critical");
+    // Edges reflect the redirect: i1 is now linked to win02.id, not win01.id
+    expect(result.edges.some((e) => e.asset === win01.id)).toBe(false);
+    expect(result.edges.some((e) => e.asset === win02.id && e.ioc === "i1")).toBe(true);
+  });
+
+  it("resolves a merge chain (A -> B -> C) to the final canonical node", () => {
+    const g = baseGraph();
+    const win01 = g.assets.find((a) => a.name === "WIN-01")!;
+    const win02 = g.assets.find((a) => a.name === "WIN-02")!;
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      added: [{ id: "manual:c", name: "FINAL", type: "host" }],
+      merges: { [win01.id]: win02.id, [win02.id]: "manual:c" },
+    });
+    expect(result.assets.some((a) => a.id === win01.id)).toBe(false);
+    expect(result.assets.some((a) => a.id === win02.id)).toBe(false);
+    const final = result.assets.find((a) => a.id === "manual:c")!;
+    expect(final.iocIds.sort()).toEqual(["i1", "i2"]);
+  });
+
+  it("ignores a merge that would create a cycle instead of hanging", () => {
+    const g = baseGraph();
+    const win01 = g.assets.find((a) => a.name === "WIN-01")!;
+    const win02 = g.assets.find((a) => a.name === "WIN-02")!;
+    // A -> B -> A: resolveCanonical must bail out rather than loop forever.
+    const result = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      merges: { [win01.id]: win02.id, [win02.id]: win01.id },
+    });
+    expect(result.assets.length).toBeGreaterThan(0); // did not hang / throw
+  });
+
+  it("un-merging (removing the entry) restores the duplicate as its own node", () => {
+    const g = baseGraph();
+    const win01 = g.assets.find((a) => a.name === "WIN-01")!;
+    const win02 = g.assets.find((a) => a.name === "WIN-02")!;
+    const merged = applyAssetOverrides(g, { ...emptyOverrides(), merges: { [win01.id]: win02.id } });
+    expect(merged.assets.some((a) => a.id === win01.id)).toBe(false);
+    const restored = applyAssetOverrides(g, emptyOverrides());
+    expect(restored.assets.some((a) => a.id === win01.id)).toBe(true);
+  });
+
   it("combined: rename + add manual asset + suppress link", () => {
     const g = baseGraph();
     const win01 = g.assets.find((a) => a.name === "WIN-01")!;
@@ -142,6 +196,7 @@ describe("applyAssetOverrides", () => {
       renames: { [win01.id]: "CORP-WS-01" },
       added: [{ id: "manual:pivot", name: "JUMP-SERVER", type: "host" }],
       removed: [],
+      merges: {},
       addedLinks: [],
       removedLinks: [{ asset: win02.id, ioc: "i2" }],
     });

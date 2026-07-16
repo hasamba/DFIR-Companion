@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Entity merging for duplicate assets/IOCs** — fold a duplicate asset or IOC onto a canonical node/indicator; reversible, and IOC merges preserve the alias across re-synthesis (closes #82).
+
 ## [0.32.0] - 2026-07-16
 
 ### Added

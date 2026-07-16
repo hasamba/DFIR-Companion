@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { AssetType } from "../analysis/assetGraph.js";
+import { mergeIocs } from "../analysis/iocMerge.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -26,8 +27,15 @@ import type { RouteContext } from "./context.js";
  *   - POST   /cases/:id/asset-overrides/assets                     — create a manual asset.
  *   - DELETE /cases/:id/asset-overrides/assets/:assetId            — suppress / delete an asset.
  *   - POST   /cases/:id/asset-overrides/assets/:assetId/restore    — restore a suppressed asset.
+ *   - POST   /cases/:id/asset-overrides/assets/:assetId/merge      — merge a duplicate asset (#82).
+ *   - POST   /cases/:id/asset-overrides/assets/:assetId/unmerge    — un-merge a duplicate asset.
  *   - POST   /cases/:id/asset-overrides/links                      — add a manual asset↔IoC link.
  *   - DELETE /cases/:id/asset-overrides/links                      — suppress / delete a link.
+ *
+ *   IOC merging (options.stateStore + options.iocAliasStore, #82 — a REAL edit to InvestigationState,
+ *   not an overlay, since IOCs are read directly by many consumers; see iocMerge.ts's header):
+ *   - POST   /cases/:id/ioc-overrides/merge   — fold a duplicate IOC onto a canonical one.
+ *   - DELETE /cases/:id/ioc-overrides/merge   — stop auto-routing a merged-away value (?value=...).
  *
  *   Saved timeframes / dwell-windows (options.dwellWindowStore, analyst-defined presence ranges):
  *   - GET    /cases/:id/dwell-windows                — list saved timeframes.
@@ -247,6 +255,33 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
+  // Merge a duplicate asset onto a canonical one (#82). Body: { into }. Folds the duplicate's
+  // IOC/finding/event links onto the canonical node on the next graph build.
+  app.post("/cases/:id/asset-overrides/assets/:assetId/merge", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    const into = typeof req.body?.into === "string" ? req.body.into.trim() : "";
+    if (!into) return res.status(400).json({ error: "into is required" });
+    try {
+      const ov = await options.assetOverridesStore.mergeAsset(req.params.id, req.params.assetId, into);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Un-merge a duplicate asset (remove it from the merge map).
+  app.post("/cases/:id/asset-overrides/assets/:assetId/unmerge", async (req: Request, res: Response) => {
+    if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
+    try {
+      const ov = await options.assetOverridesStore.unmergeAsset(req.params.id, req.params.assetId);
+      options.onAssetOverrides?.(req.params.id);
+      return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Add a manual link between an asset and an IoC. Body: { asset, ioc }.
   app.post("/cases/:id/asset-overrides/links", async (req: Request, res: Response) => {
     if (!options.assetOverridesStore) return res.status(501).json({ error: "asset overrides not configured" });
@@ -272,6 +307,50 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
       const ov = await options.assetOverridesStore.removeLink(req.params.id, asset, ioc);
       options.onAssetOverrides?.(req.params.id);
       return res.status(200).json(ov);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Merge a duplicate IOC onto a canonical one (#82). Body: { from, into }. Unlike the asset
+  // overrides above, this is a REAL edit to InvestigationState (IOCs are read directly by many
+  // consumers, not just the graph) — reversible via the existing import-undo checkpoint, and the
+  // merge is recorded as an alias so a future re-synthesis re-extracting the same near-duplicate
+  // value routes onto the canonical IOC instead of recreating it (see iocMerge.ts, iocAlias.ts).
+  app.post("/cases/:id/ioc-overrides/merge", async (req: Request, res: Response) => {
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const from = typeof req.body?.from === "string" ? req.body.from.trim() : "";
+    const into = typeof req.body?.into === "string" ? req.body.into.trim() : "";
+    if (!from || !into) return res.status(400).json({ error: "from and into are required" });
+    try {
+      const stateStore = options.stateStore;
+      let result: Awaited<ReturnType<typeof mergeIocs>> | undefined;
+      await ctx.runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        result = mergeIocs(state, from, into);
+        await ctx.pushImportCheckpoint(caseId, state, `merge IOC ${result.from.value} -> ${result.into.value}`);
+        await stateStore.save(result.state);
+        options.onState?.(result.state);
+      });
+      if (options.iocAliasStore && result) await options.iocAliasStore.add(caseId, result.from.value, result.into.id);
+      options.onIocMerge?.(caseId);
+      return res.status(200).json({ from: result!.from, into: result!.into });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Stop auto-routing a merged-away value onto its former canonical IOC (#82). The historical
+  // fold itself is only reversible via the import-undo "Undo" button. Query param: ?value=...
+  app.delete("/cases/:id/ioc-overrides/merge", async (req: Request, res: Response) => {
+    if (!options.iocAliasStore) return res.status(501).json({ error: "IOC alias store not configured" });
+    const value = typeof req.query?.value === "string" ? req.query.value : "";
+    if (!value) return res.status(400).json({ error: "value query param is required" });
+    try {
+      const map = await options.iocAliasStore.remove(req.params.id, value);
+      options.onIocMerge?.(req.params.id);
+      return res.status(200).json(map);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

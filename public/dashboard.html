@@ -4947,6 +4947,7 @@
         a.compromised && (a.type === "host" || a.type === "account") && assetTypesEnabled.has(a.type));
       const editBtns = (a) =>
         `<button class="asset-rename-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Rename asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">✏</button>`
+        + `<button class="asset-merge-btn" data-assetid="${escAttr(a.id)}" data-name="${escAttr(a.name)}" title="Merge into another asset (duplicate entity)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
         + `<button class="asset-del-btn" data-assetid="${escAttr(a.id)}" title="Suppress asset from graph" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">×</button>`;
       const chip = (a) => `<span class="asset-chip" style="padding-right:2px">${esc(a.name)}${editBtns(a)}</span>`;
       const group = (label, assets) => assets.length
@@ -4957,6 +4958,14 @@
       // Manual additions (not necessarily compromised — show them so analysts can confirm/remove).
       const manual = (assetGraphData.assets || []).filter(a => a.id.startsWith("manual:"));
       if (manual.length) html += group("Manual additions", manual);
+      // Merged (duplicate) assets (#82) — shown with what they were folded into, click ↺ to unmerge.
+      if (assetOverridesData && Object.keys(assetOverridesData.merges || {}).length) {
+        html += `<div style="margin-top:8px"><div class="asset-subhead" style="margin:0 0 4px">Merged (click ↺ to un-merge)</div>`
+          + Object.entries(assetOverridesData.merges).map(([fromId, intoId]) =>
+            `<span class="asset-chip" style="opacity:0.5">${esc(fromId)} → ${esc(intoId)}`
+            + ` <button class="asset-unmerge-btn" data-assetid="${escAttr(fromId)}" title="Un-merge asset" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">↺</button></span>`
+          ).join(" ") + `</div>`;
+      }
       // Suppressed assets (from overrides) — shown for easy restoration.
       if (assetOverridesData && (assetOverridesData.removed || []).length) {
         html += `<div style="margin-top:8px"><div class="asset-subhead" style="margin:0 0 4px">Suppressed (click ↺ to restore)</div>`
@@ -12792,6 +12801,19 @@
         openFalsePositiveModal(kind, ref, label != null ? label : ref, []);
         return;
       }
+      const iocMerge = e.target.closest(".ioc-merge-btn");
+      if (iocMerge) {
+        const id = iocMerge.dataset.iocid;
+        const cur = iocMerge.dataset.value;
+        const into = prompt(`Merge IOC "${cur}" into which IOC id? (duplicate indicator — folds its enrichments/links onto the target, and future imports re-extracting "${cur}" will route onto it too)`, "");
+        if (!into || !into.trim()) return;
+        fetch(`/cases/${caseId}/ioc-overrides/merge`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: id, into: into.trim() }),
+        }).then(r => r.ok ? null : r.json().then(err => Promise.reject(err.error)))
+          .then(() => { if (lastState) renderIocs(lastState.iocs || []); })
+          .catch(err => alert("Merge failed: " + err));
+        return;
+      }
       const un = e.target.closest(".unfp-btn");
       if (un) {
         // Parse the marker id (`<kind>:<ref>`) so the reversal can be recorded in the Investigation
@@ -12955,7 +12977,10 @@
           + `<span class="ioc-main-cell">`
           +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
-          + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction}</span>`
+          + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction} `
+          +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" title="Merge into another IOC (duplicate indicator)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
+          + (i.aliasValues && i.aliasValues.length ? ` <span class="asset-chip" style="opacity:0.7;font-size:10px" title="Values merged onto this IOC">= ${i.aliasValues.map(esc).join(", ")}</span>` : "")
+          + `</span>`
           + `</div>`;
       }).join("");
       el.innerHTML = headerRow + iocPaginationBar + rows;
@@ -15940,6 +15965,8 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
       const renameBtn = e.target.closest(".asset-rename-btn");
+      const mergeBtn = e.target.closest(".asset-merge-btn");
+      const unmergeBtn = e.target.closest(".asset-unmerge-btn");
       const delBtn = e.target.closest(".asset-del-btn");
       const restoreBtn = e.target.closest(".asset-restore-btn");
       if (renameBtn) {
@@ -15950,6 +15977,21 @@
         fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, {
           method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: newName }),
         }).then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
+      } else if (mergeBtn) {
+        const id = mergeBtn.dataset.assetid;
+        const cur = mergeBtn.dataset.name;
+        const others = (assetGraphData?.assets || []).filter(a => a.id !== id).map(a => `${a.name} (${a.id})`).join("\n");
+        const into = prompt(`Merge "${cur}" into which asset id? (duplicate entity — folds its IOCs/findings onto the target)\n\nOther assets:\n${others}`, "");
+        if (!into || !into.trim()) return;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/merge`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ into: into.trim() }),
+        }).then(r => r.ok ? null : r.json().then(e => Promise.reject(e.error)))
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); })
+          .catch(e => alert("Merge failed: " + e));
+      } else if (unmergeBtn) {
+        const id = unmergeBtn.dataset.assetid;
+        fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}/unmerge`, { method: "POST" })
+          .then(() => { loadAssetGraph(caseId); loadAssetOverrides(caseId); }).catch(() => {});
       } else if (delBtn) {
         const id = delBtn.dataset.assetid;
         fetch(`/cases/${encodeURIComponent(caseId)}/asset-overrides/assets/${encodeURIComponent(id)}`, { method: "DELETE" })

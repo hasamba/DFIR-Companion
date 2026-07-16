@@ -56,13 +56,16 @@ interface DescMatcher { ioc: IOC; test: (descLower: string) => boolean; }
 function buildDescMatchers(iocs: readonly IOC[]): DescMatcher[] {
   const out: DescMatcher[] = [];
   for (const i of iocs) {
-    const v = i.value.toLowerCase();
-    if (v.length < 4) continue;
-    if (IPV4_SHAPE.test(v)) {
-      const re = new RegExp(`(?<![\\d.])${escapeRegExp(v)}(?![\\d.])`);
-      out.push({ ioc: i, test: (d) => re.test(d) });
-    } else {
-      out.push({ ioc: i, test: (d) => d.includes(v) });
+    // Match the IOC's own value plus any analyst-merged alias values (#82) — an event mentioning
+    // the pre-merge duplicate value should still link to the canonical IOC.
+    for (const v of [i.value, ...(i.aliasValues ?? [])].map((s) => s.toLowerCase())) {
+      if (v.length < 4) continue;
+      if (IPV4_SHAPE.test(v)) {
+        const re = new RegExp(`(?<![\\d.])${escapeRegExp(v)}(?![\\d.])`);
+        out.push({ ioc: i, test: (d) => re.test(d) });
+      } else {
+        out.push({ ioc: i, test: (d) => d.includes(v) });
+      }
     }
   }
   return out;
@@ -108,7 +111,11 @@ export function buildAssetGraph(state: InvestigationState): AssetGraph {
   const iocs = state.iocs;
   const byId = new Map(iocs.map((i) => [i.id, i] as const));
   const byValue = new Map<string, IOC>();
-  for (const i of iocs) byValue.set(i.value.toLowerCase(), i);
+  for (const i of iocs) {
+    byValue.set(i.value.toLowerCase(), i);
+    // Analyst-merged duplicate values (#82, iocMerge.ts) still resolve onto this canonical IOC.
+    for (const alias of i.aliasValues ?? []) byValue.set(alias.toLowerCase(), i);
+  }
   const findingById = new Map(state.findings.map((f) => [f.id, f] as const));
   const descMatchers = buildDescMatchers(iocs);
 
