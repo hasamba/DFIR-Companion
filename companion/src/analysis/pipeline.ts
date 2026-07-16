@@ -4380,12 +4380,16 @@ export class AnalysisPipeline {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("starred report");
     const loaded = await this.opts.stateStore.load(caseId);
     const wanted = new Set(starredIds);
+    // FORENSIC copies win the union: imports dual-write the same event ids to both stores, but all
+    // later severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
+    // only — the super copy is frozen at import time, so it must not shadow the re-graded one.
+    // Super-only events (raw host triage never promoted) still resolve via the fill-the-gaps pass.
     const byId = new Map<string, ForensicEvent>();
+    for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
     if (this.opts.superTimelineStore) {
-      for (const e of await this.opts.superTimelineStore.all(caseId)) if (wanted.has(e.id)) byId.set(e.id, e);
+      for (const e of await this.opts.superTimelineStore.all(caseId)) if (wanted.has(e.id) && !byId.has(e.id)) byId.set(e.id, e);
     }
-    for (const e of loaded.forensicTimeline) if (wanted.has(e.id) && !byId.has(e.id)) byId.set(e.id, e);
-    const all = [...byId.values()].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+    const all = sortByEventTime([...byId.values()]);
     if (!all.length) throw new Error("no starred events");
 
     // The provenance line is computed HERE (the model copies it verbatim, it never counts events
@@ -4404,7 +4408,7 @@ export class AnalysisPipeline {
       events.map(render).join("\n") +
       `\n\nWrite the starred events report as JSON.`;
 
-    const mdSchema = z.object({ markdown: z.string() });
+    const mdSchema = z.object({ markdown: z.string().min(1) });
     const result = await withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "starred-report");
       return mdSchema.parse(parsed);
@@ -4431,7 +4435,7 @@ export class AnalysisPipeline {
       events.map(render).join("\n") +
       `\n\nWrite the overview as JSON.`;
 
-    const mdSchema = z.object({ markdown: z.string() });
+    const mdSchema = z.object({ markdown: z.string().min(1) });
     const result = await withRetry(async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "view-summary");
       return mdSchema.parse(parsed);
@@ -4454,8 +4458,7 @@ export class AnalysisPipeline {
     let events = selectSynthesisEvents(all, max);
     const fit = fitItemsToBudget(events, render, Math.max(0, inputTokenBudget() - overheadTokens));
     if (fit < events.length) events = selectSynthesisEvents(all, fit);
-    events = [...events].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
-    return { events, render };
+    return { events: sortByEventTime(events), render };
   }
 
   // Incident-specific remediation plan (#178): a concrete, prioritized action list for the IR team,
