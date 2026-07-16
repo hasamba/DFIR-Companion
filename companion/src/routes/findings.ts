@@ -494,8 +494,10 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       });
       options.onTags?.(req.params.id);
       // A star is the reserved "starred" tag — a high-frequency triage gesture; don't spam the
-      // activity log (it's hidden from every other tag surface too).
-      if (label !== STARRED_LABEL) {
+      // activity log (it's hidden from every other tag surface too). Check the STORED label
+      // (tag.label, already normalized by add()) so a differently-cased "Starred" is caught too —
+      // symmetric with the DELETE side, which reads removed.label.
+      if (tag.label !== STARRED_LABEL) {
         logActivity(options.activityLogStore, options.onActivity, req.params.id, {
           category: "collaboration", action: "tag-added", actor: tag.author,
           detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,

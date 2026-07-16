@@ -50,6 +50,20 @@ describe("activity log suppression for the reserved 'starred' tag", () => {
     expect(added.length).toBe(0);
   });
 
+  it("does NOT log a tag-added entry for a differently-cased 'Starred' (normalized to the reserved label)", async () => {
+    const { app } = await harness();
+    // add() normalizes "Starred" → "starred"; the suppression check reads the STORED tag.label,
+    // so a cased/spaced variant is caught too (symmetric with the DELETE side).
+    const post = await request(app).post("/cases/c1/tags").send({
+      targetType: "event", targetId: "ev1", label: "Starred", author: "an",
+    });
+    expect(post.status).toBe(201);
+    expect(post.body.label).toBe("starred");
+    const log = await request(app).get("/cases/c1/activity-log");
+    const added = log.body.filter((e: { action: string }) => e.action === "tag-added");
+    expect(added.length).toBe(0);
+  });
+
   it("does NOT log a tag-removed entry when the removed tag was 'starred'", async () => {
     const { app } = await harness();
     const post = await request(app).post("/cases/c1/tags").send({
