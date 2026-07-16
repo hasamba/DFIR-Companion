@@ -6,7 +6,7 @@ import {
 } from "../../src/analysis/loginGraph.js";
 
 // Minimal ForensicEvent factory — only description/asset/timestamp vary per test.
-export const ev = (over: Partial<ForensicEvent> & { description: string }): ForensicEvent => ({
+const ev = (over: Partial<ForensicEvent> & { description: string }): ForensicEvent => ({
   id: over.id ?? `id-${Math.abs(hash(over.description))}`,
   timestamp: "2026-06-10T12:00:00Z",
   severity: "Low",

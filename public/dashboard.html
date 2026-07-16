@@ -5111,7 +5111,8 @@
         if (lgCy) { lgCy.destroy(); lgCy = null; }
         return;
       }
-      // Collapsed section → zero-size container → cytoscape can't layout. Defer; re-rendered on expand (Task 6).
+      // Collapsed section → zero-size container → cytoscape can't layout. Defer; the section's h2
+      // click hook re-renders on expand (see the Login Graph control wiring).
       if (!el.offsetWidth) { lgPendingRender = true; return; }
       lgPendingRender = false;
       if (typeof cytoscape === "undefined") { stats.textContent = "Graph library not loaded — restart the companion server."; return; }
