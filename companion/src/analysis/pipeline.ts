@@ -1585,6 +1585,15 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
+  // Whether a TEXT/synthesis provider is available — the gate for text-only AI features (starred
+  // report, view summary, …). Mirrors how those methods resolve their provider
+  // (`synthesisProvider ?? provider`): DFIR_AI_SYNTH_PROVIDER falls back to DFIR_AI_PROVIDER, so this
+  // is true whenever EITHER is configured. Distinct from hasAiProvider(), which reflects the VISION
+  // provider (DFIR_AI_PROVIDER only) used for screenshot/OCR analysis.
+  hasSynthesisProvider(): boolean {
+    return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
+  }
+
   private requireProvider(purpose: string): AIProvider {
     if (!this.opts.provider) throw new Error(`AI provider not configured; ${purpose} requires an AI provider`);
     return this.opts.provider;

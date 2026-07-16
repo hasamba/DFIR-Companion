@@ -321,7 +321,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // events (stars = the reserved "starred" analyst tag). Button-triggered, EPHEMERAL — review,
   // copy, or persist via the PUT below. 400 when nothing is starred (the dashboard guards too).
   app.post("/cases/:id/starred-report", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for starred report" });
+    // Gate on the SYNTHESIS (text) provider, not hasAiProvider() (the VISION/OCR provider): this is a
+    // text-only call driven by synthesisProvider, so it must work whenever DFIR_AI_SYNTH_PROVIDER (or
+    // the DFIR_AI_PROVIDER it falls back to) is set — even if the vision provider alone is unconfigured.
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for starred report" });
     if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
     try {
       const tags = await options.tagsStore.load(req.params.id);
@@ -373,7 +376,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // the body carries the dashboard's active filter set (same names/values as the GET
   // /super-timeline query params). Button-triggered, EPHEMERAL — nothing is stored.
   app.post("/cases/:id/view-summary", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for view summary" });
+    // Synthesis (text) provider gate — see the starred-report route above for why this is
+    // hasSynthesisProvider() rather than the vision-provider hasAiProvider().
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for view summary" });
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const b = req.body ?? {};
     const csv = (v: unknown): string[] => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);

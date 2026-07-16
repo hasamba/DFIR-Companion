@@ -147,3 +147,45 @@ describe("POST /cases/:id/view-summary", () => {
     expect(r.status).toBe(400);
   });
 });
+
+// Both reports run on the SYNTHESIS (text) provider, not the vision/OCR provider (DFIR_AI_PROVIDER).
+// A synthesis-only install (DFIR_AI_SYNTH_PROVIDER set, vision provider unset → aiConfigured=false)
+// must still produce reports — the route gate is hasSynthesisProvider(), not hasAiProvider().
+describe("synthesis-provider gate (no vision provider)", () => {
+  async function synthOnlyHarness() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-starred-synthonly-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const provider = new CapturingProvider();
+    const pipeline = buildRuntimePipeline({
+      provider: undefined, synthesisProvider: provider, stateStore, store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const superStore = new SuperTimelineStore(store);
+    const app = createApp(store, {
+      pipeline, stateStore, aiConfigured: false,   // vision provider off — mirrors buildProvider() === undefined
+      tagsStore: new TagsStore(store),
+      superTimelineStore: superStore,
+      starredReportStore: new StarredReportStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    return { app, superStore };
+  }
+
+  it("starred-report works on synthesis alone (200, not 501)", async () => {
+    const { app, superStore } = await synthOnlyHarness();
+    await superStore.append("c1", [sev("v1", "2026-06-01T09:00:00Z", "mimikatz.exe executed")]);
+    await request(app).post("/cases/c1/tags").send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
+    const r = await request(app).post("/cases/c1/starred-report").send({});
+    expect(r.status).toBe(200);
+    expect(r.body.markdown).toContain("# Starred Events Report");
+  });
+
+  it("view-summary works on synthesis alone (200, not 501)", async () => {
+    const { app, superStore } = await synthOnlyHarness();
+    await superStore.append("c1", [sev("v1", "2026-06-01T09:00:00Z", "psexec lateral hop")]);
+    const r = await request(app).post("/cases/c1/view-summary").send({});
+    expect(r.status).toBe(200);
+    expect(r.body.eventCount).toBe(1);
+  });
+});
