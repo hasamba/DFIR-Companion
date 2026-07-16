@@ -575,6 +575,26 @@
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: var(--c-11161d); padding: 12px; display: flex; flex-direction: column; }
     .asset-graph-wrap:fullscreen .asset-graph { flex: 1; max-height: none; }
+    /* ── Login Graph (cytoscape) ─────────────────────────── */
+    .login-graph-wrap { position: relative; }
+    .login-graph { height: 480px; border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
+    .login-graph-wrap:fullscreen { background: var(--c-11161d); padding: 12px; }
+    .login-graph-wrap:fullscreen .login-graph { height: calc(100vh - 90px); }
+    .lg-stats { font-size: 12px; color: var(--c-9aa4b2); margin: 4px 0 8px; }
+    .lg-toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .lg-toolbar input[type="text"] { flex: 1 1 180px; min-width: 140px; font-size: 12px; }
+    .lg-toolbar button { padding: 3px 9px; font-size: 12px; }
+    .lg-options { position: absolute; top: 40px; left: 8px; z-index: 30; background: var(--c-161b22); border: 1px solid var(--c-2a2f3a);
+      border-radius: 6px; padding: 12px 14px; font-size: 12px; color: var(--c-e6e6e6); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+    .lg-opt-group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .lg-opt-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .lg-opt-label { font-weight: 600; flex-basis: 100%; color: var(--c-9aa4b2); }
+    .lg-side-panel { position: absolute; top: 40px; right: 8px; z-index: 30; width: 300px; max-height: 420px;
+      overflow-y: auto; background: var(--c-161b22); border: 1px solid var(--c-2a2f3a); border-radius: 6px;
+      padding: 10px 12px; font-size: 12px; color: var(--c-e6e6e6); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .lg-side-panel .lg-ev-row { padding: 5px 0; border-top: 1px solid var(--c-2a2f3a); }
+    .lg-truncated { color: var(--c-ffd93b); }
     /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
     #sec-swimlane:fullscreen { background: var(--c-11161d); padding: 16px; overflow: auto; }
     /* Fallback "maximize" for when the native Fullscreen API is unavailable or rejected (e.g.
@@ -3875,6 +3895,42 @@
 
     <section id="sec-beacons" style="grid-column: 1 / -1"><h2>Beacon Candidates<span class="ev-sub">periodic outbound channels — too regular to be human traffic (derived, no AI); a hunting lead, not a verdict</span></h2><div id="beacons">—</div></section>
     <section id="sec-anomalies" style="grid-column: 1 / -1"><h2>Timeline Anomalies<span class="ev-sub">assets whose event rate in a time bucket spikes — vs other assets (peer) or vs their own baseline (self) (derived, no AI); a triage lead, not a verdict</span></h2><div id="anomalies">—</div></section>
+    <section id="sec-login-graph" style="grid-column: 1 / -1">
+      <h2>🔑 Login Graph<span class="ev-sub">who logged on where — accounts → hosts from super-timeline logon events (4624/4625)</span></h2>
+      <div id="loginGraphStats" class="lg-stats">—</div>
+      <div id="loginGraphWrap" class="login-graph-wrap">
+        <div class="lg-toolbar">
+          <input id="lgFilter" type="text" placeholder="Filter nodes and edges" autocomplete="off" />
+          <button type="button" id="lgFit" title="Fit to screen">⤢ Fit</button>
+          <button type="button" id="lgExport" title="Export as PNG">⬇ PNG</button>
+          <button type="button" id="lgRefresh" title="Rebuild from the super-timeline">↻ Refresh</button>
+          <button type="button" id="lgOptions" title="View options">⚙ View</button>
+        </div>
+        <div id="lgOptionsPanel" class="lg-options" style="display:none">
+          <div class="lg-opt-group"><span class="lg-opt-label">Layout type</span>
+            <label><input type="radio" name="lgLayout" value="spread" /> spread</label>
+            <label><input type="radio" name="lgLayout" value="dagre" /> dagre</label>
+            <label><input type="radio" name="lgLayout" value="circle" /> circle</label>
+            <label><input type="radio" name="lgLayout" value="concentric" /> concentric</label>
+            <label><input type="radio" name="lgLayout" value="breadthfirst" /> breadthfirst</label>
+          </div>
+          <div class="lg-opt-group"><span class="lg-opt-label">Edge style</span>
+            <label><input type="radio" name="lgEdgeStyle" value="bezier" /> bezier</label>
+            <label><input type="radio" name="lgEdgeStyle" value="taxi" /> taxi</label>
+          </div>
+          <div class="lg-opt-group"><span class="lg-opt-label">Transparency for unselected elements</span>
+            <input type="range" id="lgDim" min="0" max="90" step="5" />
+          </div>
+          <div class="lg-opt-group">
+            <label><input type="checkbox" id="lgShowFailed" /> show failed logons (4625)</label>
+            <label><input type="checkbox" id="lgHideNoise" /> hide machine / system-session accounts</label>
+          </div>
+        </div>
+        <div id="loginGraph" class="login-graph"></div>
+        <div id="lgSidePanel" class="lg-side-panel" style="display:none"></div>
+      </div>
+    </section>
+
     <section id="sec-geomap" style="grid-column: 1 / -1">
       <h2>🌍 Geographic Map<span class="ev-sub">imported IPs geolocated from GeoIP enrichment — markers colored by severity (derived; OpenStreetMap tiles load on demand when you open the map)</span></h2>
       <div id="geoStats" class="geo-stats">—</div>
@@ -4953,6 +5009,120 @@
       clearTimeout(assetGraphTimer);
       assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
     }
+
+    // ── Login Graph (cytoscape) ─────────────────────────────────────────────
+    let lgData = null;               // last /login-graph payload
+    let lgCy = null;                 // cytoscape instance
+    let lgTimer = null;              // debounced reload
+    let lgPendingRender = false;     // section was collapsed at render time
+    const LG_VIEW_DEFAULTS = { layout: "spread", edgeStyle: "bezier", dim: 15, showFailed: true, hideNoise: false };
+    let lgView = { ...LG_VIEW_DEFAULTS };
+    const lgViewKey = () => "dfir.loginGraphView." + (document.getElementById("caseId").value.trim() || "");
+    function loadLgView() {
+      try { lgView = { ...LG_VIEW_DEFAULTS, ...JSON.parse(localStorage.getItem(lgViewKey()) || "{}") }; }
+      catch (e) { lgView = { ...LG_VIEW_DEFAULTS }; }
+    }
+    function saveLgView() { try { localStorage.setItem(lgViewKey(), JSON.stringify(lgView)); } catch (e) { /* quota — non-fatal */ } }
+
+    function loadLoginGraph(caseId) {
+      loadLgView();
+      fetch(`/cases/${encodeURIComponent(caseId)}/login-graph`).then(r => r.json()).then(g => {
+        lgData = g; renderLoginGraph();
+      }).catch(() => {});
+    }
+    function scheduleLoginGraphReload(caseId) {
+      clearTimeout(lgTimer);
+      lgTimer = setTimeout(() => loadLoginGraph(caseId), 800);
+    }
+
+    // Age formatter for the "generated X ago" header.
+    function lgAgo(iso) {
+      const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+      if (s < 60) return "a few seconds ago";
+      if (s < 3600) return `${Math.round(s / 60)} min ago`;
+      return `${Math.round(s / 3600)} h ago`;
+    }
+
+    function lgElements() {
+      // Apply the data toggles (failed / noise) BEFORE handing elements to cytoscape.
+      const edges = (lgData.edges || []).filter(e => lgView.showFailed || e.outcome !== "failed");
+      const nodeById = new Map((lgData.nodes || []).map(n => [n.id, n]));
+      const keptEdges = lgView.hideNoise
+        ? edges.filter(e => !(nodeById.get(e.source) || {}).isNoise && !(nodeById.get(e.target) || {}).isNoise)
+        : edges;
+      const refd = new Set(keptEdges.flatMap(e => [e.source, e.target]));
+      const nodes = (lgData.nodes || []).filter(n => refd.has(n.id));
+      return [
+        ...nodes.map(n => ({ data: { id: n.id, name: n.name, type: n.type } })),
+        ...keptEdges.map((e, i) => ({ data: {
+          id: `lge-${i}`, source: e.source, target: e.target,
+          label: `${e.logonType} (${e.count})`,
+          outcome: e.outcome, risk: e.risk,
+          logonType: e.logonType, count: e.count, firstSeen: e.firstSeen, lastSeen: e.lastSeen,
+          sourceName: (nodeById.get(e.source) || {}).name, targetName: (nodeById.get(e.target) || {}).name,
+          sourceFull: e.source.replace(/^account:/, ""), targetFull: e.target.replace(/^host:/, ""),
+        } })),
+      ];
+    }
+
+    const LG_STYLE = [
+      { selector: "node", style: {
+        "background-color": "#e05c5c", label: "data(name)", color: "#fff",
+        "font-size": "10px", "text-valign": "center", "text-halign": "center",
+        shape: "round-rectangle", width: "label", height: "label", padding: "6px",
+      } },
+      { selector: 'node[type = "host"]', style: { "background-color": "#3a7bd5" } },
+      { selector: "edge", style: {
+        width: 1.5, "line-color": "#8899aa", "curve-style": "bezier",
+        "target-arrow-shape": "triangle", "target-arrow-color": "#8899aa", "arrow-scale": 1,
+        label: "data(label)", "font-size": "9px", color: "#ccc",
+        "text-rotation": "autorotate", "text-background-color": "#0b0e14", "text-background-opacity": 0.7,
+      } },
+      { selector: 'edge[outcome = "failed"]', style: { "line-style": "dashed", "line-color": "#e05c5c", "target-arrow-color": "#e05c5c" } },
+      { selector: 'edge[risk = "medium"]', style: { "line-color": "#e0a15c", "target-arrow-color": "#e0a15c", width: 2 } },
+      { selector: ".lg-dim", style: { opacity: 0.15 } },
+    ];
+
+    function lgLayoutOpts() {
+      const name = lgView.layout === "spread" ? "cose" : lgView.layout;
+      // animate:false — animated layouts advance on requestAnimationFrame, which browsers pause in
+      // background/occluded tabs, stalling the layout forever and leaving the initial grid. Synchronous
+      // positioning always applies, even when the dashboard loads in a backgrounded tab.
+      const base = { name, animate: false, fit: true, padding: 30 };
+      if (name === "concentric") return { ...base, concentric: (n) => n.degree(), levelWidth: () => 1 };
+      if (name === "breadthfirst") return { ...base, directed: true };
+      return base;
+    }
+
+    function renderLoginGraph() {
+      const el = document.getElementById("loginGraph");
+      const stats = document.getElementById("loginGraphStats");
+      if (!lgData) { stats.textContent = "—"; return; }
+      if (!lgData.edges || !lgData.edges.length) {
+        stats.textContent = "No Windows logon events (4624/4625) found in this case's super-timeline.";
+        if (lgCy) { lgCy.destroy(); lgCy = null; }
+        return;
+      }
+      // Collapsed section → zero-size container → cytoscape can't layout. Defer; re-rendered on expand (Task 6).
+      if (!el.offsetWidth) { lgPendingRender = true; return; }
+      lgPendingRender = false;
+      if (typeof cytoscape === "undefined") { stats.textContent = "Graph library not loaded — restart the companion server."; return; }
+      const elements = lgElements();
+      const shown = elements.filter(x => x.data.source).length;
+      stats.innerHTML = `${elements.length - shown} nodes and ${shown} edges · generated ${lgAgo(lgData.generatedAt)}` +
+        (lgData.truncated ? ` · <span class="lg-truncated">showing busiest ${lgData.edges.length} of ${lgData.totalEdges} relationships — refine with the filter</span>` : "");
+      if (lgCy) { lgCy.destroy(); lgCy = null; }
+      lgCy = cytoscape({ container: el, elements, style: LG_STYLE, wheelSensitivity: 0.2 });
+      lgApplyEdgeStyle();
+      lgApplyDim();
+      lgCy.layout(lgLayoutOpts()).run();
+      lgWireGraphEvents();
+    }
+
+    // Wired for real in Task 6 — stubs so this task is loadable standalone.
+    function lgApplyEdgeStyle() {}
+    function lgApplyDim() {}
+    function lgWireGraphEvents() {}
 
     // "Known compromised assets" — with rename/remove controls when overrides are available.
     function renderAssetList() {
@@ -14204,6 +14374,7 @@
       loadCaseTemplatePicker(caseId);
       applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
       loadAssetGraph(caseId);
+      loadLoginGraph(caseId);
       loadAssetOverrides(caseId);
       loadEvidenceGraph(caseId);
       loadPhases(caseId);
@@ -14326,7 +14497,7 @@
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
         else if (msg.type === "dwell_window_changed") loadSavedTimeframes(caseId);
-        else if (msg.type === "super_timeline_changed") loadSuperTimeline(caseId);
+        else if (msg.type === "super_timeline_changed") { loadSuperTimeline(caseId); scheduleLoginGraphReload(caseId); }
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
         else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
@@ -16501,6 +16672,7 @@
       { id: "sec-evidence-gaps", label: "Evidence Gaps" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
+      { id: "sec-login-graph",  label: "Login Graph" },
       { id: "sec-evidence",     label: "Evidence Chain" },
       { id: "sec-beacons",      label: "Beacon Candidates" },
       { id: "sec-anomalies",    label: "Timeline Anomalies" },
