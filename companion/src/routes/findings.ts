@@ -13,6 +13,7 @@ import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
 import { type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "../analysis/notebookStore.js";
 import { sanitizeRuleInput } from "../analysis/iocWhitelist.js";
+import { STARRED_LABEL } from "../analysis/superTimeline.js";
 import type { ForensicEvent, Finding } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
@@ -492,10 +493,14 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onTags?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "collaboration", action: "tag-added", actor: tag.author,
-        detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,
-      });
+      // A star is the reserved "starred" tag — a high-frequency triage gesture; don't spam the
+      // activity log (it's hidden from every other tag surface too).
+      if (label !== STARRED_LABEL) {
+        logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+          category: "collaboration", action: "tag-added", actor: tag.author,
+          detail: `tagged ${targetType} ${targetId} "${label}"`, targetType, targetId,
+        });
+      }
       return res.status(201).json(tag);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -508,9 +513,13 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const removed = await options.tagsStore.remove(req.params.id, req.params.tagId);
       if (!removed) return res.status(404).json({ error: "tag not found" });
       options.onTags?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "collaboration", action: "tag-removed", detail: `tag ${req.params.tagId} removed`,
-      });
+      // A star is the reserved "starred" tag — a high-frequency triage gesture; don't spam the
+      // activity log (it's hidden from every other tag surface too).
+      if (removed.label !== STARRED_LABEL) {
+        logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+          category: "collaboration", action: "tag-removed", detail: `tag ${req.params.tagId} removed`,
+        });
+      }
       return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
