@@ -209,6 +209,13 @@ jobs:
 
       - name: Upload + publish (listed)
         if: steps.creds.outputs.configured == 'true'
+        # The upload succeeds and the Store auto-publishes on upload for already-public listed
+        # items; the action's separate `publish` call then gets an expected 400 because there's
+        # nothing left to publish. continue-on-error here is just plumbing so the job can reach
+        # the verification step below — it does NOT decide success/failure. The "Verify Chrome
+        # Web Store publish" step is the real safety net: it checks the store's live version
+        # against manifest.json and fails the job for real if the upload didn't actually land.
+        continue-on-error: true
         uses: mnao305/chrome-extension-upload@v5.0.0
         with:
           file-path: ${{ steps.zip.outputs.path }}
@@ -218,6 +225,45 @@ jobs:
           refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
           # Listed extension: submit the new version for publication after upload (#138).
           publish: true
+
+      - name: Checkout
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Verify Chrome Web Store publish
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+        run: |
+          set -euo pipefail
+
+          ACCESS_TOKEN=$(curl -sf -X POST https://oauth2.googleapis.com/token \
+            -d client_id="$CLIENT_ID" \
+            -d client_secret="$CLIENT_SECRET" \
+            -d refresh_token="$REFRESH_TOKEN" \
+            -d grant_type=refresh_token | jq -r '.access_token')
+
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Could not obtain a Chrome Web Store access token — the refresh token may be invalid/expired."
+            exit 1
+          fi
+
+          ITEM=$(curl -sf -H "Authorization: Bearer $ACCESS_TOKEN" -H "x-goog-api-version: 2" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID")
+
+          LIVE_VERSION=$(echo "$ITEM" | jq -r '.crxVersion // "unknown"')
+          EXPECTED_VERSION=$(jq -r '.version' extension/manifest.json)
+          echo "Chrome Web Store live version: $LIVE_VERSION (expected: $EXPECTED_VERSION)"
+
+          if [ "$LIVE_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Chrome Web Store item is at version $LIVE_VERSION, expected $EXPECTED_VERSION — the upload/publish did not actually go through. Check the Chrome Web Store Developer Dashboard."
+            exit 1
+          fi
+
+          echo "Confirmed: Chrome Web Store is serving v$EXPECTED_VERSION."
 
   release:
     name: Attach to GitHub Release
