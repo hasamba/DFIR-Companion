@@ -262,8 +262,11 @@ jobs:
             exit 1
           fi
 
+          # The Chrome Web Store API requires a projection param on items.get, even though
+          # "DRAFT" is a historical name — it's the only supported value, not an indication
+          # this returns unpublished-draft data instead of the live listing.
           ITEM_RESPONSE=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" -H "x-goog-api-version: 2" \
-            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID")
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID?projection=DRAFT")
           ITEM_HTTP_CODE=$(echo "$ITEM_RESPONSE" | tail -n1)
           ITEM_BODY=$(echo "$ITEM_RESPONSE" | sed '$d')
 
