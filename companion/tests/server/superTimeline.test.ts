@@ -28,12 +28,13 @@ async function harness(opts: { withStore?: boolean } = {}) {
     provider: undefined, synthesisProvider: undefined, stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
+  const superStore = opts.withStore === false ? undefined : new SuperTimelineStore(store);
   const app = createApp(store, {
-    pipeline, stateStore, importerStore,
-    ...(opts.withStore === false ? {} : { superTimelineStore: new SuperTimelineStore(store) }),
+    pipeline, stateStore, importerStore, tagsStore: new TagsStore(store),
+    ...(superStore ? { superTimelineStore: superStore } : {}),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app };
+  return { app, superStore };
 }
 
 const MDE_CSV =
@@ -527,5 +528,34 @@ describe("run-bundle validates artifacts against the server catalog", () => {
     expect(run.status).toBe(400);
     expect(run.body.error).toContain("Windows.Bogus.One");
     expect(launchCalls).toEqual([]);   // hunt never launched
+  });
+});
+
+// ── starred=1 server-side filter (stars = the reserved "starred" analyst tag) ────────────────────
+describe("super-timeline starred filter (server-side)", () => {
+  const sev = (id: string, ts: string, description: string) => ({
+    id, timestamp: ts, description, severity: "Info" as const,
+    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+  });
+
+  it("keeps only events tagged 'starred' and hides the label from the facet", async () => {
+    const { app, superStore } = await harness();
+    await superStore!.append("c1", [
+      sev("sv1", "2026-06-01T09:00:00Z", "benign row"),
+      sev("sv2", "2026-06-01T10:00:00Z", "suspicious row"),
+    ]);
+    const t = await request(app).post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "sv2", label: "starred", author: "an" });
+    expect(t.status).toBe(201);
+
+    const r = await request(app).get("/cases/c1/super-timeline?starred=1");
+    expect(r.status).toBe(200);
+    expect(r.body.events.map((e: { id: string }) => e.id)).toEqual(["sv2"]);
+    expect(r.body.total).toBe(1);
+    expect(r.body.labelsAvailable).not.toContain("starred");
+
+    // Without the param both rows return (the filter is opt-in).
+    const all = await request(app).get("/cases/c1/super-timeline");
+    expect(all.body.total).toBe(2);
   });
 });
