@@ -6813,14 +6813,14 @@
       const btn = document.getElementById("stStarredReport");
       btn.disabled = true; btn.textContent = "✨ generating…";
       fetch(`/cases/${caseId}/starred-report`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; })
+        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status }); return d; })
         .then(d => {
           lastStarredReport = d;
           stRenderAiPanel("✨ Starred events report", d.markdown || "(empty report)",
             d.truncated ? `${d.usedEvents} of ${d.eventCount} starred events (AI input budget)` : `${d.eventCount} starred event${d.eventCount !== 1 ? "s" : ""}`,
             saveStarredReport);
         })
-        .catch(e => stRenderNote(/501/.test(e.message) ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
+        .catch(e => stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "starred report failed: " + e.message, true))
         .finally(() => { btn.disabled = false; btn.textContent = "✨ Starred report"; });
     }
 
@@ -6836,11 +6836,11 @@
       p.delete("offset"); p.delete("limit");
       const body = Object.fromEntries(p.entries());
       fetch(`/cases/${caseId}/view-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ("HTTP " + r.status)); return d; })
+        .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(d.error || ("HTTP " + r.status)), { status: r.status }); return d; })
         .then(d => stRenderAiPanel("✨ View summary", d.markdown || "(empty summary)",
           d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events (AI input budget)` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
           null))
-        .catch(e => stRenderNote(/501/.test(e.message) ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
+        .catch(e => stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
         .finally(() => { btn.disabled = false; btn.textContent = "✨ Summarize view"; });
     }
 
