@@ -594,6 +594,8 @@
       overflow-y: auto; background: var(--c-161b22); border: 1px solid var(--c-2a2f3a); border-radius: 6px;
       padding: 10px 12px; font-size: 12px; color: var(--c-e6e6e6); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
     .lg-side-panel .lg-ev-row { padding: 5px 0; border-top: 1px solid var(--c-2a2f3a); }
+    .lg-panel-btns { display: flex; gap: 6px; margin-top: 8px; }
+    .lg-panel-btns button { padding: 3px 9px; font-size: 12px; }
     .lg-truncated { color: var(--c-ffd93b); }
     /* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
     #sec-swimlane:fullscreen { background: var(--c-11161d); padding: 16px; overflow: auto; }
@@ -5056,8 +5058,9 @@
       const nodes = (lgData.nodes || []).filter(n => refd.has(n.id));
       return [
         ...nodes.map(n => ({ data: { id: n.id, name: n.name, type: n.type } })),
-        ...keptEdges.map((e, i) => ({ data: {
-          id: `lge-${i}`, source: e.source, target: e.target,
+        ...keptEdges.map((e) => ({ data: {
+          // Semantic key (not a positional index) so edge identity is stable across re-renders/toggles.
+          id: `lge:${e.source}|${e.target}|${e.logonType}|${e.outcome}`, source: e.source, target: e.target,
           label: `${e.logonType} (${e.count})`,
           outcome: e.outcome, risk: e.risk,
           logonType: e.logonType, count: e.count, firstSeen: e.firstSeen, lastSeen: e.lastSeen,
@@ -5124,10 +5127,115 @@
       lgWireGraphEvents();
     }
 
-    // Wired for real in Task 6 — stubs so this task is loadable standalone.
-    function lgApplyEdgeStyle() {}
-    function lgApplyDim() {}
-    function lgWireGraphEvents() {}
+    function lgApplyEdgeStyle() {
+      if (!lgCy) return;
+      lgCy.style().selector("edge").style("curve-style", lgView.edgeStyle === "taxi" ? "taxi" : "bezier").update();
+    }
+    function lgApplyDim() {
+      if (!lgCy) return;
+      // Slider 0..90 → unselected-element opacity ~1..0.03 (higher = more transparent).
+      lgCy.style().selector(".lg-dim").style("opacity", Math.max(0.03, 1 - lgView.dim / 100 * 6)).update();
+    }
+    function lgWireGraphEvents() {
+      // Instance-scoped only — lgCy is recreated per render and destroy() unbinds these.
+      // Document/element-level listeners live in the one-time control wiring block instead.
+      lgCy.on("tap", "node", (evt) => { lgDimExcept(evt.target); lgShowNodePanel(evt.target); });
+      lgCy.on("tap", "edge", (evt) => { lgDimExcept(evt.target); lgShowEdgePanel(evt.target); });
+      lgCy.on("tap", (evt) => {   // background tap clears selection + panel
+        if (evt.target === lgCy) { lgDimExcept(null); lgHideSidePanel(); }
+      });
+    }
+
+    // Dim everything except `eles` and their neighborhood; null/empty → undim all.
+    function lgDimExcept(eles) {
+      if (!lgCy) return;
+      lgCy.elements().removeClass("lg-dim");
+      if (!eles || eles.empty()) return;
+      const keep = eles.union(eles.neighborhood());
+      lgCy.elements().difference(keep).addClass("lg-dim");
+    }
+
+    function lgHideSidePanel() {
+      const p = document.getElementById("lgSidePanel");
+      p.style.display = "none";
+      p.replaceChildren();
+    }
+
+    function lgPivotToTimeline(name) {
+      const gs = document.getElementById("globalSearch");
+      gs.value = name;
+      setSearchBarOpen(true, false);     // reveal the filter bar so the active term is visible (no focus steal)
+      // superPage(0) semantics without a racing double fetch: applySearch() itself reloads the
+      // super-timeline when it has been loaded before, so pre-reset the pagination cursor and only
+      // load explicitly when the section has never been opened.
+      superOffset = 0;
+      applySearch();                     // sets searchTerm + rescopes the whole dashboard (window-exposed by the search IIFE)
+      if (!lastSuperData) loadSuperTimeline();
+      const sec = document.getElementById("sec-super-timeline");
+      if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    }
+
+    // DOM-construction helpers — side-panel content is attacker-influenced log data (account/host
+    // names, source IPs parsed from descriptions), so everything is built with createElement/
+    // textContent, never innerHTML.
+    function lgEl(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+    function lgPanelButtons(name) {
+      const wrap = lgEl("div", "lg-panel-btns");
+      const open = lgEl("button", "lg-open-tl", "Open in Timeline");
+      open.type = "button";
+      open.onclick = () => lgPivotToTimeline(name);
+      const close = lgEl("button", "lg-close", "✕ Close");
+      close.type = "button";
+      close.onclick = () => { lgHideSidePanel(); lgDimExcept(null); };
+      wrap.append(open, close);
+      return wrap;
+    }
+
+    function lgShowNodePanel(node) {
+      const p = document.getElementById("lgSidePanel");
+      p.replaceChildren();
+      const title = lgEl("div");
+      title.append(lgEl("b", null, node.data("name")), lgEl("span", "ev-sub", " " + node.data("type")));
+      p.append(title, lgPanelButtons(node.data("name")));
+      p.style.display = "block";
+    }
+
+    function lgShowEdgePanel(edge) {
+      const p = document.getElementById("lgSidePanel");
+      const d = edge.data();
+      p.replaceChildren();
+      const title = lgEl("div");
+      title.append(lgEl("b", null, `${d.sourceName} → ${d.targetName}`));
+      const sub = lgEl("div", "ev-sub",
+        `${d.label}${d.outcome === "failed" ? " · FAILED" : ""} · ${String(d.firstSeen || "").slice(0, 16)} → ${String(d.lastSeen || "").slice(0, 16)}`);
+      const list = lgEl("div", null, "Loading events…");
+      list.id = "lgEdgeEvents";
+      p.append(title, sub, list, lgPanelButtons(d.sourceName));
+      p.style.display = "block";
+      const caseId = document.getElementById("caseId").value.trim();
+      const qs = new URLSearchParams({ account: d.sourceFull, host: d.targetFull, type: d.logonType, outcome: d.outcome, limit: "50" });
+      fetch(`/cases/${encodeURIComponent(caseId)}/login-graph/edge-events?${qs}`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+        .then(r => {
+          if (!list.isConnected) return;   // panel was closed/replaced meanwhile
+          list.replaceChildren();
+          for (const e of r.events) {
+            const row = lgEl("div", "lg-ev-row",
+              `${String(e.timestamp || "").replace("T", " ").slice(0, 19)}` +
+              `${e.sourceIp ? ` · from ${e.sourceIp}` : ""}${e.workstation ? ` (${e.workstation})` : ""}` +
+              `${e.count > 1 ? ` · ×${e.count}` : ""}`);
+            list.append(row);
+          }
+          if (r.total > r.events.length) list.append(lgEl("div", "ev-sub", `…and ${r.total - r.events.length} more — Open in Timeline for all`));
+          if (!r.events.length) list.append(lgEl("div", "ev-sub", "No matching events."));
+        })
+        .catch(() => { if (list.isConnected) { list.replaceChildren(); list.append(lgEl("div", "ev-sub", "Could not load events.")); } });
+    }
 
     // "Known compromised assets" — with rename/remove controls when overrides are available.
     function renderAssetList() {
@@ -14995,6 +15103,64 @@
       }
     });
 
+    // ── Login Graph controls (one-time wiring; graph-instance events live in lgWireGraphEvents) ──
+    document.getElementById("lgFit").addEventListener("click", () => { if (lgCy) lgCy.fit(undefined, 30); });
+    document.getElementById("lgRefresh").addEventListener("click", () => {
+      const c = document.getElementById("caseId").value.trim();
+      if (!c) return;
+      clearTimeout(lgTimer);             // don't double-fetch against the WS debounce
+      loadLoginGraph(c);
+    });
+    document.getElementById("lgExport").addEventListener("click", () => {
+      if (!lgCy) return;
+      const a = document.createElement("a");
+      a.href = lgCy.png({ full: true, scale: 2, bg: "#0f1115" });
+      a.download = "login-graph.png";
+      a.click();
+    });
+    document.getElementById("lgOptions").addEventListener("click", () => {
+      const p = document.getElementById("lgOptionsPanel");
+      const show = p.style.display === "none";
+      if (show) {   // sync controls from lgView before showing
+        document.querySelectorAll('input[name="lgLayout"]').forEach(r => { r.checked = r.value === lgView.layout; });
+        document.querySelectorAll('input[name="lgEdgeStyle"]').forEach(r => { r.checked = r.value === lgView.edgeStyle; });
+        document.getElementById("lgDim").value = lgView.dim;
+        document.getElementById("lgShowFailed").checked = lgView.showFailed;
+        document.getElementById("lgHideNoise").checked = lgView.hideNoise;
+      }
+      p.style.display = show ? "" : "none";
+    });
+    document.querySelectorAll('input[name="lgLayout"]').forEach(r => r.addEventListener("change", () => {
+      lgView.layout = r.value; saveLgView();
+      if (lgCy) lgCy.layout(lgLayoutOpts()).run();       // re-layout live
+    }));
+    document.querySelectorAll('input[name="lgEdgeStyle"]').forEach(r => r.addEventListener("change", () => {
+      lgView.edgeStyle = r.value; saveLgView(); lgApplyEdgeStyle();
+    }));
+    document.getElementById("lgDim").addEventListener("input", () => {
+      lgView.dim = Number(document.getElementById("lgDim").value); saveLgView(); lgApplyDim();
+    });
+    document.getElementById("lgShowFailed").addEventListener("change", (e) => {
+      lgView.showFailed = e.target.checked; saveLgView(); renderLoginGraph();   // element-set change → rebuild
+    });
+    document.getElementById("lgHideNoise").addEventListener("change", (e) => {
+      lgView.hideNoise = e.target.checked; saveLgView(); renderLoginGraph();
+    });
+    // Live filter: dim everything that doesn't match (nodes by name, edges by label).
+    document.getElementById("lgFilter").addEventListener("input", (e) => {
+      if (!lgCy) return;
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) { lgDimExcept(null); return; }
+      const hits = lgCy.elements().filter(el =>
+        String(el.data("name") || el.data("label") || "").toLowerCase().includes(q));
+      lgDimExcept(hits);
+    });
+    // Deferred render for a section that was collapsed at data-arrival time (zero-size container).
+    // setTimeout(0) runs after setupCollapsible's own h2 click handler has toggled .collapsed.
+    document.querySelector("#sec-login-graph h2").addEventListener("click", () => {
+      setTimeout(() => { if (lgPendingRender) renderLoginGraph(); else if (lgCy) lgCy.resize(); }, 0);
+    });
+
     // Evidence Chain graph controls (mirror the asset-graph chrome).
     document.querySelectorAll(".ev-type-toggle").forEach(cb => cb.onchange = () => {
       if (cb.checked) evTypesEnabled.add(cb.value); else evTypesEnabled.delete(cb.value);
@@ -15634,6 +15800,7 @@
         if (lastSuperData) loadSuperTimeline();   // the main filter's search term scopes the super-timeline too
         renderFalsePositives(fpMarkers);   // search term scopes the False Positives panel too
       }
+      window.applySearch = applySearch;   // exposed for cross-section pivots (Login Graph "Open in Timeline")
       function applyTimeRange() {
         filterFrom = utcInputToIso(ff.value);
         filterTo = utcInputToIso(ft.value);
