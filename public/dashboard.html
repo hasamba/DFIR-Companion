@@ -3904,6 +3904,7 @@
         <div class="lg-toolbar">
           <input id="lgFilter" type="text" placeholder="Filter nodes and edges" autocomplete="off" />
           <button type="button" id="lgFit" title="Fit to screen">⤢ Fit</button>
+          <button type="button" id="lgFullscreen" title="Enlarge the graph to full screen">⛶ Fullscreen</button>
           <button type="button" id="lgExport" title="Export as PNG">⬇ PNG</button>
           <button type="button" id="lgRefresh" title="Rebuild from the super-timeline">↻ Refresh</button>
           <button type="button" id="lgOptions" title="View options">⚙ View</button>
@@ -15108,6 +15109,22 @@
 
     // ── Login Graph controls (one-time wiring; graph-instance events live in lgWireGraphEvents) ──
     document.getElementById("lgFit").addEventListener("click", () => { if (lgCy) lgCy.fit(undefined, 30); });
+    // Fullscreen toggle on the wrap (mirrors #assetFullscreen); the floating ⚙/side panels are
+    // position:absolute INSIDE the wrap, so they stay usable while fullscreen.
+    document.getElementById("lgFullscreen").addEventListener("click", () => {
+      const wrap = document.getElementById("loginGraphWrap");
+      if (document.fullscreenElement === wrap) document.exitFullscreen();
+      else if (wrap.requestFullscreen) wrap.requestFullscreen();
+    });
+    // Resize + refit when OUR wrap enters/exits fullscreen. lgFsWas distinguishes our exit from
+    // another section's fullscreenchange (on exit fullscreenElement is null for everyone).
+    let lgFsWas = false;
+    document.addEventListener("fullscreenchange", () => {
+      const isNow = document.fullscreenElement === document.getElementById("loginGraphWrap");
+      if (!isNow && !lgFsWas) return;   // unrelated section's fullscreen event
+      lgFsWas = isNow;
+      if (lgCy) setTimeout(() => { if (lgCy) { lgCy.resize(); lgCy.fit(undefined, 30); } }, 60);   // wait for the relayout before measuring
+    });
     document.getElementById("lgRefresh").addEventListener("click", () => {
       const c = document.getElementById("caseId").value.trim();
       if (!c) return;
