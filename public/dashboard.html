@@ -5037,7 +5037,9 @@
 
     // Age formatter for the "generated X ago" header.
     function lgAgo(iso) {
-      const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+      const t = Date.parse(iso);
+      if (!Number.isFinite(t)) return "just now";   // unparseable timestamp — never "NaN h ago"
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
       if (s < 60) return "a few seconds ago";
       if (s < 3600) return `${Math.round(s / 60)} min ago`;
       return `${Math.round(s / 3600)} h ago`;
@@ -5098,6 +5100,9 @@
       const el = document.getElementById("loginGraph");
       const stats = document.getElementById("loginGraphStats");
       if (!lgData) { stats.textContent = "—"; return; }
+      // Route errors (501 super-timeline not configured / 500) come back as {error} JSON — surface
+      // them instead of masquerading as the empty state. textContent: the message is server-derived.
+      if (lgData.error) { stats.textContent = "Login graph unavailable: " + lgData.error; if (lgCy) { lgCy.destroy(); lgCy = null; } return; }
       if (!lgData.edges || !lgData.edges.length) {
         stats.textContent = "No Windows logon events (4624/4625) found in this case's super-timeline.";
         if (lgCy) { lgCy.destroy(); lgCy = null; }

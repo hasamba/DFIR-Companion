@@ -206,6 +206,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-timeline",
       "sec-evidence",
       "sec-assets",
+      "sec-login-graph",
       "sec-hostranking",
       "sec-swimlane",
       "sec-findings",
