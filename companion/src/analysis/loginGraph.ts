@@ -134,7 +134,9 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     host.eventCount += n;
 
     const key = `${acct.id}|${host.id}|${p.typeName}|${p.outcome}`;
-    const last = e.endTimestamp ?? e.timestamp;
+    // Clamp: anomalous importer data can carry endTimestamp < timestamp; lastSeen must never precede firstSeen.
+    const end = e.endTimestamp ?? e.timestamp;
+    const last = end > e.timestamp ? end : e.timestamp;
     const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
     const edge = edges.get(key);
     if (!edge) {
@@ -153,7 +155,9 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     }
   }
 
-  const sorted = [...edges.values()].sort((a, b) => b.count - a.count);
+  // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
+  const sorted = [...edges.values()].sort((a, b) =>
+    b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
   const kept = sorted.slice(0, maxEdges);
   const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
   return {

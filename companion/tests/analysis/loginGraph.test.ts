@@ -148,6 +148,16 @@ describe("buildLoginGraph", () => {
     expect(g.edges.find((e) => e.source === "account:corp\\b")?.risk).toBe("none");
   });
 
+  it("keeps an edge medium once any contributing event is risky (worst-of carryover)", () => {
+    const g = buildLoginGraph([
+      LOGON("CORP\\a", "SRV-01", 10, { ip: "203.0.113.7" }),   // external RDP → medium
+      LOGON("CORP\\a", "SRV-01", 10, { ip: "10.0.0.5" }),      // later internal event must not downgrade
+    ]);
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0].risk).toBe("medium");
+    expect(g.edges[0].count).toBe(2);
+  });
+
   it("flags noise account nodes", () => {
     const g = buildLoginGraph([LOGON("CORP\\WKSTN-01$", "DC-01", 3)]);
     expect(g.nodes.find((n) => n.type === "account")?.isNoise).toBe(true);
