@@ -621,7 +621,7 @@ export function kerberosRoastSignal(eid: number, ed: Row): { severity: Severity;
 
 // Windows logon-type codes (4624/4625 `LogonType`) → human name. Mirrors Timesketch's login analyzer
 // LOGON_TYPES, which only tags; we additionally GRADE the risky ones (see logonRisk).
-const LOGON_TYPES: Record<number, string> = {
+export const LOGON_TYPES: Record<number, string> = {
   2: "Interactive", 3: "Network", 4: "Batch", 5: "Service", 7: "Unlock",
   8: "NetworkCleartext", 9: "NewCredentials", 10: "RemoteInteractive/RDP", 11: "CachedInteractive",
 };
