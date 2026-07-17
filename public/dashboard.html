@@ -518,6 +518,19 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .finding-main-cell .finding-tagline { margin-top: 4px; }
+    /* Finding assignment + workflow status (#87) — a compact control row under the finding title. */
+    .finding-workflow { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px; }
+    .fwf-status { font-size: 11px; padding: 1px 4px; border-radius: 5px; background: var(--c-161a22);
+      color: var(--c-9aa4b2); border: 1px solid var(--c-2b3242); cursor: pointer; }
+    .fwf-status.fwf-has-status { color: var(--c-e6e6e6); }
+    .fwf-status.fwf-new { border-color: #6aa9ff; }
+    .fwf-status.fwf-in_progress { border-color: #e0b84a; color: #e0b84a; }
+    .fwf-status.fwf-in_review { border-color: #c79bff; color: #c79bff; }
+    .fwf-status.fwf-resolved { border-color: #6bcb77; color: #6bcb77; }
+    .fwf-assignee { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--c-161a22);
+      color: var(--c-9aa4b2); border: 1px solid var(--c-2b3242); cursor: pointer; }
+    .fwf-assignee.assigned { color: #6aa9ff; border-color: #35507a; }
+    .fwf-assignee:hover, .fwf-status:hover { border-color: var(--c-4a5670); }
     .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
     .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--c-2a2f3a); overflow: hidden; }
     .finding-conf-cell .fcbar > span { display: block; height: 100%; }
@@ -5884,6 +5897,56 @@
         renderPinned();
         if (lastState) render(lastState);   // refresh the 📌 button state on the finding cards
       }).catch(() => {});
+    }
+
+    // ── Finding assignment + workflow status (#87) ──────────────────────────────────────────
+    // Per-finding analyst owner + triage state, server-backed (state/finding-workflow.json) so it
+    // survives synthesis. workflowByFinding maps findingId -> { assignee, status }. Merged onto the
+    // finding cards; changes PATCH the server and the finding_workflow_changed WS syncs other clients.
+    let workflowByFinding = new Map();
+    const FINDING_WF_STATUS_LABELS = { new: "New", in_progress: "In progress", in_review: "In review", resolved: "Resolved" };
+    function loadFindingWorkflow(caseId) {
+      fetch(`/cases/${caseId}/finding-workflow`).then(r => r.json()).then(list => {
+        workflowByFinding = new Map();
+        (Array.isArray(list) ? list : []).forEach(r => { if (r && r.findingId) workflowByFinding.set(String(r.findingId), r); });
+        if (lastState) render(lastState);   // refresh the inline assignee/status controls
+      }).catch(() => {});
+    }
+    // The assignee + status controls shown on each finding card.
+    function findingWorkflowControls(fid) {
+      const wf = workflowByFinding.get(String(fid)) || {};
+      const status = wf.status || "";
+      const opts = [["", "— status —"], ["new", "New"], ["in_progress", "In progress"], ["in_review", "In review"], ["resolved", "Resolved"]]
+        .map(([v, l]) => `<option value="${v}"${v === status ? " selected" : ""}>${l}</option>`).join("");
+      const assignee = (wf.assignee || "").trim();
+      const label = assignee ? esc(assignee) : "Assign";
+      return `<span class="finding-workflow">` +
+        `<select class="fwf-status${status ? " fwf-has-status fwf-" + status : ""}" data-fwf="${escAttr(String(fid))}" title="Analyst workflow status (survives synthesis)">${opts}</select>` +
+        `<button class="fwf-assignee${assignee ? " assigned" : ""}" data-fwf="${escAttr(String(fid))}" title="${assignee ? "Assigned to " + escAttr(assignee) + " — click to change" : "Assign this finding to an analyst"}">👤 ${label}</button>` +
+        `</span>`;
+    }
+    // PATCH one field; the server drops the record when both assignee and status become empty.
+    function patchFindingWorkflow(fid, patch) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !fid) return;
+      fetch(`/cases/${caseId}/findings/${encodeURIComponent(String(fid))}/workflow`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...patch, updatedBy: investigatorName() }),
+      }).then(r => r.ok ? r.json() : null).then(data => {
+        // Reconcile locally for instant feedback; the WS finding_workflow_changed also arrives.
+        if (data && "record" in data) {
+          if (data.record) workflowByFinding.set(String(fid), data.record);
+          else workflowByFinding.delete(String(fid));
+          if (lastState) render(lastState);
+        }
+      }).catch(() => {});
+    }
+    function setFindingWorkflowStatus(fid, value) { patchFindingWorkflow(fid, { status: value || "" }); }
+    function assignFinding(fid) {
+      const wf = workflowByFinding.get(String(fid)) || {};
+      const next = window.prompt("Assign this finding to (leave blank to clear):", wf.assignee || "");
+      if (next === null) return;   // cancelled
+      patchFindingWorkflow(fid, { assignee: next.trim() });
     }
 
     // Resolve pins against the live findings, worst-severity label preserved. A pin whose finding
@@ -14471,6 +14534,7 @@
               `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}</span>` +
               `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
               (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
+              findingWorkflowControls(f.id) +
             `</span>` +
             `<span class="finding-conf-cell">${confMeter}</span>` +
             `<span class="finding-actions-cell">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
@@ -14650,6 +14714,7 @@
       loadActivityLog(caseId);
       loadTags(caseId);
       loadPins(caseId);
+      loadFindingWorkflow(caseId);
       loadNotebook(caseId);
       loadNbAiToggle(caseId);
       loadHypotheses(caseId);
@@ -14749,6 +14814,7 @@
         else if (msg.type === "activity_changed") loadActivityLog(caseId);
         else if (msg.type === "tags_changed") loadTags(caseId);
         else if (msg.type === "pins_changed") loadPins(caseId);
+        else if (msg.type === "finding_workflow_changed") loadFindingWorkflow(caseId);
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
         else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
         else if (msg.type === "dwell_window_changed") loadSavedTimeframes(caseId);
@@ -15245,6 +15311,11 @@
     document.getElementById("commentPost").onclick = postComment;
     document.getElementById("commentClose").onclick = closeCommentModal;
     document.getElementById("commentOverlay").addEventListener("click", (e) => { if (e.target.id === "commentOverlay") closeCommentModal(); });
+    // Finding workflow status <select> (#87) — delegated 'change' (a select doesn't emit 'click').
+    document.querySelector("main").addEventListener("change", (e) => {
+      const sel = e.target.closest && e.target.closest(".fwf-status");
+      if (sel) setFindingWorkflowStatus(sel.getAttribute("data-fwf"), sel.value);
+    });
     document.querySelector("main").addEventListener("click", (e) => {
       // Star toggle (individual row)
       const star = e.target.closest && e.target.closest(".ev-star");
@@ -15376,6 +15447,10 @@
       // Pinned findings (#220): pin/unpin toggle on a finding card, plus jump/unpin inside the strip.
       const pin = e.target.closest && e.target.closest(".pin-btn");
       if (pin) { e.stopPropagation(); togglePin(pin.getAttribute("data-pin")); return; }
+      // Finding assignee button (#87) → prompt for the owner (the status <select> is handled by a
+      // separate delegated change listener, since a select fires 'change', not 'click').
+      const fwfAssign = e.target.closest && e.target.closest(".fwf-assignee");
+      if (fwfAssign) { e.stopPropagation(); assignFinding(fwfAssign.getAttribute("data-fwf")); return; }
       const pjump = e.target.closest && e.target.closest(".pinned-title");
       if (pjump) { jumpToFinding(pjump.getAttribute("data-jump")); return; }
       const punpin = e.target.closest && e.target.closest(".pinned-unpin");

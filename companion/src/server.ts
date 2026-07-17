@@ -100,6 +100,7 @@ import { ActivityLogStore } from "./analysis/activityLog.js";
 import { CommentsStore } from "./analysis/comments.js";
 import { TagsStore, type Tag } from "./analysis/tags.js";
 import { PinnedFindingsStore } from "./analysis/pinnedFindings.js";
+import { FindingWorkflowStore } from "./analysis/findingWorkflow.js";
 import { NotebookStore } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
@@ -278,6 +279,11 @@ export interface AppOptions {
   // clients over the WS to re-fetch when a finding is pinned/unpinned/reordered.
   pinnedFindingsStore?: PinnedFindingsStore;
   onPins?: (caseId: string) => void;
+  // Analyst assignment + workflow status for findings (#87): a human owner and an analyst-editable
+  // triage state (new/in-progress/in-review/resolved), kept in a side file so re-synthesis never
+  // wipes them. onFindingWorkflow pings dashboard clients over the WS to re-fetch on any change.
+  findingWorkflowStore?: FindingWorkflowStore;
+  onFindingWorkflow?: (caseId: string) => void;
   // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
   // clients over the WS to re-fetch when an entry is added, updated, or removed.
   notebookStore?: NotebookStore;
@@ -2944,6 +2950,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const commentsStore = new CommentsStore(store);
   const tagsStore = new TagsStore(store);
   const pinnedFindingsStore = new PinnedFindingsStore(store, Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined);
+  const findingWorkflowStore = new FindingWorkflowStore(store);
   const notebookStore = new NotebookStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const learnedPatternStore = new LearnedPatternStore(store);
@@ -3072,6 +3079,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
     pinnedFindingsStore,
     onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
+    findingWorkflowStore,
+    onFindingWorkflow: (caseId) => hub.broadcastTo(caseId, { type: "finding_workflow_changed" }),
     notebookStore,
     onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
     hypothesisStore,

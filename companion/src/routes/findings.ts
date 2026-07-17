@@ -11,6 +11,7 @@ import { DEFAULT_SOURCE_TRUST } from "../analysis/sourceTrust.js";
 import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
+import { FINDING_WORKFLOW_STATUSES, type FindingWorkflowStatus } from "../analysis/findingWorkflow.js";
 import { type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "../analysis/notebookStore.js";
 import { sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { STARRED_LABEL } from "../analysis/superTimeline.js";
@@ -28,6 +29,7 @@ import type { RouteContext } from "./context.js";
  *   - correlation-profile — the per-case cross-source event-correlation window.
  *   - comments / tags  — collaboration annotations attached to a (targetType, targetId) entity.
  *   - pinned-findings  — the analyst's ordered shortlist of the findings that matter most (#220).
+ *   - finding-workflow — per-finding analyst assignee + workflow status (new/in-progress/…) (#87).
  *   - notebook         — per-case hypotheses/notes/questions the AI pass can optionally read.
  *
  * Pure structural move out of createApp (see routes/system.ts for the conventions). Nothing here is
@@ -581,6 +583,56 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       return res.status(200).json({ pins, limit: options.pinnedFindingsStore.limit });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Finding assignment + workflow status (#87). A human owner and an analyst-editable triage status
+  // (new/in_progress/in_review/resolved) for each finding, kept in a per-case side file so they
+  // survive re-synthesis (the AI never touches them). GET lists every workflow record; PATCH upserts
+  // one finding's assignee/status (an empty assignee + null status clears the record). Mirrors the
+  // comments/tags/pinned pattern: the dashboard fetches the list and merges it onto the finding cards.
+  app.get("/cases/:id/finding-workflow", async (req: Request, res: Response) => {
+    if (!options.findingWorkflowStore) return res.status(501).json({ error: "finding workflow not configured" });
+    try {
+      return res.status(200).json(await options.findingWorkflowStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.patch("/cases/:id/findings/:findingId/workflow", async (req: Request, res: Response) => {
+    if (!options.findingWorkflowStore) return res.status(501).json({ error: "finding workflow not configured" });
+    // Only apply fields the caller actually sent, so a status-only PATCH leaves the assignee intact
+    // (and vice versa). `status: ""`/null clears the status; an empty assignee clears the owner.
+    const patch: { assignee?: string; status?: FindingWorkflowStatus | null; updatedBy?: string } = {};
+    if (req.body?.assignee !== undefined) patch.assignee = String(req.body.assignee);
+    if (req.body?.status !== undefined) {
+      const raw = req.body.status;
+      if (raw === null || raw === "") {
+        patch.status = null;
+      } else if ((FINDING_WORKFLOW_STATUSES as readonly string[]).includes(String(raw))) {
+        patch.status = String(raw) as FindingWorkflowStatus;
+      } else {
+        return res.status(400).json({ error: `status must be one of ${FINDING_WORKFLOW_STATUSES.join(", ")} (or empty to clear)` });
+      }
+    }
+    if (typeof req.body?.updatedBy === "string") patch.updatedBy = req.body.updatedBy;
+    if (patch.assignee === undefined && patch.status === undefined) {
+      return res.status(400).json({ error: "provide assignee and/or status to update" });
+    }
+    try {
+      const record = await options.findingWorkflowStore.patch(req.params.id, req.params.findingId, patch);
+      options.onFindingWorkflow?.(req.params.id);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "triage", action: "finding-workflow", actor: patch.updatedBy ?? "",
+        detail: record
+          ? `finding ${req.params.findingId}: ${record.status ? `status=${record.status}` : "no status"}${record.assignee ? `, assignee=${record.assignee}` : ""}`
+          : `finding ${req.params.findingId}: workflow cleared`,
+        targetType: "finding", targetId: req.params.findingId,
+      });
+      return res.status(200).json({ record });
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
     }
   });
 
