@@ -67,11 +67,27 @@ A narrative paragraph written by the AI describing the full attacker journey —
 
 ---
 
+## Narrative Timeline
+
+Rewrites the Attack Path into client-readable prose for stakeholders, then lets you polish the wording before it lands in a report.
+
+**✨ Generate** — one AI call that produces a prose incident narrative and saves it to case state (it is skipped if the panel is hidden, and refused server-side if the report's Timeline section is disabled in the template). **✏ Edit / Save** hand-edits the generated text; the edit survives until the next synthesis.
+
+---
+
 ## Kill Chain
 
 Shows which **Cyber Kill Chain phases** are covered by the evidence: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objectives.
 
 Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
+
+---
+
+## Timeline Gaps
+
+Detects suspicious silent periods in the forensic timeline — windows where events go quiet. A **complete** gap, where every source goes dark at once, is flagged as the classic log-tampering signature. Detection is deterministic; the panel labels it a lead, not proof.
+
+**✨ Hypothesize gaps** — one AI call over the detected gaps. For each silent window it hypothesizes what the attacker likely did (inferred from the surrounding events) and pairs it with shadow-artifact collections that could reconstruct the missing window. Each suggested artifact carries a **▶ Deploy collection** button — enabled only when Velociraptor is configured — that launches the collection to recover the missing evidence.
 
 ---
 
@@ -205,6 +221,20 @@ You can manually add assets or links using the **+** button.
 
 ---
 
+## Login Graph
+
+A Timesketch-style directed graph of **who logged on where** — accounts point to the hosts they authenticated to, built from Windows logon events (4624 success / 4625 failure) in the super-timeline. Because plain low-severity 4624 events never reach the forensic timeline, this is often the only place lateral movement is visible. Edges are aggregated per (account, host, logon type, outcome) with a count, first/last-seen, and a risk flag; click an edge to fetch the underlying events.
+
+Fully deterministic — it re-parses the logon descriptions the importers already rendered, so no AI and no re-import are needed.
+
+- **⟳ Refresh** — rebuilds the graph from the whole super-timeline. It re-parses each row's rendered logon description with an injection guard: a logon marker appearing after the first ` - ` separator is rejected, so attacker-controlled command-line text can't plant a fake account→host edge.
+- **Hide machine / system-session accounts** — hides nodes the server tagged as noise (machine `name$` accounts, `DWM-*`/`UMFD-*` session accounts, `ANONYMOUS LOGON`). SYSTEM / LOCAL SERVICE / NETWORK SERVICE are deliberately **not** treated as noise.
+- **Show failed logons (4625)** — reveals failed-logon edges (drawn dashed).
+
+Edges turn orange for **medium risk** when a backing logon looks risky — external-source RDP, cleartext authentication, or `runas /netonly`.
+
+---
+
 ## Evidence Chain
 
 A causal graph showing:
@@ -272,7 +302,15 @@ It's a **lens, not a gate** — nothing is dropped from state. Single-source evi
 
 On the timeline, the lens composes with the **Source** filter: it counts only distinct sources still checked, and while active the Source menu lists only the tools present on corroborated events.
 
-**Source trust** — every event source also carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources. Override a source's trust for the case in Settings.
+**Source trust** — every event source also carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources. Override a source's trust for the case in Settings, or in the dedicated **Source Trust** panel below.
+
+---
+
+## Source Trust
+
+Lists every known evidence source (tool) with its built-in default trust weight (0–1) and a per-case override you can type — for example, lowering a hunt that was noisy on this engagement. **Save trust overrides** persists the per-case map; changes take effect on the next synthesis.
+
+Default tiers: EDR (CrowdStrike / Defender) = 1.0; Sigma engines (Hayabusa / Chainsaw / THOR) = 0.95; DFIR collectors (Velociraptor / Sysmon) = 0.85; SIEM / network sensors ≈ 0.8; intel / screenshots ≈ 0.75; generic log / CSV = 0.6; unknown = 0.7. An event's trust is the **maximum** across its sources, so one high-trust corroborator lifts the whole event. Trust picks the canonical wording when duplicates are merged, and only ever **caps confidence downward** on findings supported solely by low-trust sources — it never boosts.
 
 ---
 
