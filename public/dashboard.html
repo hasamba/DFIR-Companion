@@ -5039,18 +5039,10 @@
     let lgCy = null;                 // cytoscape instance
     let lgTimer = null;              // debounced reload
     let lgPendingRender = false;     // section was collapsed at render time
-    const LG_VIEW_DEFAULTS = { layout: "spread", edgeStyle: "bezier", dim: 85, showFailed: true, hideNoise: false };
-    let lgView = { ...LG_VIEW_DEFAULTS };
-    const lgViewKey = () => "dfir.loginGraphView." + (document.getElementById("caseId").value.trim() || "");
-    function loadLgView() {
-      try { lgView = { ...LG_VIEW_DEFAULTS, ...JSON.parse(localStorage.getItem(lgViewKey()) || "{}") }; }
-      catch (e) { lgView = { ...LG_VIEW_DEFAULTS }; }
-    }
-    function saveLgView() { try { localStorage.setItem(lgViewKey(), JSON.stringify(lgView)); } catch (e) { /* quota — non-fatal */ } }
-
     function loadLoginGraph(caseId) {
-      loadLgView();
-      fetch(`/cases/${encodeURIComponent(caseId)}/login-graph`).then(r => r.json()).then(g => {
+      const gv = lgEnsureGV();
+      if (gv) gv.loadView();
+      fetch(`/cases/${encodeURIComponent(caseId)}/login-graph`).then((r) => r.json()).then((g) => {
         lgData = g; renderLoginGraph();
       }).catch(() => {});
     }
@@ -5069,19 +5061,21 @@
       return `${Math.round(s / 3600)} h ago`;
     }
 
-    function lgElements() {
-      // Apply the data toggles (failed / noise) BEFORE handing elements to cytoscape.
-      const edges = (lgData.edges || []).filter(e => lgView.showFailed || e.outcome !== "failed");
-      const nodeById = new Map((lgData.nodes || []).map(n => [n.id, n]));
-      const keptEdges = lgView.hideNoise
-        ? edges.filter(e => !(nodeById.get(e.source) || {}).isNoise && !(nodeById.get(e.target) || {}).isNoise)
+    // The shared-module instance for the Login Graph (created once, lazily, after DOM is ready).
+    let lgGV = null;
+
+    // Build cytoscape elements from lgData + the module's view (data toggles live in view).
+    function lgBuildElements(view) {
+      const edges = (lgData.edges || []).filter((e) => view.showFailed || e.outcome !== "failed");
+      const nodeById = new Map((lgData.nodes || []).map((n) => [n.id, n]));
+      const keptEdges = view.hideNoise
+        ? edges.filter((e) => !(nodeById.get(e.source) || {}).isNoise && !(nodeById.get(e.target) || {}).isNoise)
         : edges;
-      const refd = new Set(keptEdges.flatMap(e => [e.source, e.target]));
-      const nodes = (lgData.nodes || []).filter(n => refd.has(n.id));
+      const refd = new Set(keptEdges.flatMap((e) => [e.source, e.target]));
+      const nodes = (lgData.nodes || []).filter((n) => refd.has(n.id));
       return [
-        ...nodes.map(n => ({ data: { id: n.id, name: n.name, type: n.type } })),
+        ...nodes.map((n) => ({ data: { id: n.id, name: n.name, type: n.type } })),
         ...keptEdges.map((e) => ({ data: {
-          // Semantic key (not a positional index) so edge identity is stable across re-renders/toggles.
           id: `lge:${e.source}|${e.target}|${e.logonType}|${e.outcome}`, source: e.source, target: e.target,
           label: `${e.logonType} (${e.count})`,
           outcome: e.outcome, risk: e.risk,
@@ -5107,75 +5101,61 @@
       } },
       { selector: 'edge[outcome = "failed"]', style: { "line-style": "dashed", "line-color": "#e05c5c", "target-arrow-color": "#e05c5c" } },
       { selector: 'edge[risk = "medium"]', style: { "line-color": "#e0a15c", "target-arrow-color": "#e0a15c", width: 2 } },
-      { selector: ".lg-dim", style: { opacity: 0.15 } },
+      { selector: ".gv-dim", style: { opacity: 0.15 } },
     ];
 
-    function lgLayoutOpts() {
-      const name = lgView.layout === "spread" ? "cose" : lgView.layout;
-      // animate:false — animated layouts advance on requestAnimationFrame, which browsers pause in
-      // background/occluded tabs, stalling the layout forever and leaving the initial grid. Synchronous
-      // positioning always applies, even when the dashboard loads in a backgrounded tab.
-      const base = { name, animate: false, fit: true, padding: 30 };
-      if (name === "concentric") return { ...base, concentric: (n) => n.degree(), levelWidth: () => 1 };
-      if (name === "breadthfirst") return { ...base, directed: true };
-      return base;
+    function lgEnsureGV() {
+      if (lgGV) return lgGV;
+      if (!window.DfirGraphView) return null;   // module not loaded yet (should not happen post-load)
+      lgGV = window.DfirGraphView.createGraphView({
+        graphId: "login",
+        container: document.getElementById("loginGraph"),
+        wrap: document.getElementById("loginGraphWrap"),
+        caseIdEl: document.getElementById("caseId"),
+        exportName: "login-graph.png",
+        defaults: { layout: "spread", edgeStyle: "bezier", dim: 85, showFailed: true, hideNoise: false },
+        style: LG_STYLE,
+        buildElements: lgBuildElements,
+        onNodeTap: (node) => lgShowNodePanel(node),
+        onEdgeTap: (edge) => lgShowEdgePanel(edge),
+        onBackgroundTap: () => lgHideSidePanel(),
+        onRefresh: () => { const cId = document.getElementById("caseId").value.trim(); if (cId) { clearTimeout(lgTimer); loadLoginGraph(cId); } },
+        controls: {
+          layoutRadios: document.querySelectorAll('input[name="lgLayout"]'),
+          edgeStyleRadios: document.querySelectorAll('input[name="lgEdgeStyle"]'),
+          dimSlider: document.getElementById("lgDim"),
+          filterInput: document.getElementById("lgFilter"),
+          fitBtn: document.getElementById("lgFit"),
+          fullscreenBtn: document.getElementById("lgFullscreen"),
+          exportBtn: document.getElementById("lgExport"),
+          refreshBtn: document.getElementById("lgRefresh"),
+          optionsBtn: document.getElementById("lgOptions"),
+          optionsPanel: document.getElementById("lgOptionsPanel"),
+          toggles: [
+            { input: document.getElementById("lgShowFailed"), key: "showFailed" },
+            { input: document.getElementById("lgHideNoise"), key: "hideNoise" },
+          ],
+        },
+      });
+      return lgGV;
     }
 
     function renderLoginGraph() {
-      const el = document.getElementById("loginGraph");
       const stats = document.getElementById("loginGraphStats");
       if (!lgData) { stats.textContent = "—"; return; }
-      // Route errors (501 super-timeline not configured / 500) come back as {error} JSON — surface
-      // them instead of masquerading as the empty state. textContent: the message is server-derived.
-      if (lgData.error) { stats.textContent = "Login graph unavailable: " + lgData.error; if (lgCy) { lgCy.destroy(); lgCy = null; } return; }
+      if (lgData.error) { stats.textContent = "Login graph unavailable: " + lgData.error; if (lgGV) lgGV.destroy(); return; }
       if (!lgData.edges || !lgData.edges.length) {
         stats.textContent = "No Windows logon events (4624/4625) found in this case's super-timeline.";
-        if (lgCy) { lgCy.destroy(); lgCy = null; }
+        if (lgGV) lgGV.destroy();
         return;
       }
-      // Collapsed section → zero-size container → cytoscape can't layout. Defer; the section's h2
-      // click hook re-renders on expand (see the Login Graph control wiring).
-      if (!el.offsetWidth) { lgPendingRender = true; return; }
-      lgPendingRender = false;
-      if (typeof cytoscape === "undefined") { stats.textContent = "Graph library not loaded — restart the companion server."; return; }
-      const elements = lgElements();
-      const shown = elements.filter(x => x.data.source).length;
+      const gv = lgEnsureGV();
+      if (!gv) { stats.textContent = "Graph library not loaded — restart the companion server."; return; }
+      const elements = lgBuildElements(gv.view);
+      const shown = elements.filter((x) => x.data.source).length;
       stats.innerHTML = `${elements.length - shown} nodes and ${shown} edges · generated ${lgAgo(lgData.generatedAt)}` +
         (lgData.truncated ? ` · <span class="lg-truncated">showing busiest ${lgData.edges.length} of ${lgData.totalEdges} relationships — refine with the filter</span>` : "");
-      if (lgCy) { lgCy.destroy(); lgCy = null; }
-      lgCy = cytoscape({ container: el, elements, style: LG_STYLE, wheelSensitivity: 0.2 });
-      lgApplyEdgeStyle();
-      lgApplyDim();
-      lgCy.layout(lgLayoutOpts()).run();
-      lgWireGraphEvents();
-    }
-
-    function lgApplyEdgeStyle() {
-      if (!lgCy) return;
-      lgCy.style().selector("edge").style("curve-style", lgView.edgeStyle === "taxi" ? "taxi" : "bezier").update();
-    }
-    function lgApplyDim() {
-      if (!lgCy) return;
-      // Slider 0..90 → unselected-element opacity 1..0.1, linear (higher = more transparent).
-      lgCy.style().selector(".lg-dim").style("opacity", Math.max(0.05, 1 - lgView.dim / 100)).update();
-    }
-    function lgWireGraphEvents() {
-      // Instance-scoped only — lgCy is recreated per render and destroy() unbinds these.
-      // Document/element-level listeners live in the one-time control wiring block instead.
-      lgCy.on("tap", "node", (evt) => { lgDimExcept(evt.target); lgShowNodePanel(evt.target); });
-      lgCy.on("tap", "edge", (evt) => { lgDimExcept(evt.target); lgShowEdgePanel(evt.target); });
-      lgCy.on("tap", (evt) => {   // background tap clears selection + panel
-        if (evt.target === lgCy) { lgDimExcept(null); lgHideSidePanel(); }
-      });
-    }
-
-    // Dim everything except `eles` and their neighborhood; null/empty → undim all.
-    function lgDimExcept(eles) {
-      if (!lgCy) return;
-      lgCy.elements().removeClass("lg-dim");
-      if (!eles || eles.empty()) return;
-      const keep = eles.union(eles.neighborhood());
-      lgCy.elements().difference(keep).addClass("lg-dim");
+      gv.render();
     }
 
     function lgHideSidePanel() {
@@ -5214,7 +5194,7 @@
       open.onclick = () => lgPivotToTimeline(name);
       const close = lgEl("button", "lg-close", "✕ Close");
       close.type = "button";
-      close.onclick = () => { lgHideSidePanel(); lgDimExcept(null); };
+      close.onclick = () => { lgHideSidePanel(); if (lgGV) lgGV.dimExcept(null); };
       wrap.append(open, close);
       return wrap;
     }
@@ -15323,80 +15303,9 @@
       }
     });
 
-    // ── Login Graph controls (one-time wiring; graph-instance events live in lgWireGraphEvents) ──
-    document.getElementById("lgFit").addEventListener("click", () => { if (lgCy) lgCy.fit(undefined, 30); });
-    // Fullscreen toggle on the wrap (mirrors #assetFullscreen); the floating ⚙/side panels are
-    // position:absolute INSIDE the wrap, so they stay usable while fullscreen.
-    document.getElementById("lgFullscreen").addEventListener("click", () => {
-      const wrap = document.getElementById("loginGraphWrap");
-      if (document.fullscreenElement === wrap) document.exitFullscreen();
-      else if (wrap.requestFullscreen) wrap.requestFullscreen();
-    });
-    // Resize + refit when OUR wrap enters/exits fullscreen. lgFsWas distinguishes our exit from
-    // another section's fullscreenchange (on exit fullscreenElement is null for everyone).
-    let lgFsWas = false;
-    document.addEventListener("fullscreenchange", () => {
-      const isNow = document.fullscreenElement === document.getElementById("loginGraphWrap");
-      if (!isNow && !lgFsWas) return;   // unrelated section's fullscreen event
-      lgFsWas = isNow;
-      if (lgCy) setTimeout(() => { if (lgCy) { lgCy.resize(); lgCy.fit(undefined, 30); } }, 60);   // wait for the relayout before measuring
-    });
-    document.getElementById("lgRefresh").addEventListener("click", () => {
-      const c = document.getElementById("caseId").value.trim();
-      if (!c) return;
-      clearTimeout(lgTimer);             // don't double-fetch against the WS debounce
-      loadLoginGraph(c);
-    });
-    document.getElementById("lgExport").addEventListener("click", () => {
-      if (!lgCy) return;
-      const a = document.createElement("a");
-      a.href = lgCy.png({ full: true, scale: 2, bg: "#0f1115" });
-      a.download = "login-graph.png";
-      a.click();
-    });
-    document.getElementById("lgOptions").addEventListener("click", () => {
-      const p = document.getElementById("lgOptionsPanel");
-      const show = p.style.display === "none";
-      if (show) {   // sync controls from lgView before showing
-        document.querySelectorAll('input[name="lgLayout"]').forEach(r => { r.checked = r.value === lgView.layout; });
-        document.querySelectorAll('input[name="lgEdgeStyle"]').forEach(r => { r.checked = r.value === lgView.edgeStyle; });
-        document.getElementById("lgDim").value = lgView.dim;
-        document.getElementById("lgShowFailed").checked = lgView.showFailed;
-        document.getElementById("lgHideNoise").checked = lgView.hideNoise;
-      }
-      p.style.display = show ? "" : "none";
-    });
-    document.querySelectorAll('input[name="lgLayout"]').forEach(r => r.addEventListener("change", () => {
-      lgView.layout = r.value; saveLgView();
-      if (lgCy) lgCy.layout(lgLayoutOpts()).run();       // re-layout live
-    }));
-    document.querySelectorAll('input[name="lgEdgeStyle"]').forEach(r => r.addEventListener("change", () => {
-      lgView.edgeStyle = r.value; saveLgView(); lgApplyEdgeStyle();
-    }));
-    document.getElementById("lgDim").addEventListener("input", () => {
-      lgView.dim = Number(document.getElementById("lgDim").value); saveLgView(); lgApplyDim();
-    });
-    document.getElementById("lgShowFailed").addEventListener("change", (e) => {
-      lgView.showFailed = e.target.checked; saveLgView(); renderLoginGraph();   // element-set change → rebuild
-    });
-    document.getElementById("lgHideNoise").addEventListener("change", (e) => {
-      lgView.hideNoise = e.target.checked; saveLgView(); renderLoginGraph();
-    });
-    // Live filter: dim everything that doesn't match (nodes by name, edges by label).
-    document.getElementById("lgFilter").addEventListener("input", (e) => {
-      if (!lgCy) return;
-      const q = e.target.value.trim().toLowerCase();
-      if (!q) { lgDimExcept(null); return; }
-      const hits = lgCy.elements().filter(el =>
-        String(el.data("name") || el.data("label") || "").toLowerCase().includes(q));
-      // Zero matches must read as "nothing matches" (dim ALL) — lgDimExcept(empty) would UNdim all.
-      if (hits.empty()) { lgCy.elements().addClass("lg-dim"); return; }
-      lgDimExcept(hits);
-    });
     // Deferred render for a section that was collapsed at data-arrival time (zero-size container).
-    // setTimeout(0) runs after setupCollapsible's own h2 click handler has toggled .collapsed.
     document.querySelector("#sec-login-graph h2").addEventListener("click", () => {
-      setTimeout(() => { if (lgPendingRender) renderLoginGraph(); else if (lgCy) lgCy.resize(); }, 0);
+      setTimeout(() => { if (lgGV) lgGV.onExpand(); }, 0);
     });
 
     // Evidence Chain graph controls (mirror the asset-graph chrome).
