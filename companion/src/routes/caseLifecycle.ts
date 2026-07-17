@@ -903,7 +903,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // IRIS/Velociraptor reconnect routes' reloadEnvPrefix pattern.
   app.post("/settings/ai-reload", async (_req: Request, res: Response) => {
     try {
-      const applied = await reloadEnvPrefix("DFIR_AI_");
+      // Reload BOTH the vision family (renamed DFIR_VISION_*) and the legacy DFIR_AI_* prefix (still
+      // honored as a fallback, and covers DFIR_AI_SYNTH_*/VELO/SECOND_OPINION), so the wizard's
+      // save → reload → ai-test flow sees new config under either naming without a restart.
+      const applied = [...await reloadEnvPrefix("DFIR_VISION_"), ...await reloadEnvPrefix("DFIR_AI_")];
       return res.json({ ok: true, applied });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -915,7 +918,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // step sees the new config. ALLOWLISTED — the prefix must be a known integration group, so a request
   // can't reload arbitrary env (and the route never reads/returns secret VALUES, only the applied keys).
   const RELOADABLE_PREFIXES = new Set([
-    "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
+    "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
     "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
     "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
     "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
@@ -941,7 +944,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.get("/setup/status", (_req: Request, res: Response) => {
     const has = (k: string): boolean => !!(process.env[k] && process.env[k]!.trim());
     res.status(200).json({
-      ai: !!hasAiProvider() || has("DFIR_AI_PROVIDER"),
+      ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
       velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),
       iris: !!ctx.irisClient() || (has("DFIR_IRIS_URL") && has("DFIR_IRIS_KEY")),
       timesketch: !!options.timesketchClient || (has("DFIR_TIMESKETCH_URL") && has("DFIR_TIMESKETCH_USER") && has("DFIR_TIMESKETCH_PASSWORD")),

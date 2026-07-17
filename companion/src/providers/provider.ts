@@ -64,10 +64,10 @@ export function httpErrorMessage(provider: string, status: number, body?: string
   switch (status) {
     case 402:
       return `${provider} HTTP 402 (payment required): the ${provider} account is out of credits or has no active billing. ` +
-        `Add credits/billing on the provider, or switch DFIR_AI_PROVIDER / DFIR_AI_MODEL (e.g. a cheaper model, OpenRouter, or local Ollama).${snippet}`;
+        `Add credits/billing on the provider, or switch the AI model (DFIR_VISION_* for screenshots, DFIR_AI_SYNTH_* for text — e.g. a cheaper model, OpenRouter, or local Ollama).${snippet}`;
     case 401:
     case 403:
-      return `${provider} HTTP ${status} (auth): the API key is missing, invalid, or lacks access to the model. Check DFIR_AI_KEY and DFIR_AI_MODEL.${snippet}`;
+      return `${provider} HTTP ${status} (auth): the API key is missing, invalid, or lacks access to the model. Check the AI key/model config (DFIR_VISION_* for screenshots, DFIR_AI_SYNTH_* for text).${snippet}`;
     case 429:
       return `${provider} HTTP 429 (rate limit / quota): too many requests or quota exhausted. Wait and retry, slow imports, or switch model/provider.${snippet}`;
     default:

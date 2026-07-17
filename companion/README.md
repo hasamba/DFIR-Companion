@@ -58,13 +58,13 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_LOG_LEVEL` | `debug`/`info`/`warn`/`error` (default `info`); live toggle via Settings |
 | `DFIR_LOG_DIR` | Global session log folder (beside cases root) |
 | **AI — extraction** | — |
-| `DFIR_AI_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` (unset = capture-only) |
-| `DFIR_AI_MODEL` | Model id (must support vision for screenshot extraction) |
-| `DFIR_AI_KEY` | Provider API key (blank for auth-less local proxy) |
-| `DFIR_AI_BASE_URL` | Override API base URL (for LiteLLM or OpenAI-compatible endpoints) |
-| `DFIR_AI_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
+| `DFIR_VISION_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` (unset = capture-only) |
+| `DFIR_VISION_MODEL` | Model id (must support vision for screenshot extraction) |
+| `DFIR_VISION_KEY` | Provider API key (blank for auth-less local proxy) |
+| `DFIR_VISION_BASE_URL` | Override API base URL (for LiteLLM or OpenAI-compatible endpoints) |
+| `DFIR_VISION_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
 | **AI — text model (optional two-tier)** | — |
-| `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for ALL text work — CSV extraction, log triage, findings/MITRE/attacker path (unset = reuses `DFIR_AI_MODEL`). `DFIR_AI_MODEL` itself is the vision model: screenshots only. |
+| `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for ALL text work — CSV extraction, log triage, findings/MITRE/attacker path (unset = reuses `DFIR_VISION_MODEL`). `DFIR_VISION_MODEL` itself is the vision model: screenshots only. |
 | **AI — Velociraptor VQL generation** | — |
 | `DFIR_AI_VELO_PROVIDER` / `_MODEL` / `_KEY` | Dedicated model for VQL hunts (many models botch VQL) |
 | **AI — second LLM opinion** | — |
@@ -76,20 +76,22 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_AI_SYNTH_THINKING_TOKENS` | **Chain-of-Thought** budget for synthesis (#121); off by default, set ≥1024 to let the model reason step-by-step before findings (Anthropic extended thinking / OpenRouter `reasoning`). Per-run alternative: the dashboard **🧠 deep** checkbox (no restart; covers AI Re-synthesize + 2nd opinion) |
 | `DFIR_AI_CONTEXT_TOKENS` | Model context window; default 128000 (raise for Claude 200k/Gemini 1M) |
 
+> The five screenshot/vision vars (`DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` / `DFIR_VISION_IMAGE_DETAIL`) were renamed from the `DFIR_AI_*` prefix; the legacy `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY` / `DFIR_AI_BASE_URL` / `DFIR_AI_IMAGE_DETAIL` names still work as a deprecated fallback (the new name wins when both are set).
+
 Local models via **LiteLLM**: run [LiteLLM](https://docs.litellm.ai/) as a local gateway
 in front of Ollama / vLLM / any of its 100+ backends — it speaks the OpenAI chat-completions
 API, so the companion talks to it natively. Start the proxy (`litellm --model ollama/llama3.1`,
-default port `4000`), then set `DFIR_AI_PROVIDER=litellm` and `DFIR_AI_MODEL=<your proxy model>`.
-The `litellm` provider defaults `DFIR_AI_BASE_URL` to `http://localhost:4000/v1`; set that var
-only to change the host/port (e.g. a proxy on another box). Leave `DFIR_AI_KEY` blank for an
+default port `4000`), then set `DFIR_VISION_PROVIDER=litellm` and `DFIR_VISION_MODEL=<your proxy model>`.
+The `litellm` provider defaults `DFIR_VISION_BASE_URL` to `http://localhost:4000/v1`; set that var
+only to change the host/port (e.g. a proxy on another box). Leave `DFIR_VISION_KEY` blank for an
 auth-less proxy, or set it to the proxy's master/virtual key. Screenshot extraction needs a
 **multimodal** model; text-only models still drive CSV/log/synthesis (pair them via the two-tier
 `DFIR_AI_SYNTH_*` vars). Keeping everything on-box means evidence never leaves your network.
 
 Direct local **Ollama** (no proxy): Ollama already serves a native OpenAI-compatible API, so you
-can skip LiteLLM entirely — set `DFIR_AI_PROVIDER=ollama`, `DFIR_AI_BASE_URL=http://localhost:11434/v1`,
-and `DFIR_AI_MODEL` to a pulled model (a **vision** model such as `llama3.2-vision` for screenshot
-extraction). Leave `DFIR_AI_KEY` blank — Ollama ignores it. *Without* `DFIR_AI_BASE_URL` the `ollama`
+can skip LiteLLM entirely — set `DFIR_VISION_PROVIDER=ollama`, `DFIR_VISION_BASE_URL=http://localhost:11434/v1`,
+and `DFIR_VISION_MODEL` to a pulled model (a **vision** model such as `llama3.2-vision` for screenshot
+extraction). Leave `DFIR_VISION_KEY` blank — Ollama ignores it. *Without* `DFIR_VISION_BASE_URL` the `ollama`
 provider targets hosted Ollama Cloud (`https://ollama.com/v1`), which does need a key.
 
 Self-hosted enrichment TLS: if your **MISP**, **YETI**, or **OpenCTI** instance presents an internal-CA
@@ -127,10 +129,10 @@ via an injected undici dispatcher; VirusTotal/AbuseIPDB and the AI calls keep th
 | `--reset` | Start from an empty state before analyzing (otherwise merges into existing). | off |
 | `--all` | Include duplicate screenshots too (most thorough; more API calls). Otherwise only non-duplicates. | off |
 | `--window N` | Screenshots per AI call. | `4` |
-| `--provider NAME` | Override `DFIR_AI_PROVIDER` (extraction model) for this run. | from `.env` |
-| `--model ID` | Override `DFIR_AI_MODEL` (extraction model) for this run. | from `.env` |
-| `--key KEY` | Override `DFIR_AI_KEY` for this run. | from `.env` |
-| `--base-url URL` | Override `DFIR_AI_BASE_URL` (e.g. a local LiteLLM proxy) for this run. | from `.env` |
+| `--provider NAME` | Override `DFIR_VISION_PROVIDER` (extraction model) for this run. | from `.env` |
+| `--model ID` | Override `DFIR_VISION_MODEL` (extraction model) for this run. | from `.env` |
+| `--key KEY` | Override `DFIR_VISION_KEY` for this run. | from `.env` |
+| `--base-url URL` | Override `DFIR_VISION_BASE_URL` (e.g. a local LiteLLM proxy) for this run. | from `.env` |
 | `--synth-model ID` | Use a **different (stronger) model for the synthesis pass** — findings / MITRE / attacker path. Per-screenshot extraction still uses `--model`. | = extraction model |
 | `--synth-provider NAME` / `--synth-key KEY` / `--synth-base-url URL` | Provider/key/base-URL for the synthesis model (if different). | = extraction provider/key/base-URL |
 | `--no-synthesis` | Skip the final synthesis pass (raw forensic timeline only, no findings/attacker path). | off |
@@ -656,7 +658,7 @@ always contain the real data ("tokenize-in-transit").
   it is sent: words matching the case entity set are covered with opaque black rectangles in
   an **in-memory** copy. The original screenshot files on disk are never modified. OCR is
   best-effort, so the dashboard still warns when anon is on and the vision model is external.
-  Pointing `DFIR_AI_MODEL` at a local Ollama vision model keeps screenshots on-box and skips
+  Pointing `DFIR_VISION_MODEL` at a local Ollama vision model keeps screenshots on-box and skips
   OCR entirely.
   - **Visibility:** a one-line `[OCR] case=… redaction ran on N screenshot(s) — scrubbed M
     word(s)…` is logged whenever the pre-pass runs (so you can tell the redacted path ran vs.
@@ -688,7 +690,7 @@ high-volume part (one AI call per few screenshots) — use a cheap vision model 
 Synthesis is a single text-only call over the whole timeline — point a stronger model
 at just that. Configure it once in `.env`:
 
-    DFIR_AI_MODEL=openai/gpt-4o-mini          # extraction (cheap, reads every screenshot)
+    DFIR_VISION_MODEL=openai/gpt-4o-mini          # extraction (cheap, reads every screenshot)
     DFIR_AI_SYNTH_MODEL=google/gemini-2.5-pro # synthesis (strong, one text-only call)
 
 …then just `npm run reanalyze -- <caseId> --reset`. Or set it ad-hoc on the CLI
@@ -725,7 +727,7 @@ Screenshots are captured **lossless** (PNG) at the browser's full viewport resol
 hostnames and domains usually come from (1) the vision model downscaling large images,
 and (2) model OCR strength. Mitigations:
 
-- `DFIR_AI_IMAGE_DETAIL=high` (default) tiles images at full resolution for OpenAI/
+- `DFIR_VISION_IMAGE_DETAIL=high` (default) tiles images at full resolution for OpenAI/
   OpenRouter models instead of downscaling — the biggest single accuracy win.
 - Use a stronger vision model for text-heavy forensic screenshots, e.g.
   `openai/gpt-4o` or `google/gemini-2.5-pro` rather than a fast/cheap flash model.

@@ -1585,11 +1585,12 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
-  // Whether a TEXT/synthesis provider is available — the gate for text-only AI features (starred
-  // report, view summary, …). Mirrors how those methods resolve their provider
-  // (`synthesisProvider ?? provider`): DFIR_AI_SYNTH_PROVIDER falls back to DFIR_AI_PROVIDER, so this
-  // is true whenever EITHER is configured. Distinct from hasAiProvider(), which reflects the VISION
-  // provider (DFIR_AI_PROVIDER only) used for screenshot/OCR analysis.
+  // True when TEXT work (synthesis, ask/explain, summaries, hunts, CSV/log triage, starred report,
+  // view summary, …) can run. Mirrors how those methods resolve their provider
+  // (`synthesisProvider ?? provider`): DFIR_AI_SYNTH_PROVIDER falls back to the vision provider
+  // (DFIR_VISION_PROVIDER), so this is true whenever EITHER is configured. Route gates for text-only
+  // AI features must use this — NOT hasAiProvider(), which reflects only the screenshot/vision
+  // provider and is false in an OCR-less install (synthesis provider set, vision provider unset).
   hasSynthesisProvider(): boolean {
     return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
   }

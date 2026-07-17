@@ -867,7 +867,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const synthInFlight = new Set<string>();
 
   function scheduleSynthesis(caseId: string): void {
-    if (!autoSynth || !options.pipeline || !hasAiProvider()) return;
+    // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
+    // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
+    // DFIR_AI_SYNTH_PROVIDER set) must still auto-synthesize after imports.
+    if (!autoSynth || !options.pipeline || !options.pipeline.hasSynthesisProvider()) return;
     const existing = synthTimers.get(caseId);
     if (existing) clearTimeout(existing);
     synthTimers.set(caseId, setTimeout(() => {
@@ -2216,7 +2219,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function resynthesizeInBackground(caseId: string): void {
     const pipeline = options.pipeline;
     if (!pipeline) return;
-    if (!hasAiProvider()) { autoEnrichIfEnabled(caseId); return; }
+    // synthesize() is TEXT work — gate on the synthesis provider (which falls back to the vision
+    // provider), not hasAiProvider(): an OCR-less install (only DFIR_AI_SYNTH_PROVIDER set) must
+    // still re-synthesize after imports/mutations.
+    if (!pipeline.hasSynthesisProvider()) { autoEnrichIfEnabled(caseId); return; }
     void (async () => {
       // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
       // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
@@ -2422,6 +2428,7 @@ import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js
 import { makeImageLoader } from "./analysis/imageLoader.js";
 import { ProviderRegistry, ProviderError } from "./providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "./providers/provider.js";
+import { visionEnv } from "./config/aiEnv.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { OpenRouterProvider } from "./providers/openrouter.js";
 import { OllamaCloudProvider } from "./providers/ollama.js";
@@ -2478,23 +2485,26 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
 }
 
 export function buildProvider(): AnalyzeProvider | undefined {
+  // Vision/screenshot model — DFIR_VISION_* (legacy DFIR_AI_* still honored via visionEnv).
   return buildProviderFrom({
-    provider: process.env.DFIR_AI_PROVIDER,
-    model: process.env.DFIR_AI_MODEL,
-    apiKey: process.env.DFIR_AI_KEY,
-    baseUrl: process.env.DFIR_AI_BASE_URL,
-    imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
+    provider: visionEnv(process.env, "PROVIDER"),
+    model: visionEnv(process.env, "MODEL"),
+    apiKey: visionEnv(process.env, "KEY"),
+    baseUrl: visionEnv(process.env, "BASE_URL"),
+    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
 
 // Synthesis model: dedicated DFIR_AI_SYNTH_* vars, falling back to the main model.
 export function buildSynthesisProvider(): AnalyzeProvider | undefined {
+  // Text model — DFIR_AI_SYNTH_*, falling back to the vision model's config (DFIR_VISION_*, legacy
+  // DFIR_AI_* via visionEnv) when a dedicated synth var is unset.
   return buildProviderFrom({
-    provider: process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER,
-    model: process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL,
-    apiKey: process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY,
-    baseUrl: process.env.DFIR_AI_SYNTH_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
-    imageDetail: process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined,
+    provider: process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER"),
+    model: process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL"),
+    apiKey: process.env.DFIR_AI_SYNTH_KEY ?? visionEnv(process.env, "KEY"),
+    baseUrl: process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
+    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
 
@@ -2507,10 +2517,10 @@ export function buildSecondOpinionProvider(): AnalyzeProvider | undefined {
   const model = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim();
   if (!model) return undefined;
   return buildProviderFrom({
-    provider: process.env.DFIR_AI_SECOND_OPINION_PROVIDER ?? process.env.DFIR_AI_PROVIDER,
+    provider: process.env.DFIR_AI_SECOND_OPINION_PROVIDER ?? visionEnv(process.env, "PROVIDER"),
     model,
-    apiKey: process.env.DFIR_AI_SECOND_OPINION_KEY ?? process.env.DFIR_AI_KEY,
-    baseUrl: process.env.DFIR_AI_SECOND_OPINION_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
+    apiKey: process.env.DFIR_AI_SECOND_OPINION_KEY ?? visionEnv(process.env, "KEY"),
+    baseUrl: process.env.DFIR_AI_SECOND_OPINION_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
   });
 }
 
@@ -2525,8 +2535,8 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
   return buildProviderFrom({
     provider: process.env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
     model: process.env.DFIR_AI_VELO_MODEL?.trim() || DEFAULT_VELO_MODEL,
-    apiKey: process.env.DFIR_AI_VELO_KEY ?? process.env.DFIR_AI_KEY,
-    baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? process.env.DFIR_AI_BASE_URL,
+    apiKey: process.env.DFIR_AI_VELO_KEY ?? visionEnv(process.env, "KEY"),
+    baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
   });
 }
 
@@ -2996,13 +3006,13 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
   const secondOpinionProvider = buildSecondOpinionProvider(); // dedicated second-opinion model (#116)
   // Model labels for the second-opinion comparison header (fall back to provider name in the pipeline).
-  const synthesisModelLabel = process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL ?? undefined;
+  const synthesisModelLabel = process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? undefined;
   const secondOpinionModelLabel = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim() || undefined;
   if (secondOpinionProvider) logLine(`[second-opinion] enabled — model "${secondOpinionModelLabel}" (${secondOpinionProvider.name})`);
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
-  const visionIsLocalForPipeline = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
+  const visionIsLocalForPipeline = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,

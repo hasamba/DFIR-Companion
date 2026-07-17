@@ -11,6 +11,7 @@
 // Exit codes: 0 = all pass (or real-mode skipped), 1 = a gate failed, 2 = a runner error.
 
 import { config as loadDotenv } from "dotenv";
+import { visionEnv } from "../../src/config/aiEnv.js";
 import { runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider, realProviderOrNull } from "./harness.js";
 import {
   scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis,
@@ -76,11 +77,11 @@ async function main(): Promise<void> {
     loadDotenv({ quiet: true });
     const provider = realProviderOrNull();
     if (!provider) {
-      console.log("eval --real: no AI provider configured (set DFIR_AI_PROVIDER / DFIR_AI_KEY) — skipped.");
+      console.log("eval --real: no AI provider configured (set DFIR_AI_SYNTH_* or DFIR_VISION_*) — skipped.");
       process.exit(0);
     }
     // Report the TEXT model — that's what realProviderOrNull() resolves and what these fixtures grade.
-    const model = process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL ?? "(default)";
+    const model = process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? "(default)";
     console.log(`eval --real: provider ${provider.name}, model ${model}\n`);
     extractionProvider = synthesisProvider = () => provider;
     override = REAL_THRESHOLDS;

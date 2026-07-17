@@ -18,7 +18,7 @@ import type { RouteContext } from "./context.js";
  * integration domains and stay in createApp.
  */
 export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, serverLogger, hasAiProvider, ingestStreamed } = ctx;
+  const { store, options, serverLogger, ingestStreamed } = ctx;
 
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved call
   // sites stay verbatim.
@@ -46,7 +46,7 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
     const kind = ctx.resolveImportKind()(filename, text);
     if (kind === "unknown") return res.status(400).json({ error: "could not detect the payload type — not recognized as any supported import shape" });
-    if ((kind === "csv" || kind === "log") && !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
+    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
 
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);

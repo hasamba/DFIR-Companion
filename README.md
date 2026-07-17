@@ -421,7 +421,7 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    git clone https://github.com/hasamba/DFIR-Companion.git
    cd DFIR-Companion/companion
    npm install
-   cp .env.example .env      # set DFIR_AI_PROVIDER / MODEL / KEY (or leave AI off)
+   cp .env.example .env      # set DFIR_VISION_PROVIDER / MODEL / KEY (or leave AI off)
    npm run dev               # serves http://127.0.0.1:4773  (dashboard at /dashboard)
    ```
 
@@ -572,33 +572,35 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DFIR_AI_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic`; unset = capture-only |
-| `DFIR_AI_MODEL` | — | Model id (e.g. `gpt-4o-mini`, `gemini-2.5-flash`); **must support vision** for screenshot extraction |
-| `DFIR_AI_KEY` | — | Provider API key; leave blank for an auth-less local proxy |
-| `DFIR_AI_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
+| `DFIR_VISION_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic`; unset = capture-only |
+| `DFIR_VISION_MODEL` | — | Model id (e.g. `gpt-4o-mini`, `gemini-2.5-flash`); **must support vision** for screenshot extraction |
+| `DFIR_VISION_KEY` | — | Provider API key; leave blank for an auth-less local proxy |
+| `DFIR_VISION_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
 | `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
 | `DFIR_AI_SYNTH_MAX_EVENTS` | `300` | Cap on forensic events sent to synthesis; Critical/High always get a finding regardless |
 | `DFIR_REPORT_SYNTH_COVERAGE` | _(off)_ | Set truthy to add a **§3.4 Synthesis coverage** footnote to the report — "considered N of M in-window events (K omitted: budget/filtered)", the token estimate, and how many high-severity omissions the safety-net backfill recovered. The dashboard synth-meta card always shows this line; this flag only controls whether it also appears in the exported report |
 | `DFIR_AI_CONTEXT_TOKENS` | `128000` | Model context window; raise for Claude/Gemini (200k/1M) to send more per call |
-| `DFIR_AI_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
+| `DFIR_VISION_IMAGE_DETAIL` | `high` | `high` \| `low` \| `auto` (OpenAI/OpenRouter); `high` tiles at full res for small-text OCR |
 | `DFIR_AI_AUTO_SYNTHESIZE` | `on` | Re-synthesize during capture: `on` \| `off` |
 | `DFIR_AI_AUTO_SYNTHESIZE_MS` | `8000` | Debounce window before auto-synthesis fires (ms) |
 | `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
 | `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
 
+> The screenshot/vision vars above (`DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` / `DFIR_VISION_IMAGE_DETAIL`) were renamed from the `DFIR_AI_*` prefix; the legacy `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY` / `DFIR_AI_BASE_URL` / `DFIR_AI_IMAGE_DETAIL` names still work as a deprecated fallback (the new name wins when both are set).
+
 ### AI — text model (two-tier, optional)
 
-The split is **vision vs text**: `DFIR_AI_MODEL` reads screenshots (must be multimodal); the `DFIR_AI_SYNTH_*` model does **all text work** — CSV extraction, log triage, synthesis, ask/explain. If unset, text work reuses `DFIR_AI_MODEL`.
+The split is **vision vs text**: `DFIR_VISION_MODEL` reads screenshots (must be multimodal); the `DFIR_AI_SYNTH_*` model does **all text work** — CSV extraction, log triage, synthesis, ask/explain. If unset, text work reuses `DFIR_VISION_MODEL`.
 
 Recommended: cheap vision model for screenshots, strong reasoning model for text. Don't economise on the text model — a weak one fails log triage *silently*, returning no events rather than wrong ones (`npm run eval:real` measures exactly this).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_AI_PROVIDER` | Provider for text work (CSV/log/synthesis) |
-| `DFIR_AI_SYNTH_MODEL` | = `DFIR_AI_MODEL` | Text model id — CSV/log extraction + synthesis (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
-| `DFIR_AI_SYNTH_KEY` | = `DFIR_AI_KEY` | Text-model API key |
-| `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_AI_BASE_URL` | Synthesis base URL |
+| `DFIR_AI_SYNTH_PROVIDER` | = `DFIR_VISION_PROVIDER` | Provider for text work (CSV/log/synthesis) |
+| `DFIR_AI_SYNTH_MODEL` | = `DFIR_VISION_MODEL` | Text model id — CSV/log extraction + synthesis (e.g. `gpt-4o`, `gemini-2.5-pro`, `claude-sonnet-4-6`) |
+| `DFIR_AI_SYNTH_KEY` | = `DFIR_VISION_KEY` | Text-model API key |
+| `DFIR_AI_SYNTH_BASE_URL` | = `DFIR_VISION_BASE_URL` | Synthesis base URL |
 
 ### AI — Velociraptor hunt model (optional)
 
@@ -608,8 +610,8 @@ A dedicated model used **only** to generate Velociraptor VQL hunts (the *Suggest
 |---|---|---|
 | `DFIR_AI_VELO_PROVIDER` | `openrouter` | Provider for VQL-hunt generation |
 | `DFIR_AI_VELO_MODEL` | `anthropic/claude-haiku-4.5` | Model id for VQL-hunt generation |
-| `DFIR_AI_VELO_KEY` | = `DFIR_AI_KEY` | API key (reuses the main key when blank) |
-| `DFIR_AI_VELO_BASE_URL` | = `DFIR_AI_BASE_URL` | Base URL override |
+| `DFIR_AI_VELO_KEY` | = `DFIR_VISION_KEY` | API key (reuses the main key when blank) |
+| `DFIR_AI_VELO_BASE_URL` | = `DFIR_VISION_BASE_URL` | Base URL override |
 
 ### AI — custom prompts (optional)
 
@@ -838,11 +840,11 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 Example `.env` (two-tier OpenRouter setup):
 
 ```
-DFIR_AI_PROVIDER=openrouter
-DFIR_AI_MODEL=openai/gpt-4o-mini          # cheap extraction (per screenshot)
-DFIR_AI_KEY=sk-or-...
+DFIR_VISION_PROVIDER=openrouter
+DFIR_VISION_MODEL=openai/gpt-4o-mini          # cheap extraction (per screenshot)
+DFIR_VISION_KEY=sk-or-...
 DFIR_AI_SYNTH_MODEL=google/gemini-2.5-pro # strong synthesis (one call)
-DFIR_AI_IMAGE_DETAIL=high
+DFIR_VISION_IMAGE_DETAIL=high
 ```
 
 ## npm scripts — full CLI reference
@@ -882,9 +884,9 @@ events, and attacker-path preview.
 | Arg / flag | Default | Effect |
 | --- | --- | --- |
 | `caseId` (positional) | `test1` | Case to sample screenshots from. |
-| `--provider NAME` | from `.env` | Override `DFIR_AI_PROVIDER` for this run. |
-| `--model ID` | from `.env` | Override `DFIR_AI_MODEL` for this run. |
-| `--key KEY` | from `.env` | Override `DFIR_AI_KEY` for this run. |
+| `--provider NAME` | from `.env` | Override `DFIR_VISION_PROVIDER` for this run. |
+| `--model ID` | from `.env` | Override `DFIR_VISION_MODEL` for this run. |
+| `--key KEY` | from `.env` | Override `DFIR_VISION_KEY` for this run. |
 
 ```
 npm run verify:ai
@@ -918,10 +920,10 @@ Uses your API quota (~1 call per `--window` screenshots, plus 1 synthesis call).
 | `--reset` | off | Empty the state before analyzing. Otherwise merges into existing. |
 | `--all` | off | Include duplicate screenshots too (most thorough, more API calls). |
 | `--window N` | `4` | Screenshots per AI extraction call. |
-| `--provider NAME` | from `.env` | Override `DFIR_AI_PROVIDER` (extraction). |
-| `--model ID` | from `.env` | Override `DFIR_AI_MODEL` (extraction). |
-| `--key KEY` | from `.env` | Override `DFIR_AI_KEY` (extraction). |
-| `--base-url URL` | from `.env` | Override `DFIR_AI_BASE_URL` (extraction) — e.g. a local LiteLLM proxy. |
+| `--provider NAME` | from `.env` | Override `DFIR_VISION_PROVIDER` (extraction). |
+| `--model ID` | from `.env` | Override `DFIR_VISION_MODEL` (extraction). |
+| `--key KEY` | from `.env` | Override `DFIR_VISION_KEY` (extraction). |
+| `--base-url URL` | from `.env` | Override `DFIR_VISION_BASE_URL` (extraction) — e.g. a local LiteLLM proxy. |
 | `--synth-provider NAME` | = extraction / `DFIR_AI_SYNTH_PROVIDER` | Provider for the synthesis pass. |
 | `--synth-model ID` | = extraction / `DFIR_AI_SYNTH_MODEL` | Stronger model for synthesis (findings / MITRE / attacker path). |
 | `--synth-key KEY` | = extraction / `DFIR_AI_SYNTH_KEY` | API key for the synthesis provider. |
@@ -970,10 +972,10 @@ back to the extraction model.
 | Arg / flag | Default | Effect |
 | --- | --- | --- |
 | `caseId` (positional) | `test1` | Case to synthesize. |
-| `--provider NAME` | `DFIR_AI_SYNTH_PROVIDER` ?? `DFIR_AI_PROVIDER` | Override the synthesis provider. |
-| `--model ID` | `DFIR_AI_SYNTH_MODEL` ?? `DFIR_AI_MODEL` | Override the synthesis model. |
-| `--key KEY` | `DFIR_AI_SYNTH_KEY` ?? `DFIR_AI_KEY` | Override the synthesis API key. |
-| `--base-url URL` | `DFIR_AI_SYNTH_BASE_URL` ?? `DFIR_AI_BASE_URL` | Override the synthesis base URL (e.g. a local LiteLLM proxy). |
+| `--provider NAME` | `DFIR_AI_SYNTH_PROVIDER` ?? `DFIR_VISION_PROVIDER` | Override the synthesis provider. |
+| `--model ID` | `DFIR_AI_SYNTH_MODEL` ?? `DFIR_VISION_MODEL` | Override the synthesis model. |
+| `--key KEY` | `DFIR_AI_SYNTH_KEY` ?? `DFIR_VISION_KEY` | Override the synthesis API key. |
+| `--base-url URL` | `DFIR_AI_SYNTH_BASE_URL` ?? `DFIR_VISION_BASE_URL` | Override the synthesis base URL (e.g. a local LiteLLM proxy). |
 
 ```
 # Use whatever .env says

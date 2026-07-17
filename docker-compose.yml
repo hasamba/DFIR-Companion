@@ -29,13 +29,15 @@ services:
       DFIR_PORT: "4773"
       DFIR_CASES_ROOT: "/data/cases"
       DFIR_MAX_BODY_MB: "256"
-      # --- AI analysis (optional). Leave DFIR_AI_PROVIDER unset for capture/import-only. ---
-      # DFIR_AI_PROVIDER: "openai"
-      # DFIR_AI_MODEL: "gpt-4o"
-      # DFIR_AI_KEY: "sk-replace-me"
+      # --- AI analysis (optional). Leave DFIR_VISION_PROVIDER unset for capture/import-only. ---
+      # DFIR_VISION_* is the SCREENSHOT (vision) model; DFIR_AI_SYNTH_* does all text work.
+      # (Legacy DFIR_AI_PROVIDER/MODEL/KEY/BASE_URL still work as a deprecated fallback.)
+      # DFIR_VISION_PROVIDER: "openai"
+      # DFIR_VISION_MODEL: "gpt-4o"
+      # DFIR_VISION_KEY: "sk-replace-me"
       # Reach an AI endpoint on the host (Docker Desktop): http://host.docker.internal:PORT/v1
-      # e.g. a local Ollama:  DFIR_AI_PROVIDER=ollama  DFIR_AI_BASE_URL=http://host.docker.internal:11434/v1
-      # DFIR_AI_BASE_URL: "http://host.docker.internal:11434/v1"
+      # e.g. a local Ollama:  DFIR_VISION_PROVIDER=ollama  DFIR_VISION_BASE_URL=http://host.docker.internal:11434/v1
+      # DFIR_VISION_BASE_URL: "http://host.docker.internal:11434/v1"
     # Prefer a file for config? Copy companion/.env.example to .env and uncomment:
     # env_file:
     #   - .env

@@ -31,6 +31,7 @@ import { DiscoveredEntitiesStore } from "../src/analysis/anonDiscovered.js";
 import { SynthMetaStore } from "../src/analysis/synthMeta.js";
 import { HypothesisStore } from "../src/analysis/hypothesisStore.js";
 import { buildProviderFrom } from "../src/server.js";
+import { visionEnv } from "../src/config/aiEnv.js";
 import type { CaptureMetadata } from "../src/types.js";
 
 function flag(name: string): boolean {
@@ -51,16 +52,16 @@ async function main(): Promise<void> {
   const reset = flag("reset");
   const windowSize = Math.max(1, opt("window", 4));
 
-  const imageDetail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
+  const imageDetail = visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined;
 
-  // Extraction model (per screenshot) — CLI overrides fall back to .env.
-  const provName = strOpt("provider") ?? process.env.DFIR_AI_PROVIDER;
-  const model = strOpt("model") ?? process.env.DFIR_AI_MODEL;
-  const apiKey = strOpt("key") ?? process.env.DFIR_AI_KEY;
-  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_BASE_URL;
+  // Screenshot (vision) model — CLI overrides fall back to .env (DFIR_VISION_*, legacy DFIR_AI_*).
+  const provName = strOpt("provider") ?? visionEnv(process.env, "PROVIDER");
+  const model = strOpt("model") ?? visionEnv(process.env, "MODEL");
+  const apiKey = strOpt("key") ?? visionEnv(process.env, "KEY");
+  const baseUrl = strOpt("base-url") ?? visionEnv(process.env, "BASE_URL");
   const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl, imageDetail });
   if (!provider) {
-    console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
+    console.error("No AI provider configured (DFIR_VISION_PROVIDER / --provider). Aborting.");
     process.exit(1);
   }
 

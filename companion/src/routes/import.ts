@@ -55,12 +55,14 @@ import type { RouteContext } from "./context.js";
  *   and the drop-watcher state maps dropSeen / dropScanning / dropPendingLogged (live accessors —
  *   the poller mutates the SAME maps, so they must be read live, never captured at registration).
  * Pre-existing ctx members reused: store, options, serverLogger, recordImportFailure, recordAiError,
- * hasAiProvider, getControl, runToolAndIngest, resolveImportKind + liveToolConfigs + customTools +
- * dropWatchEnabled (live accessors).
+ * getControl, runToolAndIngest, resolveImportKind + liveToolConfigs + customTools +
+ * dropWatchEnabled (live accessors). (The AI CSV/log gates ask the pipeline directly via
+ * options.pipeline.hasSynthesisProvider() — text work runs on the synthesis provider, so the
+ * vision-only ctx.hasAiProvider would wrongly 501 an OCR-less install.)
  */
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
-    store, options, recordImportFailure, recordAiError, hasAiProvider, getControl,
+    store, options, recordImportFailure, recordAiError, getControl,
     runToolAndIngest, pushImportCheckpoint, moveDropFile,
     dispatchImport, demoteForensicForCase, resynthesizeInBackground,
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
@@ -191,7 +193,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     if (kind === "unknown") {
       return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)" });
     }
-    if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
+    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
 
@@ -376,7 +378,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     if (kind === "unknown") {
       return res.status(400).json({ error: "could not detect the file type — not recognized as any supported import format" });
     }
-    if ((kind === "csv" || kind === "log") && !hasAiProvider()) {
+    if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
 
@@ -515,7 +517,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // timeline, then synthesize findings/TTPs/attacker-path. Evidence-first: the raw
   // CSV is persisted + audit-logged BEFORE any analysis; analysis runs in background.
   app.post("/cases/:id/import-csv", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
     const caseId = req.params.id;
     const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
     const originalName = String(req.body?.filename ?? "import.csv");
@@ -563,7 +565,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Same evidence-first pattern as import-csv: persist + audit, then analyze in the
   // background (line-batched). The CSV path stays specialized for tabular exports.
   app.post("/cases/:id/import-log", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for log analysis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for log analysis" });
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "import.log");

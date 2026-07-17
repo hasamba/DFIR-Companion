@@ -33,7 +33,7 @@ export function mockProvider(canned: string): MockProvider {
 // gracefully so a missing key never fails CI. dotenv is loaded by the runner.
 //
 // Deliberately the TEXT model (`buildSynthesisProvider()`, i.e. DFIR_AI_SYNTH_MODEL falling back to
-// DFIR_AI_MODEL), not `buildProvider()`: every path these fixtures exercise — analyzeCsv, analyzeLog,
+// the vision model DFIR_VISION_MODEL), not `buildProvider()`: every path these fixtures exercise — analyzeCsv, analyzeLog,
 // synthesize — runs on the text model in production. Grading the vision model here would score a model
 // production never uses for this work.
 export function realProviderOrNull(): AIProvider | undefined {

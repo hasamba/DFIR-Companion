@@ -22,6 +22,7 @@ import { DiscoveredEntitiesStore } from "../src/analysis/anonDiscovered.js";
 import { SynthMetaStore } from "../src/analysis/synthMeta.js";
 import { HypothesisStore } from "../src/analysis/hypothesisStore.js";
 import { buildProviderFrom } from "../src/server.js";
+import { visionEnv } from "../src/config/aiEnv.js";
 
 function strOpt(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -33,17 +34,16 @@ async function main(): Promise<void> {
 
   // Synthesis prefers the dedicated synth model. Precedence: CLI flag >
   // DFIR_AI_SYNTH_* > the main extraction model in .env.
-  const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? process.env.DFIR_AI_PROVIDER;
-  const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? process.env.DFIR_AI_MODEL;
-  const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? process.env.DFIR_AI_KEY;
-  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? process.env.DFIR_AI_BASE_URL;
-  const imageDetail = process.env.DFIR_AI_IMAGE_DETAIL as "high" | "low" | "auto" | undefined;
+  const provName = strOpt("provider") ?? process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER");
+  const model = strOpt("model") ?? process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL");
+  const apiKey = strOpt("key") ?? process.env.DFIR_AI_SYNTH_KEY ?? visionEnv(process.env, "KEY");
+  const baseUrl = strOpt("base-url") ?? process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL");
+  const imageDetail = visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined;
   const provider = buildProviderFrom({ provider: provName, model, apiKey, baseUrl, imageDetail });
   if (!provider) {
-    console.error("No AI provider configured (DFIR_AI_PROVIDER / --provider). Aborting.");
+    console.error("No AI provider configured (DFIR_AI_SYNTH_PROVIDER / DFIR_VISION_PROVIDER / --provider). Aborting.");
     process.exit(1);
   }
-  process.env.DFIR_AI_MODEL = model; // for the log line below
   const raw = process.env.DFIR_CASES_ROOT ?? "cases";
   const companionDir = fileURLToPath(new URL("../", import.meta.url));
   const casesRoot = isAbsolute(raw) ? raw : resolve(companionDir, raw);
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   const pipeline = new AnalysisPipeline({ provider, stateStore, falsePositiveStore: new FalsePositiveStore(store), scopeStore: new ScopeStore(store), imageLoader: makeImageLoader(store), anonStore: new AnonControlStore(store), customEntitiesStore: new CustomEntitiesStore(store), discoveredStore: new DiscoveredEntitiesStore(store), synthMetaStore: new SynthMetaStore(store), hypothesisStore: new HypothesisStore(store) });
 
   const before = await stateStore.load(caseId);
-  console.log(`Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${process.env.DFIR_AI_MODEL})…`);
+  console.log(`Synthesizing "${caseId}" from ${before.forensicTimeline.length} forensic events (provider=${provider.name} model=${model})…`);
   if (before.forensicTimeline.length === 0) {
     console.log("No forensic timeline yet — run `npm run reanalyze -- " + caseId + "` first.");
     return;

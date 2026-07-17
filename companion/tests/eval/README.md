@@ -30,13 +30,15 @@ npm run eval             # both extraction + synthesis
 npm run eval:extraction  # precision/recall per fixture
 npm run eval:synthesis   # coverage / hallucination per fixture
 
-# Phase 2 — real provider (needs DFIR_AI_PROVIDER / DFIR_AI_KEY in env or .env); non-blocking
+# Phase 2 — real provider (needs DFIR_VISION_PROVIDER / DFIR_VISION_KEY in env or .env); non-blocking
 npm run eval:real
 npm run eval:real:extraction
 npm run eval:real:synthesis
 ```
 
 Exit code `0` = all pass (or `--real` skipped for no provider), `1` = a gate failed, `2` = a runner error.
+
+> `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` were formerly `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY`; the legacy names still work as a deprecated fallback.
 
 ## Scoring model
 
@@ -59,7 +61,7 @@ Extraction quality varies enormously by model, and the harness is only a usable 
 | `google/gemini-2.5-pro` | 4/4 pass, 100% recall, stable across runs |
 | `openai/gpt-4o-mini` | flaps run-to-run (same fixture scored 0% and 100% on identical input); consistently misses the proxy-exfil case entirely |
 
-Point `--real` at a strong model via `DFIR_AI_MODEL` (it need not be the model used for day-to-day extraction). A red `--real` on a weak model is telling you about the *model*, not a prompt regression.
+Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the model used for day-to-day extraction). A red `--real` on a weak model is telling you about the *model*, not a prompt regression.
 
 **Synthesis — deterministic quality checks (no golden needed):**
 - **Coverage** — every Critical/High event is cited by ≥1 finding (else a regression).

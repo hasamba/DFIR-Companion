@@ -163,6 +163,7 @@ describe("POST /cases/:id/tagger/clear", () => {
 function appAi(suggest: (caseId: string, desc: string) => Promise<SuggestOutcome>) {
   const fakePipeline = {
     hasAiProvider: () => true,
+    hasSynthesisProvider: () => true,   // suggest-rule is TEXT work — gated on the synthesis provider
     suggestTaggerRule: suggest,
   } as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline;
   return createApp(store, {

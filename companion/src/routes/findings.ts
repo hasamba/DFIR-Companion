@@ -34,7 +34,7 @@ import type { RouteContext } from "./context.js";
  * shared back with createApp beyond one already-graduated member reused via ctx:
  *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick (owned by createApp,
  *     graduated for the import domain); the false-positive + scope mutations reuse it.
- * Plus the stable ctx surface (store, options, hasAiProvider).
+ * Plus the stable ctx surface (store, options).
  *
  * Domain-local state is rebuilt in-module from ctx.store:
  *   - falsePositives (FalsePositiveStore) — a stateless disk-backed store that just wraps ctx.store,
@@ -56,7 +56,7 @@ import type { RouteContext } from "./context.js";
  * floor, which belongs to the aiSynthesis domain, not analyst annotations).
  */
 export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, hasAiProvider, resynthesizeInBackground } = ctx;
+  const { store, options, resynthesizeInBackground } = ctx;
 
   // Domain-local stateless disk-backed stores, rebuilt from ctx.store (see module header).
   const falsePositives = new FalsePositiveStore(store);
@@ -299,7 +299,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         : findSimilarFindings(anchor as Finding, state.findings);
 
       if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
-      if (!options.pipeline || !hasAiProvider()) {
+      if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) {
         return res.status(200).json({ candidates: deterministic, aiUnavailable: true });
       }
 
