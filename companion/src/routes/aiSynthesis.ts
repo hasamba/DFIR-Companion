@@ -5,6 +5,7 @@ import { readPublicAsset } from "../serverAssets.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "../reports/reportTemplate.js";
 import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type NewHypothesis } from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
+import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -315,6 +316,107 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // TimeSketch-style Starred Events Report: ONE text-only AI call over ONLY the analyst-starred
+  // events (stars = the reserved "starred" analyst tag). Button-triggered, EPHEMERAL — review,
+  // copy, or persist via the PUT below. 400 when nothing is starred (the dashboard guards too).
+  app.post("/cases/:id/starred-report", async (req: Request, res: Response) => {
+    // Gate on the SYNTHESIS (text) provider, not hasAiProvider() (the VISION/OCR provider): this is a
+    // text-only call driven by synthesisProvider, so it must work whenever DFIR_AI_SYNTH_PROVIDER (or
+    // the DFIR_AI_PROVIDER it falls back to) is set — even if the vision provider alone is unconfigured.
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for starred report" });
+    if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
+    try {
+      const tags = await options.tagsStore.load(req.params.id);
+      const starredIds = [...new Set(tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL).map((t) => t.targetId))];
+      if (!starredIds.length) return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
+      const result = await options.pipeline.starredReport(req.params.id, starredIds);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "starred-report", detail: `starred events report generated (${result.usedEvents}/${result.eventCount} starred events)`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg === "no starred events") return res.status(400).json({ error: msg });
+      errLine(`[starred-report] case=${req.params.id}: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  // The saved copy of the starred report (a per-case side file; survives reload, overwritten on
+  // each save). GET → 404 when nothing is saved yet.
+  app.get("/cases/:id/starred-report", async (req: Request, res: Response) => {
+    if (!options.starredReportStore) return res.status(501).json({ error: "starred report store not configured" });
+    try {
+      const saved = await options.starredReportStore.load(req.params.id);
+      if (!saved) return res.status(404).json({ error: "no saved starred report" });
+      return res.status(200).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.put("/cases/:id/starred-report", async (req: Request, res: Response) => {
+    if (!options.starredReportStore) return res.status(501).json({ error: "starred report store not configured" });
+    const markdown = typeof req.body?.markdown === "string" ? req.body.markdown : "";
+    if (!markdown.trim()) return res.status(400).json({ error: "markdown is required" });
+    try {
+      const saved = { markdown, savedAt: new Date().toISOString(), eventCount: Number(req.body?.eventCount) || 0 };
+      await options.starredReportStore.save(req.params.id, saved);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "starred-report-saved", detail: "starred events report saved to case",
+      });
+      return res.status(200).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Summarize the analyst's CURRENT super-timeline view (TimeSketch's "seen events" summary):
+  // the body carries the dashboard's active filter set (same names/values as the GET
+  // /super-timeline query params). Button-triggered, EPHEMERAL — nothing is stored.
+  app.post("/cases/:id/view-summary", async (req: Request, res: Response) => {
+    // Synthesis (text) provider gate — see the starred-report route above for why this is
+    // hasSynthesisProvider() rather than the vision-provider hasAiProvider().
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for view summary" });
+    if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    const b = req.body ?? {};
+    const csv = (v: unknown): string[] => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const filters: SuperQuery = {
+      from: typeof b.from === "string" && b.from ? b.from : undefined,
+      to: typeof b.to === "string" && b.to ? b.to : undefined,
+      exclude: csv(b.exclude),
+      excludeHosts: csv(b.excludeHosts),
+      labels: csv(b.labels),
+      taggedOnly: b.tagged === true || b.tagged === "1" || b.tagged === "true",
+      starred: b.starred === true || b.starred === "1" || b.starred === "true",
+      search: typeof b.q === "string" ? b.q : undefined,
+      excludeText: csv(b.excludeText),
+    };
+    try {
+      // Tag label map — same construction as the GET /super-timeline route, so labels=/starred
+      // filter by the case's analyst tags here too.
+      let tagLabelMap: Record<string, string[]> | undefined;
+      if (options.tagsStore) {
+        const tags = await options.tagsStore.load(req.params.id);
+        tagLabelMap = {};
+        for (const t of tags) {
+          if (t.targetType !== "event") continue;
+          (tagLabelMap[t.targetId] ??= []).push(t.label);
+        }
+      }
+      const result = await options.pipeline.viewSummary(req.params.id, filters, tagLabelMap);
+      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        category: "ai", action: "view-summary", detail: `view summary generated (${result.usedEvents}/${result.eventCount} matching events)`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg === "no events match the current filters") return res.status(400).json({ error: msg });
+      errLine(`[view-summary] case=${req.params.id}: ${msg}`);
+      return res.status(500).json({ error: msg });
     }
   });
 
