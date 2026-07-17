@@ -60,3 +60,61 @@ export function iocKind(type: string): IocKind | undefined {
     default: return undefined;
   }
 }
+
+// Thrown by a provider on HTTP 429 instead of a plain Error, so callers can distinguish
+// "back off and retry" from a hard failure (auth, network) that should surface immediately.
+// Carries the server's Retry-After (parsed to ms) when it sent one.
+export class RateLimitError extends Error {
+  readonly retryAfterMs?: number;
+  constructor(message: string, retryAfterMs?: number) {
+    super(message);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+// Retry-After is either a whole number of seconds, or an HTTP-date. Returns ms, or undefined
+// when absent/unparseable (caller falls back to its own backoff schedule).
+export function parseRetryAfterMs(header: string | null | undefined, nowMs = Date.now()): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
+}
+
+export interface RetryPolicy {
+  retries?: number;       // additional attempts after the first (default 2)
+  backoffMs?: number;     // base backoff before the first retry (default 1000, doubles each attempt)
+  maxBackoffMs?: number;  // cap on the computed backoff, before jitter (default 30_000)
+}
+
+export interface RetryRunOptions extends RetryPolicy {
+  sleep?: (ms: number) => Promise<void>;  // injectable delay (tests pass a no-op)
+  random?: () => number;                  // injectable jitter source (default Math.random), returns [0, 1)
+}
+
+// Retries `fn` when it throws a RateLimitError, waiting the server's Retry-After if it gave
+// one, else an exponential backoff — with a bit of jitter either way so parallel callers
+// hitting the same limit don't all retry in lockstep. Any other error (auth, network, a
+// provider's plain "not found") is NOT retried — it should surface to the caller immediately.
+export async function withRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryRunOptions = {}): Promise<T> {
+  const retries = opts.retries ?? 2;
+  const backoffMs = opts.backoffMs ?? 1000;
+  const maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const random = opts.random ?? Math.random;
+
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!(err instanceof RateLimitError) || attempt >= retries) throw err;
+      const base = err.retryAfterMs ?? Math.min(maxBackoffMs, backoffMs * 2 ** attempt);
+      const jitter = base * 0.2 * random();   // 0–20% extra, never below the requested wait
+      await sleep(Math.round(base + jitter));
+      attempt++;
+    }
+  }
+}

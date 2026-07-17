@@ -396,6 +396,9 @@ export interface AppOptions {
   enrichmentProviders?: EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichProviderDelayMs?: Record<string, number>;  // per-provider throttle overrides (keyed by provider.name)
+  enrichJitterMs?: number;          // ± random jitter added to the inter-call wait (#78)
+  enrichRetries?: number;           // retry attempts for a provider call that hits a 429 (#78)
+  enrichRetryBackoffMs?: number;    // base backoff before the first 429 retry, doubles each attempt (#78)
   enrichMaxIocs?: number;
   // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
   // sent to breach-data providers. IOC domains are never queried here.
@@ -2125,6 +2128,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         providers,
         delayMs: options.enrichDelayMs,
         perProviderDelayMs: options.enrichProviderDelayMs,
+        jitterMs: options.enrichJitterMs,
+        retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
         maxIocs: options.enrichMaxIocs,
         force,
         signal: job?.signal,    // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
@@ -2160,6 +2165,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
           check: (p, c) => rocky.checkParentChild(p, c),
           delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
+          jitterMs: options.enrichJitterMs,
+          retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
           maxChecks: options.enrichMaxIocs,
           force,
         });
@@ -3127,6 +3134,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichProviderDelayMs: buildEnrichProviderDelayMap(),
+    // #78: ± jitter on the inter-call wait, and bounded retry-with-backoff on a 429 (honouring
+    // Retry-After) instead of a single rate-limit hit aborting the lookup.
+    enrichJitterMs: Number(process.env.DFIR_ENRICH_JITTER_MS) || undefined,
+    enrichRetries: Number(process.env.DFIR_ENRICH_RETRIES) || undefined,
+    enrichRetryBackoffMs: Number(process.env.DFIR_ENRICH_RETRY_BACKOFF_MS) || undefined,
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
     customerExposureProviders: buildCustomerExposureProviders(),
     customerExposureDelayMs: Number(process.env.DFIR_EXPOSURE_DELAY_MS) || undefined,
