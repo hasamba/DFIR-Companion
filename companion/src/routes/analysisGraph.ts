@@ -10,10 +10,10 @@ import type { RouteContext } from "./context.js";
  * demand with the same scope/legitimate filtering as the report; no AI.
  *
  *   Graphs & rankings (options.reportWriter, pure reads):
- *   - GET    /cases/:id/asset-graph              — asset ↔ IoC graph.
+ *   - GET    /cases/:id/asset-graph              — asset ↔ IoC graph. Optional ?from/?until time window (#83).
  *   - GET    /cases/:id/login-graph              — directed account→host logon graph (4624/4625, from the super-timeline).
  *   - GET    /cases/:id/login-graph/edge-events  — the events behind one login-graph edge (lazy drill-down).
- *   - GET    /cases/:id/evidence-graph           — causal evidence chain (process trees + lateral).
+ *   - GET    /cases/:id/evidence-graph           — causal evidence chain (process trees + lateral). Optional ?from/?until (#83).
  *   - GET    /cases/:id/phases                   — temporal attack phases (activity bursts).
  *   - GET    /cases/:id/beacon-candidates        — regular-interval C2 candidates (#82).
  *   - GET    /cases/:id/anomalies                — per-asset event-rate spikes (#175).
@@ -66,12 +66,20 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   // ARRAY — a blind `as string` cast would pass truthy guards and TypeError downstream.
   const s = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+  // Parse the optional ?from / ?until time-window query params (#83) shared by the asset/evidence
+  // graph reads. Returns undefined when neither bound is present, so the builders take their
+  // unfiltered path. Non-string (repeated) params narrow away to undefined and are simply ignored.
+  const timeWindow = (req: Request): { from?: string; until?: string } | undefined => {
+    const from = s(req.query.from), until = s(req.query.until);
+    return from || until ? { from, until } : undefined;
+  };
+
   // The asset ↔ IoC graph (compromised assets and the IoCs that touched each), derived on
   // demand from the current state with the same scope/legitimate filtering as the report.
   app.get("/cases/:id/asset-graph", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.assetGraph(req.params.id));
+      return res.status(200).json(await options.reportWriter.assetGraph(req.params.id, timeWindow(req)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -121,7 +129,7 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/evidence-graph", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id));
+      return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id, timeWindow(req)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

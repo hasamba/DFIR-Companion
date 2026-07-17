@@ -12,7 +12,7 @@ import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } from "./csv.js";
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
-import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
+import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
@@ -197,18 +197,20 @@ export class ReportWriter {
   }
 
   // The asset ↔ IoC graph for the case (same scope/legitimate filtering as the report),
-  // with any analyst overrides (renames, additions, suppressions) applied on top.
-  async assetGraph(caseId: string): Promise<AssetGraph> {
+  // with any analyst overrides (renames, additions, suppressions) applied on top. An optional
+  // time `window` (#83) further narrows the graph to events in that range before overrides apply.
+  async assetGraph(caseId: string, window?: TimeWindow): Promise<AssetGraph> {
     const state = await this.loadFilteredState(caseId);
-    const graph = buildAssetGraph(state);
+    const graph = buildAssetGraph(state, window);
     const overrides = this.assetOverrides ? await this.assetOverrides.load(caseId) : emptyOverrides();
     return applyAssetOverrides(graph, overrides);
   }
 
-  // The causal evidence chain graph (process trees + lateral movement) for the case,
-  // derived on demand with the same scope/legitimate filtering as the report.
-  async evidenceGraph(caseId: string): Promise<EvidenceGraph> {
-    return buildEvidenceGraph(await this.loadFilteredState(caseId));
+  // The causal evidence chain graph (process trees + lateral movement) for the case, derived on
+  // demand with the same scope/legitimate filtering as the report. An optional time `window` (#83)
+  // narrows it to events in that range.
+  async evidenceGraph(caseId: string, window?: TimeWindow): Promise<EvidenceGraph> {
+    return buildEvidenceGraph(await this.loadFilteredState(caseId), window);
   }
 
   // Temporal attack phases (bursts of activity grouped by time gap) for the case, derived on

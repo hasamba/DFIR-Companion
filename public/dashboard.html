@@ -4688,6 +4688,14 @@
     function refreshFilteredViews() {
       renderKillChain(lastFt || []);
       if (phasesData.length) renderPhases();
+      // Re-fetch the asset/evidence graphs scoped to the active time filter (#83). Only when a graph
+      // has already been loaded for the open case, so a time-range change before the graphs are opened
+      // does no needless fetch — and the swimlane brush / search dates / dwell-windows all reach here.
+      const caseId = (document.getElementById("caseId") || {}).value?.trim();
+      if (caseId) {
+        if (assetGraphData) loadAssetGraph(caseId);
+        if (evGraphData) loadEvidenceGraph(caseId);
+      }
     }
     function _updateSearchCount(shown, total) {
       const el = document.getElementById("searchMatchCount");
@@ -4992,10 +5000,20 @@
       };
     }
 
+    // The active time-window query string for the graph reads (#83). Mirrors the global timeline
+    // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
+    // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
+    function _graphTimeQuery() {
+      const p = new URLSearchParams();
+      if (filterFrom) p.set("from", filterFrom);
+      if (filterTo) p.set("until", filterTo);
+      const q = p.toString();
+      return q ? `?${q}` : "";
+    }
     function loadAssetGraph(caseId) {
       const gv = assetEnsureGV();
       if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style/positions)
-      fetch(`/cases/${caseId}/asset-graph`).then(r => r.json()).then(g => {
+      fetch(`/cases/${caseId}/asset-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
         assetGraphData = g; renderAssetGraph();
       }).catch(() => {});
     }
@@ -5440,7 +5458,7 @@
     function loadEvidenceGraph(caseId) {
       const gv = evEnsureGV();
       if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style)
-      fetch(`/cases/${caseId}/evidence-graph`).then(r => r.json()).then(g => {
+      fetch(`/cases/${caseId}/evidence-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
         evGraphData = g; renderEvidenceGraph();
       }).catch(() => {});
     }
@@ -7165,6 +7183,10 @@
       if (f) f.value = isoToUtcInput(w.start);
       if (t) t.value = isoToUtcInput(w.end);
       superPage(0);
+      // Apply the saved dwell-window as the GLOBAL time scope too (#83): zoomToTimeWindow reuses the
+      // same filterFrom/filterTo brush path the swimlane and search-bar dates use, so the asset/evidence
+      // graphs, Kill Chain and Attack Phases all narrow to the window — not just the super-timeline page.
+      zoomToTimeWindow(w.start || null, w.end || null);
     }
 
     // Transient inline confirmation next to the "Save current range" button (first line), auto-clearing

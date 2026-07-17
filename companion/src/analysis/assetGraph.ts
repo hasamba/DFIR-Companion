@@ -37,6 +37,31 @@ export interface AssetGraph {
   edges: AssetGraphEdge[];
 }
 
+// Optional time-window scope (#83): when set, only forensic events whose `timestamp` falls in
+// [from, until] contribute to the graph, so brushing a range on the swimlane (or applying a saved
+// dwell-window) narrows the asset/evidence graphs to that window. Both bounds are ISO-8601 UTC and
+// independently optional (open-ended on either side). Shared by buildAssetGraph + buildEvidenceGraph.
+export interface TimeWindow { from?: string; until?: string; }
+
+// True when an event is inside the window. Events with an unparseable/absent timestamp are KEPT —
+// mirrors the dashboard's client-side _evMatchesTimeRange ("undated → can't prove out of range →
+// keep") so the two filters agree. A null/empty window matches everything.
+function eventInWindow(e: ForensicEvent, w?: TimeWindow): boolean {
+  if (!w || (!w.from && !w.until)) return true;
+  const t = Date.parse(e.timestamp);
+  if (Number.isNaN(t)) return true;
+  if (w.from) { const f = Date.parse(w.from); if (!Number.isNaN(f) && t < f) return false; }
+  if (w.until) { const u = Date.parse(w.until); if (!Number.isNaN(u) && t > u) return false; }
+  return true;
+}
+
+// The forensic timeline narrowed to a time window (returns the same array when no window is set, so
+// the unfiltered path allocates nothing). Both graph builders funnel their timeline through this.
+export function filterTimeline(events: readonly ForensicEvent[], w?: TimeWindow): ForensicEvent[] {
+  if (!w || (!w.from && !w.until)) return events as ForensicEvent[];
+  return events.filter((e) => eventInWindow(e, w));
+}
+
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
 
@@ -107,7 +132,10 @@ export function extractAccounts(text: string): string[] {
   return [...out];
 }
 
-export function buildAssetGraph(state: InvestigationState): AssetGraph {
+export function buildAssetGraph(state: InvestigationState, window?: TimeWindow): AssetGraph {
+  // Scope the timeline first (#83); IoCs/findings are still keyed off the full state, so only those
+  // reached by an in-window event end up linked — out-of-window links simply don't form.
+  const timeline = filterTimeline(state.forensicTimeline, window);
   const iocs = state.iocs;
   const byId = new Map(iocs.map((i) => [i.id, i] as const));
   const byValue = new Map<string, IOC>();
@@ -160,7 +188,7 @@ export function buildAssetGraph(state: InvestigationState): AssetGraph {
     return [...found.values()];
   }
 
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     const assetsForEvent: GraphAsset[] = [];
     if (e.asset && e.asset.trim()) assetsForEvent.push(ensureAsset("host", e.asset.trim()));
     for (const acct of extractAccounts(e.description)) assetsForEvent.push(ensureAsset("account", acct));

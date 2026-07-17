@@ -1,5 +1,5 @@
 import type { InvestigationState, ForensicEvent, Severity } from "./stateTypes.js";
-import { extractAccounts } from "./assetGraph.js";
+import { extractAccounts, filterTimeline, type TimeWindow } from "./assetGraph.js";
 import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
 
 // Derives the EVIDENCE CHAIN GRAPH — the *causal* view of an incident, complementing the
@@ -121,7 +121,10 @@ function isPseudoAccount(acct: string): boolean {
   return PSEUDO_ACCT_DOMAIN.test(domain.trim()) || PSEUDO_ACCT_USER.test(user.trim());
 }
 
-export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
+export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindow): EvidenceGraph {
+  // Scope the timeline to the requested window (#83) once, up front; every derivation pass below
+  // reads `timeline` instead of state.forensicTimeline, so edges/nodes only form from in-window events.
+  const timeline = filterTimeline(state.forensicTimeline, window);
   // Nodes are materialized lazily so only those that participate in ≥1 edge are emitted.
   const nodeMap = new Map<string, EvidenceNode>();
   function mergeNode(id: string, kind: EvidenceNodeKind, label: string, asset: string | undefined, eventIds: readonly string[], sev: Severity): EvidenceNode {
@@ -149,7 +152,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
   }
 
   // ── spawned: parent→child from each event's own process pair ──────────────────────────
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     if (!e.parentName || !e.processName) continue;
     const parent = e.parentName.trim(), child = e.processName.trim();
     if (!parent || !child || parent.toLowerCase() === child.toLowerCase()) continue; // skip self-spawn
@@ -166,7 +169,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
 
   // ── lateral_move (hash): same binary on ≥2 distinct hosts ─────────────────────────────
   const byHash = new Map<string, Map<string, ForensicEvent>>(); // hash -> assetLower -> a backing event
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     const h = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
     const asset = (e.asset ?? "").trim();
     if (!h || !asset) continue;
@@ -191,7 +194,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
 
   // ── lateral_move (account): same account active on ≥2 distinct hosts (account → host star) ──
   const byAccount = new Map<string, Map<string, ForensicEvent>>(); // account -> assetLower -> event
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     const asset = (e.asset ?? "").trim();
     if (!asset) continue;
     for (const acct of extractAccounts(e.description)) {
@@ -220,7 +223,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
   // the artifact visible in the graph and lets multiple writers/executors all connect through it.
   const writesByHash = new Map<string, ForensicEvent[]>();
   const execsByHash = new Map<string, ForensicEvent[]>();
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     if (!e.action) continue;
     const h = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
     if (!h) continue;
@@ -273,7 +276,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
   // ── network_flow: srcIp → dstIp:port ──────────────────────────────────────────────────
   // Requires dstIp. Source is srcIp (network node) when present, otherwise the event's asset
   // (host node — the host that made the connection). Skips if source cannot be determined.
-  for (const e of state.forensicTimeline) {
+  for (const e of timeline) {
     const dst = (e.dstIp ?? "").trim();
     if (!dst) continue;
     const srcIp = (e.srcIp ?? "").trim();
@@ -322,7 +325,7 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
   // ── kill-chain phase: tag each node with the dominant tactic of its backing events (#93) ──
   // Derived last, once every node's eventIds are final. Enables the dashboard's optional
   // color-by-kill-chain overlay without a second pass over the timeline per node.
-  const eventById = new Map<string, ForensicEvent>(state.forensicTimeline.map((e) => [e.id, e]));
+  const eventById = new Map<string, ForensicEvent>(timeline.map((e) => [e.id, e]));
   for (const n of nodeMap.values()) {
     const tac = dominantTactic(n.eventIds, eventById);
     if (tac) n.tactic = tac;
