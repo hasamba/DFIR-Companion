@@ -77,6 +77,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-anomalies",
       "sec-exposure",
       "sec-questions",
+      "sec-uncertainties",
       "sec-threads",
       "sec-mitre",
       "sec-adversary",

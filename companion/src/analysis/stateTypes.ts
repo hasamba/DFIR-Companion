@@ -271,6 +271,20 @@ export interface NextStep {
   staleReSynth?: boolean;
 }
 
+// Structured analytical-uncertainty status (issue #73). A DFIR analytical-safety guard: separates what
+// the analysis KNOWS from what it INFERRED from what it merely SPECULATED, so an inferred conclusion is
+// never read as a confirmed fact. Distinct from `hypotheses` (competing explanations to test) — an
+// uncertainty is a single claim/topic with an explicit epistemic status and the gap needed to resolve it.
+export const UNCERTAINTY_STATUSES = ["confirmed", "inferred", "speculated", "unknown"] as const;
+export type UncertaintyStatus = (typeof UNCERTAINTY_STATUSES)[number];
+
+export interface Uncertainty {
+  topic: string;              // the claim/aspect this refers to, e.g. "initial access vector"
+  status: UncertaintyStatus;  // confirmed (evidenced) | inferred | speculated | unknown
+  basis: string;              // what the current status rests on — supporting event ids / findings (prose)
+  gap: string;                // what is missing to raise the status (the collection/analysis needed)
+}
+
 export interface InvestigationState {
   caseId: string;
   findings: Finding[];
@@ -281,6 +295,7 @@ export interface InvestigationState {
   mitreTechniques: Technique[];
   keyQuestions: InvestigationQuestion[]; // standard DFIR questions + current answers
   nextSteps: NextStep[];               // AI-recommended next investigative actions, most important first
+  uncertainties: Uncertainty[];        // structured "what we know vs inferred vs speculated" ledger (#73)
   lastSummary: string;
   attackerPath: string;                // narrative reconstruction of the attacker's path
   narrativeTimeline: string;           // prose story of the incident for stakeholders (re-generated on synthesis)
@@ -302,6 +317,7 @@ export function emptyState(caseId: string): InvestigationState {
     mitreTechniques: [],
     keyQuestions: [],
     nextSteps: [],
+    uncertainties: [],
     lastSummary: "",
     attackerPath: "",
     narrativeTimeline: "",

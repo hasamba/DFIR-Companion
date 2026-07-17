@@ -4006,6 +4006,7 @@
         <div id="customerExposure">—</div>
       </div></section>
     <section id="sec-questions" style="grid-column: 1 / -1"><h2>Key Investigative Questions<span class="ev-sub">open questions the AI is tracking — answered automatically once the evidence supports them</span></h2><div id="keyQuestions">—</div></section>
+    <section id="sec-uncertainties" style="grid-column: 1 / -1"><h2>Uncertainty Ledger<span class="ev-sub">what the analysis KNOWS vs INFERRED vs SPECULATED — treat anything below Confirmed as provisional, not fact</span></h2><div id="uncertainties">—</div></section>
     <section id="sec-huntprofile" style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads<span class="ev-sub">open leads the AI tracks across re-synthesis runs — closed automatically once the evidence resolves them</span></h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2><div id="mitre">—</div></section>
@@ -14397,6 +14398,29 @@
           }).join("")
         : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
 
+      // Uncertainty ledger (#73): analytical-safety separation of known / inferred / speculated /
+      // unknown, so an inferred conclusion is never read as a confirmed fact. Weakest status first —
+      // speculated/unknown surface at the top where the open risk is.
+      const UNC_META = {
+        confirmed:  { label: "Confirmed",  color: "#6bcb77", desc: "directly evidenced" },
+        inferred:   { label: "Inferred",   color: "#ffd93b", desc: "deduced from indirect evidence" },
+        speculated: { label: "Speculated", color: "#ff9f43", desc: "plausible guess, little evidence" },
+        unknown:    { label: "Unknown",    color: "#9aa4b2", desc: "no basis yet" },
+      };
+      const UNC_ORDER = { speculated: 0, unknown: 1, inferred: 2, confirmed: 3 };
+      const unc = (state.uncertainties || []).slice().sort(
+        (a, b) => (UNC_ORDER[a.status] ?? 9) - (UNC_ORDER[b.status] ?? 9));
+      document.getElementById("uncertainties").innerHTML = unc.length
+        ? unc.map(u => {
+            const m = UNC_META[u.status] || UNC_META.unknown;
+            return `<div class="step-row" style="--step-color:${m.color}">` +
+              `<span class="step-priority" title="${esc(m.desc)}">${esc(m.label)}</span> <strong>${esc(u.topic)}</strong>` +
+              (u.basis ? `<span class="step-rationale">Basis: ${esc(u.basis)}</span>` : "") +
+              (u.gap ? `<span class="step-pointer">Gap → ${esc(u.gap)}</span>` : "") +
+              `</div>`;
+          }).join("")
+        : "<div style='color:var(--c-9aa4b2)'>Not assessed yet — run Synthesize.</div>";
+
       renderIocs(state.iocs || []);
       lastIocs = state.iocs || [];
 
@@ -17067,6 +17091,7 @@
       { id: "sec-iocs",         label: "IOCs" },
       { id: "sec-exposure",     label: "Customer Exposure" },
       { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-uncertainties", label: "Uncertainty Ledger" },
       { id: "sec-huntprofile",  label: "Hunting Profile" },
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
