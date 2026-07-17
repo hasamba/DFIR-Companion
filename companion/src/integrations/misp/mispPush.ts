@@ -1,13 +1,14 @@
 // Orchestrates a full Companion → MISP push. Find-or-create the MISP event by the case's
-// idempotency tag (`dfir-companion:case-{id}`), then push IOCs as attributes and MITRE
-// techniques from findings as tags. Idempotent: re-pushing skips attributes already present
-// in the event (deduplicated by value) and creates the event only once.
+// idempotency tag (`dfir-companion:case-{id}`), then push IOCs and the forensic timeline as
+// attributes, and MITRE techniques from findings as tags. Idempotent: re-pushing skips
+// attributes already present in the event (deduplicated by value) and creates the event only once.
 //
 // The client is injected as a structural interface so this is unit-testable with a mock (no
 // network), matching the IRIS/Timesketch push pattern.
 
-import type { InvestigationState, IOC } from "../../analysis/stateTypes.js";
+import type { ForensicEvent, InvestigationState, IOC } from "../../analysis/stateTypes.js";
 import type { MispPushClientLike, MispEventCreate, MispAttrBody } from "./mispPushClient.js";
+import { byEventTime } from "../../analysis/forensicSort.js";
 
 export interface MispPushInput {
   caseId: string;              // Companion case id — used for idempotency tag and event title
@@ -25,6 +26,7 @@ export interface MispPushResult {
   eventInfo: string;
   created: boolean;            // true = the event was newly created
   attributes: { added: number; existing: number; skipped: number };
+  timeline: { added: number; existing: number; skipped: number };
   tags: number;                // MITRE + idempotency tags attached
   eventUrl?: string;
   warnings: string[];
@@ -64,6 +66,32 @@ function mapIocType(ioc: IOC): { type: string; category: string } | null {
   }
 }
 
+// Map a forensic timeline event to a MISP attribute. MISP ships no default "timeline" object
+// template, so the event's time window is carried via the native attribute `first_seen`/
+// `last_seen` fields instead — a portable equivalent that needs no template registered on the
+// target instance. `value` embeds the timestamp + description so re-pushing the same event
+// dedupes the same way IOC attributes do (existing attribute value, case-insensitive).
+// Returns null for an unparseable timestamp (mirrors the Timesketch mapper's skip behaviour).
+function mapTimelineEvent(event: ForensicEvent): MispAttrBody | null {
+  if (Number.isNaN(Date.parse(event.timestamp))) return null;
+
+  const meta: string[] = [];
+  if (event.asset) meta.push(`asset: ${event.asset}`);
+  if (event.sources?.length) meta.push(`source: ${event.sources.join(", ")}`);
+  if (event.mitreTechniques?.length) meta.push(`mitre: ${event.mitreTechniques.join(", ")}`);
+  if (event.count && event.count > 1) meta.push(`occurrences: ${event.count}`);
+
+  return {
+    type: "text",
+    category: "Internal reference",
+    value: `[${event.timestamp}] ${event.description || "(event)"}`.slice(0, 65000),
+    to_ids: false,
+    comment: meta.join(" | ") || undefined,
+    first_seen: event.timestamp,
+    last_seen: event.endTimestamp,
+  };
+}
+
 // Collect unique MITRE technique IDs from all findings.
 function collectMitre(state: InvestigationState): string[] {
   const seen = new Set<string>();
@@ -78,6 +106,7 @@ export async function pushCaseToMisp(
 ): Promise<MispPushResult> {
   const warnings: string[] = [];
   const attributes = { added: 0, existing: 0, skipped: 0 };
+  const timeline = { added: 0, existing: 0, skipped: 0 };
   let tags = 0;
 
   // 1. Connectivity / auth (fatal — nothing works without this).
@@ -146,6 +175,28 @@ export async function pushCaseToMisp(
     }
   }
 
+  // 4b. Push the forensic timeline as attributes carrying the time window (first_seen/last_seen)
+  //     plus a description/metadata comment. Same value-based dedupe set as IOCs above, so a
+  //     re-push only adds events that aren't already on the event.
+  for (const event of [...input.state.forensicTimeline].sort(byEventTime)) {
+    const mapped = mapTimelineEvent(event);
+    if (!mapped) {
+      timeline.skipped += 1;
+      warnings.push(`timeline event skipped (unparseable timestamp): ${event.id}`);
+      continue;
+    }
+    const key = mapped.value.trim().toLowerCase();
+    if (existingValues.has(key)) { timeline.existing += 1; continue; }
+    try {
+      await client.addAttribute(eventId, mapped);
+      existingValues.add(key);
+      timeline.added += 1;
+    } catch (err) {
+      timeline.skipped += 1;
+      warnings.push(`timeline event "${event.id}": ${(err as Error).message}`);
+    }
+  }
+
   // 5. Attach MITRE technique tags (non-fatal — MISP may reject unknown tags gracefully).
   for (const tech of collectMitre(input.state)) {
     try {
@@ -161,6 +212,7 @@ export async function pushCaseToMisp(
     eventInfo,
     created,
     attributes,
+    timeline,
     tags,
     eventUrl: options.baseUrl
       ? `${options.baseUrl.replace(/\/+$/, "")}/events/view/${eventId}`

@@ -28,6 +28,9 @@ export interface MispAttrBody {
   value: string;
   category: string;
   to_ids: boolean;
+  comment?: string;      // free-text annotation, separate from `value`
+  first_seen?: string;   // ISO8601 — start of the attribute's validity/observation window
+  last_seen?: string;    // ISO8601 — end of the window (native MISP attribute fields)
 }
 
 // Structural subset of MispPushClient used by the orchestrator — lets tests pass a mock.

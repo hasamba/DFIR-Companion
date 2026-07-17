@@ -16617,6 +16617,8 @@
             document.getElementById("status").textContent =
               `MISP event #${res.eventId} ${verb}: ${res.attributes.added} attribute(s) added` +
               (res.attributes.existing ? ` (${res.attributes.existing} existing)` : "") +
+              (res.timeline ? `, ${res.timeline.added} timeline event(s) added` : "") +
+              (res.timeline && res.timeline.existing ? ` (${res.timeline.existing} existing)` : "") +
               (res.tags ? `, ${res.tags} tag(s)` : "") +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.eventUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.eventUrl)}" target="_blank" rel="noopener">Open in MISP</a>`;
