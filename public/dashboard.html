@@ -557,6 +557,9 @@
     .ev-leg-file { border-top: 2px solid var(--c-4ade80); }
     .ev-leg-net { border-top: 2px solid var(--c-38bdf8); }
     .legend-ico { vertical-align: middle; margin-right: 2px; }
+    /* Anchor the absolutely-positioned View/side panels (.lg-options/.lg-side-panel) to their own
+       graph wrap — without this they escape to the page and stay floating when you scroll away. */
+    .asset-graph-wrap { position: relative; }
     /* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
     .asset-graph-wrap:fullscreen { background: var(--c-11161d); padding: 12px; }
     .asset-graph-wrap:fullscreen .login-graph { height: calc(100vh - 90px); }

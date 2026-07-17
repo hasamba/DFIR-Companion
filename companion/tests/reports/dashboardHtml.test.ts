@@ -110,6 +110,9 @@ describe("dashboard.html", () => {
     // .asset-graph-wrap and their canvas div is .login-graph, so the sizing rule must target that
     // (a regression guard — the old rule targeted the now-removed .asset-graph class).
     expect(html).toContain(".asset-graph-wrap:fullscreen .login-graph");
+    // The absolutely-positioned View/side panels must anchor to their own graph wrap — otherwise
+    // they escape to the page and stay floating over other sections when you scroll away.
+    expect(html).toMatch(/\.asset-graph-wrap\s*\{[^}]*position:\s*relative/);
   });
 
   it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
