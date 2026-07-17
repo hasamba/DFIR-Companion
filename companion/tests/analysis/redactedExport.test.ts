@@ -4,14 +4,22 @@ import {
   resolveRedactedExportOptions,
   redactedExportPolicy,
   assembleRedactedEntries,
+  buildExportManifest,
   buildRedactionNotes,
   redactedExportFilename,
   safeArchiveName,
   DEFAULT_REDACTED_EXPORT_OPTIONS,
+  type ExportManifest,
+  type ExportManifestMeta,
   type RedactedReportContents,
   type RedactionSummary,
 } from "../../src/analysis/redactedExport.js";
+import { createHash } from "node:crypto";
 import { createAnonymizer, SECRET_PLACEHOLDER, type KnownEntities } from "../../src/analysis/anonymize.js";
+
+// Fixed provenance so the manifest tests are deterministic (the real orchestrator supplies a live
+// timestamp + app version).
+const MANIFEST_META: ExportManifestMeta = { caseId: "c1", exportedAt: "2026-01-01T00:00:00.000Z", generatedBy: "test-1.2.3" };
 
 const KNOWN: KnownEntities = {
   hosts: ["VICTIM-PC"],
@@ -90,6 +98,7 @@ describe("assembleRedactedEntries", () => {
       screenshots: [{ name: "shot-001.png", data: Buffer.from([1, 2, 3]) }],
       notes: "NOTES",
       options: DEFAULT_REDACTED_EXPORT_OPTIONS,
+      manifest: MANIFEST_META,
     });
     const paths = entries.map((e) => e.path);
     expect(paths).toContain("REDACTION-NOTES.txt");
@@ -98,16 +107,18 @@ describe("assembleRedactedEntries", () => {
     expect(paths).toContain("report/findings.csv");
     expect(paths).toContain("report/state-export.json");
     expect(paths).toContain("screenshots/shot-001.png");
+    expect(paths).toContain("export-manifest.json");
   });
 
-  it("omits sections the analyst excluded", () => {
+  it("omits sections the analyst excluded (but still writes notes + manifest)", () => {
     const entries = assembleRedactedEntries({
       contents: CONTENTS,
       screenshots: [{ name: "shot-001.png", data: Buffer.from([1]) }],
       notes: "NOTES",
       options: { includeReport: false, includeCsvs: false, includeStateJson: false, includeScreenshots: false, blurScreenshots: false },
+      manifest: MANIFEST_META,
     });
-    expect(entries.map((e) => e.path)).toEqual(["REDACTION-NOTES.txt"]);
+    expect(entries.map((e) => e.path)).toEqual(["REDACTION-NOTES.txt", "export-manifest.json"]);
   });
 
   it("never lets a screenshot filename escape the screenshots/ prefix (zip-slip)", () => {
@@ -116,10 +127,61 @@ describe("assembleRedactedEntries", () => {
       screenshots: [{ name: "../../report/report.md", data: Buffer.from([9]) }],
       notes: "NOTES",
       options: DEFAULT_REDACTED_EXPORT_OPTIONS,
+      manifest: MANIFEST_META,
     });
     const shotPaths = entries.map((e) => e.path).filter((p) => p.startsWith("screenshots/"));
     expect(shotPaths).toEqual(["screenshots/report.md"]);
     expect(shotPaths[0]).not.toContain("..");
+  });
+
+  it("appends export-manifest.json LAST, with a correct sha256/bytes for every other file", () => {
+    const entries = assembleRedactedEntries({
+      contents: CONTENTS,
+      screenshots: [{ name: "shot-001.png", data: Buffer.from([1, 2, 3]) }],
+      notes: "NOTES",
+      options: DEFAULT_REDACTED_EXPORT_OPTIONS,
+      manifest: MANIFEST_META,
+    });
+    // Manifest is the final entry and does not list itself.
+    const last = entries[entries.length - 1];
+    expect(last.path).toBe("export-manifest.json");
+    const manifest = JSON.parse(last.data.toString("utf8")) as ExportManifest;
+    expect(manifest.caseId).toBe("c1");
+    expect(manifest.exportedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(manifest.generatedBy).toBe("test-1.2.3");
+    expect(manifest.files.some((f) => f.path === "export-manifest.json")).toBe(false);
+    expect(manifest.totalFiles).toBe(entries.length - 1);
+
+    // Each manifest row matches the actual bytes/hash of its entry.
+    const byPath = new Map(entries.map((e) => [e.path, e.data]));
+    for (const f of manifest.files) {
+      const data = byPath.get(f.path)!;
+      expect(data).toBeDefined();
+      expect(f.bytes).toBe(data.length);
+      expect(f.sha256).toBe(createHash("sha256").update(data).digest("hex"));
+    }
+    expect(manifest.totalBytes).toBe(manifest.files.reduce((n, f) => n + f.bytes, 0));
+  });
+});
+
+describe("buildExportManifest", () => {
+  it("hashes each entry independently and sums totals", () => {
+    const entries = [
+      { path: "a.txt", data: Buffer.from("hello") },
+      { path: "b/c.bin", data: Buffer.from([0, 1, 2, 3]) },
+    ];
+    const m = buildExportManifest(entries, MANIFEST_META);
+    expect(m.totalFiles).toBe(2);
+    expect(m.totalBytes).toBe(9);
+    expect(m.files[0]).toEqual({
+      path: "a.txt", bytes: 5, sha256: createHash("sha256").update("hello").digest("hex"),
+    });
+    expect(m.files[1].path).toBe("b/c.bin");
+  });
+
+  it("is deterministic for the same inputs", () => {
+    const entries = [{ path: "x", data: Buffer.from("y") }];
+    expect(buildExportManifest(entries, MANIFEST_META)).toEqual(buildExportManifest(entries, MANIFEST_META));
   });
 });
 

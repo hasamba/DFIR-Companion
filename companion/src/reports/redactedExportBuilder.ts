@@ -10,6 +10,7 @@ import { createAnonymizer, deriveKnownEntities, type CustomEntity, type KnownEnt
 import { redactScreenshot, type ScreenshotRedactOptions, type ScreenshotRedactResult } from "../analysis/imageRedact.js";
 import type { OcrRunner } from "../analysis/ocrRedact.js";
 import { createZip } from "../analysis/zipArchive.js";
+import { getAppVersion } from "../version.js";
 import {
   assembleRedactedEntries,
   buildRedactionNotes,
@@ -106,7 +107,11 @@ export async function buildRedactedExport(
     metadataStripped,
   };
   const notes = buildRedactionNotes(summary);
-  const entries = assembleRedactedEntries({ contents, screenshots, notes, options });
+  const entries = assembleRedactedEntries({
+    contents, screenshots, notes, options,
+    // Provenance for the hashed export-manifest.json (#79) — mirrors the whole-case archive manifest.
+    manifest: { caseId, exportedAt: new Date().toISOString(), generatedBy: getAppVersion() },
+  });
   return { zip: createZip(entries), summary };
 }
 

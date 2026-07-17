@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { buildRedactedExport, type RedactedExportDeps } from "../../src/reports/redactedExportBuilder.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 import { DEFAULT_REDACTED_EXPORT_OPTIONS } from "../../src/analysis/redactedExport.js";
@@ -111,6 +112,33 @@ describe("buildRedactedExport", () => {
       includeReport: true, includeCsvs: false, includeStateJson: false, includeScreenshots: false, blurScreenshots: false,
     });
     const paths = readZip(zip).map((e) => e.path).sort();
-    expect(paths).toEqual(["REDACTION-NOTES.txt", "report/report.html", "report/report.md"]);
+    expect(paths).toEqual(["REDACTION-NOTES.txt", "export-manifest.json", "report/report.html", "report/report.md"]);
+  });
+
+  it("ships an export-manifest.json with a correct sha256/bytes for every other file (#79)", async () => {
+    const { zip } = await buildRedactedExport(deps(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
+    const entries = readZip(zip);
+    const manifestEntry = entries.find((e) => e.path === "export-manifest.json");
+    expect(manifestEntry).toBeDefined();
+    const manifest = JSON.parse(manifestEntry!.data.toString("utf8"));
+
+    expect(manifest.caseId).toBe("INC-1");
+    expect(typeof manifest.exportedAt).toBe("string");    // live wall-clock from the orchestrator
+    expect(new Date(manifest.exportedAt).toString()).not.toBe("Invalid Date");
+    expect(typeof manifest.generatedBy).toBe("string");
+    expect(manifest.generatedBy.length).toBeGreaterThan(0);
+
+    // Every non-manifest file is listed with a verifiable hash + byte count; the manifest excludes itself.
+    const others = entries.filter((e) => e.path !== "export-manifest.json");
+    expect(manifest.totalFiles).toBe(others.length);
+    expect(manifest.files.some((f: { path: string }) => f.path === "export-manifest.json")).toBe(false);
+    const byPath = new Map(others.map((e) => [e.path, e.data]));
+    for (const f of manifest.files) {
+      const data = byPath.get(f.path)!;
+      expect(data).toBeDefined();
+      expect(f.bytes).toBe(data.length);
+      expect(f.sha256).toBe(createHash("sha256").update(data).digest("hex"));
+    }
+    expect(manifest.totalBytes).toBe(others.reduce((n, e) => n + e.data.length, 0));
   });
 });
