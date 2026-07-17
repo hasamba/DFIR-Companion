@@ -115,6 +115,13 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/\.asset-graph-wrap\s*\{[^}]*position:\s*relative/);
   });
 
+  it("toggles the graph View panel closed on a second click (no re-open regression)", async () => {
+    const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
+    // The options-panel toggle must read purely off display==="none"; an `|| !p.style.display`
+    // fallback misread the open ("") state as hidden and re-opened instead of closing.
+    expect(mod).toContain('const show = p.style.display === "none";');
+  });
+
   it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="askInput"');

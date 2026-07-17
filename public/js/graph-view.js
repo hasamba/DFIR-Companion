@@ -146,7 +146,10 @@ export function createGraphView(opts) {
   }));
   if (c.optionsBtn && c.optionsPanel) c.optionsBtn.addEventListener("click", () => {
     const p = c.optionsPanel;
-    const show = p.style.display === "none" || !p.style.display;
+    // The panel starts hidden via inline style="display:none". Toggle purely on that: clicking
+    // View while it's open ("") must CLOSE it. (An `|| !p.style.display` fallback would read the
+    // open "" state as "hidden" and re-open instead of closing.)
+    const show = p.style.display === "none";
     if (show) {   // sync controls from view before showing
       if (c.layoutRadios) c.layoutRadios.forEach((r) => { r.checked = r.value === view.layout; });
       if (c.edgeStyleRadios) c.edgeStyleRadios.forEach((r) => { r.checked = r.value === view.edgeStyle; });
