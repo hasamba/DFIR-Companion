@@ -862,7 +862,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const synthInFlight = new Set<string>();
 
   function scheduleSynthesis(caseId: string): void {
-    if (!autoSynth || !options.pipeline || !hasAiProvider()) return;
+    // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
+    // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
+    // DFIR_AI_SYNTH_PROVIDER set) must still auto-synthesize after imports.
+    if (!autoSynth || !options.pipeline || !options.pipeline.hasSynthesisProvider()) return;
     const existing = synthTimers.get(caseId);
     if (existing) clearTimeout(existing);
     synthTimers.set(caseId, setTimeout(() => {
@@ -2211,7 +2214,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function resynthesizeInBackground(caseId: string): void {
     const pipeline = options.pipeline;
     if (!pipeline) return;
-    if (!hasAiProvider()) { autoEnrichIfEnabled(caseId); return; }
+    // synthesize() is TEXT work — gate on the synthesis provider (which falls back to the vision
+    // provider), not hasAiProvider(): an OCR-less install (only DFIR_AI_SYNTH_PROVIDER set) must
+    // still re-synthesize after imports/mutations.
+    if (!pipeline.hasSynthesisProvider()) { autoEnrichIfEnabled(caseId); return; }
     void (async () => {
       // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
       // path (AI analysis only runs when enabled for the case). With AI off, a deterministic

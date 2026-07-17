@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
+import { MockProvider } from "../../src/providers/provider.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -22,18 +23,18 @@ async function harness() {
 // /import, /import-file and /synthesize each 501 with "not configured" before they ever look at
 // caseMeta.status when options.pipeline is absent — harness() deliberately has no pipeline, so
 // those routes' own precondition gate is unreachable-proof against the archived-status guard.
-// This variant wires a real (no-AI) pipeline via buildRuntimePipeline, same as
+// This variant wires a real pipeline via buildRuntimePipeline, same as
 // tests/server/importMissingCase.test.ts, so requests clear that gate and actually reach the
-// closed/archived check under test. aiConfigured forces /synthesize's hasAiProvider() gate true
-// too, without needing a working AI provider — the archived check short-circuits before any
-// AI call would happen.
+// closed/archived check under test. A mock synthesisProvider forces /synthesize's
+// hasSynthesisProvider() gate true too, without needing a working AI provider — the archived
+// check short-circuits before any AI call would happen (the mock is never invoked).
 async function harnessWithPipeline() {
   const root = await mkdtemp(join(tmpdir(), "dfir-lifecycle-pipeline-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const commentsStore = new CommentsStore(store);
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: undefined, synthesisProvider: new MockProvider("stub", "{}"), stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { stateStore, commentsStore, pipeline, aiConfigured: true });

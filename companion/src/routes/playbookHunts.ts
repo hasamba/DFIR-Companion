@@ -36,7 +36,7 @@ import type { RouteContext } from "./context.js";
  *   - refreshVeloClients — the client-inventory refresh (already graduated for routes/velociraptor.ts);
  *                          the suggest-hunts route reuses it so a host enrolled mid-investigation is
  *                          resolvable at deploy time.
- * Plus the stable ctx surface (options, hasAiProvider).
+ * Plus the stable ctx surface (options).
  *
  * Domain-local helpers moved verbatim into the module (used only by these routes):
  *   - loadFreshHunts — load persisted #70 hunt suggestions, dropping any whose task was reworded/deleted.
@@ -46,7 +46,7 @@ import type { RouteContext } from "./context.js";
  *     state, so rebuilding them here is behaviour-identical (same singleton notifier).
  */
 export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): void {
-  const { options, hasAiProvider, refreshVeloClients, syncPlaybook, loadPlaybookControl } = ctx;
+  const { options, refreshVeloClients, syncPlaybook, loadPlaybookControl } = ctx;
 
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
@@ -151,7 +151,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   // the playbook store; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
   // Registered BEFORE /:taskId so "suggest-hunts" is not captured as a task id.
   app.post("/cases/:id/playbook/suggest-hunts", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
     if (!options.playbookStore || !options.stateStore) return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);

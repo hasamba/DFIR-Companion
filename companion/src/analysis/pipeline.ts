@@ -1525,6 +1525,14 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
+  // True when TEXT work (synthesis, ask/explain, summaries, hunts, CSV/log triage, …) can run:
+  // the dedicated synthesis provider, or the vision provider it falls back to. Route gates for
+  // text-only AI features must use this — NOT hasAiProvider(), which reflects only the
+  // screenshot/vision provider and is false in an OCR-less install (DFIR_AI_SYNTH_PROVIDER only).
+  hasSynthesisProvider(): boolean {
+    return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
+  }
+
   private requireProvider(purpose: string): AIProvider {
     if (!this.opts.provider) throw new Error(`AI provider not configured; ${purpose} requires an AI provider`);
     return this.opts.provider;

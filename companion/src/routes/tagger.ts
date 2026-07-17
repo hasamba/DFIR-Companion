@@ -23,7 +23,7 @@ import type { RouteContext } from "./context.js";
  *   - POST   /cases/:id/tagger/preview   — dry-run a candidate rule; report its match count (no writes).
  */
 export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
-  const { options, hasAiProvider } = ctx;
+  const { options } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
 
   // The active ruleset: raw YAML for the editor + a compact per-rule summary + where it came from
@@ -131,7 +131,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
   // Suggest ONE tagger rule from a plain-English description (PR #112 follow-up). AI-gated. Returns
   // a candidate for review — nothing is persisted here. Body: { description }.
   app.post("/cases/:id/tagger/suggest-rule", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for tagger rule suggestion" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for tagger rule suggestion" });
     const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
     if (!description) return res.status(400).json({ error: "description is required" });
     try {

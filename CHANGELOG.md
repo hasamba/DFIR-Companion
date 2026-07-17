@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Text AI features no longer require the screenshot/vision provider** — synthesis, ask, event explain, executive summary/remediation/narrative, hunt suggestions, CSV/log import triage, query translation, tagger-rule drafting, gap hypotheses, and auto/re-synthesis now run whenever a synthesis provider is configured (`DFIR_AI_SYNTH_PROVIDER`), instead of returning 501 in OCR-less installs where `DFIR_AI_PROVIDER` is unset.
+
 ### Added
 - **Login Graph** — new dashboard section: an interactive, Timesketch-style directed graph of Windows logon activity (accounts → hosts from super-timeline 4624/4625 rows). Draggable nodes, five layouts (spread/dagre/circle/concentric/breadthfirst), bezier/taxi edges, selection transparency, live filter, PNG export, fullscreen. Failed logons render as dashed red edges, risky logon shapes (external RDP, cleartext, `runas /netonly`) as orange, and a one-click filter hides machine/system-session account noise. Click an edge for the underlying events; click a node to pivot into the super-timeline. Fully offline (vendored cytoscape.js).
 - **Entity merging for duplicate assets/IOCs** — fold a duplicate asset or IOC onto a canonical node/indicator; reversible, and IOC merges preserve the alias across re-synthesis (closes #82).

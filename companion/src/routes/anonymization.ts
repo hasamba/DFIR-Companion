@@ -23,7 +23,7 @@ import type { RouteContext } from "./context.js";
  *   - applyDeobfuscationToCase — the shared deobfuscation sweep (owned by createApp; also fired by
  *     the push-ingest seam), graduated for the import domain and reused by POST /deobfuscate here.
  *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick, likewise graduated.
- * Plus the stable ctx surface (store, options, hasAiProvider, serverLogger).
+ * Plus the stable ctx surface (store, options, serverLogger).
  *
  * Domain-local state is rebuilt in-module from ctx.store: the three stateless disk-backed stores
  * (anonControl, customEntities, discoveredEntities) each just wrap ctx.store, so a fresh instance
@@ -38,7 +38,7 @@ import type { RouteContext } from "./context.js";
  * were intentionally left in place.
  */
 export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, hasAiProvider } = ctx;
+  const { store, options } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
@@ -79,7 +79,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         redactSecrets: typeof req.body?.redactSecrets === "boolean" ? req.body.redactSecrets : cur.redactSecrets,
       };
       await anonControl.save(req.params.id, next);
-      if (next.enabled !== cur.enabled && options.pipeline && hasAiProvider()) {
+      if (next.enabled !== cur.enabled && options.pipeline && options.pipeline.hasSynthesisProvider()) {
         void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
       }
       if (next.enabled !== cur.enabled) {
@@ -225,7 +225,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   // `platforms` is an optional analyst-chosen subset; both it and the result are bounded by the
   // server's DFIR_HUNT_PLATFORMS allowlist so a disabled platform is never generated.
   app.post("/cases/:id/translate-query", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for query translation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for query translation" });
     const request = typeof req.body?.request === "string" ? req.body.request.trim() : "";
     if (!request) return res.status(400).json({ error: "request is required" });
     const enabled = options.huntPlatforms ?? [...HUNT_PLATFORMS];

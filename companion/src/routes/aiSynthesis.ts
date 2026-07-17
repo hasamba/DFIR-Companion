@@ -36,7 +36,9 @@ import type { RouteContext } from "./context.js";
  *
  * Shared surface — reuses already-graduated ctx members; nothing new was invented beyond the two
  * graduated below:
- *   - store, options, hasAiProvider — stable ctx surface.
+ *   - store, options — stable ctx surface. (Text-AI gates ask the pipeline directly via
+ *     options.pipeline.hasSynthesisProvider(), NOT ctx.hasAiProvider — that reflects only the
+ *     screenshot/vision provider and would 501 every text feature in an OCR-less install.)
  *   - getControl / loadPlaybookControl — already-graduated stable methods, reused as-is.
  *   - captureBuffers() — the live accessor for the per-case capture buffer Map; the ai-control POST
  *     handler drops the pending buffer through it when pausing (the ONE non-verbatim rebind: the
@@ -64,7 +66,7 @@ import type { RouteContext } from "./context.js";
  *     the moved handler bodies keep their original log calls verbatim.
  */
 export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, hasAiProvider, getControl, setControl, backfill, loadPlaybookControl } = ctx;
+  const { store, options, getControl, setControl, backfill, loadPlaybookControl } = ctx;
 
   // Module-private wrappers mirroring createApp's logLine/errLine (serverLogger.info/error), so the
   // moved handler bodies keep their original `logLine(...)` / `errLine(...)` calls verbatim.
@@ -122,7 +124,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
   app.post("/cases/:id/synthesize", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
@@ -268,7 +270,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
   // no state change — returns a grounded answer + status + collection guidance (`pointer`).
   app.post("/cases/:id/ask", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for case questions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for case questions" });
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
@@ -286,7 +288,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Returns structured analysis: what happened, why it matters, ATT&CK mapping, pivot queries,
   // and evidence for/against maliciousness. Useful for junior analysts and training.
   app.post("/cases/:id/events/:eid/explain", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for event explanation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for event explanation" });
     try {
       const result = await options.pipeline.explainEvent(req.params.id, req.params.eid);
       return res.status(200).json(result);
@@ -302,7 +304,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // call). The dashboard shows it and can save it into report-meta.executiveSummary, which then
   // overrides the auto-derived summary in the generated report.
   app.post("/cases/:id/executive-summary", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for executive summary" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for executive summary" });
     if (!(await reportSectionEnabled(req.params.id, "executiveSummary")))
       return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
@@ -320,7 +322,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // case's findings + the deterministic ATT&CK mitigations. Ephemeral (no state change); the
   // dashboard renders it under the Mitigation & Defensive Countermeasures panel.
   app.post("/cases/:id/remediation-plan", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
     try {
       const result = await options.pipeline.remediationPlan(req.params.id);
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -336,7 +338,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // hypothesis's supporting vs. refuting evidence and returns an ADVISORY recommended status. Ephemeral:
   // it NEVER mutates a hypothesis (the analyst applies any recommendation via the existing PATCH route).
   app.post("/cases/:id/hypothesis-review", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hypothesis review" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hypothesis review" });
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
     try {
       const result = await options.pipeline.hypothesisReview(req.params.id);
@@ -352,7 +354,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // Generate (or regenerate) a prose narrative timeline for the case (one text-only AI call).
   // Saves the result to state.narrativeTimeline so it persists and appears in the report/dashboard.
   app.post("/cases/:id/narrative", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for narrative generation" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for narrative generation" });
     // The narrative timeline renders under report section 3.2, inside the "Timeline of events"
     // major section — so a disabled `timeline` section means the narrative won't appear; skip its
     // AI call to save tokens (issue #168). The analyst's already-saved narrative is left intact.
@@ -560,7 +562,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // wide hunt to proactively detect it. Single text-only AI call, EPHEMERAL (no state change) — the
   // dashboard shows the VQL + rationale for review, then deploys via POST /velociraptor/hunt.
   app.post("/cases/:id/adversary-hints/hunt-technique", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
     const techniqueId = String((req.body as { techniqueId?: unknown })?.techniqueId ?? "").trim();
     const techniqueName = String((req.body as { techniqueName?: unknown })?.techniqueName ?? "").trim() || undefined;
     if (!/^T\d{4}(?:\.\d{3})?$/i.test(techniqueId)) return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
@@ -579,7 +581,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // run. EPHEMERAL (no state change). Needs an AI provider; returns [] when the case has no memory
   // evidence (the dashboard hides the panel in that case).
   app.post("/cases/:id/memory/next-steps", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for memory next-step suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for memory next-step suggestions" });
     try {
       const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
       logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);

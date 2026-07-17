@@ -17,7 +17,7 @@ import type { RouteContext } from "./context.js";
  *   - POST /cases/:id/super-timeline/promote      — pull raw events up into the analyzed timeline.
  *
  * Pure structural move out of createApp (see routes/system.ts for the conventions). Nothing here is
- * shared back with createApp beyond the stable ctx surface (options, hasAiProvider, serverLogger) and
+ * shared back with createApp beyond the stable ctx surface (options, serverLogger) and
  * one already-graduated member reused via ctx:
  *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick (owned by createApp; fired
  *     here after /super-timeline/promote merges events into the forensic timeline). No new graduations.
@@ -29,7 +29,7 @@ import type { RouteContext } from "./context.js";
  * in createApp; only the timeline/super-timeline views + exports move here.
  */
 export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
-  const { options, hasAiProvider, resynthesizeInBackground } = ctx;
+  const { options, resynthesizeInBackground } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
@@ -67,7 +67,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   // collections for review, then deploys a chosen shadow-artifact collection via POST /velociraptor/hunt.
   // Needs an AI provider; does NOT need the Velociraptor API (the VQL is useful to copy even when off).
   app.post("/cases/:id/timeline-gaps/hypothesize", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for gap hypotheses" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for gap hypotheses" });
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);

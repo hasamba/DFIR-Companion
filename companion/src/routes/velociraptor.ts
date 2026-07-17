@@ -31,7 +31,7 @@ import type { RouteContext } from "./context.js";
  * /velociraptor/* and /cases/:id/velociraptor/* endpoints moved.
  */
 export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, hasAiProvider } = ctx;
+  const { store, options } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
@@ -245,7 +245,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // for review, then deploys the chosen one through POST /velociraptor/hunt (launchHunt). Needs an AI
   // provider; does NOT need the Velociraptor API (the VQL is useful to copy even when deploy is off).
   app.post("/cases/:id/velociraptor/suggest-hunts", async (req: Request, res: Response) => {
-    if (!options.pipeline || !hasAiProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
     try {
       // Optional excludeVql → regenerate a DIFFERENT take (the per-card ↻ Regenerate button), mirroring
       // the playbook-hunt regen. Absent → a normal full suggestion pass.
