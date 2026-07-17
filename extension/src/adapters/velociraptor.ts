@@ -16,6 +16,13 @@ export const velociraptorAdapter: Adapter = {
     return false;
   },
 
+  // Fallback for a self-hosted Velociraptor on an arbitrary host/port that matchUrl can't
+  // recognize (e.g. reverse-proxied off :8889 with no "velociraptor" in the hostname). The GUI's
+  // index.html always sets document.title to exactly "Velociraptor".
+  matchDom(doc: Document): boolean {
+    return /velociraptor/i.test(doc.title);
+  },
+
   apiPatterns: [
     "/api/v1/GetTable",
     "/api/v1/GetHuntResults",

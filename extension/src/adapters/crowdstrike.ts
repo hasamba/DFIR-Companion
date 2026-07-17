@@ -14,6 +14,12 @@ export const crowdstrikeAdapter: Adapter = {
     return /(crowdstrike|falcon)/i.test(url.hostname);
   },
 
+  // Fallback for a reverse-proxied / rebranded Falcon console whose hostname doesn't carry
+  // "crowdstrike"/"falcon". The console titles every page "<view> | Falcon".
+  matchDom(doc: Document): boolean {
+    return /(crowdstrike|falcon)/i.test(doc.title);
+  },
+
   apiPatterns: [
     "/detects/",
     "/alerts/",

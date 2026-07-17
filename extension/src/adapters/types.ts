@@ -16,6 +16,14 @@ export interface Adapter {
   /** True when this adapter recognizes the page (host / path / port signature). */
   matchUrl(url: URL): boolean;
   /**
+   * Optional DOM signature (title pattern, known root element ids, meta tags), tried only as a
+   * FALLBACK when no adapter's matchUrl wins — see adapterForPage() in registry.ts. Covers tools
+   * deployed behind a reverse proxy, a vanity hostname, or a custom path (e.g. Kibana at `/soc/`,
+   * a self-hosted Velociraptor on an arbitrary host) that matchUrl can't recognize (issue #76).
+   * Pure — accepts an injected Document — so it's unit-testable without a browser.
+   */
+  matchDom?(doc: Document): boolean;
+  /**
    * Regex sources (matched case-insensitively against a response URL) for the tool's data API.
    * The MAIN-world hook only forwards bodies whose URL matches one of these — so we never copy
    * unrelated traffic. Strings (not RegExp) so they survive the postMessage bridge to the page.

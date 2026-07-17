@@ -18,6 +18,11 @@ export const socratesAdapter: Adapter = {
     return /\/socrates\.html$/i.test(url.pathname);
   },
 
+  // Fallback for a reverse-proxied deployment where the socrates.html filename isn't in the path.
+  matchDom(doc: Document): boolean {
+    return /socrates/i.test(doc.title);
+  },
+
   apiPatterns: ["/api/events", "/api/sigma-alerts"],
 
   // Both endpoints return a JSON array of record objects. Return the object rows; null otherwise.

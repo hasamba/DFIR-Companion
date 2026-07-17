@@ -19,6 +19,12 @@ export const volwebAdapter: Adapter = {
     return false;
   },
 
+  // Fallback for a reverse-proxied VolWeb whose hostname/path matchUrl can't recognize. The React
+  // front end titles every page "VolWeb".
+  matchDom(doc: Document): boolean {
+    return /volweb/i.test(doc.title);
+  },
+
   apiPatterns: ["/api/evidence/\\d+/plugin/[^/]+/"],
 
   extractRows(_url: string, body: unknown): unknown[] | null {

@@ -20,6 +20,12 @@ export const securityOnionAdapter: Adapter = {
     return /^#\/(alerts|hunt|dashboards)\b/i.test(url.hash);
   },
 
+  // Fallback for SOC pages matchUrl misses — e.g. the app's initial load before the hash router
+  // has picked a view, or a reverse-proxied deployment. SOC titles every page "Security Onion".
+  matchDom(doc: Document): boolean {
+    return /security onion/i.test(doc.title);
+  },
+
   apiPatterns: ["/api/events/"],
 
   extractRows(_url: string, body: unknown): unknown[] | null {

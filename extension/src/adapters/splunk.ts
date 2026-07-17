@@ -16,6 +16,12 @@ export const splunkAdapter: Adapter = {
     return false;
   },
 
+  // Fallback for Splunk Web behind a reverse proxy / vanity host that matchUrl's host/path/port
+  // checks miss. Splunk Web titles every page "<view> | Splunk".
+  matchDom(doc: Document): boolean {
+    return /\bsplunk\b/i.test(doc.title);
+  },
+
   // Splunk results arrive via several URL patterns depending on version and deployment.
   // The v2 API (Splunk 9.x) uses /v2/jobs/<sid>/events (not /results); older builds use
   // /jobs/<sid>/results.  __raw is the direct REST pass-through; __proxy is an alternate path.
