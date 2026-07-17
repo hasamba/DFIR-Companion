@@ -442,268 +442,298 @@ Click **2nd Opinion** in the toolbar (when `DFIR_AI_SECOND_OPINION_MODEL` is con
 
 ## 9. Dashboard Panels — Reference
 
-All panels are visible by default. Some are collapsed until they have data. Use **Settings → Dashboard Views** to show/hide panels per role or phase.
+This section is a complete, panel-by-panel tour of the dashboard. For each panel you get a plain-English "what it does / what it's good for," followed by the **smart controls** in that panel — the buttons that run AI, call an external service, or apply real rule-based logic. Trivial controls (full-screen, download PNG/SVG/CSV, copy, collapse, pagination, plain sort/filter) are intentionally not listed.
+
+**How to read the "behind the button" tags:**
+
+- 🤖 **AI** — makes a call to your configured AI model.
+- ⚙ **Logic** — deterministic rules/statistics computed on your machine. No AI, no network.
+- 🌐 **Network** — calls an external service (threat-intel, Velociraptor, breach databases). Only runs when you opt in.
+
+> **Panels come and go with the data.** All panels are available, but many stay hidden until they have something to show. Use **Settings → Dashboard Views** to show/hide panels per role or investigation phase (Analyst, Lead, Executive, Triage, Report, Deep-Dive, Hunt-Prep).
 
 ### Summary bar
 
-The top of the dashboard shows:
-- Case name and investigator
-- Screenshot count and last capture time
-- Last synthesis time and what changed
-- Last import time and how many new events/IOCs it added
-- A severity summary badge (Critical / High / Medium counts)
+The strip at the very top of the dashboard. It shows the case name and investigator, the screenshot count and last capture time, the last synthesis time and what changed, the last import (how many new events/IOCs it added), and a severity summary badge (Critical / High / Medium counts). Read-only.
 
-### Findings
+---
 
-Your primary conclusions. Each finding has:
-- **Title** — what happened
-- **Severity** — Critical / High / Medium / Low / Info
-- **MITRE techniques** — linked to attack.mitre.org
-- **Supporting events** — click to jump to each event in the timeline
-- **Supporting IOCs** — the indicators that back this finding
-- **🚫 Mark False Positive** — exclude from analysis
+*The panels below are grouped the way an investigation flows: **conclusions & narrative**, then **the timeline**, then **graphs**, then **intel & hunting**, then **notes & case record**.*
 
-The finding list is sorted worst-first. Click a finding to expand it.
+---
 
-### Attack Path
+### Ask the LLM
 
-A narrative paragraph written by the AI describing the full attacker journey — from initial access through the kill chain to last known activity. Plain English.
+Free-text Q&A over the whole synthesized case. Type an investigative question in plain English ("Was data exfiltrated? Was a USB connected? When did the attacker first touch the domain controller?") and the tool answers from the case's timeline, findings, attack path, and evidence-chain graph — citing the specific events it relied on. Answers are ephemeral until you choose to keep one.
 
-### Kill Chain
-
-Shows which **Cyber Kill Chain phases** are covered by the evidence: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control, Actions on Objectives.
-
-Phases with evidence are highlighted. Gaps may indicate coverage blind spots.
-
-### Forensic Timeline
-
-The core of the investigation. A table of all forensic events, sorted by timestamp (or severity — click the column header to sort).
-
-Each row shows:
-- Timestamp
-- Severity badge (color-coded)
-- Description
-- Source tool(s) — e.g. Chainsaw, Velociraptor, SIEM
-- Asset (affected host)
-- Evidence link (click to open the screenshot or imported file)
-- `NEW` badge if added in the last import
-- **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
-- **[Decoded]** expander — for events with base64/PowerShell encoded payloads, shows the decoded content
-- **🚫 Mark False Positive** — excludes this event from analysis
-
-**Filters:**
-- **Severity** — Critical / High / Medium / Low / Info
-- **Source** — show/hide by tool (e.g. hide all Chainsaw, show only Velociraptor)
-- **Date range** — filter by time window (or use the **Scope** bar to set the investigation scope)
-- **🔍 Screenshot text** — full-text search across OCR'd screenshots
-- **Pagination** — 100 / 250 / 500 / All rows per page
-
-**Drag to scope:** drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
-
-### Attack Phases
-
-Groups the forensic timeline into temporal **bursts** — clusters of activity separated by periods of silence. Each burst is labeled with the dominant MITRE tactic (Initial Access, Execution, Persistence, etc.).
-
-This shows the *when* axis: not just what happened, but which phase of the attack was most active at what time.
-
-No AI — derived deterministically from the timeline data.
-
-### Timeline Swimlane
-
-A visual chart with:
-- **Y-axis:** compromised assets (hosts)
-- **X-axis:** time
-- **Color:** event severity
-
-Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. Exports as SVG.
-
-### Timeline Anomalies
-
-Detects assets whose event rate spikes above the per-bucket median. A sudden burst of activity from one asset stands out here.
-
-Useful for spotting data exfiltration, log flooding, or initial-access beachheads. No AI — purely statistical.
-
-Configure thresholds via `DFIR_ANOMALY_BUCKET_MINUTES`, `DFIR_ANOMALY_SPIKE_FACTOR`, `DFIR_ANOMALY_MIN_EVENTS`.
-
-### Beacon Candidates
-
-Outbound network connections that are *too regular to be human* — suggesting automated beaconing (C2 keepalives, malware checking in). Ranked by periodicity. A hunting lead, not a verdict.
-
-### MITRE ATT\&CK
-
-Shows all ATT&CK techniques identified across findings and events, grouped by tactic. Click a technique to jump to the events that evidence it.
-
-### Compromised Assets & IoC Graph
-
-A graph showing:
-- **Known compromised assets** (hosts, accounts)
-- **IoCs that touched each asset**
-
-Assets are derived from events' `asset` field plus account mentions (DOMAIN\user, UPN). Click an asset to see all events and IOCs linked to it.
-
-You can manually add assets or links using the **+** button.
-
-### Evidence Chain
-
-A causal graph showing:
-- **Process trees** (parent → child process spawns)
-- **File lineage** (file written then executed)
-- **Lateral movement** (shared hashes or accounts across hosts)
-- **Network flows** (host → IP connections)
-
-This is the "how did we get here" graph — tracing the attack path through actual artifact relationships, not just the AI narrative. No AI — derived from structured event fields.
-
-Filters: severity floor, SVG export.
-
-### IOCs (Indicators of Compromise)
-
-Every indicator extracted from all evidence:
-- IP addresses
-- Domains
-- URLs
-- File hashes (MD5, SHA-1, SHA-256)
-- File paths
-- Process names
-
-**Filters:** by type (ip/domain/url/hash/file/process/other), by flagged-only, text search.
-
-Each IOC shows:
-- **Verdict badge** — reputation from enrichment providers (malicious / suspicious / clean / unknown)
-- **Source badge** — how many tools corroborated this indicator (e.g. ⊕ 3 sources)
-- **🚫 Mark False Positive** — known-good, excludes from analysis
-- Click to run enrichment on demand
-
-### Recommended Mitigations & Defensive Countermeasures
-
-Two-part panel, fully AI-free and offline:
-
-**ATT&CK Mitigations (M-codes):** Concrete MITRE-recommended mitigations for the case's techniques, ranked by how many techniques each mitigation addresses. Start with the highest-leverage mitigation.
-
-**D3FEND Defensive Countermeasures:** MITRE D3FEND countermeasures grouped into two bands:
-- *Harden now* — Prevent, Detect, Contain actions
-- *This incident & context* — Evict, Restore, Model, Deceive actions
-
-Each entry shows the D3FEND action (plain English label like "Prevent" instead of MITRE jargon), a definition on hover, and which of the case's techniques it addresses.
-
-**✨ Generate remediation plan** button — one AI call produces an incident-specific, prioritized plan (Contain / Eradicate / Harden / Recover / Verify) grounded in the actual findings, ATT&CK mitigations, and D3FEND countermeasures. References real hosts, CVEs, and IOCs from your case.
-
-### Adversary Hints
-
-Compares the case's ATT&CK techniques against the MITRE ATT&CK Groups database to find groups with the highest technique overlap. Shows:
-- Group name, aliases, and description
-- How many techniques overlap (and which ones)
-- **Likely next techniques** — techniques that matched groups use that haven't appeared in this case yet, ranked by how distinctive they are to those groups
-
-**This is a hypothesis, not attribution.** Use it to guide hunting — if a matched group tends to pivot via RDP, that's worth looking for.
-
-Offline, no AI, no network calls at runtime. Update the underlying data with `npm run data:update-attack`.
-
-### Key Investigative Questions
-
-Open questions the AI thinks you should be pursuing based on the current evidence — gaps, unknowns, and unexplained events.
-
-### Recommended Next Steps
-
-Prioritized list of concrete investigation actions: what files to check, what hunts to run, what questions to answer. Synthesis-generated.
-
-### Ask the Case
-
-A free-text question box. Type any question in natural language:
-- "When did the attacker first access the domain controller?"
-- "What credentials were likely stolen?"
-- "List all C2 IP addresses and their first-seen times."
-
-The AI answers using the full forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths ("this process wrote a file which was executed by another process on a different host").
+- 🤖 **Ask** — one AI call grounded in the case's synthesized state. Returns a status (answered / partial / unknown), a prose answer, a "where to look" pointer, and cited event IDs. Requires a configured synthesis provider.
+- ⚙ **Add to open questions** (on each answer) — files the Q&A into **Key Investigative Questions** so future synthesis runs keep trying to answer it as evidence accumulates. A persistent state change, not just display.
 
 ### Query Translator
 
-Type a plain-English description of what you want to hunt for. Select the output query language:
-- **VQL** (Velociraptor) — can be deployed as a fleet hunt in one click
-- **KQL** (Kibana/Elastic)
-- **ES|QL** (Elasticsearch)
-- **SPL** (Splunk)
-- **Sigma** (cross-SIEM)
-- **YARA** (file/memory)
-- **Suricata** (network IDS)
+Turns a plain-English description of what you want to hunt for into runnable queries across many platforms at once. Good for when you know *what* you're looking for but not the syntax.
 
-### Investigation Threads
+- 🤖 **Translate** — one AI call that emits a schema-grounded query per selected platform (Velociraptor VQL, Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA, Suricata), each with an interpretation line and per-query caveats. Requires a synthesis provider.
+- ⚙ **Platform checkboxes** — the picker only lists platforms your server's allowlist (`DFIR_HUNT_PLATFORMS`) has enabled; only checked ones are sent to the AI.
+- 🌐 **Deploy hunt (all clients)** (Velociraptor VQL card only) — launches the generated VQL as a real fleet hunt. Enabled only when Velociraptor is configured.
 
-Open and closed investigation threads — chains of related events grouped by the AI. Useful for multi-stage attack sequences.
+### Executive Summary
 
-### Hypotheses
+Shows the case's auto-derived summary and, on demand, generates a polished, management-facing version you can review and save into the report.
 
-Status-tracked investigation hypotheses. Can be:
-- Auto-generated by AI from the evidence
-- Manually added by the analyst
-- Promoted from Analyst Notebook notes
+- 🤖 **✨ Generate** — one AI call producing management-facing prose over the synthesized case. Guarded two ways: skipped if the panel is hidden (to save tokens), and refused server-side if the report's Executive Summary section is disabled in the template. Requires a synthesis provider.
+- ⚙ **Save to report's Executive Summary** (after generating) — copies the generated text into the report metadata so it overrides the auto-generated summary in the exported report.
 
-Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hypotheses are fed into synthesis to steer the AI's analysis. Hypotheses with evidence links survive re-synthesis.
+### Playbook
 
-### Response Playbook
+An actionable remediation/investigation checklist auto-derived from the case's recommended next steps and Critical/High findings. The derivation is deterministic and idempotent: it re-syncs on every synthesis while always preserving your per-task status, assignee, due date, notes, ordering, and any custom tasks.
 
-A trackable checklist of response tasks:
-- Auto-generated from findings (Critical/High findings generate response steps)
-- Analyst-added custom tasks
+- ⚙ **↻ Sync from analysis** — re-derives tasks from the latest next-steps and high-severity findings, refreshing auto-task text but preserving your edits. No AI.
+- 🤖 **✨ Suggest Velociraptor hunts** — one AI call that proposes a VQL hunt for each endpoint-related task (a fleet hunt, or a single-host collection when the task is tied to one endpoint), each with a rationale to review before deploying. Needs a synthesis provider (not the Velociraptor API, just to view/copy the VQL).
+- ⚙ **IR templates** (checkbox) — deterministic expansion: turns each Critical/High finding into Contain → Investigate → Eradicate → Recover tasks (High → Investigate + Contain only), tailored to the finding's dominant ATT&CK tactic.
 
-Each task has: status, assignee, due date, notes.
+### Attack Path
 
-**IR Templates mode** (Settings → Velociraptor → IR Templates): expands each Critical/High finding into phase-based steps (Critical → Contain / Investigate / Eradicate / Recover; High → Investigate / Contain). The Investigate step is tailored to the finding's dominant ATT&CK tactic.
+A read-only, kill-chain-ordered narrative of how the adversary progressed (initial access → execution → persistence → … → impact), citing finding IDs and times. Produced as part of the main synthesis, not by a button here.
 
-Push the playbook to **ClickUp** with one click (toolbar → Export → Push playbook to ClickUp).
+*No smart buttons (view-only).*
 
-### Hunting Profile
+### Narrative Timeline
 
-Shows what has been hunted in this case and whether each hunt found anything:
-- Hunt title and VQL fingerprint
-- Status (hit / miss / deployed / pending)
-- Result row count and new events added to the case
-- **Re-collect** button to pull fresh results
-- **Expand** to view hunt rows inline
+Takes the Attack Path and, on demand, rewrites it into client-readable prose for stakeholders, then lets you polish the wording before it goes into a report.
 
-Used to track your hunting coverage and avoid running the same hunt twice.
+- 🤖 **✨ Generate** — one AI call that writes a prose incident narrative and saves it to case state. Guarded like Executive Summary (skipped if hidden; refused if the report's Timeline section is disabled). Requires a synthesis provider.
+- ⚙ **✏ Edit / Save** — hand-edit the narrative; Save persists the edited text (no AI). Survives until the next synthesis.
 
-### Analyst Notebook
+### Findings
 
-Free-text notes. Supports Markdown. Notes are per-case and survive re-synthesis. Notes can be promoted to Hypotheses.
+The core analyst worklist: the synthesized, deduplicated conclusions (severity, confidence, ATT&CK techniques, supporting events and IOCs), sorted worst-first. This is where you triage, pin a shortlist, filter, and reconcile a second-opinion cross-check. The findings themselves come from synthesis; the controls here are triage actions.
 
-### Investigation Log
+- ⚙ **Corroboration lens (⊕ 2+ / 3+ src)** — a view filter that shows only findings whose supporting events span at least N distinct tools/sources. Non-destructive.
+- ⚙ **🚫 Mark False Positive** (single or bulk) — excludes the finding(s) from analysis and cascades a re-synthesis that neutralizes any next-steps/answers those findings backed (they get a "stale — re-synthesis queued" badge). Marking also offers to mark similar items in the same action.
+- 🤖 **Second-opinion diff (Apply / Apply all)** — after the toolbar's **2nd Opinion** runs a *different* model as an independent cross-check, this shows where it disagrees with the primary synthesis (findings added/dropped, severity, technique) and lets you accept or reject each delta. Non-destructive until you accept.
 
-A durable log of every synthesis run — what the AI concluded each time and what changed. Useful for tracking how the investigation evolved.
+### Recommended Next Steps
+
+A prioritized list of the most valuable next investigative actions, each with a rationale and a "where to look" pointer. It's a field of the main synthesis (hidden by default — the Playbook supersedes it for tracking, but it still feeds the Playbook, report, and exports).
+
+- 🌐 **⬇ Collect on \<host\>** (per step, when the step carries a collection directive) — launches that collection on the named endpoint via Velociraptor. Rule-gated: the button only appears when Velociraptor is configured **and** the host matches a real case asset, so a hallucinated hostname never gets a deploy button (it degrades to a copyable manual-collection line).
+
+---
+
+### Forensic Timeline
+
+The case's main event feed and primary triage surface: every analyzed/promoted event with severity, source, host, MITRE mapping, and IOCs. You filter it, star/tag/comment rows, mark false positives, and drill into individual events. Rendering and most controls are driven by imported data plus the deterministic content tagger; only the per-row Explain button uses AI.
+
+- 🤖 **💡 Explain** (per row) — one AI call per click. Returns a plain-English "what happened," why it matters, normal-vs-suspicious context, an ATT&CK mapping, evidence for/against maliciousness, and suggested pivot/hunt queries. Changes no case state.
+- ⚙ **[Decoded] expander** — shows content decoded at import time by a local decoder that detects and unpacks common obfuscation (PowerShell `-enc`/`-EncodedCommand` UTF-16LE base64, `[Convert]::FromBase64String(...)`, generic base64 near an execution marker) and extracts IOCs from it. No AI, no network.
+- ⚙ **🚫 Mark False Positive** (per row / bulk) — flags the event as analyst-confirmed benign and excludes it from analysis (kept, not deleted). The exclusion propagates so every derived panel recomputes over the filtered set.
+- ⚙ **Scope bar** (1h / 24h / 7d / 30d presets, from/to, Apply, Clear) — restricts the case to a UTC time window; **Apply** re-runs synthesis using only in-window events, **Clear** restores all.
+- ⚙ **Corroboration lens (⊕ any / 2+ / 3+ src)** — shows only events seen by ≥N distinct tools. A view lens.
+- ⚙ **🔍 Screenshot text search** — plain text match against the locally-built OCR index of every ingested screenshot (built with Tesseract, on your machine). Returns one hit per matching screenshot, each linking back to the source. No AI.
+
+### Kill Chain
+
+Groups the (scoped, false-positive-filtered) timeline into ATT&CK tactic buckets — Initial Access, Execution, Persistence, and so on — via each event's technique. A quick "where in the attack lifecycle is my evidence concentrated" view; clicking a tactic card expands its events. Entirely deterministic (a hard-coded technique→tactic table). The panel itself notes this is a categorization, not a confirmed stage.
+
+*No smart buttons (view-only; tactic cards just expand).*
+
+### Attack Phases
+
+Segments the timeline into temporal **bursts** of activity — events grouped by the silent gaps between them, each phase labelled by its dominant tactic and time span. Good for seeing the attack as distinct waves rather than a flat list. Fully derived, no AI.
+
+*No smart buttons (view-only).*
+
+### Host & Account Ranking
+
+Ranks the hosts and accounts that carry the attack by a **signal score** rather than by event volume — so a quiet-but-central host outranks a noisy benign one. The score deterministically weights severity-graded events (Critical/High/Medium), the number of distinct techniques on the entity, and "connective" IOCs that tie it to others. Expanding a row shows the contributing events and IOCs. No AI.
+
+- ⚙ **⌖ Apply scope window** — when signal is concentrated on a few hosts, the panel computes a suggested time window around that activity and sets the investigation scope to it. Deterministic.
+
+### Timeline Gaps
+
+Detects suspicious silent periods in the timeline — windows where events go quiet. A complete gap, where *every* source goes dark at once, is flagged as the classic log-tampering signature. Detection is deterministic; the panel labels it a lead, not proof.
+
+- 🤖 **✨ Hypothesize gaps** — one AI call over the already-detected gaps. For each silent window it hypothesizes what the attacker likely did (from the surrounding events) and pairs it with shadow-artifact collections that could reconstruct the missing window.
+- 🌐 **▶ Deploy collection** (per hypothesized artifact) — launches the suggested shadow-artifact VQL collection to recover the missing evidence. Enabled only when Velociraptor is configured.
+
+### Evidence Gaps
+
+Answers "what is this case still missing?" It surfaces uncovered kill-chain phases (each with where/what to collect), silent windows, blind spots (sources collected but empty, or telemetry with no corroborating detector), and likely-next attacker techniques modeled from lookalike actors. Deterministic (`knownUnknowns`), surfaced once the case has a Critical/High finding. A lead, not proof.
+
+- 🌐 **⬇ Collect on \<host\>** (per uncovered phase) — shown only for a host actually seen in this case and only when Velociraptor is configured; launches the recommended collection on that host. Otherwise degrades to a manual-collection hint.
+
+### Timeline Swimlane
+
+A visual chart of the timeline: Y-axis is your chosen grouping (asset, severity, or tactic), X-axis is time, dot color is severity. Good for spotting bursts, lateral spread across hosts, and clusters at a glance. Purely a visualization of the timeline (no AI). Clicking a dot flashes the matching timeline row; dragging the time axis filters the Forensic Timeline.
+
+- ⚙ **🚫 Mark False Positive** (on box/shift-selected dots) — same exclusion action as the timeline: marks selected events benign and drops them across the derived panels.
+- ⚙ **⌖ Scope to view** — sets the investigation scope to the time range currently visible in the chart.
+
+### Super-Timeline
+
+The complete superset of **every** event ever imported from any source, *before* scope and legitimacy filtering — nothing is removed. You filter by time/origin/host/tag, triage rows (star/comment/tag), then promote the events that matter up into the analyzed Forensic Timeline where the AI synthesizes them. Filtering and the content tagger are deterministic; the panel has two AI review buttons and one AI rule-drafting helper.
+
+- ⚙ **⬆ Promote selected → forensic timeline** — copies the selected events up into the analyzed timeline so they enter synthesis. A copy operation, not an AI judgment.
+- 🤖 **✨ Starred report** — one AI call producing a report over only the starred events (the Timesketch starred-events review workflow). Needs a synthesis provider.
+- 🤖 **✨ Summarize view** — one AI call summarizing whatever the current filters show. Ephemeral. Needs a synthesis provider.
+- ⚙ **Content tagger → Run tagger** — applies content-based YAML rules (any/all/none conditions over fields like description, message, asset, path, processName, sha256, port, severity) to tag matching events; rules can also re-grade severity/view. This is the deterministic tagger that runs after import — **it is why events can carry a severity even with AI turned off.**
+- 🤖 **Content tagger → ✨ Suggest rule** — describe a rule in plain English and the AI drafts the tagger YAML for review; **Check matches** then counts how many events it would hit (deterministic, no changes) before you **Add rule**. The AI writes the rule; matching/applying is deterministic.
+
+---
+
+### Compromised Assets & IoC Graph
+
+A network graph of the case's assets (hosts and accounts) and the IOCs that touched each one, with edges showing which indicator was seen in an event on which asset. Assets/IOCs are derived automatically from findings and the timeline; you can also add nodes and links by hand. Good for seeing at a glance which machines/accounts are involved and which indicators connect them. The graph derivation is fully deterministic (the findings/IOCs it draws may have been produced by AI earlier).
+
+- ⚙ **+ Add asset** (name + type) — creates an analyst-authored node not auto-derived from the timeline. A persisted per-case overlay.
+- ⚙ **Link / Unlink asset↔IoC** — add or suppress an edge by hand, to correct or augment the auto-derived edges. (Under the hood, auto-edges are computed by matching each IOC value against event fields with digit/dot-boundary regex so `1.1.1.1` doesn't falsely match inside `11.1.1.10`.)
+
+### Login Graph
+
+A Timesketch-style directed graph of "who logged on where" — accounts point to the hosts they authenticated to, built from Windows logon events (4624 success / 4625 failure) in the super-timeline. Good for tracing lateral movement and spotting risky logons, because plain low-severity 4624 events never reach the forensic timeline but are exactly what lateral-movement analysis needs. Edges are aggregated per (account, host, logon type, outcome) with a count, first/last-seen, and a risk flag; clicking an edge fetches the underlying events. Fully deterministic — it re-parses descriptions importers already rendered; no AI, no re-import.
+
+- ⚙ **⟳ Refresh** — rebuilds the graph by re-querying the whole super-timeline. More than a refetch: it re-parses every row's rendered logon description with an injection guard (it rejects a logon marker appearing after the first ` - ` separator, so attacker-controlled command-line text can't plant a fake account→host edge).
+- ⚙ **Hide machine / system-session accounts** (checkbox) — hides nodes the server tagged as noise (machine `name$` accounts, `DWM-*`/`UMFD-*` session accounts, `ANONYMOUS LOGON`). SYSTEM / LOCAL SERVICE / NETWORK SERVICE are deliberately **not** treated as noise.
+- ⚙ **Show failed logons (4625)** (checkbox) — reveals failed-logon edges (dashed). Success/failure is parsed from the event, not AI. (Edges also turn orange for "medium risk" when a backing logon is risky — e.g. external-source RDP, cleartext, or runas /netonly.)
+
+### Evidence Chain
+
+The causal view of the incident — instead of "which IOC touched which host" (Assets) or "what happened when" (Timeline), this shows **how** it happened: process spawn trees, lateral movement, file lineage, and network flows. Every edge carries a confidence level, the rule that derived it, a human-readable basis, and backing event IDs, so each causal claim is auditable. Fully deterministic — derived on read from fields the importers already populate. No AI.
+
+- ⚙ **Process trees** (toggle) — parent→child edges from each event's `processName`/`parentName` on the same host; process nodes keyed by (asset, name) so excel→powershell→cmd chains into one tree without PID guessing.
+- ⚙ **Lateral movement** (toggle) — edges where the same binary hash appears on ≥2 hosts (high confidence) or the same account is active on ≥2 hosts (medium confidence).
+- ⚙ **File lineage** (toggle) — wrote→executed chains: a file written then executed with the same hash, with the file artifact as a middle node.
+- ⚙ **Network flows** (toggle) — directed src→dst connections (srcIp/host → dstIp:port) from Suricata/Zeek network events.
+- ⚙ **Sev (min-severity)** — declutter filter that hides nodes below the chosen severity (each node carries the worst severity of its backing events).
+
+### Beacon Candidates
+
+Surfaces periodic outbound C2-style channels — connections whose inter-arrival intervals are too regular to be human traffic. It groups outbound connections by (source host → destination IP : port) and flags tuples with low interval jitter. A hunting lead, not a verdict (legitimate software also polls on a timer) — the panel always carries that caveat. Fully deterministic statistics over network events already in the timeline; no AI, no network calls.
+
+- ⚙ **The panel is the smart output** (no smart buttons). The rule: it excludes inbound connections, requires ≥5 events per tuple (`DFIR_BEACON_MIN_COUNT`), computes the median inter-arrival interval and its median-absolute-deviation (robust stats, so a few missed check-ins don't hide a periodic channel), and flags a tuple when jitter ≤ 20% of the median (`DFIR_BEACON_MAX_JITTER_PCT`). Severity is High for a public-IP destination (likely external C2), else Medium; sorted external-first, then most-regular, then most-frequent.
+
+### Timeline Anomalies
+
+Flags assets whose event rate spikes in a time bucket — "the host that suddenly went crazy" — without reading thousands of routine rows. It uses two baselines: a **peer** baseline (an asset far busier than other assets in the same bucket) and a **self** baseline (a normally-quiet asset that bursts relative to its own history, which importing unrelated telemetry can't mask). A triage lead, not a verdict. Fully deterministic; no AI.
+
+- ⚙ **The panel is the smart output** (no smart buttons). Events are bucketed by (asset, 15-minute window — `DFIR_ANOMALY_BUCKET_MINUTES`). Peer pass flags a bucket count ≥ 5× (`DFIR_ANOMALY_SPIKE_FACTOR`) the median across other assets; self pass flags ≥ 5× (`DFIR_ANOMALY_SELF_FACTOR`) the median of the asset's own buckets. A bucket flagged by both is reported once. Severity: Critical ≥10×, High ≥7×, else Medium. Configurable via the `DFIR_ANOMALY_*` env vars.
+
+### GeoIP Map
+
+Plots the case's IP IOCs on a world map, colored by severity, using coordinates from GeoIP enrichment that was already fetched — so the map is empty until IP IOCs are enriched (map tiles load on demand from OpenStreetMap when you open it). Good for seeing where malicious infrastructure sits and drawing victim↔attacker flows. Deterministic derivation on read; no AI, no *new* enrichment calls when you open it.
+
+- ⚙ **Flows** (checkbox) — draws lines between two geo-resolved IP endpoints for src→dst pairs in the timeline, classifying each flow (by RFC1918 internal/external) as outgoing, incoming, or lateral. Off by default.
+- ⚙ **Marker color / placement** — a rule, not a filter: Critical/High → red, Medium → orange, Low → yellow, legitimate/whitelisted IPs → gray. Coordinates come from the first enrichment carrying lat/lon; if only a country is known it falls back to the country centroid and marks the marker "approximate."
+
+---
+
+### IOCs (Indicators of Compromise)
+
+Central table of every indicator (IPs, domains, hashes, URLs, files, processes) extracted from evidence, plus any you add. It layers on threat-intel verdicts, corroboration counts, provenance (detection-linked vs telemetry-only), and a composite risk tier, with lens filters to cut noise. Most controls are display-only lenses that delete nothing. This panel makes external calls **only when you explicitly enrich**; false-positive and exclude actions are local/offline.
+
+- 🌐 **🔬 Enrich** (bulk / selected) — sends the selected IOCs to the threat-intel providers enabled for the case: external SaaS (VirusTotal, AbuseIPDB, Shodan, CIRCL hashlookup, Hunting.ch → MalwareBazaar/ThreatFox/URLhaus/YARAify, CrowdStrike, RockyRaccoon) and self-hosted/local (MISP, YETI, OpenCTI), plus passive context (GeoIP, reverse DNS, RDAP, lookalike-domain check). Each returns a normalized malicious/suspicious/harmless verdict. External providers are opt-in per case because sending an indicator out can tip off an adversary.
+- ⚙/🤖 **🚫 Mark False Positive** — excludes the IOC(s) from analysis (offline). The modal adds two extras: a 🤖 **🔎 Ask AI for similar** button (one AI call proposing other IOCs/events matching the same pattern to mark in one batch, alongside a deterministic similarity list), and — for a single IOC — an **Also add to the global whitelist** checkbox so the value is auto-suppressed in future cases.
+- ⚙ **🗑 Exclude** — permanently removes the IOC value(s) from this case; never re-imported or re-enriched. Per-case, offline. The "Exclude" domain-rule menu (suffix/exact/regex) does the same by matching rule.
 
 ### Customer Exposure
 
-Check whether the victim organization's own domains and email addresses appear in breach databases.
+Breach/leak and internet-exposure check for the **customer's own** domains and emails (not the case IOCs). Case hostnames and case emails under a customer domain are added automatically as "auto" chips. It tells you whether the victim organization's credentials or assets are already exposed publicly. Off until you run it, because it sends the customer's domains/emails to third parties.
 
-Configure customer domains in this panel. Click **Run exposure check** to query your configured providers (LeakCheck, HIBP, DeHashed, Shodan for attack surface).
+- 🌐 **Check Exposure** — queries the configured external providers: **LeakCheck** and **DeHashed** (credential/breach records by domain and email), **Have I Been Pwned** (breach membership), and **Shodan** (exposed hosts/services and CVEs). Results flag whether a secret/password was present in each record — but raw passwords are **never stored** (only a `passwordPresent` flag). No AI.
 
-Raw passwords from breach results are **never stored** — only a `passwordPresent` flag.
+### Key Investigative Questions
 
-### Case Details (for report)
+The open questions the AI is tracking for the case (e.g. "was data exfiltrated?"), each with a status (answered / partial / unknown) and an answer that updates as evidence accumulates. Questions are generated during synthesis; a deterministic reconsider step re-opens or marks them stale when a supporting finding is later marked false-positive, and flags answers "contradicted by timeline" when ATT&CK-tagged events conflict with a negative answer.
 
-Human-authored report metadata:
-- Distribution / classification
-- Business impact assessment
-- Executive summary
-- Recommendations section
-- Glossary
-- Custom report sections
+- 🌐 **⬇ Collect on \<host\>** — appears on an unanswered question when the AI attached a collection directive (a specific host + Velociraptor artifact expected to answer it) *and* that host is known to Velociraptor in this case. Launches that collection; otherwise degrades to a manual-collection hint.
 
-These fields appear verbatim in the generated report.
+### Hunting Profile
 
-### Geographic IP Map
+A read-only view of the case's hunt feedback loop: every hunt deployed (fleet / playbook / technique / triage bundle) with a tally of hit / no-results / pending and whether each found new evidence. Use it to track coverage and avoid running the same hunt twice. No AI.
 
-Plots all IP IOCs on an interactive world map:
-- Markers colored by severity
-- Flow lines showing victim → attacker direction
-- Country statistics panel
-- Timeline sync (filter map by time range)
-- CSV export
+- 🌐 **↻ Collect now / ↻ Re-collect** — pulls the hunt's current results from Velociraptor and imports them, recording the outcome. The button persists because fleet results trickle in as endpoints check in, so it re-pulls stragglers; a hit is never downgraded.
+- 🌐 **▸ results** (expand) — fetches the hunt's actual result rows live from Velociraptor for preview. For a not-yet-imported hunt it shows a "live preview — not imported yet" note plus an inline **↻ Collect now to import** button.
 
-Requires GeoIP enrichment to be configured and enabled. No new network calls when you open the map — uses the enrichment data already fetched.
+### Investigation Threads
+
+Open leads the AI tracks across re-synthesis runs (e.g. "unexplained outbound beacon to X") — hypotheses that aren't yet findings. Threads are created by the AI during synthesis and closed automatically once the evidence resolves them (closed threads show struck-through). A display panel driven by AI-produced state.
+
+*No smart buttons* (only per-thread comment/tag chips, which are trivial collaboration controls).
+
+### MITRE ATT&CK
+
+Lists the ATT&CK techniques the case exhibited, each linked to its attack.mitre.org page and to the finding IDs that evidence it. The technique set is produced by the AI during synthesis; the panel just renders it as offline links.
+
+*No smart buttons* (technique-level hunting is offered from Adversary Hints, not here).
+
+### Adversary Hints
+
+Offline "who typically uses these techniques, and what would they do next?" fuel. It scores the overlap between the case's ATT&CK techniques and every group in a bundled MITRE ATT&CK Groups dataset (sub-technique aware, weighting exact matches above base-technique matches), and derives each matched group's **likely next techniques** the case hasn't shown yet, ranked TF-IDF-style by distinctiveness rather than popularity. Explicitly framed as statistical technique overlap, **not attribution**. The whole panel is offline and deterministic — no AI, no network. (Update the data with `npm run data:update-attack`.)
+
+- 🤖 **⌖ hunt this** (on a "likely next technique" row) — the one exception: one AI call generates a Velociraptor VQL hunt for that specific technique, then drops the proposed VQL into the **Suggested Fleet Hunts** panel for review before deploying.
+
+### Mitigation & Defensive Countermeasures
+
+For the case's identified techniques: the concrete MITRE ATT&CK mitigations (M-code "courses of action," ranked by how many techniques each addresses) plus the MITRE D3FEND defensive techniques that harden/detect/isolate each one (grouped into "harden now" — Prevent/Detect/Contain — and "this incident & context" — Evict/Restore/Model/Deceive). Both mappings are static committed datasets resolved offline — no AI, no network.
+
+- 🤖 **✨ Generate remediation plan** — the only AI control. One AI call reads this case's findings plus the derived ATT&CK mitigations and D3FEND countermeasures and writes a concrete, incident-specific, prioritized plan (Contain / Eradicate / Harden / Recover / Verify) that references real hosts, CVEs, and IOCs. Requires a synthesis provider; output is labeled "review before acting."
+
+### Suggested Fleet Hunts
+
+AI-proposed proactive Velociraptor VQL hunts derived from the case findings — queries to run across every enrolled endpoint to find the same tradecraft elsewhere. Suggestions are ephemeral and the VQL is editable before deploying. Requires a synthesis provider; deploying additionally requires the Velociraptor API.
+
+- 🤖 **✨ Suggest hunts** — one AI call over the findings returning proposed hunts, each with a title, severity, rationale, mapped ATT&CK techniques, and ready-to-run VQL.
+- 🌐 **▶ Deploy hunt (all clients)** — launches the (possibly hand-edited) VQL as a hunt across all enrolled clients, recorded in the hunt feedback loop. Disabled until Velociraptor is configured.
+- 🤖 **↻ Regenerate** — asks the AI for a *different* VQL for that finding (passing the current VQL as an exclusion), e.g. when the proposed query won't compile, and swaps just that card.
+
+---
 
 ### False Positives (excluded from analysis)
 
-Everything you have marked as a false positive or known-good. Shows findings, events, and IOCs with their exclusion reason. Click any item to reinstate it.
+Every event, IOC, or finding you've marked as excluded, with its reason code and note, most-recent first. Marked items are hidden from the timeline/findings and fed to the next synthesis so they're dropped or suppressed. It also surfaces "learned patterns" the AI uses to down-weight look-alike activity.
+
+- ⚙ **un-mark** (per row) — reinstates the item: it returns to the timeline and analysis, and the reversal is recorded in the Investigation Log.
+- ⚙ **Learned patterns** (display, no button) — recurring reasoned dismissals distilled into a per-case ledger (signature + reason + recurrence count). This is *not* a suppression list: on the next synthesis, new look-alikes are still surfaced but at **lower confidence unless independently corroborated** — down-weighted, never auto-excluded.
+
+### Source Trust
+
+Every known evidence source (tool) with its built-in default trust weight (0–1) and a per-case override you can type — e.g. lowering a hunt that was noisy on this engagement. Overrides take effect on the next synthesis. Trust steers which tool's wording wins when the same event is merged across sources, and caps the confidence of findings supported only by low-trust sources.
+
+- ⚙ **Save trust overrides** — persists the per-case override map (each value validated into 0–1; blanks fall back to the default). The scoring logic: each tool has a default tier (EDR like CrowdStrike/Defender = 1.0; Sigma engines like Hayabusa/Chainsaw/THOR = 0.95; DFIR collectors like Velociraptor/Sysmon = 0.85; SIEM/network sensors ≈ 0.8; intel/screenshots ≈ 0.75; generic log/CSV = 0.6; unknown = 0.7). An event's trust is the **maximum** across its sources (one high-trust corroborator lifts the whole event). Correlation prefers the highest-trust event's description as canonical, and finding-confidence is only ever **capped downward** for low-trust-only findings — it never boosts.
+
+### Hypotheses
+
+Testable explanations for the observed activity, each moving from open → supported / refuted / unknown. Hypotheses are both auto-generated on every synthesis (badged "auto") and analyst-authored; both survive synthesis and are never wiped. Open hypotheses are fed into synthesis to steer the AI.
+
+- 🤖 **✨ Generate** — forces a full synthesis now, which regenerates the auto hypotheses from the current timeline. Your edited/authored hypotheses are preserved.
+- 🤖 **🔎 Review** — an AI "falsification review" that weighs the evidence for and against each **open** hypothesis and recommends a status. Strictly advisory — nothing changes until you click **Apply → \<status\>** on a result. Results are ephemeral.
+- ⚙ **Add hypothesis** — manually author one (title, expected outcome, status). Feeds synthesis context and survives re-synthesis.
+
+### Analyst Notebook
+
+Free-form notes and open questions that survive synthesis and are never wiped. Supports Markdown, per-case. Entries can be fed into AI context and promoted to hypotheses.
+
+- ⚙ **Include notebook in AI synthesis context** (checkbox) — when on, your current notes and open questions are handed to the AI on each synthesis.
+- ⚙ **→ Hypothesis** (per entry) — promotes a note/question into a status-bearing hypothesis and jumps to the Hypotheses panel. The notebook→hypothesis bridge.
+
+### Investigation Log
+
+A read-only, chronological merge of import events and AI notes with your quick-action audit lines — a single time-ordered narrative of what was imported, what the AI noted, and what you did.
+
+*No smart buttons (display-only).*
+
+### Activity Log
+
+A read-only audit table of every security-relevant action on the case (timestamp, category, actor, detail, error outcome) — the accountability/audit trail.
+
+*No smart buttons* (the category dropdown is a plain filter).
+
+### Case Details (for report)
+
+The human-authored sections of the incident report (company/org, incident ID, investigators, executive summary, business impact, limitations, goals, conclusions, recommendations, revisions, distribution, glossary, logo, and the report-template selector). Values are saved per case and merged into the report at generation time; blank fields fall back to auto-derived values or "to be completed" placeholders.
+
+- ⚙ **Override fields** — there are no ✨ buttons in this panel, but several fields are logic-backed overrides: **Executive Summary** and **Narrative** are AI-generated in *their own* panels and written here as overrides; **Glossary** is auto-derived from the report at generation time (fill only to override); **Recommendations / Conclusions / Investigation goals** are override fields too (e.g. goals left blank are derived from the case's key questions). Filling a field overrides the auto/AI output in the report; leaving it blank uses the auto value.
 
 ---
 
