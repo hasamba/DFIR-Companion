@@ -11,6 +11,20 @@ describe("dashboard.html", () => {
     expect(html).toContain("let lastIocs");
   });
 
+  it("offers a kill-chain colour overlay on the evidence graph with a phase legend (#93)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // The Node colour mode radios (severity default + kill-chain phase) drive evColorMode.
+    expect(html).toContain('name="evColorMode"');
+    expect(html).toContain('value="killchain"');
+    expect(html).toContain("let evColorMode");
+    // Nodes recolour by their server-derived tactic; the legend + no-tactic fallback are present.
+    expect(html).toContain("evTacticColor");
+    expect(html).toContain("EV_KC_ORDER");
+    expect(html).toContain("renderEvKcLegend");
+    expect(html).toContain('id="evKcLegend"');
+    expect(html).toContain("EV_KC_NO_TACTIC");   // nodes with no tactic degrade cleanly
+  });
+
   it("contains websocket wiring and the consolidated import/export controls", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("/ws?caseId=");

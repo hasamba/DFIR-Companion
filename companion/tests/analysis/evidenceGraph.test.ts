@@ -280,6 +280,53 @@ describe("buildEvidenceGraph — network_flow (src→dst)", () => {
   });
 });
 
+describe("buildEvidenceGraph — kill-chain tactic per node (#93)", () => {
+  it("tags a process node with the dominant ATT&CK tactic of its backing events", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      // T1059 (Command-Line Interpreter) → Execution, on both events backing the powershell node.
+      ev({ id: "e1", asset: "HOST-A", parentName: "excel.exe", processName: "powershell.exe", mitreTechniques: ["T1059"] }),
+      ev({ id: "e2", asset: "HOST-A", parentName: "powershell.exe", processName: "cmd.exe", mitreTechniques: ["T1059.001"] }),
+    );
+    const g = buildEvidenceGraph(s);
+    const ps = g.nodes.find((n) => n.kind === "process" && /powershell/.test(n.label))!;
+    expect(ps.tactic).toBe("Execution");
+  });
+
+  it("degrades cleanly: a node whose events map to no tactic has no tactic field", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", parentName: "explorer.exe", processName: "notepad.exe" }),
+    );
+    const g = buildEvidenceGraph(s);
+    for (const n of g.nodes) expect(n.tactic).toBeUndefined();
+  });
+
+  it("wins the dominant-tactic vote by frequency across a node's backing events", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      // Two Discovery events + one Execution event back the same host node → Discovery wins.
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, mitreTechniques: ["T1087"] }), // Discovery
+      ev({ id: "e2", asset: "HOST-A", sha256: HASH, mitreTechniques: ["T1083"] }), // Discovery
+      ev({ id: "e3", asset: "HOST-A", sha256: HASH, mitreTechniques: ["T1059"] }), // Execution
+      ev({ id: "e4", asset: "HOST-B", sha256: HASH, mitreTechniques: ["T1087"] }), // makes the hash lateral
+    );
+    const g = buildEvidenceGraph(s);
+    const hostA = g.nodes.find((n) => n.id === "host:host-a")!;
+    expect(hostA.tactic).toBe("Discovery");
+  });
+
+  it("derives a tactic from the keyword fallback when no technique id is present", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", parentName: "svc.exe", processName: "rclone.exe", description: "rclone copy to remote — data staged for exfiltration" }),
+    );
+    const g = buildEvidenceGraph(s);
+    const proc = g.nodes.find((n) => n.kind === "process" && /rclone/.test(n.label))!;
+    expect(proc.tactic).toBe("Exfiltration");
+  });
+});
+
 describe("buildEvidenceGraph — invariants", () => {
   it("returns an empty graph for an empty case", () => {
     expect(buildEvidenceGraph(emptyState("c1"))).toEqual({ nodes: [], edges: [] });

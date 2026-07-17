@@ -1,5 +1,6 @@
 import type { InvestigationState, ForensicEvent, Severity } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
+import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
 
 // Derives the EVIDENCE CHAIN GRAPH — the *causal* view of an incident, complementing the
 // chronological forensic timeline and the (associative) asset↔IoC graph. Where the asset
@@ -39,6 +40,9 @@ export interface EvidenceNode {
   asset?: string;             // owning host, for process nodes
   ip?: string;                // IP address, for network nodes
   maxSeverity: Severity;      // worst severity among the events backing this node
+  tactic?: IrisTactic;        // dominant ATT&CK tactic across backing events — the kill-chain phase
+                              // this node sits in. Undefined when no backing event maps to a tactic
+                              // (powers the dashboard's optional color-by-kill-chain overlay, #93).
   eventIds: string[];         // forensic events that produced this node (provenance)
 }
 
@@ -60,6 +64,37 @@ export interface EvidenceGraph {
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
 function worse(a: Severity, b: Severity): Severity { return SEV_RANK[b] < SEV_RANK[a] ? b : a; }
+
+// Kill-chain order — used only to tie-break the dominant-tactic vote deterministically (the
+// earliest stage represented wins a tie, so a node reads as the stage it leads with). Same order
+// as burstDetect.ts, kept local per the codebase's copy-the-order convention.
+const CHAIN_ORDER: IrisTactic[] = [
+  "Initial Access", "Execution", "Persistence", "Privilege Escalation",
+  "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
+  "Collection", "Command and Control", "Exfiltration", "Impact",
+];
+
+// The dominant ATT&CK tactic across a node's backing events: each event resolves to a tactic via
+// the canonical technique/keyword mapping (reused from the kill-chain view + IRIS export), the most
+// frequent tactic wins, and ties break toward the earliest kill-chain stage. Undefined when no
+// backing event maps to any tactic — so a node with no ATT&CK signal degrades cleanly (no overlay
+// color). Pure; the eventIds → event lookup is passed in so the whole graph shares one map.
+function dominantTactic(eventIds: readonly string[], eventById: Map<string, ForensicEvent>): IrisTactic | undefined {
+  const counts = new Map<IrisTactic, number>();
+  for (const id of eventIds) {
+    const e = eventById.get(id);
+    if (!e) continue;
+    const tac = tacticForTechniques(e.mitreTechniques, e.description);
+    if (tac) counts.set(tac, (counts.get(tac) ?? 0) + 1);
+  }
+  let best: IrisTactic | undefined;
+  let bestCount = 0;
+  for (const tac of CHAIN_ORDER) {                 // iterate in chain order so the earliest stage wins ties
+    const c = counts.get(tac) ?? 0;
+    if (c > bestCount) { best = tac; bestCount = c; }
+  }
+  return best;
+}
 
 const procNodeId = (asset: string, name: string) => `proc:${asset.toLowerCase()}:${name.toLowerCase()}`;
 const hostNodeId = (name: string) => `host:${name.toLowerCase()}`;
@@ -282,6 +317,15 @@ export function buildEvidenceGraph(state: InvestigationState): EvidenceGraph {
       confidence: "high", rule: "process-on-host",
       basis: `${n.label} ran on ${host}`, eventId: n.eventIds[0],
     });
+  }
+
+  // ── kill-chain phase: tag each node with the dominant tactic of its backing events (#93) ──
+  // Derived last, once every node's eventIds are final. Enables the dashboard's optional
+  // color-by-kill-chain overlay without a second pass over the timeline per node.
+  const eventById = new Map<string, ForensicEvent>(state.forensicTimeline.map((e) => [e.id, e]));
+  for (const n of nodeMap.values()) {
+    const tac = dominantTactic(n.eventIds, eventById);
+    if (tac) n.tactic = tac;
   }
 
   const nodes = [...nodeMap.values()].sort((a, b) =>
