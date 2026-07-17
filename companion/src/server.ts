@@ -2381,8 +2381,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // (startServer), so createApp-only unit tests never start a filesystem poller.
   if (dropWatchEnabled && options.dropStatusStore) startDropWatcher();
 
-  // Vendored client libraries (Leaflet for the Geographic map, #133; cytoscape+dagre for the
-  // Login Graph). Whitelisted filenames only.
+  // Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
+  // cytoscape+dagre for the graphs) plus first-party browser modules (the shared graph-view module
+  // used by the Login/Assets/Evidence graphs). Whitelisted paths only.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
     "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
