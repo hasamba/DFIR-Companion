@@ -4066,6 +4066,8 @@
           <div id="evGraph" class="login-graph"></div>
           <div id="evSidePanel" class="lg-side-panel" style="display:none"></div>
         </div>
+        <h3 class="asset-subhead">Lateral movement paths<span class="ev-sub"> — ordered entry → pivot → target chains reconstructed from lateral_move + ran_on evidence, by real timestamp (#92)</span></h3>
+        <div id="evPathsList">—</div>
       </div>
     </section>
 
@@ -5580,6 +5582,7 @@
 
     // --- Evidence Chain graph (causal: process trees + lateral movement) ----------
     let evGraphData = null;                                 // { nodes, edges }
+    let evPathsData = null;                                 // ordered lateral-movement chains (#92)
     let evGraphTimer = null;
     const evTypesEnabled = new Set(
       [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
@@ -5611,6 +5614,9 @@
       if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style)
       fetch(`/cases/${caseId}/evidence-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
         evGraphData = g; renderEvidenceGraph();
+      }).catch(() => {});
+      fetch(`/cases/${caseId}/lateral-paths${_graphTimeQuery()}`).then(r => r.json()).then(paths => {
+        evPathsData = paths; renderEvidencePaths();
       }).catch(() => {});
     }
     // State changes (imports / synthesis) re-derive the graph — debounced.
@@ -5776,6 +5782,28 @@
       }
       renderEvKcLegend();
       gv.render();
+    }
+
+    // Lateral-movement PATHS (#92): the ordered entry→pivot→target chains the server reconstructs
+    // from lateral_move + ran_on evidence by real timestamp (buildLateralPaths), listed alongside
+    // the pairwise evidence graph. "Highlight" turns on the lateral_move layer (off by default,
+    // since it's usually the noisiest) and dims everything except this chain's hosts.
+    function renderEvidencePaths() {
+      const el = document.getElementById("evPathsList");
+      if (!evPathsData || !evPathsData.length) {
+        el.innerHTML = "<div style='padding:8px 0;color:var(--c-9aa4b2)'>No multi-hop lateral chains reconstructed yet.</div>";
+        return;
+      }
+      const confClass = (c) => c === "high" ? "ev-leg-high" : c === "medium" ? "ev-leg-med" : "ev-leg-ran";
+      el.innerHTML = evPathsData.map((p, i) => {
+        const route = p.hostIds.map((id) => esc((evGraphData?.nodes || []).find((n) => n.id === id)?.label || id)).join(" → ");
+        return `<div class="ev-path-row" style="margin-bottom:4px">`
+          + `<span class="ev-leg-line ${confClass(p.confidence)}"></span>`
+          + `<b>${route}</b> <span class="ev-sub">${esc(p.confidence)} confidence, ${p.hops.length} hop(s)`
+          + (p.startTime ? `, ${esc(p.startTime)} → ${esc(p.endTime)}` : "") + `</span> `
+          + `<button type="button" class="ev-path-highlight" data-path-idx="${i}" style="background:none;border:1px solid var(--c-6b7585);border-radius:3px;cursor:pointer;padding:0 5px;color:var(--c-cbd3df);font-size:10px">Highlight</button>`
+          + `</div>`;
+      }).join("");
     }
 
     // Kill-chain legend (#93): swatches for the tactics that actually appear in the current graph,
@@ -15463,6 +15491,26 @@
     }));
     document.querySelector("#sec-evidence h2").addEventListener("click", () => {
       setTimeout(() => { if (evGV) evGV.onExpand(); }, 0);
+    });
+    // Highlight a reconstructed lateral-movement path (#92) in the evidence graph: switch on the
+    // lateral_move layer (off by default) if needed, re-render, then dim everything except this
+    // chain's hosts and their immediate neighborhood.
+    document.getElementById("evPathsList").addEventListener("click", (e) => {
+      const btn = e.target.closest(".ev-path-highlight");
+      if (!btn || !evPathsData) return;
+      const path = evPathsData[Number(btn.dataset.pathIdx)];
+      if (!path) return;
+      if (!evTypesEnabled.has("lateral_move")) {
+        evTypesEnabled.add("lateral_move");
+        const cb = document.querySelector('.ev-type-toggle[value="lateral_move"]');
+        if (cb) cb.checked = true;
+        renderEvidenceGraph();
+      }
+      const gv = evEnsureGV();
+      if (!gv || !gv.cy) return;
+      let coll = gv.cy.collection();
+      for (const id of path.hostIds) coll = coll.union(gv.cy.getElementById(id));
+      gv.dimExcept(coll);
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
     document.getElementById("rm-companyLogoFile").addEventListener("change", (e) => {

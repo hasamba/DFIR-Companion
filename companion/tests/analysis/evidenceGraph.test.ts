@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildEvidenceGraph } from "../../src/analysis/evidenceGraph.js";
+import { buildEvidenceGraph, buildLateralPaths } from "../../src/analysis/evidenceGraph.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const HASH = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
@@ -351,6 +351,109 @@ describe("buildEvidenceGraph — invariants", () => {
     // Only nodes that participate in an edge are emitted.
     const inEdge = new Set(g.edges.flatMap((e) => [e.source, e.target]));
     expect(g.nodes.every((n) => inEdge.has(n.id))).toBe(true);
+  });
+});
+
+describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
+  it("chains a binary hopping across 3 hosts into one ordered entry→pivot→target path", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "ALCLIENT07", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "DC01", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+      ev({ id: "e3", asset: "FILESVR01", sha256: HASH, timestamp: "2026-05-20T11:00:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    expect(paths).toHaveLength(1);
+    expect(paths[0].hostIds).toEqual(["host:alclient07", "host:dc01", "host:filesvr01"]);
+    expect(paths[0].confidence).toBe("high");
+    expect(paths[0].hops).toHaveLength(2);
+    expect(paths[0].hops.every((h) => h.rule === "shared-hash")).toBe(true);
+    expect(paths[0].startTime).toBe("2026-05-20T09:00:00Z");
+    expect(paths[0].endTime).toBe("2026-05-20T11:00:00Z");
+  });
+
+  it("orders hops by real timestamp, not by alphabetical host name", () => {
+    const s = emptyState("c1");
+    // ZEBRA seen first, ALPHA second — an alphabetical sort would reverse this.
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "ZEBRA", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "ALPHA", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    expect(paths).toHaveLength(1);
+    expect(paths[0].hostIds).toEqual(["host:zebra", "host:alpha"]);
+  });
+
+  it("stitches a hash hop and a later account hop into one mixed-rule path, confidence = weakest link", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+      ev({ id: "e3", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T11:00:00Z" }),
+      ev({ id: "e4", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T12:00:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    expect(paths).toHaveLength(1);
+    expect(paths[0].hostIds).toEqual(["host:host-a", "host:host-b", "host:host-c"]);
+    expect(paths[0].hops.map((h) => h.rule)).toEqual(["shared-hash", "shared-account"]);
+    expect(paths[0].confidence).toBe("medium"); // weakest link, not the first hop's "high"
+  });
+
+  it("does not stitch a hop that would move backward in time", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T12:00:00Z" }),
+      // A different account ties HOST-B back to HOST-C, but earlier than the hop that reached HOST-B.
+      ev({ id: "e3", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T08:00:00Z" }),
+      ev({ id: "e4", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T08:30:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    // The hash hop A→B stands alone; the account hop is a separate, earlier, unrelated root/chain.
+    const hashPath = paths.find((p) => p.hostIds.includes("host:host-a"))!;
+    expect(hashPath.hostIds).toEqual(["host:host-a", "host:host-b"]);
+  });
+
+  it("does not form a cycle back to an already-visited host", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+      // A second hash ties HOST-B back to HOST-A, later in time — would form a cycle if followed.
+      ev({ id: "e3", asset: "HOST-B", sha256: HASH2, timestamp: "2026-05-20T11:00:00Z" }),
+      ev({ id: "e4", asset: "HOST-A", sha256: HASH2, timestamp: "2026-05-20T12:00:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    for (const p of paths) {
+      const unique = new Set(p.hostIds);
+      expect(unique.size).toBe(p.hostIds.length); // no host repeats within a single path
+    }
+  });
+
+  it("returns an empty array when there is no lateral signal", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({ id: "e1", asset: "HOST-A", sha256: HASH }));
+    expect(buildLateralPaths(s)).toEqual([]);
+  });
+
+  it("every hop carries its two backing events (per-hop evidence)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    const paths = buildLateralPaths(s);
+    expect(paths[0].hops[0].eventIds).toEqual(["e1", "e2"]);
+  });
+
+  it("respects the time window (#83), matching buildEvidenceGraph's scoping", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T15:00:00Z" }),
+    );
+    const scoped = buildLateralPaths(s, { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    expect(scoped).toEqual([]); // only e1 in range — below the ≥2-host threshold
   });
 });
 

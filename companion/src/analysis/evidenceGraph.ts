@@ -337,6 +337,178 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   return { nodes, edges };
 }
 
+// ── Lateral-movement PATH inference (#92) ───────────────────────────────────────────────
+// buildEvidenceGraph's lateral_move edges are pairwise, and the shared-hash chain above orders
+// its edges ALPHABETICALLY by host name (for deterministic edge ids) rather than by when the
+// pivot actually happened — so the edges alone can't answer "what order did the attacker move
+// through these hosts?". buildLateralPaths re-derives host-to-host hops straight from the
+// timeline, each ordered by the real timestamp of the evidence tying a host to the shared
+// hash/account, then stitches them into ordered entry → pivot → ... → target chains. Pure,
+// derived on read, no AI — same shape of guarantee as buildEvidenceGraph.
+
+export interface LateralHop {
+  from: string;                 // host node id — where the artifact/account was before this hop
+  to: string;                   // host node id — where it appeared next
+  fromTimestamp: string;        // earliest evidence tying the FROM host to this hop's hash/account
+  toTimestamp: string;          // earliest evidence tying the TO host to this hop's hash/account — the hop's order key
+  confidence: Confidence;
+  rule: "shared-hash" | "shared-account";
+  basis: string;                // human one-liner
+  eventIds: string[];           // the two backing events (from-host + to-host sightings) for this hop
+}
+
+export interface LateralPath {
+  id: string;
+  hostIds: string[];             // ordered host node ids: entry host → pivot(s) → target
+  hops: LateralHop[];             // per-hop evidence; length = hostIds.length - 1
+  confidence: Confidence;         // weakest-link confidence across the chain's hops
+  startTime: string;
+  endTime: string;
+}
+
+const CONF_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
+const weakerConf = (a: Confidence, b: Confidence): Confidence => (CONF_RANK[b] > CONF_RANK[a] ? b : a);
+
+// Unparseable/absent timestamps sort as epoch (0) rather than poisoning comparisons with NaN —
+// mirrors how buildEvidenceGraph's time-window filter treats an unparseable timestamp as in-range.
+function timeOf(ts: string): number {
+  const t = Date.parse(ts);
+  return Number.isFinite(t) ? t : 0;
+}
+
+export function buildLateralPaths(state: InvestigationState, window?: TimeWindow): LateralPath[] {
+  const timeline = filterTimeline(state.forensicTimeline, window);
+
+  // The EARLIEST event tying each host to a given hash/account (not just "a" event, as in
+  // buildEvidenceGraph's byHash/byAccount — here the hop order depends on real chronology).
+  function earliestPerHost(pick: (e: ForensicEvent) => string | undefined): Map<string, Map<string, ForensicEvent>> {
+    const byKey = new Map<string, Map<string, ForensicEvent>>();
+    for (const e of timeline) {
+      const key = (pick(e) ?? "").trim().toLowerCase();
+      const asset = (e.asset ?? "").trim();
+      if (!key || !asset) continue;
+      const hosts = byKey.get(key) ?? new Map<string, ForensicEvent>();
+      const assetKey = asset.toLowerCase();
+      const existing = hosts.get(assetKey);
+      if (!existing || timeOf(e.timestamp) < timeOf(existing.timestamp)) hosts.set(assetKey, e);
+      byKey.set(key, hosts);
+    }
+    return byKey;
+  }
+
+  const hops: LateralHop[] = [];
+
+  // shared-hash hops: chronological chain across every host the binary touched (high confidence).
+  const byHash = earliestPerHost((e) => e.sha256 ?? e.md5);
+  for (const [h, hosts] of byHash) {
+    if (hosts.size < 2) continue;
+    const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
+    for (let i = 1; i < ordered.length; i++) {
+      const from = ordered[i - 1], to = ordered[i];
+      hops.push({
+        from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
+        fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
+        confidence: "high", rule: "shared-hash",
+        basis: `same binary ${shortHash(h)}: ${from.asset!.trim()} → ${to.asset!.trim()}`,
+        eventIds: [from.id, to.id],
+      });
+    }
+  }
+
+  // shared-account hops: chronological chain of hosts the same (non-pseudo) account touched
+  // (medium confidence — a roaming account is signal, not proof of an attacker's hand).
+  const byAccount = new Map<string, Map<string, ForensicEvent>>();
+  for (const e of timeline) {
+    const asset = (e.asset ?? "").trim();
+    if (!asset) continue;
+    for (const acct of extractAccounts(e.description)) {
+      if (isPseudoAccount(acct)) continue;
+      const hosts = byAccount.get(acct) ?? new Map<string, ForensicEvent>();
+      const assetKey = asset.toLowerCase();
+      const existing = hosts.get(assetKey);
+      if (!existing || timeOf(e.timestamp) < timeOf(existing.timestamp)) hosts.set(assetKey, e);
+      byAccount.set(acct, hosts);
+    }
+  }
+  for (const [acct, hosts] of byAccount) {
+    if (hosts.size < 2) continue;
+    const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
+    for (let i = 1; i < ordered.length; i++) {
+      const from = ordered[i - 1], to = ordered[i];
+      hops.push({
+        from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
+        fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
+        confidence: "medium", rule: "shared-account",
+        basis: `${acct} active on ${from.asset!.trim()} then ${to.asset!.trim()}`,
+        eventIds: [from.id, to.id],
+      });
+    }
+  }
+  if (hops.length === 0) return [];
+
+  // ── stitch hops into ordered chains ───────────────────────────────────────────────────
+  // A chain is a sequence of hops where each hop's target feeds the next hop's source AND time
+  // only moves forward (the next hop's arrival ≥ this hop's). At each step the LONGEST available
+  // continuation is taken — a fork (two possible next hops) picks one branch, not every
+  // combination, so a host with multiple onward pivots still yields one path per entry point
+  // instead of a combinatorial blow-up.
+  const hopTime = (h: LateralHop) => timeOf(h.toTimestamp);
+  const outByHost = new Map<string, LateralHop[]>();
+  for (const hop of hops) {
+    const arr = outByHost.get(hop.from) ?? [];
+    arr.push(hop);
+    outByHost.set(hop.from, arr);
+  }
+  for (const arr of outByHost.values()) arr.sort((a, b) => hopTime(a) - hopTime(b));
+
+  function extend(hop: LateralHop, visited: Set<string>): LateralHop[] {
+    let bestTail: LateralHop[] = [];
+    for (const next of outByHost.get(hop.to) ?? []) {
+      if (hopTime(next) < hopTime(hop)) continue;    // must not move backward in time
+      if (visited.has(next.to)) continue;            // cycle guard — no host twice in one chain
+      const tail = extend(next, new Set(visited).add(next.to));
+      if (tail.length > bestTail.length) bestTail = tail;
+    }
+    return [hop, ...bestTail];
+  }
+
+  // A hop is a chain ROOT when no other hop lands on its `from` host at/before this hop's own
+  // start — i.e. this host wasn't already reached as a mid-chain pivot, so the chain genuinely
+  // begins here rather than being a tail that a root's walk will already cover.
+  const arrivalsByHost = new Map<string, number[]>();
+  for (const hop of hops) {
+    const arr = arrivalsByHost.get(hop.to) ?? [];
+    arr.push(hopTime(hop));
+    arrivalsByHost.set(hop.to, arr);
+  }
+  function isRoot(hop: LateralHop): boolean {
+    const t = timeOf(hop.fromTimestamp);
+    return !(arrivalsByHost.get(hop.from) ?? []).some((arrival) => arrival <= t);
+  }
+
+  const paths: LateralPath[] = [];
+  let idx = 0;
+  for (const hop of hops) {
+    if (!isRoot(hop)) continue;
+    const chain = extend(hop, new Set([hop.from, hop.to]));
+    const hostIds = [chain[0].from, ...chain.map((h) => h.to)];
+    let confidence: Confidence = "high";
+    for (const h of chain) confidence = weakerConf(confidence, h.confidence);
+    paths.push({
+      id: `lateral-path:${idx++}`,
+      hostIds,
+      hops: chain,
+      confidence,
+      startTime: chain[0].fromTimestamp,
+      endTime: chain[chain.length - 1].toTimestamp,
+    });
+  }
+
+  // Longest chains first (the most complete reconstructed pivot sequence), then earliest-starting.
+  paths.sort((a, b) => b.hops.length - a.hops.length || timeOf(a.startTime) - timeOf(b.startTime));
+  return paths;
+}
+
 // One connected component of the evidence graph (rabbit-hole detection #13). `nodeIds`/`eventIds` are
 // the nodes and their backing forensic events; `critHighCount` is how many of its nodes carry a
 // Critical/High max-severity — the signal used to pick the MAIN component (the corroborated attack mass).

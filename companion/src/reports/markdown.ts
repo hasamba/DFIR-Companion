@@ -3,7 +3,7 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
-import { buildEvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildEvidenceGraph, buildLateralPaths } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
@@ -729,6 +729,19 @@ function chainOfEvidence(state: InvestigationState, lines: string[]): void {
     lines.push("| From | To | Basis | Confidence |", "| --- | --- | --- | --- |");
     for (const e of lateral) {
       lines.push(`| ${cellMd(name(e.source))} | ${cellMd(name(e.target))} | ${cellMd(e.basis)} | ${e.confidence} |`);
+    }
+    lines.push("");
+  }
+
+  // Ordered lateral-movement PATHS (#92) — ...→pivot→target chains reconstructed from the
+  // pairwise lateral_move edges above, chronologically sequenced rather than pairwise.
+  const paths = buildLateralPaths(state);
+  if (paths.length > 0) {
+    lines.push("**Lateral movement paths**", "");
+    lines.push("| Path | Confidence | First seen | Last seen |", "| --- | --- | --- | --- |");
+    for (const p of paths) {
+      const route = p.hostIds.map((id) => cellMd(name(id))).join(" → ");
+      lines.push(`| ${route} | ${p.confidence} | ${p.startTime || "—"} | ${p.endTime || "—"} |`);
     }
     lines.push("");
   }

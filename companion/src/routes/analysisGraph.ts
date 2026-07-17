@@ -14,6 +14,7 @@ import type { RouteContext } from "./context.js";
  *   - GET    /cases/:id/login-graph              — directed account→host logon graph (4624/4625, from the super-timeline).
  *   - GET    /cases/:id/login-graph/edge-events  — the events behind one login-graph edge (lazy drill-down).
  *   - GET    /cases/:id/evidence-graph           — causal evidence chain (process trees + lateral). Optional ?from/?until (#83).
+ *   - GET    /cases/:id/lateral-paths            — ordered lateral-movement chains (entry→pivot→target, #92). Optional ?from/?until (#83).
  *   - GET    /cases/:id/phases                   — temporal attack phases (activity bursts).
  *   - GET    /cases/:id/beacon-candidates        — regular-interval C2 candidates (#82).
  *   - GET    /cases/:id/anomalies                — per-asset event-rate spikes (#175).
@@ -130,6 +131,19 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id, timeWindow(req)));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Ordered lateral-movement chains (#92): entry host → pivot → ... → target, derived on demand
+  // from the current state with the same scope/legitimate filtering as the report. Optional
+  // ?from/?until (#83). Complements /evidence-graph's pairwise lateral_move edges with the
+  // temporal sequencing they deliberately don't encode.
+  app.get("/cases/:id/lateral-paths", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      return res.status(200).json(await options.reportWriter.lateralPaths(req.params.id, timeWindow(req)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
