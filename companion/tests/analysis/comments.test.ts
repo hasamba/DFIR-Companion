@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { CommentsStore } from "../../src/analysis/comments.js";
+import { CommentsStore, parseMentions } from "../../src/analysis/comments.js";
 
 describe("CommentsStore", () => {
   let store: CommentsStore;
@@ -39,5 +39,22 @@ describe("CommentsStore", () => {
     expect(await store.remove("c1", c.id)).toBe(true);
     expect(await store.load("c1")).toHaveLength(0);
     expect(await store.remove("c1", "does-not-exist")).toBe(false);
+  });
+
+  it("parses @name mentions and stores them on the comment", async () => {
+    const c = await store.add("c1", {
+      targetType: "finding", targetId: "f1", author: "Bob",
+      text: "cc @alice and @Charlie-99 can you check this?",
+    });
+    expect(c.mentions).toEqual(["alice", "Charlie-99"]);
+  });
+
+  it("de-dupes mentions case-insensitively, keeping first-seen casing and order", () => {
+    expect(parseMentions("@Alice ping @alice again, @bob")).toEqual(["Alice", "bob"]);
+  });
+
+  it("returns [] mentions when the text has no @tokens", async () => {
+    const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", text: "no mentions here" });
+    expect(c.mentions).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import {
   findingEventsFromDiff,
   playbookTaskEvent,
   milestoneEvent,
+  mentionEvent,
   parseChannelInput,
   applyChannelPatch,
   redactChannel,
@@ -29,7 +30,7 @@ function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
     name: "Slack",
     enabled: true,
     minSeverity: "High",
-    events: { critical_finding: true, playbook_update: true, milestone: false },
+    events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
     webhookUrl: "https://hooks.slack.com/services/x",
     createdAt: NOW,
     updatedAt: NOW,
@@ -51,7 +52,7 @@ function finding(over: Partial<Finding> = {}): Finding {
 describe("shouldNotify", () => {
   it("requires enabled + the event-kind toggle", () => {
     expect(shouldNotify(channel({ enabled: false }), event())).toBe(false);
-    expect(shouldNotify(channel({ events: { critical_finding: false, playbook_update: true, milestone: false } }), event())).toBe(false);
+    expect(shouldNotify(channel({ events: { critical_finding: false, playbook_update: true, milestone: false, mention: true } }), event())).toBe(false);
     expect(shouldNotify(channel(), event())).toBe(true);
   });
 
@@ -62,10 +63,17 @@ describe("shouldNotify", () => {
   });
 
   it("milestones bypass the threshold (gated only by the toggle)", () => {
-    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: true } });
+    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: true, mention: true } });
     expect(shouldNotify(ch, event({ kind: "milestone", severity: "Info" }))).toBe(true);
-    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false } });
+    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false, mention: true } });
     expect(shouldNotify(off, event({ kind: "milestone", severity: "Info" }))).toBe(false);
+  });
+
+  it("mentions bypass the threshold (gated only by the toggle)", () => {
+    const ch = channel({ minSeverity: "Critical", events: { critical_finding: true, playbook_update: true, milestone: false, mention: true } });
+    expect(shouldNotify(ch, event({ kind: "mention", severity: "Info" }))).toBe(true);
+    const off = channel({ minSeverity: "Info", events: { critical_finding: true, playbook_update: true, milestone: false, mention: false } });
+    expect(shouldNotify(off, event({ kind: "mention", severity: "Info" }))).toBe(false);
   });
 });
 
@@ -121,6 +129,15 @@ describe("playbookTaskEvent / milestoneEvent", () => {
     const ev = milestoneEvent("case-1", "Investigation opened", ["Investigator: ana"], NOW);
     expect(ev.kind).toBe("milestone");
     expect(ev.severity).toBe("Info");
+    expect(ev.lines).toContain("Case: case-1");
+  });
+
+  it("mentionEvent is Info severity and names the mentioned investigators", () => {
+    const ev = mentionEvent("case-1", "finding", "f1", "Alice", ["bob", "carol"], "cc @bob @carol please check", NOW);
+    expect(ev.kind).toBe("mention");
+    expect(ev.severity).toBe("Info");
+    expect(ev.title).toBe("Alice mentioned @bob, @carol in a comment");
+    expect(ev.lines).toContain("On finding f1");
     expect(ev.lines).toContain("Case: case-1");
   });
 });

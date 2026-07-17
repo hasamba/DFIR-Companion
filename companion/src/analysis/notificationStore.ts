@@ -42,6 +42,7 @@ const eventsSchema = z.object({
   critical_finding: z.boolean().catch(true),
   playbook_update: z.boolean().catch(true),
   milestone: z.boolean().catch(false),
+  mention: z.boolean().catch(true),
 });
 
 const channelSchema = z.object({
@@ -50,7 +51,7 @@ const channelSchema = z.object({
   name: z.string().catch(""),
   enabled: z.boolean().catch(false),
   minSeverity: z.enum(SEVERITIES).catch("High"),
-  events: eventsSchema.catch({ critical_finding: true, playbook_update: true, milestone: false } as Record<NotificationEventKind, boolean>),
+  events: eventsSchema.catch({ critical_finding: true, playbook_update: true, milestone: false, mention: true } as Record<NotificationEventKind, boolean>),
   webhookUrl: z.string().optional(),
   smtp: smtpSchema.optional(),
   telegram: telegramSchema.optional(),
