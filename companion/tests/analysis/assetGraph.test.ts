@@ -108,3 +108,52 @@ describe("buildAssetGraph", () => {
     expect(g).toEqual({ assets: [], iocs: [], edges: [] });
   });
 });
+
+describe("buildAssetGraph — time window (#83)", () => {
+  function seeded() {
+    const s = emptyState("c1");
+    s.iocs.push(
+      { id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" },
+      { id: "i2", type: "ip", value: "10.0.0.9", firstSeen: "" },
+    );
+    s.forensicTimeline.push(
+      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "beacon to 10.0.0.5", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" },
+      { id: "e2", timestamp: "2026-05-20T12:00:00Z", description: "beacon to 10.0.0.9", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-02" },
+    );
+    return s;
+  }
+
+  it("keeps only assets/IoCs whose events fall inside the window", () => {
+    const g = buildAssetGraph(seeded(), { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    expect(g.assets.map((a) => a.name)).toEqual(["WIN-01"]);              // WIN-02's event is out of range
+    expect(g.iocs.map((i) => i.id)).toEqual(["i1"]);                      // only the in-range IoC links
+    expect(g.edges).toEqual([{ asset: "host:win-01", ioc: "i1" }]);
+  });
+
+  it("honors an open-ended (from-only / until-only) window", () => {
+    const fromOnly = buildAssetGraph(seeded(), { from: "2026-05-20T11:00:00Z" });
+    expect(fromOnly.assets.map((a) => a.name)).toEqual(["WIN-02"]);
+    const untilOnly = buildAssetGraph(seeded(), { until: "2026-05-20T11:00:00Z" });
+    expect(untilOnly.assets.map((a) => a.name)).toEqual(["WIN-01"]);
+  });
+
+  it("an empty/absent window is identical to no window (full graph)", () => {
+    const full = buildAssetGraph(seeded());
+    expect(buildAssetGraph(seeded(), {})).toEqual(full);
+    expect(buildAssetGraph(seeded(), { from: "", until: "" })).toEqual(full);
+    expect(full.assets).toHaveLength(2);
+  });
+
+  it("keeps events with an unparseable/absent timestamp (mirrors the client filter)", () => {
+    const s = emptyState("c1");
+    s.iocs.push({ id: "i1", type: "ip", value: "10.0.0.5", firstSeen: "" });
+    s.forensicTimeline.push(
+      { id: "e1", timestamp: "", description: "beacon to 10.0.0.5", severity: "High",
+        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" },
+    );
+    const g = buildAssetGraph(s, { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    expect(g.assets.map((a) => a.name)).toEqual(["WIN-01"]);   // undated → can't prove out of range → kept
+  });
+});

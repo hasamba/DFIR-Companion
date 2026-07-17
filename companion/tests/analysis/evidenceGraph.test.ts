@@ -353,3 +353,39 @@ describe("buildEvidenceGraph — invariants", () => {
     expect(g.nodes.every((n) => inEdge.has(n.id))).toBe(true);
   });
 });
+
+describe("buildEvidenceGraph — time window (#83)", () => {
+  // A hash shared across two hosts — but each sighting is at a different time, so a window that
+  // covers only one of them drops the pair below the ≥2-host threshold and no lateral edge forms.
+  function seeded() {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "ALCLIENT07", sha256: HASH, severity: "Critical", timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "DC01", sha256: HASH, severity: "High", timestamp: "2026-05-20T15:00:00Z" }),
+    );
+    return s;
+  }
+
+  it("narrows the graph to events inside the window", () => {
+    const scoped = buildEvidenceGraph(seeded(), { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    // Only e1 is in range → the second host never appears → no lateral_move edge survives.
+    expect(scoped.edges.filter((e) => e.type === "lateral_move")).toHaveLength(0);
+    expect(scoped.nodes.some((n) => n.id === "host:dc01")).toBe(false);
+  });
+
+  it("an absent/empty window is identical to no window", () => {
+    const full = buildEvidenceGraph(seeded());
+    expect(full.edges.filter((e) => e.type === "lateral_move")).toHaveLength(1);   // both hosts in range
+    expect(buildEvidenceGraph(seeded(), {})).toEqual(full);
+    expect(buildEvidenceGraph(seeded(), { from: "", until: "" })).toEqual(full);
+  });
+
+  it("keeps events with an unparseable timestamp (mirrors the client filter)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "H", parentName: "excel.exe", processName: "powershell.exe", timestamp: "" }),
+    );
+    const g = buildEvidenceGraph(s, { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
+    expect(g.edges.filter((e) => e.type === "spawned")).toHaveLength(1);   // undated → kept
+  });
+});
