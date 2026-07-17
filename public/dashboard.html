@@ -3878,33 +3878,48 @@
       <h2>Evidence Chain<span class="ev-sub">causal links — process trees, lateral movement, file lineage &amp; network flows (derived, no AI)</span></h2>
       <div id="evPanel">
         <div id="evGraphWrap" class="asset-graph-wrap">
-          <div class="asset-controls">
-            <span>Show:</span>
-            <label title="Parent → child process spawn chains (processName / parentName fields). Shows how an initial process (e.g. Word) spawned a shell, which spawned further tools."><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
-            <label title="Same binary hash or account seen on ≥ 2 hosts — indicates the attacker moved laterally between machines."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
-            <label title="A file written (action=write) then executed (action=execute) with the same hash — shows dropper → payload chains."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
-            <label title="Directed network connections from Suricata alerts / Zeek notices (srcIp → dstIp:port). Shows C2 call-outs and lateral network movement."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
-            <span class="asset-ctrl-sep"></span>
-            <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
-              <span class="ev-leg-line ev-leg-med"></span>medium
-              <span class="ev-leg-line ev-leg-ran"></span>ran on
-              <span class="ev-leg-line ev-leg-file"></span>file lineage
-              <span class="ev-leg-line ev-leg-net"></span>network flow</span>
-            <span class="asset-ctrl-sep"></span>
-            <label title="Hide nodes below this severity to reduce clutter on large graphs">Sev <select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>
-            <span class="asset-ctrl-sep"></span>
-            <button id="evZoomOut" type="button" title="Zoom out">−</button>
-            <span id="evZoomLevel" title="Zoom level (scroll the mouse wheel over the graph to zoom)">100%</span>
-            <button id="evZoomIn" type="button" title="Zoom in">+</button>
-            <button id="evZoomReset" type="button" title="Reset / fit zoom">Fit</button>
-            <span class="asset-ctrl-sep"></span>
-            <button id="evFullscreen" type="button" title="Enlarge the graph to full screen">⤢ Fullscreen</button>
-            <button id="evResetLayout" type="button" title="Clear manual node positions — back to the auto layout">↺ Reset layout</button>
-            <button id="evExportSvg" type="button" title="Download the evidence graph as an SVG file">⬇ SVG</button>
-            <span class="ev-drag-hint">drag nodes to rearrange</span>
-            <span id="evFocusHint" class="asset-hint"></span>
+          <div class="lg-toolbar">
+            <input id="evFilter" type="text" placeholder="Filter nodes and edges" autocomplete="off" />
+            <button type="button" id="evFit" title="Fit to screen">⤢ Fit</button>
+            <button type="button" id="evFullscreenBtn" title="Enlarge the graph to full screen">⛶ Fullscreen</button>
+            <button type="button" id="evExport" title="Export as PNG">⬇ PNG</button>
+            <button type="button" id="evRefresh" title="Rebuild the evidence graph">↻ Refresh</button>
+            <button type="button" id="evOptions" title="View options">⚙ View</button>
           </div>
-          <div id="evGraph" class="asset-graph">—</div>
+          <div id="evOptionsPanel" class="lg-options" style="display:none">
+            <div class="lg-opt-group"><span class="lg-opt-label">Layout type</span>
+              <label><input type="radio" name="evLayoutRadio" value="spread" /> spread</label>
+              <label><input type="radio" name="evLayoutRadio" value="dagre" /> dagre</label>
+              <label><input type="radio" name="evLayoutRadio" value="circle" /> circle</label>
+              <label><input type="radio" name="evLayoutRadio" value="concentric" /> concentric</label>
+              <label><input type="radio" name="evLayoutRadio" value="breadthfirst" /> breadthfirst</label>
+            </div>
+            <div class="lg-opt-group"><span class="lg-opt-label">Edge style</span>
+              <label><input type="radio" name="evEdgeStyle" value="bezier" /> bezier</label>
+              <label><input type="radio" name="evEdgeStyle" value="taxi" /> taxi</label>
+            </div>
+            <div class="lg-opt-group"><span class="lg-opt-label">Transparency for unselected elements</span>
+              <input type="range" id="evDim" min="0" max="90" step="5" />
+            </div>
+            <div class="lg-opt-group"><span class="lg-opt-label">Show</span>
+              <label title="Parent → child process spawn chains."><input type="checkbox" class="ev-type-toggle" value="spawned" checked> Process trees</label>
+              <label title="Same binary hash or account seen on ≥ 2 hosts."><input type="checkbox" class="ev-type-toggle" value="lateral_move"> Lateral movement</label>
+              <label title="A file written then executed with the same hash."><input type="checkbox" class="ev-type-toggle" value="file_lineage"> File lineage</label>
+              <label title="Directed network connections from Suricata/Zeek."><input type="checkbox" class="ev-type-toggle" value="network_flow"> Network flows</label>
+            </div>
+            <div class="lg-opt-group"><span class="lg-opt-label">Min severity</span>
+              <label><select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>
+            </div>
+            <div class="lg-opt-group">
+              <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
+                <span class="ev-leg-line ev-leg-med"></span>medium
+                <span class="ev-leg-line ev-leg-ran"></span>ran on
+                <span class="ev-leg-line ev-leg-file"></span>file lineage
+                <span class="ev-leg-line ev-leg-net"></span>network flow</span>
+            </div>
+          </div>
+          <div id="evGraph" class="login-graph"></div>
+          <div id="evSidePanel" class="lg-side-panel" style="display:none"></div>
         </div>
       </div>
     </section>
@@ -4903,9 +4918,6 @@
     let assetGraphTimer = null;
     const assetTypesEnabled = new Set(["host", "account", "service"]);
 
-    // Shared by the Evidence Chain graph's zoom controls.
-    function clampZoom(z) { return Math.min(5, Math.max(0.25, z)); }
-
     function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
@@ -5402,54 +5414,18 @@
 
     // --- Evidence Chain graph (causal: process trees + lateral movement) ----------
     let evGraphData = null;                                 // { nodes, edges }
-    let evFocus = null;                                     // focused node id, or null
     let evGraphTimer = null;
-    let evZoom = 1;
-    let evDims = { W: 0, H: 0 };
     const evTypesEnabled = new Set(
       [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
     );
     const evMinSevRank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
     let evMinSev = "Info";  // show nodes at this severity or above; "Info" = show all
-    // Drag-to-reposition state. evPos = effective id→{x,y} for the current draw (auto layout
-    // with any manual overrides applied); evPosOverride = the persisted manual positions.
-    let evPos = new Map(), evNodes = [], evEdges = [];
-    let evPosOverride = new Map();                          // id -> {x,y}, persisted per case
-    let evDrag = null;                                      // { id, startX, startY, origX, origY, scale, moved }
-
-    const evPosKey = () => "dfir.evpos." + (document.getElementById("caseId").value.trim() || "");
-    function loadEvPosOverride() {
-      evPosOverride = new Map();
-      try {
-        const o = JSON.parse(localStorage.getItem(evPosKey()) || "{}");
-        for (const [k, v] of Object.entries(o)) if (Array.isArray(v)) evPosOverride.set(k, { x: v[0], y: v[1] });
-      } catch (e) { /* ignore corrupt state */ }
-    }
-    function saveEvPosOverride() {
-      const o = {}; evPosOverride.forEach((v, k) => { o[k] = [Math.round(v.x), Math.round(v.y)]; });
-      try { localStorage.setItem(evPosKey(), JSON.stringify(o)); } catch (e) { /* quota — non-fatal */ }
-    }
-
-    function updateEvZoomLabel() { const el = document.getElementById("evZoomLevel"); if (el) el.textContent = Math.round(evZoom * 100) + "%"; }
-    function applyEvZoom() {
-      const svg = document.querySelector("#evGraph svg");
-      if (svg && evDims.W) { svg.setAttribute("width", Math.round(evDims.W * evZoom)); svg.setAttribute("height", Math.round(evDims.H * evZoom)); }
-      updateEvZoomLabel();
-    }
-    function setEvZoom(z) { evZoom = clampZoom(z); applyEvZoom(); }
-    function fitEvZoom() {
-      const g = document.getElementById("evGraph");
-      if (evDims.W && g && g.clientWidth && g.clientHeight) {
-        const z = Math.min((g.clientWidth - 10) / evDims.W, (g.clientHeight - 10) / evDims.H);
-        setEvZoom(z > 0 && isFinite(z) ? z : 1);
-      } else setEvZoom(1);
-    }
-    function isEvFullscreen() { return document.fullscreenElement === document.getElementById("evGraphWrap"); }
 
     function loadEvidenceGraph(caseId) {
-      loadEvPosOverride();   // restore this case's manual node positions
+      const gv = evEnsureGV();
+      if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style)
       fetch(`/cases/${caseId}/evidence-graph`).then(r => r.json()).then(g => {
-        evGraphData = g; evFocus = null; renderEvidenceGraph();
+        evGraphData = g; renderEvidenceGraph();
       }).catch(() => {});
     }
     // State changes (imports / synthesis) re-derive the graph — debounced.
@@ -5458,41 +5434,6 @@
       if (!caseId) return;
       clearTimeout(evGraphTimer);
       evGraphTimer = setTimeout(() => loadEvidenceGraph(caseId), 800);
-    }
-
-    // Layered left→right layout: longest-path layering over the directed edges. Process trees
-    // fall into natural columns (excel→powershell→cmd); lateral edges span hosts/accounts.
-    // Cycle-safe (leftover nodes get layer 0), so a rare A→B/B→A pair can't loop.
-    function evLayout(nodes, edges) {
-      const byId = new Map(nodes.map(n => [n.id, n]));
-      const out = new Map(), indeg = new Map();
-      nodes.forEach(n => { out.set(n.id, []); indeg.set(n.id, 0); });
-      edges.forEach(e => { if (out.has(e.source) && byId.has(e.target)) { out.get(e.source).push(e.target); indeg.set(e.target, indeg.get(e.target) + 1); } });
-      const layer = new Map(), deg = new Map(indeg);
-      const q = nodes.filter(n => deg.get(n.id) === 0).map(n => n.id);
-      q.forEach(id => layer.set(id, 0));
-      for (let head = 0; head < q.length; head++) {
-        const u = q[head];
-        for (const v of out.get(u) || []) {
-          layer.set(v, Math.max(layer.get(v) ?? 0, (layer.get(u) ?? 0) + 1));
-          deg.set(v, deg.get(v) - 1);
-          if (deg.get(v) === 0) q.push(v);
-        }
-      }
-      let maxLayer = 0;
-      nodes.forEach(n => { if (!layer.has(n.id)) layer.set(n.id, 0); maxLayer = Math.max(maxLayer, layer.get(n.id)); });
-      const buckets = Array.from({ length: maxLayer + 1 }, () => []);
-      [...nodes].sort((a, b) => a.id.localeCompare(b.id)).forEach(n => buckets[layer.get(n.id)].push(n));
-      const colW = 200, rowH = 64, padX = 110, padY = 44;
-      const rows = Math.max(1, ...buckets.map(b => b.length));
-      const W = padX * 2 + maxLayer * colW + 40;
-      const H = padY * 2 + (rows - 1) * rowH + 40;
-      const pos = new Map();
-      buckets.forEach((b, li) => {
-        const colH = (b.length - 1) * rowH, y0 = (H - colH) / 2;
-        b.forEach((n, i) => pos.set(n.id, { x: padX + li * colW, y: b.length === 1 ? H / 2 : y0 + i * rowH }));
-      });
-      return { pos, W, H };
     }
 
     function evSevColor(sev) { return (sev === "Critical" || sev === "High") ? "#ff5c5c" : sev === "Medium" ? "#ff9f43" : "#6aa9ff"; }
@@ -5514,109 +5455,129 @@
         + `<rect x="${f(x - 9)}" y="${f(y - 6)}" width="18" height="12" rx="2.5" fill="${c}" stroke="#0f1115" stroke-width="1"/>`;
     }
 
-    // Filter + lay out, applying any saved manual positions, then draw. Split from drawEv so a
-    // drag can redraw cheaply without recomputing the layering.
+    let evGV = null;
+
+    function evBuildElements(view) {
+      // ran_on rides with the Process-trees toggle — it hangs each tree off its host.
+      const edges0 = evGraphData.edges.filter((e) =>
+        evTypesEnabled.has(e.type) || (e.type === "ran_on" && evTypesEnabled.has("spawned")));
+      const keep = new Set(edges0.flatMap((e) => [e.source, e.target]));
+      const minRank = evMinSevRank[evMinSev] ?? 4;
+      const nodes = evGraphData.nodes.filter((n) =>
+        keep.has(n.id) && (evMinSevRank[n.maxSeverity] ?? 4) <= minRank);
+      const visibleIds = new Set(nodes.map((n) => n.id));
+      const edges = edges0.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+      const els = [];
+      for (const n of nodes) {
+        const titleSuffix = n.asset ? " on " + n.asset : n.ip ? " (" + n.ip + ")" : "";
+        els.push({ data: {
+          id: n.id, name: truncate(n.label, 22), full: n.label + titleSuffix, kind: n.kind, sev: n.maxSeverity,
+          glyph: glyphDataUri(evNodeGlyph(n, 11, 11)),
+        } });
+      }
+      for (const e of edges) {
+        els.push({ data: {
+          id: `ev:${e.source}|${e.target}|${e.type}`, source: e.source, target: e.target,
+          etype: e.type, conf: e.confidence, basis: e.basis,
+        } });
+      }
+      return els;
+    }
+
+    const EV_STYLE = [
+      { selector: "node", style: {
+        "background-image": "data(glyph)", "background-color": "#0f1115", "background-opacity": 0,
+        "background-fit": "none", "background-clip": "none", width: 26, height: 26,
+        label: "data(name)", color: "#cbd3df", "font-size": "10px",
+        "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
+      } },
+      { selector: "edge", style: {
+        width: 1.6, "line-color": "#7f8aa0", "curve-style": "bezier",
+        "target-arrow-shape": "triangle", "target-arrow-color": "#7f8aa0", "arrow-scale": 0.9,
+        "line-style": "dashed",
+      } },
+      // causal high-confidence: solid orange
+      { selector: 'edge[etype = "causal"][conf = "high"]', style: { "line-style": "solid", "line-color": "#ff8a5c", "target-arrow-color": "#ff8a5c" } },
+      { selector: 'edge[etype = "ran_on"]', style: { "line-style": "solid", "line-color": "#52617a", "target-arrow-color": "#52617a", width: 1.1, opacity: 0.7 } },
+      { selector: 'edge[etype = "file_lineage"]', style: { "line-style": "solid", "line-color": "#4ade80", "target-arrow-color": "#4ade80" } },
+      { selector: 'edge[etype = "network_flow"]', style: { "line-style": "solid", "line-color": "#38bdf8", "target-arrow-color": "#38bdf8" } },
+      { selector: ".gv-dim", style: { opacity: 0.1 } },
+    ];
+
+    function evShowNodePanel(node) {
+      const p = document.getElementById("evSidePanel");
+      p.replaceChildren();
+      const title = lgEl("div");
+      title.append(lgEl("b", null, node.data("full")), lgEl("span", "ev-sub", " " + node.data("sev")));
+      const close = lgEl("button", "lg-close", "✕ Close");
+      close.type = "button";
+      close.onclick = () => { p.style.display = "none"; if (evGV) evGV.dimExcept(null); };
+      p.append(title, close);
+      p.style.display = "block";
+    }
+    function evShowEdgePanel(edge) {
+      const p = document.getElementById("evSidePanel");
+      const d = edge.data();
+      p.replaceChildren();
+      const title = lgEl("div");
+      title.append(lgEl("b", null, d.etype));
+      const sub = lgEl("div", "ev-sub", d.basis + (d.etype === "ran_on" ? "" : " — " + d.conf + " confidence"));
+      const close = lgEl("button", "lg-close", "✕ Close");
+      close.type = "button";
+      close.onclick = () => { p.style.display = "none"; if (evGV) evGV.dimExcept(null); };
+      p.append(title, sub, close);
+      p.style.display = "block";
+    }
+
+    function evEnsureGV() {
+      if (evGV) return evGV;
+      if (!window.DfirGraphView) return null;
+      evGV = window.DfirGraphView.createGraphView({
+        graphId: "evidence",
+        container: document.getElementById("evGraph"),
+        wrap: document.getElementById("evGraphWrap"),
+        caseIdEl: document.getElementById("caseId"),
+        exportName: "evidence-graph.png",
+        defaults: { layout: "dagre", edgeStyle: "bezier", dim: 85 },
+        style: EV_STYLE,
+        buildElements: evBuildElements,
+        onNodeTap: (node) => evShowNodePanel(node),
+        onEdgeTap: (edge) => evShowEdgePanel(edge),
+        onBackgroundTap: () => { document.getElementById("evSidePanel").style.display = "none"; },
+        onRefresh: () => { const cId = document.getElementById("caseId").value.trim(); if (cId) loadEvidenceGraph(cId); },
+        controls: {
+          layoutRadios: document.querySelectorAll('input[name="evLayoutRadio"]'),
+          edgeStyleRadios: document.querySelectorAll('input[name="evEdgeStyle"]'),
+          dimSlider: document.getElementById("evDim"),
+          filterInput: document.getElementById("evFilter"),
+          fitBtn: document.getElementById("evFit"),
+          fullscreenBtn: document.getElementById("evFullscreenBtn"),
+          exportBtn: document.getElementById("evExport"),
+          refreshBtn: document.getElementById("evRefresh"),
+          optionsBtn: document.getElementById("evOptions"),
+          optionsPanel: document.getElementById("evOptionsPanel"),
+          toggles: [],   // ev-type toggles + min-sev are wired separately (Set / select, not a view flag)
+        },
+      });
+      return evGV;
+    }
+
     function renderEvidenceGraph() {
       const el = document.getElementById("evGraph");
       if (!evGraphData || !evGraphData.edges || !evGraphData.edges.length) {
         el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No causal chains yet — import process-creation events (Sysmon EID 1, THOR, Velociraptor, Cyber Triage, Volatility/Rekall memory) or evidence spanning multiple hosts, then Synthesize.</div>";
-        evNodes = []; evEdges = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel();
+        if (evGV) evGV.destroy();
         return;
       }
-      // ran_on (host→process-tree anchor) rides with the Process-trees toggle — it's the
-      // connective tissue that hangs each tree off its host so lateral movement bridges them.
-      evEdges = evGraphData.edges.filter(e =>
-        evTypesEnabled.has(e.type) || (e.type === "ran_on" && evTypesEnabled.has("spawned")));
-      const keep = new Set(evEdges.flatMap(e => [e.source, e.target]));
-      // Severity filter: hide low-severity nodes then drop orphaned edges.
-      const minRank = evMinSevRank[evMinSev] ?? 4;
-      evNodes = evGraphData.nodes.filter(n =>
-        keep.has(n.id) &&
-        (evMinSevRank[n.maxSeverity] ?? 4) <= minRank);
-      const visibleIds = new Set(evNodes.map(n => n.id));
-      evEdges = evEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
-      if (!evEdges.length) { el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links match the current type / severity filters.</div>"; evNodes = []; evDims = { W: 0, H: 0 }; updateEvZoomLabel(); return; }
-
-      const { pos } = evLayout(evNodes, evEdges);
-      // Effective position = auto layout, with a saved manual override taking precedence.
-      evPos = new Map();
-      for (const n of evNodes) evPos.set(n.id, evPosOverride.get(n.id) || pos.get(n.id));
-      drawEv();
-    }
-
-    // Render the SVG from evPos/evNodes/evEdges and wire drag + focus. The canvas grows to fit
-    // dragged-out nodes so nothing clips. Called on every drag-move (no relayout).
-    function drawEv() {
-      const el = document.getElementById("evGraph");
-      if (!evNodes.length) return;
-      const neighbors = new Map();
-      const addN = (a, b) => { let s = neighbors.get(a); if (!s) { s = new Set(); neighbors.set(a, s); } s.add(b); };
-      evEdges.forEach(e => { addN(e.source, e.target); addN(e.target, e.source); });
-      const related = (id) => !evFocus || id === evFocus || (neighbors.get(evFocus) && neighbors.get(evFocus).has(id));
-
-      let W = 200, H = 160;                                  // fit the canvas to current positions
-      for (const p of evPos.values()) { W = Math.max(W, p.x + 90); H = Math.max(H, p.y + 60); }
-      evDims = { W, H };
-      const zw = Math.round(W * evZoom), zh = Math.round(H * evZoom);
-      let svg = `<svg width="${zw}" height="${zh}" viewBox="0 0 ${W} ${H}">`;
-      svg += `<defs>`
-        + `<marker id="evArrowHigh" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ff8a5c"/></marker>`
-        + `<marker id="evArrowMed" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7f8aa0"/></marker>`
-        + `<marker id="evArrowRan" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#52617a"/></marker>`
-        + `<marker id="evArrowFile" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#4ade80"/></marker>`
-        + `<marker id="evArrowNet" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#38bdf8"/></marker>`
-        + `</defs>`;
-      for (const e of evEdges) {
-        const p = evPos.get(e.source), q = evPos.get(e.target);
-        if (!p || !q) continue;
-        const vis = related(e.source) && related(e.target);
-        // ran_on = muted anchor; file_lineage = green; network_flow = cyan; causal = orange/gray.
-        const isRan = e.type === "ran_on", isFile = e.type === "file_lineage", isNet = e.type === "network_flow";
-        const high = e.confidence === "high";
-        const stroke = isRan ? "#52617a" : isFile ? "#4ade80" : isNet ? "#38bdf8" : high ? "#ff8a5c" : "#7f8aa0";
-        const dash = (isRan || isFile || isNet || high) ? "" : ` stroke-dasharray="5 4"`;
-        const marker = isRan ? "url(#evArrowRan)" : isFile ? "url(#evArrowFile)" : isNet ? "url(#evArrowNet)" : high ? "url(#evArrowHigh)" : "url(#evArrowMed)";
-        const sw = isRan ? "1.1" : "1.6";
-        // Trim the segment to the node radius so the arrowhead lands at the glyph edge, not its center.
-        const ang = Math.atan2(q.y - p.y, q.x - p.x), r = 13;
-        const x1 = (p.x + r * Math.cos(ang)).toFixed(1), y1 = (p.y + r * Math.sin(ang)).toFixed(1);
-        const x2 = (q.x - r * Math.cos(ang)).toFixed(1), y2 = (q.y - r * Math.sin(ang)).toFixed(1);
-        svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}"${dash} marker-end="${marker}" opacity="${vis ? (isRan ? 0.6 : 0.9) : 0.06}">`
-          + `<title>${esc(e.basis + (isRan ? "" : " — " + e.confidence + " confidence"))}</title></line>`;
+      const gv = evEnsureGV();
+      if (!gv) { el.textContent = "Graph library not loaded — restart the companion server."; return; }
+      const els = evBuildElements(gv.view);
+      if (!els.some((x) => x.data.source)) {
+        el.innerHTML = "<div style='padding:16px;color:var(--c-9aa4b2)'>No links match the current type / severity filters.</div>";
+        if (evGV) evGV.destroy();
+        return;
       }
-      for (const n of evNodes) {
-        const p = evPos.get(n.id);
-        const moved = evPosOverride.has(n.id) ? " moved" : "";
-        const titleSuffix = n.asset ? " on " + n.asset : n.ip ? " (" + n.ip + ")" : "";
-        svg += `<g class="ev-node${moved}" data-id="${escAttr(n.id)}" opacity="${related(n.id) ? 1 : 0.12}">`
-          + `<text x="${p.x.toFixed(1)}" y="${(p.y + 22).toFixed(1)}" text-anchor="middle">${esc(truncate(n.label, 22))}</text>`
-          + evNodeGlyph(n, p.x, p.y)
-          + `<title>${esc(n.label + titleSuffix + " — " + n.maxSeverity + " · drag to reposition")}</title></g>`;
-      }
-      svg += `</svg>`;
-      el.innerHTML = svg;
-      updateEvZoomLabel();
-      // Press starts a potential drag; the document mousemove/mouseup (wired once) carry it. A
-      // press with no movement is a focus toggle, so click-to-focus still works.
-      el.querySelectorAll(".ev-node").forEach(node => node.addEventListener("mousedown", (ev) => {
-        ev.preventDefault();
-        const id = node.getAttribute("data-id");
-        const s = el.querySelector("svg"); if (!s) return;
-        const rect = s.getBoundingClientRect();
-        const scale = rect.width ? evDims.W / rect.width : 1;   // viewBox units per screen pixel
-        const cur = evPos.get(id);
-        evDrag = { id, startX: ev.clientX, startY: ev.clientY, origX: cur.x, origY: cur.y, scale, moved: false };
-      }));
-    }
-
-    function evExportSvg() {
-      const svg = document.querySelector("#evGraph svg");
-      if (!svg) return;
-      const svgStr = '<?xml version="1.0" encoding="utf-8"?>\n' + new XMLSerializer().serializeToString(svg);
-      const blob = new Blob([svgStr], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "evidence-graph.svg"; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      gv.render();
     }
 
     // --- Investigator comments (collaboration) -----------------------------------
@@ -15172,52 +15133,15 @@
     });
 
     // Evidence Chain graph controls (mirror the asset-graph chrome).
-    document.querySelectorAll(".ev-type-toggle").forEach(cb => cb.onchange = () => {
+    document.querySelectorAll(".ev-type-toggle").forEach((cb) => cb.addEventListener("change", () => {
       if (cb.checked) evTypesEnabled.add(cb.value); else evTypesEnabled.delete(cb.value);
-      evFocus = null; renderEvidenceGraph();
-    });
-    document.getElementById("evMinSev").onchange = function() { evMinSev = this.value; evFocus = null; renderEvidenceGraph(); };
-    document.getElementById("evExportSvg").onclick = evExportSvg;
-    document.getElementById("evZoomIn").onclick = () => setEvZoom(evZoom * 1.25);
-    document.getElementById("evZoomOut").onclick = () => setEvZoom(evZoom / 1.25);
-    document.getElementById("evZoomReset").onclick = () => fitEvZoom();
-    document.getElementById("evGraph").addEventListener("wheel", (e) => {
-      if (!evGraphData) return;
-      e.preventDefault();
-      setEvZoom(evZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
-    }, { passive: false });
-    document.getElementById("evFullscreen").onclick = () => {
-      const wrap = document.getElementById("evGraphWrap");
-      if (isEvFullscreen()) document.exitFullscreen();
-      else if (wrap.requestFullscreen) wrap.requestFullscreen();
-    };
-    document.addEventListener("fullscreenchange", () => {
-      if (!evGraphData) return;
       renderEvidenceGraph();
-      setTimeout(fitEvZoom, 60);
+    }));
+    document.getElementById("evMinSev").addEventListener("change", (e) => {
+      evMinSev = e.target.value; renderEvidenceGraph();
     });
-    // Drag a node to reposition it (positions persist per case); ↺ clears overrides.
-    document.getElementById("evResetLayout").onclick = () => {
-      evPosOverride = new Map(); saveEvPosOverride(); renderEvidenceGraph();
-    };
-    // Drag carry, wired once. evDrag is set on a node mousedown; here we move it and redraw,
-    // committing the position on release. A release with no real movement is a focus toggle.
-    document.addEventListener("mousemove", (ev) => {
-      if (!evDrag) return;
-      if (Math.abs(ev.clientX - evDrag.startX) > 3 || Math.abs(ev.clientY - evDrag.startY) > 3) evDrag.moved = true;
-      evPos.set(evDrag.id, { x: evDrag.origX + (ev.clientX - evDrag.startX) * evDrag.scale,
-                             y: evDrag.origY + (ev.clientY - evDrag.startY) * evDrag.scale });
-      drawEv();
-    });
-    document.addEventListener("mouseup", () => {
-      if (!evDrag) return;
-      const d = evDrag; evDrag = null;
-      if (d.moved) { evPosOverride.set(d.id, evPos.get(d.id)); saveEvPosOverride(); drawEv(); }
-      else {
-        evFocus = (evFocus === d.id) ? null : d.id;
-        document.getElementById("evFocusHint").textContent = evFocus ? "showing related only — click the node again to reset" : "";
-        drawEv();
-      }
+    document.querySelector("#sec-evidence h2").addEventListener("click", () => {
+      setTimeout(() => { if (evGV) evGV.onExpand(); }, 0);
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
     document.getElementById("rm-companyLogoFile").addEventListener("change", (e) => {
