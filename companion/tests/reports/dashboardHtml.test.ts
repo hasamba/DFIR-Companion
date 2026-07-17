@@ -106,6 +106,10 @@ describe("dashboard.html", () => {
     expect(html).toContain('value="dagre"');
     expect(html).toContain('value="circle"');
     expect(mod).toContain("requestFullscreen");
+    // Fullscreen must actually grow the cytoscape canvas: the asset/evidence wraps are
+    // .asset-graph-wrap and their canvas div is .login-graph, so the sizing rule must target that
+    // (a regression guard — the old rule targeted the now-removed .asset-graph class).
+    expect(html).toContain(".asset-graph-wrap:fullscreen .login-graph");
   });
 
   it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
