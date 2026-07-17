@@ -1608,6 +1608,7 @@
       <option value="ioc-blocklist">IOC block-list…</option>
       <option value="redacted">Redacted case package (ZIP)…</option>
       <option value="save-template">Save as Template…</option>
+      <option value="report-versions">Report versions (diff &amp; rollback)…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
@@ -2021,6 +2022,29 @@
         <button id="reDownload">Build &amp; download</button>
         <button id="reCancel" style="background:var(--c-2a2f3a);">Cancel</button>
         <span id="reMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="reportVersionsOverlay" class="comment-overlay">
+    <div class="comment-modal" style="max-width:640px">
+      <h3>Report versions</h3>
+      <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
+        One snapshot per report regeneration (a re-generation with nothing changed doesn't add a new
+        entry). Diff two versions to see what changed in findings, IOCs and the timeline, or restore an
+        earlier version's editable report metadata (title page, distribution, BIA, glossary,
+        recommendations…) — restoring does not touch findings/IOCs/timeline and does not regenerate the
+        report; re-run <em>Generate report</em> afterward.</p>
+      <div id="rvList" style="max-height:200px; overflow:auto; font-size:12px; margin-bottom:10px; border:1px solid var(--c-2a2f3a); border-radius:4px; padding:6px;">loading…</div>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <label style="font-size:12px;">From <select id="rvFrom" style="margin-left:4px;"></select></label>
+        <label style="font-size:12px;">To <select id="rvTo" style="margin-left:4px;"></select></label>
+        <button id="rvDiff" type="button">Diff</button>
+      </div>
+      <div id="rvDiffResult" style="font-size:12px; max-height:220px; overflow:auto;"></div>
+      <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="rvCancel" style="background:var(--c-2a2f3a);">Close</button>
+        <span id="rvMsg" style="color:var(--c-9aa4b2); font-size:12px;"></span>
       </div>
     </div>
   </div>
@@ -15016,6 +15040,92 @@
       }
     }
 
+    // ── Report versions: diff & rollback (#77) ────────────────────────────────
+    function openReportVersions() {
+      document.getElementById("rvMsg").textContent = "";
+      document.getElementById("rvDiffResult").innerHTML = "";
+      document.getElementById("reportVersionsOverlay").classList.add("open");
+      loadReportVersions();
+    }
+    function closeReportVersions() { document.getElementById("reportVersionsOverlay").classList.remove("open"); }
+
+    async function loadReportVersions() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const list = document.getElementById("rvList");
+      const fromSel = document.getElementById("rvFrom");
+      const toSel = document.getElementById("rvTo");
+      if (!caseId) { list.textContent = "no case loaded"; return; }
+      list.textContent = "loading…";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/report-versions`);
+        const versions = await res.json();
+        if (!res.ok) throw new Error(versions.error || ("HTTP " + res.status));
+        if (!versions.length) {
+          list.textContent = "no versions yet — generate a report to create one";
+          fromSel.innerHTML = ""; toSel.innerHTML = "";
+          return;
+        }
+        list.innerHTML = versions.map(v => `
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid var(--c-2a2f3a);">
+            <span>${esc(v.version)}${v.manualVersion ? ` (rev ${esc(v.manualVersion)})` : ""} — ${esc(new Date(v.createdAt).toLocaleString())}
+              · ${v.findingsCount} finding(s), ${v.iocsCount} IOC(s), ${v.eventsCount} event(s)</span>
+            <button data-restore="${escAttr(v.id)}" style="font-size:11px; flex:none;">Restore meta</button>
+          </div>`).join("");
+        list.querySelectorAll("[data-restore]").forEach(btn =>
+          btn.onclick = () => doRestoreReportVersion(btn.getAttribute("data-restore")));
+        const opts = versions.map(v => `<option value="${escAttr(v.id)}">${esc(v.version)} — ${esc(new Date(v.createdAt).toLocaleString())}</option>`).join("");
+        fromSel.innerHTML = opts;
+        toSel.innerHTML = opts;
+        fromSel.selectedIndex = Math.min(1, versions.length - 1); // default: previous version
+        toSel.selectedIndex = 0;                                  // default: most recent
+      } catch (err) {
+        list.textContent = "failed to load: " + err.message;
+      }
+    }
+
+    async function doReportVersionsDiff() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const from = document.getElementById("rvFrom").value;
+      const to = document.getElementById("rvTo").value;
+      const out = document.getElementById("rvDiffResult");
+      if (!caseId || !from || !to) return;
+      out.textContent = "diffing…";
+      try {
+        const q = new URLSearchParams({ from, to }).toString();
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/report-versions/diff?${q}`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || ("HTTP " + res.status));
+        const rows = [];
+        if (d.findings.added.length) rows.push(`<div>+ <strong>Findings added:</strong> ${d.findings.added.map(esc).join(", ")}</div>`);
+        if (d.findings.removed.length) rows.push(`<div>− <strong>Findings removed:</strong> ${d.findings.removed.map(esc).join(", ")}</div>`);
+        if (d.findings.severityChanged.length) rows.push(`<div>~ <strong>Severity changed:</strong> ${d.findings.severityChanged.map(s => `${esc(s.title)} (${esc(s.from)} → ${esc(s.to)})`).join(", ")}</div>`);
+        if (d.iocs.added.length) rows.push(`<div>+ <strong>IOCs added:</strong> ${d.iocs.added.map(i => esc(i.value)).join(", ")}</div>`);
+        if (d.iocs.removed.length) rows.push(`<div>− <strong>IOCs removed:</strong> ${d.iocs.removed.map(i => esc(i.value)).join(", ")}</div>`);
+        if (d.timeline.added.length) rows.push(`<div>+ <strong>Timeline events added:</strong> ${d.timeline.added.length}</div>`);
+        if (d.timeline.removed.length) rows.push(`<div>− <strong>Timeline events removed:</strong> ${d.timeline.removed.length}</div>`);
+        out.innerHTML = rows.length ? rows.join("") : "no differences between these versions";
+      } catch (err) {
+        out.textContent = "diff failed: " + err.message;
+      }
+    }
+
+    async function doRestoreReportVersion(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("rvMsg");
+      if (!caseId || !id) return;
+      if (!confirm("Restore this version's report metadata (title page, distribution, BIA, glossary, recommendations)? This overwrites the CURRENT report-meta. It does not touch findings/IOCs/timeline and does not regenerate the report.")) return;
+      msg.textContent = "restoring…";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/report-versions/${encodeURIComponent(id)}/restore`, { method: "POST" });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
+        fillReportMeta(body); // refresh the report-meta form in place, if open
+        msg.textContent = "restored ✓ — regenerate the report to render it";
+      } catch (err) {
+        msg.textContent = "restore failed: " + err.message;
+      }
+    }
+
     // ── ZIP case archive (unencrypted, "(no password)" in the filename) ─────
     function openZipArchive() {
       document.getElementById("zaRemoveFromList").checked = false;
@@ -15741,6 +15851,9 @@
     document.getElementById("reDownload").onclick = doRedactedExport;
     document.getElementById("reCancel").onclick = closeRedactedExport;
     document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
+    document.getElementById("rvDiff").onclick = doReportVersionsDiff;
+    document.getElementById("rvCancel").onclick = closeReportVersions;
+    document.getElementById("reportVersionsOverlay").addEventListener("click", (e) => { if (e.target.id === "reportVersionsOverlay") closeReportVersions(); });
     document.getElementById("eeDownload").onclick = doEncryptedExport;
     document.getElementById("eeCancel").onclick = closeEncryptedExport;
     document.getElementById("encryptedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "encryptedExportOverlay") closeEncryptedExport(); });
@@ -16336,6 +16449,8 @@
         openRedactedExport();
       } else if (action === "save-template") {
         openSaveTemplate();
+      } else if (action === "report-versions") {
+        openReportVersions();
       }
     };
 

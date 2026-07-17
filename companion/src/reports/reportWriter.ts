@@ -59,6 +59,7 @@ import { applyAnonDeep, type RedactedReportContents } from "../analysis/redacted
 import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { KevCatalog } from "../analysis/kev.js";
+import type { ReportVersionStore } from "./reportVersionStore.js";
 
 export interface ReportPaths {
   markdown: string;
@@ -86,6 +87,7 @@ export class ReportWriter {
     private readonly kevStore?: KevStore,
     private readonly hypothesisStore?: HypothesisStore,
     private readonly synthMeta?: SynthMetaStore,   // #11 deferred: second-look collection leads in the report
+    private readonly reportVersions?: ReportVersionStore,   // #77 report versioning (diff & rollback)
   ) {}
 
   // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
@@ -446,6 +448,18 @@ export class ReportWriter {
     await writeFile(paths.timelineCsv, c.timelineCsv, "utf8");
     await writeFile(paths.forensicTimelineCsv, c.forensicTimelineCsv, "utf8");
     await writeFile(paths.stateJson, c.stateJson, "utf8");
+    // #77 report versioning: snapshot markdown + meta + the diff-relevant slice of state so the
+    // dashboard can diff two generations and roll back to a prior version's editable meta.
+    // Best-effort — a version-store failure must never break report generation itself.
+    if (this.reportVersions) {
+      try {
+        await this.reportVersions.snapshot(caseId, {
+          markdown: c.markdown,
+          meta,
+          state: { findings: state.findings, iocs: state.iocs, forensicTimeline: state.forensicTimeline },
+        });
+      } catch { /* best-effort — see comment above */ }
+    }
     return paths;
   }
 
