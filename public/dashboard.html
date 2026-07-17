@@ -483,7 +483,7 @@
        (a <summary> styled as an icon) opens a full-width row revealing the confidence
        explanation, supporting IOCs, and the cited-event timeline — native <details> toggle,
        no extra JS wiring needed. */
-    .finding-header-row, .finding { grid-template-columns: 26px 22px 92px 92px minmax(0,1fr) 108px 148px; }
+    .finding-header-row, .finding { grid-template-columns: 26px 22px 92px 92px minmax(0,1fr) 108px 184px; }
     .finding-header-row {
       display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
       font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c-9aa4b2);
@@ -538,12 +538,12 @@
     .fwf-status-btn.fwf-in_review { color: #c79bff; border-color: #5a3f7a; }
     .fwf-status-btn.fwf-resolved { color: #6bcb77; border-color: #2f6a3a; }
     .fwf-assignee.assigned { color: #6aa9ff; border-color: #35507a; }
-    .fwf-assignee .fwf-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fwf-assignee .fwf-initials { font-size: 10px; font-weight: 700; letter-spacing: .02em; }
     .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
     .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--c-2a2f3a); overflow: hidden; }
     .finding-conf-cell .fcbar > span { display: block; height: 100%; }
     .finding-conf-cell .fcpct { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--c-9aa4b2); }
-    .finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
+    .finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 2px; }
     .finding-evidence-body {
       display: none; grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-1c2230);
     }
@@ -5939,11 +5939,20 @@
           `<span class="fwf-btn fwf-status-btn${status ? " fwf-" + status : ""}" aria-hidden="true">${ICON_FLOW}</span>` +
           `<select class="fwf-status" data-fwf="${escAttr(String(fid))}" aria-label="Workflow status">${opts}</select>` +
         `</span>`;
+      // Assigned → a compact initials chip (full name in the tooltip) so it stays one icon-button wide;
+      // unassigned → the plain person icon. Keeps all the row actions on a single line.
       const assignCtl =
         `<button type="button" class="fwf-btn fwf-assignee${assignee ? " assigned" : ""}" data-fwf="${escAttr(String(fid))}" ` +
           `title="${assignee ? "Assigned to " + escAttr(assignee) + " — click to change" : "Assign this finding to an analyst"}">` +
-          `${ICON_USER}${assignee ? `<span class="fwf-name">${esc(assignee)}</span>` : ""}</button>`;
+          `${assignee ? `<span class="fwf-initials">${esc(_workflowInitials(assignee))}</span>` : ICON_USER}</button>`;
       return `<span class="finding-workflow">${statusCtl}${assignCtl}</span>`;
+    }
+    // 1–2 letter initials for the assignee chip: first+last initial for a full name, else first two chars.
+    function _workflowInitials(name) {
+      const parts = String(name).trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return "?";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     }
     // PATCH one field; the server drops the record when both assignee and status become empty.
     function patchFindingWorkflow(fid, patch) {
