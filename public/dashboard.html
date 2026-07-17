@@ -547,13 +547,6 @@
     input { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); padding: 6px; border-radius: 6px; }
     #status { font-size: 12px; color: var(--c-9aa4b2); }
     /* Compromised assets + asset↔IoC graph */
-    .asset-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; color: var(--c-9aa4b2); margin-bottom: 8px; }
-    .asset-controls label { display: flex; align-items: center; gap: 4px; }
-    .asset-controls button { padding: 3px 9px; font-size: 12px; }
-    .asset-controls select { background: var(--c-0f1115); color: var(--c-e6e6e6); border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 3px; font-size: 12px; }
-    .asset-ctrl-sep { width: 1px; align-self: stretch; background: var(--c-2a2f3a); margin: 0 4px; }
-    #assetZoomLevel { min-width: 40px; text-align: center; }
-    .asset-hint { margin-left: auto; color: var(--c-ffd93b); }
     .asset-graph { overflow: auto; max-height: 460px; border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
     .asset-graph svg text { fill: var(--c-cbd3df); font-size: 11px; }
     .asset-node { cursor: grab; }
@@ -562,7 +555,6 @@
     .ev-node { cursor: grab; }
     .ev-node:active { cursor: grabbing; }
     .ev-node.moved text { fill: var(--c-ffd93b); }                /* a repositioned node's label is tinted */
-    .ev-drag-hint { color: var(--c-6b7585); font-size: 11px; font-style: italic; }
     .ev-node text { paint-order: stroke; stroke: var(--c-0f1115); stroke-width: 2.5px; }   /* legible over edges */
     .ev-sub { font-size: 12px; color: var(--c-9aa4b2); font-weight: normal; margin-left: 8px; }
     .ev-legend { display: inline-flex; align-items: center; gap: 6px; color: var(--c-9aa4b2); font-size: 12px; }
@@ -5015,9 +5007,7 @@
 
     // ── Login Graph (cytoscape) ─────────────────────────────────────────────
     let lgData = null;               // last /login-graph payload
-    let lgCy = null;                 // cytoscape instance
     let lgTimer = null;              // debounced reload
-    let lgPendingRender = false;     // section was collapsed at render time
     function loadLoginGraph(caseId) {
       const gv = lgEnsureGV();
       if (gv) gv.loadView();
