@@ -8,6 +8,7 @@ import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
+import { sanitizeUncertainties } from "./uncertainty.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -298,6 +299,12 @@ export function mergeDelta(
       }))
     : state.nextSteps;
 
+  // Uncertainty ledger (#73) is a holistic reassessment — replaced wholesale when synthesis provides
+  // it, preserved when a per-window delta omits it (same posture as keyQuestions / nextSteps).
+  const uncertainties = delta.uncertainties !== undefined
+    ? sanitizeUncertainties(delta.uncertainties)
+    : state.uncertainties;
+
   return {
     caseId: state.caseId,
     findings,
@@ -308,6 +315,7 @@ export function mergeDelta(
     mitreTechniques,
     keyQuestions,
     nextSteps,
+    uncertainties,
     lastSummary: delta.summary.trim().length > 0 ? delta.summary : state.lastSummary,
     attackerPath: (delta.attackerPath ?? "").trim().length > 0 ? (delta.attackerPath as string) : state.attackerPath,
     narrativeTimeline: (delta.narrativeTimeline ?? "").trim().length > 0 ? (delta.narrativeTimeline as string) : state.narrativeTimeline,

@@ -8,6 +8,46 @@ const baseDelta: AnalysisDelta = {
   timelineNote: "", summary: "",
 };
 
+describe("mergeDelta uncertainties (#73)", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+
+  it("stores sanitized uncertainties when synthesis provides them", () => {
+    const next = mergeDelta(emptyState("c1"), {
+      ...baseDelta,
+      uncertainties: [
+        { topic: "initial access", status: "inferred", basis: "f1", gap: "collect mail logs" },
+        { topic: "", status: "confirmed", basis: "", gap: "" }, // dropped: blank topic
+      ],
+    }, ctx);
+    expect(next.uncertainties).toEqual([
+      { topic: "initial access", status: "inferred", basis: "f1", gap: "collect mail logs" },
+    ]);
+  });
+
+  it("preserves existing uncertainties when a per-window delta omits the field", () => {
+    let state = mergeDelta(emptyState("c1"), {
+      ...baseDelta,
+      uncertainties: [{ topic: "exfil", status: "speculated", basis: "", gap: "pull egress logs" }],
+    }, ctx);
+    // A later delta with no uncertainties key (undefined) must NOT wipe them.
+    state = mergeDelta(state, { ...baseDelta }, ctx);
+    expect(state.uncertainties).toHaveLength(1);
+    expect(state.uncertainties[0].topic).toBe("exfil");
+  });
+
+  it("replaces the whole ledger wholesale when synthesis re-provides it", () => {
+    let state = mergeDelta(emptyState("c1"), {
+      ...baseDelta,
+      uncertainties: [{ topic: "old", status: "unknown", basis: "", gap: "" }],
+    }, ctx);
+    state = mergeDelta(state, {
+      ...baseDelta,
+      uncertainties: [{ topic: "new", status: "confirmed", basis: "", gap: "" }],
+    }, ctx);
+    expect(state.uncertainties.map((u) => u.topic)).toEqual(["new"]);
+  });
+});
+
 describe("mergeDelta", () => {
   it("adds a new finding with firstSeen and lastUpdated", () => {
     const state = emptyState("c1");

@@ -1,4 +1,4 @@
-import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
+import type { InvestigationState, Severity, ForensicEvent, Uncertainty } from "../analysis/stateTypes.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
@@ -786,6 +786,43 @@ function conclusions(state: InvestigationState, meta: ReportMeta, lines: string[
   } else {
     lines.push(TODO, "");
   }
+
+  uncertaintyLedger(state, lines);
+}
+
+// Analytical-safety ledger (issue #73): an explicit "what we know vs inferred vs speculated" table so a
+// reader never mistakes an inference for a confirmed fact. Ordered weakest-status first (speculated /
+// unknown surface at the top, where the open risk is). Rendered inside Conclusions; placeholder-free
+// only when synthesis populated it.
+const UNCERTAINTY_LABEL: Record<Uncertainty["status"], string> = {
+  confirmed: "✅ Confirmed",
+  inferred: "🟡 Inferred",
+  speculated: "🟠 Speculated",
+  unknown: "❓ Unknown",
+};
+const UNCERTAINTY_ORDER: Uncertainty["status"][] = ["speculated", "unknown", "inferred", "confirmed"];
+
+function uncertaintyLedger(state: InvestigationState, lines: string[]): void {
+  lines.push("### Analytical confidence — uncertainty ledger", "");
+  lines.push(
+    "_What this analysis KNOWS vs INFERRED vs SPECULATED. Treat anything below 'Confirmed' as provisional " +
+      "— an inference is not a fact. The 'Gap' column names what would raise each claim's confidence._",
+    "",
+  );
+  if (state.uncertainties.length === 0) {
+    lines.push("_Not assessed yet — run synthesis._", "");
+    return;
+  }
+  const sorted = [...state.uncertainties].sort(
+    (a, b) => UNCERTAINTY_ORDER.indexOf(a.status) - UNCERTAINTY_ORDER.indexOf(b.status),
+  );
+  lines.push("| Status | Topic | Basis | Gap to resolve |", "| --- | --- | --- | --- |");
+  for (const u of sorted) {
+    lines.push(
+      `| ${UNCERTAINTY_LABEL[u.status] ?? u.status} | ${cellMd(u.topic)} | ${cellMd(u.basis || "—")} | ${cellMd(u.gap || "—")} |`,
+    );
+  }
+  lines.push("");
 }
 
 const PLAYBOOK_STATUS_LABEL: Record<PlaybookStatus, string> = {

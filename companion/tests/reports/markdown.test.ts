@@ -3,6 +3,29 @@ import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
+describe("renderMarkdownReport uncertainty ledger (#73)", () => {
+  it("renders the uncertainty ledger, weakest status first, with basis and gap", () => {
+    const state = emptyState("c1");
+    state.uncertainties = [
+      { topic: "credential theft", status: "confirmed", basis: "Mimikatz on DC01", gap: "" },
+      { topic: "attribution", status: "speculated", basis: "TTP overlap", gap: "pivot the C2 infra via CTI" },
+    ];
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("### Analytical confidence — uncertainty ledger");
+    expect(md).toContain("🟠 Speculated");
+    expect(md).toContain("✅ Confirmed");
+    expect(md).toContain("pivot the C2 infra via CTI");
+    // Weakest status (speculated) must appear before the confirmed row.
+    expect(md.indexOf("attribution")).toBeLessThan(md.indexOf("credential theft"));
+  });
+
+  it("shows a placeholder when no uncertainties were assessed", () => {
+    const md = renderMarkdownReport(emptyState("c1"));
+    expect(md).toContain("### Analytical confidence — uncertainty ledger");
+    expect(md).toContain("Not assessed yet — run synthesis.");
+  });
+});
+
 describe("renderMarkdownReport", () => {
   it("cites each finding's supporting forensic events as a numbered footnote list (#222)", () => {
     const state = emptyState("c1");

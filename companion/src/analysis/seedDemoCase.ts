@@ -558,6 +558,13 @@ export async function seedDemoCase(
       { id: "ns005", priority: "medium", action: "Run THOR and Chainsaw scan on FS01 and WEB01 for additional implants and persistence", rationale: "Lateral movement confirmed to both hosts. Initial implant install and additional persistence mechanisms not yet inventoried.", pointer: "FS01, WEB01; check scheduled tasks, services, registry runkeys, WMI subscriptions" },
       { id: "ns006", priority: "medium", action: "Recover and inventory C:\\Windows\\Temp\\backup\\ on FS01 to determine exfiltrated files", rationale: "The 847 MB exfiltration came from this staging directory. File listing and timestamps will scope the data breach notification obligation.", pointer: "FS01; C:\\Windows\\Temp\\backup\\; Finding f005" },
     ],
+    uncertainties: [
+      { topic: "Initial access vector (web exploit vs phishing)", status: "inferred", basis: "WEB01 exploitation (CVE-2021-41773 + Log4Shell) and the phishing macro both landed May 15; the delivered .eml was not recovered.", gap: "Recover the mail-gateway logs / delivered email to confirm which vector achieved the first foothold." },
+      { topic: "Domain-admin credential theft", status: "confirmed", basis: "Mimikatz execution on DC01 and 3 domain-admin NTLMs dumped from LSASS (finding f002).", gap: "" },
+      { topic: "Volume of data exfiltrated (~847 MB)", status: "inferred", basis: "Suricata flagged an HTTPS upload May 18; the 2.3 GB staging archive data.7z was recovered but the on-wire transfer size is estimated.", gap: "Correlate FS01 SRUM per-app bytes with the proxy/firewall egress record to confirm the exact exfiltrated volume." },
+      { topic: "Attribution to ALPHV/BlackCat affiliate", status: "speculated", basis: "TTP overlap (Cobalt Strike + PsExec + staged .7z) resembles the group; no confirmed group-specific infrastructure or signed tooling.", gap: "Pivot the C2 IPs/domains through CTI to establish attributable infrastructure overlap." },
+      { topic: "Ransomware ever executed", status: "confirmed", basis: "encrypt.exe was blocked by the EDR on all three targets; no files encrypted and no ransom note written.", gap: "" },
+    ],
     forensicTimeline,
     timeline: [
       { timestamp: "2026-05-22T09:00:00.000Z", windowSequence: 1, description: "Analyst reviewed EDR alert dashboard — CrowdStrike ransomware block alerts on DC01, FS01, WEB01. Opened incident case.", sourceScreenshots: [] },

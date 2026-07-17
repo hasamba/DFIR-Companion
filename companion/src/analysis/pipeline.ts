@@ -629,6 +629,17 @@ export const SYNTHESIS_PROMPT = [
   "  would best separate this hypothesis from the leading alternative, named as host + artifact (e.g.",
   "  'Security.evtx 4648 on FS01'). Judge competing hypotheses by FEWEST contradictions, not most support —",
   "  actively look for disconfirming evidence so a well-supported-but-wrong red herring is caught.",
+  "- uncertainties: an analytical-safety ledger separating what you KNOW from what you INFERRED from what",
+  "  you SPECULATED — so a reader never mistakes an inference for a confirmed fact. For each material",
+  "  claim about the incident, emit { topic (the aspect, e.g. 'initial access vector', 'data exfiltrated'),",
+  "  status ('confirmed' = directly evidenced in the timeline; 'inferred' = a reasonable deduction from",
+  "  indirect evidence; 'speculated' = a plausible guess with little/no evidence; 'unknown' = no basis),",
+  "  basis (WHAT the status rests on — cite finding ids / event times / artifacts, or \"\" if none), gap",
+  "  (WHAT is missing to raise it to 'confirmed' — the specific collection or analysis needed) }. Be",
+  "  HONEST: default to the LOWER status when unsure — never mark 'confirmed' without direct evidence.",
+  "  Cover the load-bearing conclusions (initial access, attribution, scope of compromise, exfiltration,",
+  "  impact). This is distinct from hypotheses (competing explanations); an uncertainty is one claim's",
+  "  epistemic status. Return 3-8 entries.",
   "- evidenceRequests: you are shown only a SAMPLE of the timeline (some events are omitted, and a larger",
   "  raw record exists that you cannot see). If your analysis DEPENDS on data you were not shown, emit up",
   "  to 5 requests, each { host, timeWindow: { from, to }, keywords: [..], reason }. Each is resolved AFTER",
@@ -671,6 +682,10 @@ export const SYNTHESIS_PROMPT = [
       hypotheses: [
         { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"], contradictingEventIds: [], discriminator: "email gateway logs on MAIL01 for the delivery event" },
         { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [], contradictingEventIds: ["e9"], discriminator: "$MFT on FS01 for the archive-creation timestamp" },
+      ],
+      uncertainties: [
+        { topic: "initial access vector", status: "inferred", basis: "finding f1 + macro-spawned PowerShell at event e3; no email artifact recovered", gap: "collect the mail-gateway logs / the delivered .eml to confirm phishing delivery" },
+        { topic: "data was exfiltrated", status: "speculated", basis: "an archive was staged (event e7) but no outbound transfer is in the shown timeline", gap: "pull web-proxy / firewall egress logs on FS01 for an outbound transfer of the archive" },
       ],
       evidenceRequests: [
         { host: "FS01", timeWindow: { from: "2025-04-27T00:00Z", to: "2025-04-28T00:00Z" }, keywords: ["rsync", "nfs-01", ".zip"], reason: "confirm the staging→exfil hypothesis with archive-write + outbound-transfer rows not shown above" },

@@ -127,6 +127,19 @@ export const deltaSchema = z.object({
     contradictingEventIds: z.array(z.string()).default([]).catch([]),
     discriminator: z.string().default("").catch(""),
   })).optional(),
+  // Structured analytical-uncertainty ledger (issue #73). Distinct from `hypotheses` (competing
+  // explanations to test): each entry is ONE claim/topic with an explicit epistemic status —
+  // confirmed vs inferred vs speculated vs unknown — plus the basis it rests on and the gap needed to
+  // resolve it. Forces the model to separate known facts from inference so an inferred conclusion is
+  // never presented as confirmed. All fields lenient/defaulted so a partial reply still parses;
+  // sanitizeUncertainties then requires a topic, coerces status, trims/dedupes/caps. Merged into
+  // InvestigationState (replace-wholesale, like keyQuestions/nextSteps).
+  uncertainties: z.array(z.object({
+    topic: z.string().default("").catch(""),
+    status: z.enum(["confirmed", "inferred", "speculated", "unknown"]).default("unknown").catch("unknown"),
+    basis: z.string().default("").catch(""),
+    gap: z.string().default("").catch(""),
+  })).optional(),
   // Second-look loop (investigation-guidance #11): data the model knows it was NOT shown (only a
   // sample of the timeline is included in the prompt). Each request is resolved AFTER synthesis against
   // the complete raw record (super-timeline + omitted scoped events); matches are promoted for one
