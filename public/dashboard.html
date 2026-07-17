@@ -5366,6 +5366,15 @@
     // Paint the legend glyph into each Show-toggle (doubles as the graph's icon key).
     document.querySelectorAll(".legend-slot").forEach((s) => { s.innerHTML = legendIcon(s.dataset.ltype); });
 
+    // Wrap centered glyph markup (as produced by assetIcon(type,11,11,color) / evNodeGlyph(n,11,11))
+    // into a standalone SVG data URI usable as a cytoscape node background-image. The 22×22 viewBox
+    // matches the icon coordinates (center 11,11); size is the rendered pixel box.
+    function glyphDataUri(innerSvg, size) {
+      const px = size || 26;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 22 22">${innerSvg}</svg>`;
+      return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+    }
+
     function renderAssetGraph() {
       renderAssetList();
       const el = document.getElementById("assetGraph");
