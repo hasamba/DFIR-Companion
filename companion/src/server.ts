@@ -182,7 +182,7 @@ import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
-import type { ImporterFailure, AiError } from "./analysis/diagnostics.js";
+import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
@@ -597,6 +597,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: (err as Error)?.message ?? String(err) });
     if (recentAiErrors.length > DIAG_RING) recentAiErrors.length = DIAG_RING;
   }
+  // Per-importer health (#84): last run's outcome per custom (declarative) importer id. Keyed by
+  // spec.id, one entry per importer — NOT a ring, since only the latest run matters for a health view.
+  const importerRunStats = new Map<string, ImporterRunStat>();
+  function recordImporterRun(id: string, patch: Omit<ImporterRunStat, "lastRunAt">): void {
+    importerRunStats.set(id, { ...patch, lastRunAt: new Date().toISOString() });
+  }
 
   // Deep link a notification back to the case dashboard (when a public base URL is configured).
   const caseLink = (caseId: string): string | undefined =>
@@ -699,6 +705,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     appStartedAt,
     recentImportFailures,
     recentAiErrors,
+    importerRunStats,
     hasAiProvider,
     // Case-lifecycle graduations (routes/caseLifecycle.ts + routes/casePassword.ts): the unlock-cookie
     // secret, the per-case state mutex, the drop-inbox creator, the importer registry-reload + precedence
@@ -1066,7 +1073,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = importerRegistry.importers.get(kind);
-    if (custom) return pipeline.importDeclarative(caseId, text, { importer: custom, ...base });
+    if (custom) {
+      let parsed: { total: number; kept: number; dropped: number } | null = null;
+      return pipeline.importDeclarative(caseId, text, {
+        importer: custom, ...base,
+        onParsed: (r) => {
+          parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
+          recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
+        },
+      }).catch((err) => {
+        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: (err as Error)?.message ?? String(err) });
+        throw err;
+      });
+    }
     switch (kind) {
       case "thor": return pipeline.importThor(caseId, text, base);
       case "siem": return pipeline.importSiem(caseId, text, base);

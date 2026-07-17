@@ -78,7 +78,7 @@ import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
-import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions } from "./siemImport.js";
+import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
 import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
@@ -2197,9 +2197,14 @@ export class AnalysisPipeline {
       importedAt: string;
       minSeverity?: Severity;
       onProgress?: (done: number, total: number) => void;
+      // Per-importer health (#84): fired with the raw parse stats (total/kept/dropped/format) right
+      // after parsing, BEFORE the zero-events early return, so a run that legitimately produced
+      // nothing still counts as a completed (not failed) run in the diagnostics table.
+      onParsed?: (result: SiemParseResult) => void;
     },
   ): Promise<InvestigationState> {
     const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
+    opts.onParsed?.(parsedRaw);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
 

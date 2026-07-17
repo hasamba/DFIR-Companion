@@ -73,4 +73,24 @@ describe("custom importer routes", () => {
     expect(r.status).toBe(200);
     expect((await request(app).get("/importers")).body.precedence).toBe("external-first");
   });
+
+  // Per-importer health (#84): a successful custom-importer run should show up in /diagnostics'
+  // per-importer breakdown with last-run age, rows parsed, and no error.
+  it("records a successful custom-importer run in /diagnostics' per-importer breakdown", async () => {
+    const { app } = await harness();
+    await request(app).post("/importers").send({ spec: EXAMPLE_IMPORTER_SPEC });
+    await request(app).post("/cases/c1/import").send({ text: MDE_CSV, filename: "advanced-hunting.csv" });
+
+    let row: { lastStatus?: string } | undefined;
+    for (let i = 0; i < 40 && row?.lastStatus == null; i++) {
+      const diag = await request(app).get("/diagnostics");
+      row = diag.body.report.importers.perImporter.find((p: { id: string }) => p.id === "mde-advanced-hunting");
+      if (row?.lastStatus == null) await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(row).toBeTruthy();
+    expect(row!.lastStatus).toBe("ok");
+    expect((row as { kept?: number }).kept).toBeGreaterThan(0);
+    expect((row as { lastRunAt?: string }).lastRunAt).toBeTruthy();
+    expect((row as { lastError?: string | null }).lastError).toBeNull();
+  });
 });

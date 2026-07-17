@@ -18723,6 +18723,38 @@
         <span style="color:#9aa4b2">${esc(label)}</span>
         <span style="text-align:right${color ? `;color:${color}` : ""}">${value}</span></div>`;
     }
+    // Per-importer health table (#84): one row per custom (declarative) importer — last-run age,
+    // success/fail, rows parsed (kept/total, dropped), last error — plus malformed-spec load errors
+    // from the registry, so all import health signals for custom importers live in one place.
+    function renderPerImporterHealth(im) {
+      const perImporter = im.perImporter || [];
+      const loadErrors = im.loadErrors || [];
+      if (!perImporter.length && !loadErrors.length) return "";
+      let html = `<div style="margin-top:10px;border-top:1px solid var(--c-2a2f3a);padding-top:8px">
+        <div style="color:#9aa4b2;margin-bottom:4px">Per-importer breakdown (${perImporter.length}):</div>`;
+      if (perImporter.length) {
+        html += `<div style="max-height:220px;overflow:auto">` + perImporter.map(p => {
+          const ok = p.lastStatus === "ok";
+          const statusColor = p.lastStatus == null ? "#7e8aa0" : ok ? "#5ad17a" : "#ff9f9f";
+          const statusText = p.lastStatus == null ? "never run" : ok ? "ok" : "failed";
+          const age = p.lastRunAt ? diagFmtAge(Date.now() - Date.parse(p.lastRunAt)) + " ago" : "—";
+          const rows = p.lastStatus != null ? `${p.kept ?? 0}/${p.total ?? 0} kept, ${p.dropped ?? 0} dropped` : "—";
+          return `<div style="border-left:2px solid ${ok ? "#2a5a3a" : p.lastStatus ? "#5a2a2a" : "#3a3f4a"};padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+            <span style="color:#cbd3df">${esc(p.label)}</span> <span style="color:#7e8aa0">(${esc(p.id)})</span>
+            — <span style="color:${statusColor}">${statusText}</span> · ${age} · ${rows}
+            ${p.lastError ? `<br><span style="color:#ffb0b0">${esc(p.lastError)}</span>` : ""}</div>`;
+        }).join("") + `</div>`;
+      }
+      if (loadErrors.length) {
+        html += `<div style="margin-top:6px;color:#9aa4b2">Spec load errors (${loadErrors.length}):</div>`;
+        html += `<div style="max-height:160px;overflow:auto;margin-top:3px">` + loadErrors.map(e =>
+          `<div style="border-left:2px solid #5a2a2a;padding:2px 0 2px 8px;margin:3px 0;font-family:monospace;font-size:11.5px">
+            <span style="color:#ff9f9f">${esc(e.file)}</span><br>
+            ${e.errors.map(x => `<span style="color:#ffb0b0">${esc(x.path)}: ${esc(x.message)}</span>`).join("<br>")}</div>`).join("") + `</div>`;
+      }
+      html += `</div>`;
+      return html;
+    }
     function renderDiagnostics(report, cost) {
       const d = report.disk;
       const lvlColor = DIAG_LEVEL_COLOR[d.level] || "#cbd3df";
@@ -18780,6 +18812,7 @@
       } else {
         impRows += diagRow("Recent failures", "none", "#5ad17a");
       }
+      impRows += renderPerImporterHealth(im);
       const importers = diagCard("Importer health", impRows);
       const bk = report.backups || {};
       let backupsCard = "";

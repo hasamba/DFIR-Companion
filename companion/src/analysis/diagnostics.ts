@@ -6,6 +6,7 @@
 import { isLocalAiProvider } from "./anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
+import type { ImporterLoadError } from "./importerStore.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
 export function formatBytes(bytes: number): string {
@@ -145,6 +146,55 @@ export function countByKind(errors: readonly AiError[]): Record<string, number> 
   return out;
 }
 
+// ── Per-importer health (#84) ───────────────────────────────────────────────────────────
+// A single per-importer breakdown consolidating the three places import health was previously
+// split across: aggregate attempts (above), per-case import-meta, and registry load-errors
+// (importerStore.ts). In-memory, per-importer-id; resets on restart like the rings above —
+// updated by dispatchImport's custom-importer branch (server.ts) after every run.
+export interface ImporterRunStat {
+  lastRunAt: string; // ISO-8601
+  lastStatus: "ok" | "error";
+  total: number;   // records found in the container (last run)
+  kept: number;     // events emitted (last run)
+  dropped: number;  // records not represented (last run)
+  lastError: string | null;
+}
+
+// One row of the diagnostics per-importer table: static registry meta + live run stats merged.
+// An importer that loaded but never ran shows null stat fields rather than being omitted — the
+// analyst should see it's registered but idle, not silently absent from the table.
+export interface ImporterHealth {
+  id: string;
+  label: string;
+  file: string;
+  priority: number;
+  lastRunAt: string | null;
+  lastStatus: "ok" | "error" | null;
+  total: number | null;
+  kept: number | null;
+  dropped: number | null;
+  lastError: string | null;
+}
+
+/** Merge custom-importer registry meta with their live run stats into the per-importer table. */
+export function summarizeImporterHealth(
+  meta: readonly { id: string; label: string; file: string; priority: number }[],
+  runStats: ReadonlyMap<string, ImporterRunStat>,
+): ImporterHealth[] {
+  return meta.map((m) => {
+    const s = runStats.get(m.id);
+    return {
+      id: m.id, label: m.label, file: m.file, priority: m.priority,
+      lastRunAt: s?.lastRunAt ?? null,
+      lastStatus: s?.lastStatus ?? null,
+      total: s?.total ?? null,
+      kept: s?.kept ?? null,
+      dropped: s?.dropped ?? null,
+      lastError: s?.lastError ?? null,
+    };
+  });
+}
+
 // ── Cases overview & on-demand size scan ────────────────────────────────────────────────
 export interface CaseSize {
   caseId: string;
@@ -213,6 +263,8 @@ export interface DiagnosticsReport {
     attempts: ImportAttemptStats;
     recentFailures: ImporterFailure[];
     customImporters: number;
+    perImporter: ImporterHealth[]; // per-custom-importer breakdown (#84)
+    loadErrors: ImporterLoadError[]; // malformed *.json specs (importerStore.loadAll), shown alongside
   };
   backups: {
     enabled: boolean;
@@ -278,6 +330,22 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
     }
   } else {
     lines.push("  recent failures: none");
+  }
+  if (r.importers.perImporter.length) {
+    lines.push(`  per-importer health (${r.importers.perImporter.length}):`);
+    for (const p of r.importers.perImporter) {
+      const run = p.lastRunAt
+        ? `${p.lastStatus} — ${p.kept ?? 0}/${p.total ?? 0} kept, ${p.dropped ?? 0} dropped, last run ${p.lastRunAt}`
+        : "never run";
+      lines.push(`    ${p.id} (${p.label}): ${run}`);
+      if (p.lastError) lines.push(`      last error: ${p.lastError}`);
+    }
+  }
+  if (r.importers.loadErrors.length) {
+    lines.push(`  spec load errors (${r.importers.loadErrors.length}):`);
+    for (const e of r.importers.loadErrors) {
+      lines.push(`    ${e.file}: ${e.errors.map((x) => `${x.path}: ${x.message}`).join("; ")}`);
+    }
   }
   return lines.join("\n");
 }
