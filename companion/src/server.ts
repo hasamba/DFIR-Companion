@@ -2390,6 +2390,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/vendor/cytoscape/cytoscape.min.js": "application/javascript; charset=utf-8",
     "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
     "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
+    "/js/graph-view.js": "application/javascript; charset=utf-8",
   };
   for (const [route, type] of Object.entries(vendorFiles)) {
     app.get(route, async (_req, res) => {
