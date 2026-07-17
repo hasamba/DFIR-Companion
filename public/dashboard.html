@@ -518,20 +518,27 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .finding-main-cell .finding-tagline { margin-top: 4px; }
-    /* Finding assignment + workflow status (#87) — compact controls on the title row, left of the
-       comment/tag/pin/FP action icons. */
-    .finding-workflow { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; }
-    .fwf-status { font-size: 11px; padding: 1px 4px; border-radius: 5px; background: var(--c-161a22);
-      color: var(--c-9aa4b2); border: 1px solid var(--c-2b3242); cursor: pointer; }
-    .fwf-status.fwf-has-status { color: var(--c-e6e6e6); }
-    .fwf-status.fwf-new { border-color: #6aa9ff; }
-    .fwf-status.fwf-in_progress { border-color: #e0b84a; color: #e0b84a; }
-    .fwf-status.fwf-in_review { border-color: #c79bff; color: #c79bff; }
-    .fwf-status.fwf-resolved { border-color: #6bcb77; color: #6bcb77; }
-    .fwf-assignee { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--c-161a22);
-      color: var(--c-9aa4b2); border: 1px solid var(--c-2b3242); cursor: pointer; }
+    /* Finding assignment + workflow status (#87) — icon action buttons matching the comment/tag/pin/FP
+       chrome (same border/radius/height + 11px SVG). Status is an icon whose colour = the state; its
+       native <select> overlays it transparently so a click opens the real dropdown. Assign shows the
+       person icon, plus the owner's name once assigned. */
+    .finding-workflow { display: inline-flex; align-items: center; gap: 2px; }
+    .fwf-btn { display: inline-flex; align-items: center; gap: 4px; background: transparent;
+      border: 1px solid var(--c-2a2f3a); color: var(--c-9aa4b2); border-radius: 10px; padding: 0 6px;
+      font-size: 11px; line-height: 18px; cursor: pointer; margin-left: 4px; }
+    .fwf-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+    .fwf-btn:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .fwf-status-wrap { position: relative; display: inline-flex; margin-left: 4px; }
+    .fwf-status-wrap .fwf-btn { margin-left: 0; }
+    /* The real <select> sits invisibly on top of the icon button so the native dropdown opens on click. */
+    .fwf-status-wrap .fwf-status { position: absolute; inset: 0; width: 100%; height: 100%;
+      opacity: 0; cursor: pointer; border: 0; }
+    .fwf-status-btn.fwf-new { color: #6aa9ff; border-color: #35507a; }
+    .fwf-status-btn.fwf-in_progress { color: #e0b84a; border-color: #6a5a2a; }
+    .fwf-status-btn.fwf-in_review { color: #c79bff; border-color: #5a3f7a; }
+    .fwf-status-btn.fwf-resolved { color: #6bcb77; border-color: #2f6a3a; }
     .fwf-assignee.assigned { color: #6aa9ff; border-color: #35507a; }
-    .fwf-assignee:hover, .fwf-status:hover { border-color: var(--c-4a5670); }
+    .fwf-assignee .fwf-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
     .finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--c-2a2f3a); overflow: hidden; }
     .finding-conf-cell .fcbar > span { display: block; height: 100%; }
@@ -5677,6 +5684,10 @@
     const ICON_PIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.6c-2.15 0-3.9 1.75-3.9 3.9 0 2.85 3.9 7.4 3.9 7.4s3.9-4.55 3.9-7.4c0-2.15-1.75-3.9-3.9-3.9z" stroke-linejoin="round"/><circle cx="8" cy="5.5" r="1.3"/></svg>';
     const ICON_FLAG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3.5 1.5v13"/><path d="M3.5 2.2h8L9.3 4.7l2.2 2.5h-8"/></svg>';
     const ICON_HUNT = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="6.8" cy="6.8" r="4.3"/><path d="M13 13l-3.5-3.5" stroke-linecap="round"/></svg>';
+    // Assignment (person) + workflow status (progress ring) icons for findings (#87) — same
+    // 16-grid / 1.3 stroke as the other action icons so they read as one set.
+    const ICON_USER = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="5" r="2.6"/><path d="M3.4 13.3c0-2.5 2.05-4 4.6-4s4.6 1.5 4.6 4" stroke-linecap="round"/></svg>';
+    const ICON_FLOW = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.4"/><path d="M8 4.6V8l2.4 1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const ICON_EXPLAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8a4 4 0 0 0-2.3 7.3c.5.4.8 1 .8 1.6v.3h3v-.3c0-.6.3-1.2.8-1.6A4 4 0 0 0 8 1.8z" stroke-linejoin="round"/><path d="M6.3 13.2h3.4M6.7 14.5h2.6" stroke-linecap="round"/></svg>';
     const ICON_CHAIN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M6 6.2 7.6 4.6a2.3 2.3 0 0 1 3.3 3.3L9.3 9.5"/><path d="M10 9.8 8.4 11.4a2.3 2.3 0 0 1-3.3-3.3l1.6-1.6"/><path d="M6.5 9.5l3-3"/></svg>';
     const ICON_STAR = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M8 1.6l1.9 4.1 4.4.5-3.3 3 .9 4.4L8 11.4l-3.9 2.2.9-4.4-3.3-3 4.4-.5z"/></svg>';
@@ -5913,18 +5924,26 @@
         if (lastState) render(lastState);   // refresh the inline assignee/status controls
       }).catch(() => {});
     }
-    // The assignee + status controls shown on each finding card.
+    // The assignee + status controls shown on each finding card — icon action buttons matching the
+    // comment/tag/pin/FP set. Status is a colour-coded icon with the native <select> overlaid on top
+    // (so a click opens the real dropdown); Assign is a person icon that also shows the owner's name.
     function findingWorkflowControls(fid) {
       const wf = workflowByFinding.get(String(fid)) || {};
       const status = wf.status || "";
       const opts = [["", "— status —"], ["new", "New"], ["in_progress", "In progress"], ["in_review", "In review"], ["resolved", "Resolved"]]
         .map(([v, l]) => `<option value="${v}"${v === status ? " selected" : ""}>${l}</option>`).join("");
+      const statusLabel = status ? FINDING_WF_STATUS_LABELS[status] : "None";
       const assignee = (wf.assignee || "").trim();
-      const label = assignee ? esc(assignee) : "Assign";
-      return `<span class="finding-workflow">` +
-        `<select class="fwf-status${status ? " fwf-has-status fwf-" + status : ""}" data-fwf="${escAttr(String(fid))}" title="Analyst workflow status (survives synthesis)">${opts}</select>` +
-        `<button class="fwf-assignee${assignee ? " assigned" : ""}" data-fwf="${escAttr(String(fid))}" title="${assignee ? "Assigned to " + escAttr(assignee) + " — click to change" : "Assign this finding to an analyst"}">👤 ${label}</button>` +
+      const statusCtl =
+        `<span class="fwf-status-wrap" title="Workflow status: ${escAttr(statusLabel)}">` +
+          `<span class="fwf-btn fwf-status-btn${status ? " fwf-" + status : ""}" aria-hidden="true">${ICON_FLOW}</span>` +
+          `<select class="fwf-status" data-fwf="${escAttr(String(fid))}" aria-label="Workflow status">${opts}</select>` +
         `</span>`;
+      const assignCtl =
+        `<button type="button" class="fwf-btn fwf-assignee${assignee ? " assigned" : ""}" data-fwf="${escAttr(String(fid))}" ` +
+          `title="${assignee ? "Assigned to " + escAttr(assignee) + " — click to change" : "Assign this finding to an analyst"}">` +
+          `${ICON_USER}${assignee ? `<span class="fwf-name">${esc(assignee)}</span>` : ""}</button>`;
+      return `<span class="finding-workflow">${statusCtl}${assignCtl}</span>`;
     }
     // PATCH one field; the server drops the record when both assignee and status become empty.
     function patchFindingWorkflow(fid, patch) {
