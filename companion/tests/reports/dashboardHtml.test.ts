@@ -94,13 +94,32 @@ describe("dashboard.html", () => {
     expect(html).toContain("/asset-graph");
   });
 
-  it("offers fullscreen and layout (horizontal/vertical/radial) controls for the graph", async () => {
+  it("offers fullscreen and layout controls for the asset graph (shared cytoscape toolbar)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    expect(html).toContain('id="assetFullscreen"');
-    expect(html).toContain('id="assetLayout"');
-    expect(html).toContain('value="vertical"');
-    expect(html).toContain('value="radial"');
-    expect(html).toContain("requestFullscreen");
+    const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
+    // The asset graph now uses the shared graph-view module: the fullscreen button lives in the
+    // toolbar; requestFullscreen is handled once in the module. Layout is chosen via the generic
+    // layout radios (spread/dagre/circle/concentric/breadthfirst) — the old bespoke
+    // horizontal/vertical/radial SVG layouts were replaced by the shared set.
+    expect(html).toContain('id="assetFullscreenBtn"');
+    expect(html).toContain('name="assetLayoutRadio"');
+    expect(html).toContain('value="dagre"');
+    expect(html).toContain('value="circle"');
+    expect(mod).toContain("requestFullscreen");
+    // Fullscreen must actually grow the cytoscape canvas: the asset/evidence wraps are
+    // .asset-graph-wrap and their canvas div is .login-graph, so the sizing rule must target that
+    // (a regression guard — the old rule targeted the now-removed .asset-graph class).
+    expect(html).toContain(".asset-graph-wrap:fullscreen .login-graph");
+    // The absolutely-positioned View/side panels must anchor to their own graph wrap — otherwise
+    // they escape to the page and stay floating over other sections when you scroll away.
+    expect(html).toMatch(/\.asset-graph-wrap\s*\{[^}]*position:\s*relative/);
+  });
+
+  it("toggles the graph View panel closed on a second click (no re-open regression)", async () => {
+    const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
+    // The options-panel toggle must read purely off display==="none"; an `|| !p.style.display`
+    // fallback misread the open ("") state as hidden and re-opened instead of closing.
+    expect(mod).toContain('const show = p.style.display === "none";');
   });
 
   it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
@@ -219,12 +238,13 @@ describe("dashboard.html", () => {
     expect(html).toContain("regenVeloHunt");
   });
 
-  it("offers zoom in/out/fit buttons and mouse-wheel zoom for the graph", async () => {
+  it("offers fit and mouse-wheel zoom for the asset graph (shared cytoscape toolbar)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    expect(html).toContain('id="assetZoomIn"');
-    expect(html).toContain('id="assetZoomOut"');
-    expect(html).toContain('id="assetZoomReset"');
-    expect(html).toContain('addEventListener("wheel"');
+    const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
+    // The bespoke zoom in/out/reset buttons were replaced by the toolbar's Fit button plus
+    // cytoscape's built-in mouse-wheel zoom (configured via wheelSensitivity in the module).
+    expect(html).toContain('id="assetFit"');
+    expect(mod).toContain("wheelSensitivity");
   });
 
   it("has the hypotheses panel (#140) with CRUD wiring and the notebook→hypothesis bridge", async () => {

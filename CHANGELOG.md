@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Assets & IoC Graph and Evidence Chain now share the Login Graph's interactive Cytoscape view** — both moved off static SVG onto a shared graph-view module, so all three graphs offer the same five layouts (spread/dagre/circle/concentric/breadthfirst), bezier/taxi edges, selection transparency, live filter, fit, fullscreen, and PNG export. Custom node glyphs (host/account/service/process/file/network) are preserved, and the Evidence Chain keeps its typed, colored, directional edges. The old bespoke asset layouts (horizontal/vertical/radial) and manual node-position saving were replaced by the shared generic layouts.
 - **Screenshot/vision AI vars renamed `DFIR_AI_*` → `DFIR_VISION_*`** — the vision-model config (`DFIR_VISION_PROVIDER` / `_MODEL` / `_KEY` / `_BASE_URL` / `_IMAGE_DETAIL`) now has a name that reflects its screenshots-only role, distinct from the text-work family (`DFIR_AI_SYNTH_*`). The legacy `DFIR_AI_*` names still work as a deprecated fallback (the new name wins when both are set), so existing `.env` files keep working with no change required.
 
 ### Fixed
