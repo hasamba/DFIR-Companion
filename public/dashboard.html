@@ -518,8 +518,9 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .finding-main-cell .finding-tagline { margin-top: 4px; }
-    /* Finding assignment + workflow status (#87) — a compact control row under the finding title. */
-    .finding-workflow { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px; }
+    /* Finding assignment + workflow status (#87) — compact controls on the title row, left of the
+       comment/tag/pin/FP action icons. */
+    .finding-workflow { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; }
     .fwf-status { font-size: 11px; padding: 1px 4px; border-radius: 5px; background: var(--c-161a22);
       color: var(--c-9aa4b2); border: 1px solid var(--c-2b3242); cursor: pointer; }
     .fwf-status.fwf-has-status { color: var(--c-e6e6e6); }
@@ -14534,10 +14535,9 @@
               `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}</span>` +
               `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
               (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
-              findingWorkflowControls(f.id) +
             `</span>` +
             `<span class="finding-conf-cell">${confMeter}</span>` +
-            `<span class="finding-actions-cell">${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
+            `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
             (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
             `</div>`;
         }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
