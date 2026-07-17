@@ -556,6 +556,10 @@
     .ev-leg-ran { border-top: 2px solid var(--c-52617a); }
     .ev-leg-file { border-top: 2px solid var(--c-4ade80); }
     .ev-leg-net { border-top: 2px solid var(--c-38bdf8); }
+    /* Kill-chain overlay legend (#93): filled swatch per tactic. Wraps so all present phases fit. */
+    #evKcLegend { flex-wrap: wrap; gap: 4px 10px; }
+    .ev-leg-item { display: inline-flex; align-items: center; gap: 4px; }
+    .ev-leg-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
     .legend-ico { vertical-align: middle; margin-right: 2px; }
     /* Anchor the absolutely-positioned View/side panels (.lg-options/.lg-side-panel) to their own
        graph wrap — without this they escape to the page and stay floating when you scroll away. */
@@ -3897,6 +3901,14 @@
             <div class="lg-opt-group"><span class="lg-opt-label">Min severity</span>
               <label><select id="evMinSev"><option value="Info">All</option><option value="Medium">≥ Med</option><option value="High">≥ High</option><option value="Critical">Crit only</option></select></label>
             </div>
+            <div class="lg-opt-group"><span class="lg-opt-label">Node colour</span>
+              <label title="Colour nodes by their worst severity (default)."><input type="radio" name="evColorMode" value="severity" checked> Severity</label>
+              <label title="Colour nodes by their dominant ATT&amp;CK tactic, ordered along the kill chain. Nodes with no mapped tactic stay grey."><input type="radio" name="evColorMode" value="killchain"> Kill-chain phase</label>
+            </div>
+            <div class="lg-opt-group" id="evKcLegendGroup" style="display:none">
+              <span class="lg-opt-label">Kill-chain phases</span>
+              <span id="evKcLegend" class="ev-legend"></span>
+            </div>
             <div class="lg-opt-group">
               <span class="ev-legend"><span class="ev-leg-line ev-leg-high"></span>high
                 <span class="ev-leg-line ev-leg-med"></span>medium
@@ -5406,6 +5418,25 @@
     const evMinSevRank = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
     let evMinSev = "Info";  // show nodes at this severity or above; "Info" = show all
 
+    // Kill-chain overlay (#93): recolour nodes by their ATT&CK tactic (the phase the server tagged
+    // each node with) instead of by severity. Ordered as the kill chain; the palette runs cool
+    // (initial access) → hot (impact) so the graph reads as a progression. A node with no tactic
+    // degrades to the neutral colour.
+    let evColorMode = "severity";   // "severity" | "killchain"
+    const EV_KC_ORDER = [
+      "Initial Access", "Execution", "Persistence", "Privilege Escalation",
+      "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
+      "Collection", "Command and Control", "Exfiltration", "Impact",
+    ];
+    const EV_KC_COLOR = {
+      "Initial Access": "#6aa9ff", "Execution": "#38bdf8", "Persistence": "#2dd4bf",
+      "Privilege Escalation": "#4ade80", "Defense Evasion": "#a3e635", "Credential Access": "#facc15",
+      "Discovery": "#fbbf24", "Lateral Movement": "#fb923c", "Collection": "#f472b6",
+      "Command and Control": "#f87171", "Exfiltration": "#ef4444", "Impact": "#b91c1c",
+    };
+    const EV_KC_NO_TACTIC = "#6b7585";   // node with no mapped tactic — degrade cleanly
+    const evTacticColor = (tac) => (tac && EV_KC_COLOR[tac]) || EV_KC_NO_TACTIC;
+
     function loadEvidenceGraph(caseId) {
       const gv = evEnsureGV();
       if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style)
@@ -5422,9 +5453,11 @@
     }
 
     function evSevColor(sev) { return (sev === "Critical" || sev === "High") ? "#ff5c5c" : sev === "Medium" ? "#ff9f43" : "#6aa9ff"; }
+    // The colour a node is drawn in under the current mode: by severity (default) or by kill-chain tactic.
+    function evNodeColor(n) { return evColorMode === "killchain" ? evTacticColor(n.tactic) : evSevColor(n.maxSeverity); }
     // Node glyph: hosts/accounts reuse the asset-graph icons; a process is a small rounded box.
-    function evNodeGlyph(n, x, y) {
-      const c = evSevColor(n.maxSeverity), f = (v) => v.toFixed(1);
+    function evNodeGlyph(n, x, y, color) {
+      const c = color || evSevColor(n.maxSeverity), f = (v) => v.toFixed(1);
       if (n.kind === "host" || n.kind === "account") return assetIcon(n.kind, x, y, c);
       if (n.kind === "file") {
         // Diamond shape representing a file artifact.
@@ -5457,7 +5490,8 @@
         const titleSuffix = n.asset ? " on " + n.asset : n.ip ? " (" + n.ip + ")" : "";
         els.push({ data: {
           id: n.id, name: truncate(n.label, 22), full: n.label + titleSuffix, kind: n.kind, sev: n.maxSeverity,
-          glyph: glyphDataUri(evNodeGlyph(n, 11, 11)),
+          tactic: n.tactic || null,
+          glyph: glyphDataUri(evNodeGlyph(n, 11, 11, evNodeColor(n))),
         } });
       }
       for (const e of edges) {
@@ -5494,10 +5528,19 @@
       p.replaceChildren();
       const title = lgEl("div");
       title.append(lgEl("b", null, node.data("full")), lgEl("span", "ev-sub", " " + node.data("sev")));
+      p.append(title);
+      const tactic = node.data("tactic");
+      if (tactic) {
+        const tacRow = lgEl("div", "ev-sub");
+        const sw = lgEl("span");
+        sw.style.cssText = `display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle;background:${evTacticColor(tactic)}`;
+        tacRow.append(sw, document.createTextNode("kill-chain phase: " + tactic));
+        p.append(tacRow);
+      }
       const close = lgEl("button", "lg-close", "✕ Close");
       close.type = "button";
       close.onclick = () => { p.style.display = "none"; if (evGV) evGV.dimExcept(null); };
-      p.append(title, close);
+      p.append(close);
       p.style.display = "block";
     }
     function evShowEdgePanel(edge) {
@@ -5562,7 +5605,31 @@
         if (evGV) evGV.destroy();
         return;
       }
+      renderEvKcLegend();
       gv.render();
+    }
+
+    // Kill-chain legend (#93): swatches for the tactics that actually appear in the current graph,
+    // in kill-chain order, plus a "no phase" entry when some node maps to no tactic. Shown only in
+    // kill-chain colour mode. Built from the raw graph so it reflects every derived phase.
+    function renderEvKcLegend() {
+      const group = document.getElementById("evKcLegendGroup");
+      const legend = document.getElementById("evKcLegend");
+      if (!group || !legend) return;
+      if (evColorMode !== "killchain") { group.style.display = "none"; return; }
+      const present = new Set((evGraphData?.nodes || []).map((n) => n.tactic).filter(Boolean));
+      const anyMissing = (evGraphData?.nodes || []).some((n) => !n.tactic);
+      const items = EV_KC_ORDER.filter((t) => present.has(t)).map((t) => ({ label: t, color: EV_KC_COLOR[t] }));
+      if (anyMissing) items.push({ label: "no phase", color: EV_KC_NO_TACTIC });
+      legend.replaceChildren();
+      for (const it of items) {
+        const wrap = lgEl("span", "ev-leg-item");
+        const sw = lgEl("span", "ev-leg-dot");
+        sw.style.background = it.color;
+        wrap.append(sw, document.createTextNode(it.label));
+        legend.append(wrap);
+      }
+      group.style.display = items.length ? "" : "none";
     }
 
     // --- Investigator comments (collaboration) -----------------------------------
@@ -15125,6 +15192,10 @@
     document.getElementById("evMinSev").addEventListener("change", (e) => {
       evMinSev = e.target.value; renderEvidenceGraph();
     });
+    document.querySelectorAll('input[name="evColorMode"]').forEach((r) => r.addEventListener("change", (e) => {
+      if (!e.target.checked) return;
+      evColorMode = e.target.value; renderEvidenceGraph();
+    }));
     document.querySelector("#sec-evidence h2").addEventListener("click", () => {
       setTimeout(() => { if (evGV) evGV.onExpand(); }, 0);
     });
