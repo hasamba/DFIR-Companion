@@ -16,6 +16,7 @@ import {
   applyHypothesisPatch,
   reconsiderHypotheses,
   markExhaustedHypotheses,
+  ensureHypothesisStatusHistory,
 } from "./hypothesis.js";
 
 // Per-case hypothesis store (issue #140). Persists `state/hypotheses.json` via the atomic-write
@@ -32,7 +33,9 @@ export class HypothesisStore {
 
   async load(caseId: string): Promise<Hypothesis[]> {
     try {
-      return hypothesesSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
+      const parsed = hypothesesSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
+      // Backfill statusHistory (issue #95) for hypotheses persisted before that field existed.
+      return parsed.map(ensureHypothesisStatusHistory);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;

@@ -958,19 +958,47 @@ function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
   const STATUS_LABEL: Record<Hypothesis["status"], string> = {
     supported: "Supported", refuted: "Refuted", open: "Open", unknown: "Unknown",
   };
+  // Negative knowledge (issue #95): a refuted hypothesis, or one whose linked hunts came back empty
+  // (`exhausted`), is a settled, ruled-out theory — call it out up front so a reader doesn't mistake it
+  // for an open lead buried further down the section.
+  const negative = hypotheses.filter((h) => h.status === "refuted" || h.exhausted);
+  if (negative.length) {
+    lines.push(
+      "> **Negative knowledge — ruled out.** These theories were refuted by the evidence or exhausted " +
+      "(hunted for and not found); treat them as settled, not as open leads.",
+      "",
+    );
+    for (const h of negative) {
+      const tag = h.status === "refuted" ? "Refuted" : "Exhausted";
+      const reason = h.status === "refuted" ? h.notes : h.exhaustedReason;
+      lines.push(`- **[${tag}]** ${h.title}${reason ? ` — ${reason}` : ""}`);
+    }
+    lines.push("");
+  }
   // Concluded hypotheses first (supported, then refuted), then the outstanding ones (open, unknown).
   const order: Hypothesis["status"][] = ["supported", "refuted", "open", "unknown"];
   const sorted = [...hypotheses].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   for (const h of sorted) {
-    lines.push(`### ${h.title} — ${STATUS_LABEL[h.status] ?? h.status}`, "");
+    const exhaustedTag = h.exhausted ? " ⊘ Exhausted" : "";
+    lines.push(`### ${h.title} — ${STATUS_LABEL[h.status] ?? h.status}${exhaustedTag}`, "");
     if (h.description) lines.push(h.description, "");
     if (h.expectedOutcome) lines.push(`**Expected outcome (what would prove or disprove this):** ${h.expectedOutcome}`, "");
+    if (h.exhausted && h.exhaustedReason) lines.push(`**Exhausted:** ${h.exhaustedReason}`, "");
     const bits: string[] = [];
     if (h.relatedTechniques.length) bits.push(`ATT&CK: ${h.relatedTechniques.join(", ")}`);
     if (h.relatedEventIds.length) bits.push(`${h.relatedEventIds.length} supporting event${h.relatedEventIds.length === 1 ? "" : "s"}`);
     if (h.relatedIocIds.length) bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
     if (bits.length) lines.push(`_${bits.join(" · ")}._`, "");
     if (h.notes) lines.push(`**Analyst notes:** ${h.notes}`, "");
+    // Status-change audit trail (issue #95): a dated open → … chain, skipped when there's only the
+    // initial entry (nothing has changed since the hypothesis was created).
+    const history = h.statusHistory ?? [];
+    if (history.length > 1) {
+      const chain = history
+        .map((s) => `${STATUS_LABEL[s.status] ?? s.status} (${(s.changedAt || "").slice(0, 10)})`)
+        .join(" → ");
+      lines.push(`**Status history:** ${chain}`, "");
+    }
   }
 }
 

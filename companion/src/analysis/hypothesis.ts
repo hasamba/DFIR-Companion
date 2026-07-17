@@ -28,6 +28,15 @@ export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
 export const HYPOTHESIS_SOURCES = ["analyst", "synthesis"] as const;
 export type HypothesisSource = (typeof HYPOTHESIS_SOURCES)[number];
 
+// One entry in a hypothesis's dated status-change audit trail (issue #95). Appended whenever the
+// STATUS actually changes value — not on every patch/refresh — so it reads as a clean history of
+// open → supported / refuted / unknown transitions, not a log of every edit.
+export const hypothesisStatusChangeSchema = z.object({
+  status: z.enum(HYPOTHESIS_STATUSES),
+  changedAt: z.string(),
+});
+export type HypothesisStatusChange = z.infer<typeof hypothesisStatusChangeSchema>;
+
 // Lenient (.catch / .default everywhere) so one off field in a hand-edited or older file never
 // rejects the whole array — same posture as responseSchema.ts and the other side-file stores.
 export const hypothesisSchema = z.object({
@@ -66,6 +75,10 @@ export const hypothesisSchema = z.object({
   author: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Dated status-change audit trail (issue #95). Lenient-default so a pre-existing hypotheses.json
+  // (written before this field existed) parses to [] rather than rejecting the whole file; the store
+  // backfills a single entry from createdAt on load (see ensureHypothesisStatusHistory).
+  statusHistory: z.array(hypothesisStatusChangeSchema).default([]).catch([]),
 });
 
 export type Hypothesis = z.infer<typeof hypothesisSchema>;
@@ -126,6 +139,27 @@ const MAX_LINKS = 200;
 
 function dedupeStrings(arr: readonly string[] | undefined): string[] {
   return [...new Set((arr ?? []).map((s) => String(s).trim()).filter(Boolean))];
+}
+
+// Append a status-change entry — but only when the status actually differs from the last recorded
+// one (idempotent under repeated writes of the same status, e.g. a refresh that changes other fields
+// but not status). Pure.
+function appendStatusChange(
+  history: readonly HypothesisStatusChange[] | undefined,
+  status: HypothesisStatus,
+  now: string,
+): HypothesisStatusChange[] {
+  const prev = history ?? [];
+  const last = prev[prev.length - 1];
+  if (last && last.status === status) return [...prev];
+  return [...prev, { status, changedAt: now }];
+}
+
+// Backfill a single status-history entry (from createdAt) for a hypothesis loaded from a
+// pre-#95 hypotheses.json that has no history yet. Pure; a no-op once history is populated.
+export function ensureHypothesisStatusHistory(h: Hypothesis): Hypothesis {
+  if (h.statusHistory && h.statusHistory.length) return h;
+  return { ...h, statusHistory: [{ status: h.status, changedAt: h.createdAt }] };
 }
 
 // Whitespace-normalize a title so two formattings fingerprint identically. Lowercased — unlike VQL,
@@ -246,6 +280,7 @@ export function mergeHypotheses(
           contradictingEventIds: [...(seed.contradictingEventIds ?? [])],   // ACH (#14)
           discriminator: seed.discriminator ?? "",
           needsReview: false,   // authoritative refresh clears any interim FP-cascade flag (#12)
+          statusHistory: appendStatusChange(cur.statusHistory, seed.status, now),
           updatedAt: now,
         };
         changed = true;
@@ -272,6 +307,7 @@ export function mergeHypotheses(
         sourceKey: seed.sourceKey,
         createdAt: now,
         updatedAt: now,
+        statusHistory: [{ status: seed.status, changedAt: now }],
       };
       result.push(fresh);
       byKey.set(seed.sourceKey, fresh);
@@ -314,12 +350,13 @@ export function buildAnalystHypothesis(
   id: string,
   now: string,
 ): Hypothesis {
+  const status = input.status && VALID_STATUS.has(input.status) ? input.status : "open";
   return {
     id,
     title: String(input.title ?? "").trim().slice(0, MAX_TITLE_LEN),
     description: String(input.description ?? "").trim().slice(0, MAX_TEXT_LEN),
     expectedOutcome: String(input.expectedOutcome ?? "").trim().slice(0, MAX_TEXT_LEN),
-    status: input.status && VALID_STATUS.has(input.status) ? input.status : "open",
+    status,
     relatedTechniques: dedupeStrings(input.relatedTechniques).slice(0, MAX_TECHNIQUES),
     relatedEventIds: dedupeStrings(input.relatedEventIds).slice(0, MAX_LINKS),
     relatedIocIds: dedupeStrings(input.relatedIocIds).slice(0, MAX_LINKS),
@@ -335,12 +372,14 @@ export function buildAnalystHypothesis(
     author: (input.author || "").trim() || "anonymous",
     createdAt: now,
     updatedAt: now,
+    statusHistory: [{ status, changedAt: now }],
   };
 }
 
 // Apply an analyst patch to a hypothesis, marking it analystTouched and bumping updatedAt. Pure —
 // the store passes `now` and persists the result. Unknown status values are ignored (kept as-is).
 export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now: string): Hypothesis {
+  const statusChanged = patch.status !== undefined && VALID_STATUS.has(patch.status) && patch.status !== h.status;
   return {
     ...h,
     ...(patch.title !== undefined ? { title: String(patch.title).trim().slice(0, MAX_TITLE_LEN) } : {}),
@@ -356,6 +395,7 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
     ...(patch.notes !== undefined ? { notes: String(patch.notes).trim().slice(0, MAX_TEXT_LEN) } : {}),
     analystTouched: true,
     needsReview: false,   // the analyst is editing it now — that IS the review (#12)
+    ...(statusChanged ? { statusHistory: appendStatusChange(h.statusHistory, patch.status as HypothesisStatus, now) } : {}),
     updatedAt: now,
   };
 }
@@ -393,7 +433,9 @@ export function reconsiderHypotheses(
     return {
       ...h,
       needsReview: true,
-      ...(flipStatus ? { status: "unknown" as HypothesisStatus } : {}),
+      ...(flipStatus
+        ? { status: "unknown" as HypothesisStatus, statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
+        : {}),
       updatedAt: now,
     };
   });

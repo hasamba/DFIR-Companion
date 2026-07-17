@@ -2,15 +2,17 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
 import { hypothesisAutoKey } from "../../src/analysis/hypothesis.js";
 
 describe("HypothesisStore", () => {
   let store: HypothesisStore;
+  let cases: CaseStore;
   beforeEach(async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-hypo-"));
-    const cases = new CaseStore(root);
+    cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     store = new HypothesisStore(cases);
   });
@@ -76,5 +78,17 @@ describe("HypothesisStore", () => {
     const after = (await store.load("c1"))[0];
     expect(after.status).toBe("supported");
     expect(after.description).toBe("v1");
+  });
+
+  it("backfills statusHistory (issue #95) for a hypotheses.json written before that field existed", async () => {
+    const legacy = [{
+      id: "hp1", title: "Old-format hypothesis", description: "", expectedOutcome: "",
+      status: "refuted", relatedTechniques: [], relatedEventIds: [], relatedIocIds: [],
+      assignee: "", notes: "", source: "analyst", analystTouched: true,
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z",
+    }];
+    await writeFile(join(cases.stateDir("c1"), "hypotheses.json"), JSON.stringify(legacy));
+    const [h] = await store.load("c1");
+    expect(h.statusHistory).toEqual([{ status: "refuted", changedAt: "2026-01-01T00:00:00.000Z" }]);
   });
 });

@@ -24,6 +24,19 @@ describe("reconsiderHypotheses (#12)", () => {
     expect(out[0].updatedAt).toBe(NOW);
   });
 
+  it("records the flip-to-unknown in statusHistory (issue #95)", () => {
+    const { hypotheses: out } = reconsiderHypotheses(
+      [h({ id: "hp1", title: "staging", status: "supported", relatedEventIds: ["e5"], analystTouched: false,
+        statusHistory: [{ status: "supported", changedAt: "2026-01-01T00:00:00Z" }] })],
+      { fpEventIds: new Set(["e5"]), fpIocIds: new Set() },
+      NOW,
+    );
+    expect(out[0].statusHistory).toEqual([
+      { status: "supported", changedAt: "2026-01-01T00:00:00Z" },
+      { status: "unknown", changedAt: NOW },
+    ]);
+  });
+
   it("respects the analyst freeze: a TOUCHED hypothesis keeps its status, only flagged needsReview", () => {
     const { hypotheses: out } = reconsiderHypotheses(
       [h({ id: "hp1", title: "staging", status: "supported", relatedIocIds: ["i2"], analystTouched: true })],
