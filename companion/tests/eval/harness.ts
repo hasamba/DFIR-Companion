@@ -5,15 +5,16 @@
 //   - Phase 2 (real, non-blocking): pass the env-configured provider (`realProviderOrNull()`) to score the
 //     CURRENT prompt's actual output against the golden expectations. Same runners, same scorer, same fixtures.
 
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { buildRuntimePipeline, buildProvider, buildSynthesisProvider } from "../../src/server.js";
-import { MockProvider, type AIProvider } from "../../src/providers/provider.js";
+import { MockProvider, type AIProvider, type AnalyzeImage } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
-import type { ProducedEvent, ProducedFinding } from "./scorer.js";
+import type { CaptureMetadata } from "../../src/types.js";
+import type { GoldenEvent, ProducedEvent, ProducedFinding, Thresholds } from "./scorer.js";
 import type { ExtractionFixture, ScreenshotFixture, SynthesisFixture } from "./fixtures.js";
 
 const IMPORTED_AT = "2026-06-01T00:00:00Z"; // fixed clock input — keeps runs reproducible
@@ -40,15 +41,23 @@ export function realProviderOrNull(): AIProvider | undefined {
   return buildSynthesisProvider() ?? buildProvider();
 }
 
-// Build a fresh, isolated pipeline backed by a temp case, driven by the given provider.
-export async function makeEvalPipeline(provider: AIProvider, caseId = "eval"): Promise<EvalPipeline> {
+const stubImageLoader = async (): Promise<AnalyzeImage> => ({ base64: "AAAA", mimeType: "image/webp" });
+
+// Build a fresh, isolated pipeline backed by a temp case, driven by the given provider. `imageLoader`
+// defaults to a stub (placeholder bytes, no real image ever decoded) for the mock/text fixtures; real
+// screenshot grading (below) passes one that reads actual image bytes off disk.
+export async function makeEvalPipeline(
+  provider: AIProvider,
+  caseId = "eval",
+  imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage> = stubImageLoader,
+): Promise<EvalPipeline> {
   const root = await mkdtemp(join(tmpdir(), "dfir-eval-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   await store.createCase({ caseId, name: "eval", investigator: "eval", aiProvider: provider.name });
   const pipeline = buildRuntimePipeline({
     provider, synthesisProvider: provider, stateStore, store,
-    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    imageLoader,
   });
   return { pipeline, stateStore, caseId };
 }
@@ -85,6 +94,97 @@ export async function runScreenshotFixture(fx: ScreenshotFixture, provider: AIPr
   const { pipeline, caseId } = await makeEvalPipeline(provider);
   const captures = fx.captures.map((c) => ({ ...c, caseId })); // bind synthetic captures to the temp case
   const state = await pipeline.analyzeWindow(caseId, captures);
+  return producedEvents(state);
+}
+
+// --- Real vision-model grading (issue #135) ---------------------------------------------------------
+//
+// SCREENSHOT_FIXTURES above is mock-only by design (no real screenshot may be committed). This section
+// drives analyzeWindow against ACTUAL screenshots + the REAL vision provider, sourced entirely from a
+// local, uncommitted directory pointed to by DFIR_EVAL_SCREENSHOT_DIR — never from the repo.
+
+export interface RealScreenshotFixture {
+  name: string;             // derived from the image's basename
+  imagePath: string;        // absolute path to the screenshot file
+  mimeType: string;
+  tabTitle: string;
+  url: string;
+  timestamp?: string;       // capture time; defaults to IMPORTED_AT if the sidecar omits it
+  golden: GoldenEvent[];
+  thresholds?: Thresholds;
+}
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+};
+
+interface ScreenshotSidecar {
+  tabTitle?: string;
+  url?: string;
+  timestamp?: string;
+  golden: GoldenEvent[];
+  thresholds?: Thresholds;
+}
+
+// Load real screenshot fixtures from a local directory: each image (.png/.jpg/.jpeg/.webp) is paired
+// with a same-basename `.json` sidecar holding `{ tabTitle?, url?, timestamp?, golden, thresholds? }`.
+// An image without a valid sidecar is skipped with a warning, not a hard failure — a local set can be
+// built up incrementally. A missing/unset directory returns [] rather than throwing, so callers can
+// treat "nothing configured" and "nothing found" the same way: a clean skip.
+export async function loadRealScreenshotFixtures(dir: string): Promise<RealScreenshotFixture[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const fixtures: RealScreenshotFixture[] = [];
+  for (const entry of entries.sort()) {
+    const ext = extname(entry).toLowerCase();
+    const mimeType = IMAGE_MIME_BY_EXT[ext];
+    if (!mimeType) continue;
+    const base = entry.slice(0, -ext.length);
+    const sidecarPath = join(dir, `${base}.json`);
+    let sidecar: ScreenshotSidecar;
+    try {
+      sidecar = JSON.parse(await readFile(sidecarPath, "utf8"));
+    } catch {
+      console.warn(`eval --real: ${entry} has no valid ${base}.json sidecar — skipped`);
+      continue;
+    }
+    fixtures.push({
+      name: base,
+      imagePath: join(dir, entry),
+      mimeType,
+      tabTitle: sidecar.tabTitle ?? base,
+      url: sidecar.url ?? "https://eval.local/",
+      timestamp: sidecar.timestamp,
+      golden: sidecar.golden ?? [],
+      thresholds: sidecar.thresholds,
+    });
+  }
+  return fixtures;
+}
+
+// Run one real screenshot fixture through analyzeWindow: reads the actual image bytes off disk and
+// hands them to `provider` (the real, vision-scoped provider — see realProviderOrNull's note on why
+// the TEXT provider used by the other --real fixtures is the wrong model for this modality).
+export async function runRealScreenshotFixture(fx: RealScreenshotFixture, provider: AIProvider): Promise<ProducedEvent[]> {
+  const bytes = await readFile(fx.imagePath);
+  const image: AnalyzeImage = { base64: bytes.toString("base64"), mimeType: fx.mimeType };
+  const { pipeline, caseId } = await makeEvalPipeline(provider, "eval", async () => image);
+  const capture: CaptureMetadata = {
+    caseId,
+    sequenceNumber: 1,
+    timestamp: fx.timestamp ?? IMPORTED_AT,
+    url: fx.url,
+    tabTitle: fx.tabTitle,
+    triggerType: "timer",
+    contentHash: `real-${fx.name}`,
+    isDuplicate: false,
+    screenshotFile: basename(fx.imagePath),
+  };
+  const state = await pipeline.analyzeWindow(caseId, [capture]);
   return producedEvents(state);
 }
 

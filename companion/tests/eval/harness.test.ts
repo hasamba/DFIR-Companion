@@ -1,5 +1,11 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider } from "./harness.js";
+import {
+  runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider,
+  loadRealScreenshotFixtures, runRealScreenshotFixture,
+} from "./harness.js";
 import { scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis } from "./scorer.js";
 import { EXTRACTION_FIXTURES, SCREENSHOT_FIXTURES, SYNTHESIS_FIXTURES } from "./fixtures.js";
 
@@ -38,6 +44,54 @@ describe("eval harness — screenshot fixtures (#64)", () => {
       expect(passesExtraction(score, fx.thresholds)).toBe(true);
     });
   }
+});
+
+// Real screenshot grading (#135) sources images + goldens from a local, uncommitted directory. These
+// tests exercise the loader + runner plumbing with a MockProvider (deterministic, no real image bytes
+// are actually decoded by analyzeWindow) — grading against the REAL vision model is exactly what
+// `npm run eval:real:screenshots` does manually against a locally configured DFIR_EVAL_SCREENSHOT_DIR.
+describe("eval harness — real screenshot loader (#135)", () => {
+  it("returns [] for a directory that doesn't exist — a clean skip, not a throw", async () => {
+    const fixtures = await loadRealScreenshotFixtures(join(tmpdir(), "dfir-eval-does-not-exist"));
+    expect(fixtures).toEqual([]);
+  });
+
+  it("loads image+sidecar pairs and skips an image with no valid sidecar", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-eval-screenshots-"));
+    await writeFile(join(dir, "task.webp"), "not a real image, just bytes");
+    await writeFile(join(dir, "task.json"), JSON.stringify({
+      tabTitle: "Velociraptor — Task Scheduler",
+      url: "https://velociraptor.local/app",
+      golden: [{ keywords: ["powershell"], mitreTechniques: ["T1053.005"] }],
+    }));
+    await writeFile(join(dir, "orphan.png"), "no sidecar for this one");
+    await writeFile(join(dir, "notes.txt"), "not an image — ignored entirely");
+
+    const fixtures = await loadRealScreenshotFixtures(dir);
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0]).toMatchObject({
+      name: "task",
+      mimeType: "image/webp",
+      tabTitle: "Velociraptor — Task Scheduler",
+      golden: [{ keywords: ["powershell"], mitreTechniques: ["T1053.005"] }],
+    });
+  });
+
+  it("runRealScreenshotFixture drives analyzeWindow off the real image path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-eval-screenshots-"));
+    await writeFile(join(dir, "task.webp"), "placeholder bytes");
+    await writeFile(join(dir, "task.json"), JSON.stringify({ golden: [] }));
+    const [fx] = await loadRealScreenshotFixtures(dir);
+
+    const canned = JSON.stringify({
+      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+      timelineNote: "", summary: "eval",
+      forensicEvents: [{ id: "e1", timestamp: "2026-06-01T02:13:00Z", description: "Scheduled task launches hidden powershell", severity: "High", mitreTechniques: ["T1053.005"], asset: "WS02" }],
+    });
+    const produced = await runRealScreenshotFixture(fx, mockProvider(canned));
+    expect(produced).toHaveLength(1);
+    expect(produced[0].description).toContain("powershell");
+  });
 });
 
 describe("eval harness — synthesis fixtures (#64)", () => {
