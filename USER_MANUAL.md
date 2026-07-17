@@ -399,16 +399,16 @@ DFIR Companion supports multiple AI backends:
 
 | Provider | Setting |
 |----------|---------|
-| **OpenAI** | `DFIR_AI_PROVIDER=openai` |
-| **Anthropic (Claude)** | `DFIR_AI_PROVIDER=openai` with `DFIR_AI_BASE_URL=https://api.anthropic.com/v1` |
-| **OpenRouter** | `DFIR_AI_PROVIDER=openrouter` |
-| **Google Gemini** | `DFIR_AI_PROVIDER=gemini` |
-| **Ollama** (local) | `DFIR_AI_PROVIDER=ollama`, `DFIR_AI_BASE_URL=http://localhost:11434/v1` |
-| **LiteLLM** (local proxy) | `DFIR_AI_PROVIDER=litellm` |
+| **OpenAI** | `DFIR_VISION_PROVIDER=openai` |
+| **Anthropic (Claude)** | `DFIR_VISION_PROVIDER=openai` with `DFIR_VISION_BASE_URL=https://api.anthropic.com/v1` |
+| **OpenRouter** | `DFIR_VISION_PROVIDER=openrouter` |
+| **Google Gemini** | `DFIR_VISION_PROVIDER=gemini` |
+| **Ollama** (local) | `DFIR_VISION_PROVIDER=ollama`, `DFIR_VISION_BASE_URL=http://localhost:11434/v1` |
+| **LiteLLM** (local proxy) | `DFIR_VISION_PROVIDER=litellm` |
 
-Configure via the Setup Wizard or in `.env`. All AI calls are made server-side — API keys never go to the browser.
+Configure via the Setup Wizard or in `.env`. All AI calls are made server-side — API keys never go to the browser. (The screenshot/vision vars were renamed from `DFIR_AI_*` to `DFIR_VISION_*`; the legacy `DFIR_AI_*` names still work as a deprecated fallback.)
 
-> **Using a local model?** Only screenshot reading needs a **multimodal** (vision) model — that's `DFIR_AI_MODEL`. Everything else (CSV/log import, synthesis, and all other text-only AI features) runs on `DFIR_AI_SYNTH_MODEL`, so a text-only model is fine there. Use the two-tier setup (`DFIR_AI_MODEL` = cheap vision for screenshots, `DFIR_AI_SYNTH_MODEL` = strong reasoning for everything else) — a weak text model fails log triage silently, returning no events at all rather than wrong ones.
+> **Using a local model?** Only screenshot reading needs a **multimodal** (vision) model — that's `DFIR_VISION_MODEL`. Everything else (CSV/log import, synthesis, and all other text-only AI features) runs on `DFIR_AI_SYNTH_MODEL`, so a text-only model is fine there. Use the two-tier setup (`DFIR_VISION_MODEL` = cheap vision for screenshots, `DFIR_AI_SYNTH_MODEL` = strong reasoning for everything else) — a weak text model fails log triage silently, returning no events at all rather than wrong ones.
 
 ### What the AI sees (anonymization)
 

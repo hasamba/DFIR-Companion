@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isSeaRuntime } from "../serverAssets.js";
+import { withVisionEnvAliases } from "../config/aiEnv.js";
 
 const SECRET_SUFFIXES = ["_KEY", "_SECRET", "_PASSWORD", "_TOKEN"];
 
@@ -78,7 +79,9 @@ export async function reloadEnvPrefix(prefix: string): Promise<string[]> {
 
 /** Return all .env values; secrets are replaced with the sentinel string. */
 export async function getEnvForSettings(): Promise<Record<string, string>> {
-  const raw = parseLines(await readRaw());
+  // Surface legacy DFIR_AI_* vision values under the renamed DFIR_VISION_* keys so an existing
+  // install's values still populate the renamed Settings fields (a Save then writes the new names).
+  const raw = withVisionEnvAliases(parseLines(await readRaw())) as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw)) {
     out[k] = isSecretKey(k) && v ? "••••••••" : v;

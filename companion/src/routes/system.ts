@@ -289,7 +289,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   app.post("/diagnostics/ai-test", async (_req: Request, res: Response) => {
     const provider = options.aiTestProvider?.();
     if (!provider) {
-      return res.status(501).json({ ok: false, error: "AI provider not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in Settings → AI, then restart the server" });
+      return res.status(501).json({ ok: false, error: "AI provider not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in Settings → AI, then restart the server" });
     }
     const startedAt = Date.now();
     try {
@@ -352,7 +352,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     // 1. AI provider — CRITICAL: without it, analysis and synthesis don't work.
     const aiProvider = options.aiTestProvider?.();
     if (!aiProvider) {
-      items.push({ name: "AI provider", ok: false, critical: true, detail: "not configured — set DFIR_AI_PROVIDER / DFIR_AI_MODEL / DFIR_AI_KEY in .env, then restart" });
+      items.push({ name: "AI provider", ok: false, critical: true, detail: "not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in .env, then restart" });
     } else {
       try {
         await aiProvider.analyze({

@@ -31,6 +31,8 @@ beforeEach(async () => {
   }
   delete process.env.DFIR_AI_PROVIDER;
   delete process.env.DFIR_AI_MODEL;
+  delete process.env.DFIR_VISION_PROVIDER;
+  delete process.env.DFIR_VISION_MODEL;
 });
 
 afterEach(async () => {
@@ -52,6 +54,17 @@ describe("/settings/ai-reload", () => {
     // The values are now live in process.env (what buildProvider() reads).
     expect(process.env.DFIR_AI_PROVIDER).toBe("openai");
     expect(process.env.DFIR_AI_MODEL).toBe("gpt-4o-mini");
+  });
+
+  it("also applies the renamed DFIR_VISION_* vision family (screenshot provider)", async () => {
+    await writeFile(ENV_PATH, "DFIR_VISION_PROVIDER=openai\nDFIR_VISION_MODEL=gpt-4o-mini\n", "utf8");
+
+    const res = await request(app).post("/settings/ai-reload");
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toContain("DFIR_VISION_PROVIDER");
+    expect(res.body.applied).toContain("DFIR_VISION_MODEL");
+    expect(process.env.DFIR_VISION_PROVIDER).toBe("openai");
+    expect(process.env.DFIR_VISION_MODEL).toBe("gpt-4o-mini");
   });
 
   it("succeeds with an empty applied list when no DFIR_AI_* keys are present", async () => {

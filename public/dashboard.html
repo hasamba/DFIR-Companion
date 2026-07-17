@@ -2354,8 +2354,8 @@
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
         <div class="sfield-row">
           <div class="sfield">
-            <label>Provider<span class="sfield-hint">DFIR_AI_PROVIDER</span></label>
-            <select id="env-DFIR_AI_PROVIDER">
+            <label>Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
+            <select id="env-DFIR_VISION_PROVIDER">
               <option value="">— not set —</option>
               <option value="openai">openai</option>
               <option value="openrouter">openrouter</option>
@@ -2365,11 +2365,11 @@
               <option value="anthropic">anthropic</option>
             </select>
           </div>
-          <div class="sfield"><label>Model (extraction, must support vision)<span class="sfield-hint">DFIR_AI_MODEL</span></label><input id="env-DFIR_AI_MODEL" placeholder="gpt-4o-mini" /></div>
+          <div class="sfield"><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><input id="env-DFIR_VISION_MODEL" placeholder="gpt-4o-mini" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>API key<span class="sfield-hint">DFIR_AI_KEY</span></label><input id="env-DFIR_AI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_AI_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_AI_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
+          <div class="sfield"><label>API key<span class="sfield-hint">DFIR_VISION_KEY</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_VISION_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_AI_TIMEOUT_MS</span></label><input id="env-DFIR_AI_TIMEOUT_MS" placeholder="180000" /></div>
@@ -2379,8 +2379,8 @@
         <div class="sfield-row">
           <div class="sfield"><label>Synth max events<span class="sfield-hint">DFIR_AI_SYNTH_MAX_EVENTS</span></label><input id="env-DFIR_AI_SYNTH_MAX_EVENTS" placeholder="300" /></div>
           <div class="sfield">
-            <label>Image detail<span class="sfield-hint">DFIR_AI_IMAGE_DETAIL</span></label>
-            <select id="env-DFIR_AI_IMAGE_DETAIL">
+            <label>Image detail<span class="sfield-hint">DFIR_VISION_IMAGE_DETAIL</span></label>
+            <select id="env-DFIR_VISION_IMAGE_DETAIL">
               <option value="">— default (high) —</option>
               <option value="high">high</option>
               <option value="low">low</option>
@@ -10019,7 +10019,7 @@
       ).join("");
       document.getElementById("anonCustCat").innerHTML = ANON_ENTITY_CATEGORIES.map(c => `<option value="${escAttr(c)}">${esc(c)}</option>`).join("");
       const warn = document.getElementById("anonWarning");
-      if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. Point DFIR_AI_MODEL at a local Ollama vision model to keep screenshots fully on-box. Imported CSV/log text and synthesis are anonymized."; }
+      if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. Point DFIR_VISION_MODEL at a local Ollama vision model to keep screenshots fully on-box. Imported CSV/log text and synthesis are anonymized."; }
       else { warn.style.display = "none"; }
       document.getElementById("anonMsg").textContent = "loading entities…";
       loadAnonEntities(caseId)
@@ -17443,9 +17443,9 @@
       if (!key && !local) { result.style.color = "#ffb05a"; result.textContent = "Enter an API key (or pick a local provider)."; return; }
       const btn = wizEl("wizTestSaveBtn"); btn.disabled = true;
       result.style.color = "#9aa4b2"; result.textContent = "Saving configuration…";
-      const updates = { DFIR_AI_PROVIDER: provider, DFIR_AI_MODEL: model };
-      if (key) updates.DFIR_AI_KEY = key;
-      if (baseUrl) updates.DFIR_AI_BASE_URL = baseUrl;
+      const updates = { DFIR_VISION_PROVIDER: provider, DFIR_VISION_MODEL: model };
+      if (key) updates.DFIR_VISION_KEY = key;
+      if (baseUrl) updates.DFIR_VISION_BASE_URL = baseUrl;
       try {
         const save = await fetch("/settings/env", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ updates }) });
         if (!save.ok) { const j = await save.json().catch(() => ({})); result.style.color = "#ff9f9f"; result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)) + " — restart the companion server if this 404s."; btn.disabled = false; return; }

@@ -9,6 +9,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildProvider } from "../src/server.js";
+import { visionEnv } from "../src/config/aiEnv.js";
 import { extractJsonText } from "../src/analysis/extractJson.js";
 import { deltaSchema } from "../src/analysis/responseSchema.js";
 import { getSystemPrompt } from "../src/analysis/pipeline.js";
@@ -19,16 +20,16 @@ function strOpt(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  if (strOpt("provider")) process.env.DFIR_AI_PROVIDER = strOpt("provider");
-  if (strOpt("model")) process.env.DFIR_AI_MODEL = strOpt("model");
-  if (strOpt("key")) process.env.DFIR_AI_KEY = strOpt("key");
+  if (strOpt("provider")) process.env.DFIR_VISION_PROVIDER = strOpt("provider");
+  if (strOpt("model")) process.env.DFIR_VISION_MODEL = strOpt("model");
+  if (strOpt("key")) process.env.DFIR_VISION_KEY = strOpt("key");
 
   const provider = buildProvider();
   if (!provider) {
-    console.log("No provider configured (DFIR_AI_PROVIDER unset).");
+    console.log("No provider configured (DFIR_VISION_PROVIDER unset).");
     return;
   }
-  console.log(`Provider: ${provider.name}, model: ${process.env.DFIR_AI_MODEL}`);
+  console.log(`Provider: ${provider.name}, model: ${visionEnv(process.env, "MODEL")}`);
 
   const raw = process.env.DFIR_AI_CASES_ROOT ?? process.env.DFIR_CASES_ROOT ?? "cases";
   const companionDir = fileURLToPath(new URL("../", import.meta.url));

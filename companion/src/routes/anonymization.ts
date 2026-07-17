@@ -10,6 +10,7 @@ import { buildRedactedExport } from "../reports/redactedExportBuilder.js";
 import { CustomerStore } from "../analysis/customerStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "../analysis/huntPlatforms.js";
+import { visionEnv } from "../config/aiEnv.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -49,7 +50,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
-  const visionIsLocal = isLocalAiProvider(process.env.DFIR_AI_PROVIDER, process.env.DFIR_AI_BASE_URL);
+  const visionIsLocal = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
   // external vision). POST updates it and, when `enabled` flips, forces a re-synth so conclusions

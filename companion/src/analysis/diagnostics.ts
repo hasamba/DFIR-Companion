@@ -4,6 +4,7 @@
 // classify, and REDACT them into a shareable report. Keeping the transforms pure makes the
 // whole surface unit-testable without spinning up a server or touching the filesystem.
 import { isLocalAiProvider } from "./anonymize.js";
+import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
@@ -34,7 +35,7 @@ export function formatAge(ms: number): string {
 
 // ── AI config sanity (REDACTED — never carries an API key) ──────────────────────────────
 // All fields here are non-secret config: provider names, model ids, base URLs, numeric
-// bounds. API keys (DFIR_AI_KEY etc.) are deliberately NOT read so they can never leak into
+// bounds. API keys (DFIR_VISION_KEY etc.) are deliberately NOT read so they can never leak into
 // the diagnostics payload or the copy-to-clipboard blob.
 export interface AiDiagnostics {
   configured: boolean;
@@ -73,9 +74,10 @@ function orNull(v: string | undefined): string | null {
  * AND a model are the minimum (a key may legitimately be absent for a local Ollama).
  */
 export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
-  const provider = orNull(env.DFIR_AI_PROVIDER);
-  const model = orNull(env.DFIR_AI_MODEL);
-  const baseUrl = orNull(env.DFIR_AI_BASE_URL);
+  // Vision/screenshot config: DFIR_VISION_* (legacy DFIR_AI_* honored as a fallback via visionEnv).
+  const provider = orNull(visionEnv(env, "PROVIDER"));
+  const model = orNull(visionEnv(env, "MODEL"));
+  const baseUrl = orNull(visionEnv(env, "BASE_URL"));
   return {
     configured: Boolean(provider && model),
     provider,
@@ -84,7 +86,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     secondOpinionModel: orNull(env.DFIR_AI_SECOND_OPINION_MODEL),
     velociraptorModel: orNull(env.DFIR_AI_VELO_MODEL),
     baseUrl,
-    imageDetail: orNull(env.DFIR_AI_IMAGE_DETAIL) ?? "high",
+    imageDetail: orNull(visionEnv(env, "IMAGE_DETAIL")) ?? "high",
     timeoutMs: num(env.DFIR_AI_TIMEOUT_MS, 180_000),
     maxTokens: num(env.DFIR_AI_MAX_TOKENS, 16_000),
     contextTokens: num(env.DFIR_AI_CONTEXT_TOKENS, 128_000),

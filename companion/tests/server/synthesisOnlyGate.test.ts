@@ -9,7 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
-// Regression tests for the provider-gate mismatch: DFIR_AI_PROVIDER is the SCREENSHOT (vision)
+// Regression tests for the provider-gate mismatch: DFIR_VISION_PROVIDER is the SCREENSHOT (vision)
 // model, DFIR_AI_SYNTH_PROVIDER is ALL TEXT WORK. An OCR-less install sets ONLY the synthesis
 // provider — so every text-AI route must gate on pipeline.hasSynthesisProvider(), NOT on the
 // vision provider (hasAiProvider / aiConfigured). These apps are built exactly like that install:
