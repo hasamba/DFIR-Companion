@@ -53,6 +53,16 @@ describe("CommentsStore", () => {
     expect(parseMentions("@Alice ping @alice again, @bob")).toEqual(["Alice", "bob"]);
   });
 
+  it("does not treat email addresses / IOCs as mentions", () => {
+    // The `@` in an email is preceded by a handle char, so it must not parse as a mention.
+    expect(parseMentions("contact bob@example.com about this")).toEqual([]);
+    expect(parseMentions("beacon to admin@evil-domain.net was seen")).toEqual([]);
+    // A real leading mention alongside an email: only the mention, never the email domain.
+    expect(parseMentions("@alice can you check bob@example.com?")).toEqual(["alice"]);
+    // Mid-word @ (e.g. within a token) is not a mention either.
+    expect(parseMentions("path/to@v2/thing")).toEqual([]);
+  });
+
   it("returns [] mentions when the text has no @tokens", async () => {
     const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", text: "no mentions here" });
     expect(c.mentions).toEqual([]);

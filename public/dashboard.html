@@ -5709,7 +5709,9 @@
     // Highlight @name tokens as chips in a comment body. esc() first (so the raw text can never
     // inject markup), then the @token regex only ever matches already-escaped, HTML-safe text.
     function mentionHtml(text) {
-      return esc(text).replace(/@([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})/g, '<span class="mention-chip">@$1</span>');
+      // `@` must not follow a word/handle char so emails/IOCs (bob@example.com) aren't chipped as
+      // mentions. Runs over esc()'d text; keep in sync with MENTION_RE in analysis/comments.ts.
+      return esc(text).replace(/(?<![A-Za-z0-9._@-])@([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})/g, '<span class="mention-chip">@$1</span>');
     }
 
     function loadComments(caseId) {

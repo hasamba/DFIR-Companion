@@ -26,7 +26,10 @@ const commentsSchema = z.array(commentSchema).catch([]);
 // Pull `@name` tokens out of comment text (letters/digits/./_/- , 1-64 chars — matches typical
 // investigator handles/usernames). Case-insensitive de-dup, first-seen casing kept, in order of
 // appearance so the mention chips read left-to-right the way the analyst typed them.
-const MENTION_RE = /@([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})/g;
+// The `@` must NOT be preceded by a word/handle character, so email addresses and IOCs
+// (`bob@example.com`, `user@host`) — routine in DFIR comments — don't parse as a mention of
+// their domain and fire spurious notifications. Keep this in sync with mentionHtml() in dashboard.html.
+const MENTION_RE = /(?<![A-Za-z0-9._@-])@([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})/g;
 
 export function parseMentions(text: string): string[] {
   const seen = new Set<string>();
