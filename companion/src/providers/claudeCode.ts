@@ -25,11 +25,21 @@ interface ClaudeResultEvent {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
-  // Keyed by the CONCRETE model id actually served (e.g. "claude-sonnet-4-6") — present even when
-  // --model was given as an alias ("sonnet"/"haiku"/"opus"), which the CLI resolves before billing.
-  // Confirmed live: a single-key object in the normal case; more than one key would mean the CLI
-  // fell back to a different model mid-call, so we just report the first for a resolved-model label.
-  modelUsage?: Record<string, unknown>;
+  // Keyed by the CONCRETE model id(s) actually invoked (e.g. "claude-sonnet-4-6") — present even
+  // when --model was given as an alias ("sonnet"/"haiku"/"opus"), which the CLI resolves before
+  // billing. Confirmed live: NOT always a single key — a call can also carry a small internal
+  // Haiku sub-call (routing/classification, a handful of output tokens) alongside the primary
+  // generation, so picking "the first key" is wrong; see pickResolvedModel() below.
+  modelUsage?: Record<string, { outputTokens?: number }>;
+}
+
+// modelUsage can hold more than one model per call (a cheap internal routing/classification
+// sub-call plus the primary generation) — the entry with the most OUTPUT tokens is the one that
+// actually produced the response text, so that's the "resolved model" worth surfacing/logging.
+function pickResolvedModel(modelUsage: ClaudeResultEvent["modelUsage"]): string | undefined {
+  const entries = Object.entries(modelUsage ?? {});
+  if (entries.length === 0) return undefined;
+  return entries.reduce((best, cur) => ((cur[1]?.outputTokens ?? 0) > (best[1]?.outputTokens ?? 0) ? cur : best))[0];
 }
 
 // Isolation flags: replace the default system prompt, load NO settings/hooks/CLAUDE.md, no MCP,
@@ -115,7 +125,7 @@ export class ClaudeCodeProvider implements AIProvider {
     if (!text) throw new ProviderError("Claude Code returned no content", "other");
 
     const u = resultEvent.usage;
-    const resolvedModel = Object.keys(resultEvent.modelUsage ?? {})[0];
+    const resolvedModel = pickResolvedModel(resultEvent.modelUsage);
     const hasUsage = !!u || resultEvent.total_cost_usd !== undefined || !!resolvedModel;
     const usage: ProviderUsage | undefined = hasUsage ? {
       ...(u?.input_tokens !== undefined ? { inputTokens: u.input_tokens } : {}),

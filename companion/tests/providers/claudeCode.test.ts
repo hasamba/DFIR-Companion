@@ -55,6 +55,22 @@ describe("ClaudeCodeProvider", () => {
     expect(out.usage).toEqual({ inputTokens: 10, outputTokens: 20, cacheCreationTokens: 30, cacheReadTokens: 40, costUSD: 0.042 });
   });
 
+  it("resolves the model that actually produced the output, not just the first modelUsage key", async () => {
+    // Captured live: a --model claude-sonnet-5 call reports modelUsage for BOTH the primary
+    // generation AND a small internal Haiku sub-call, with claude-haiku-4-5-20251001 listed FIRST
+    // despite claude-sonnet-5 being the one that wrote the actual response (5 output tokens vs 13
+    // — small counts either way, but the ordering is what previously fooled Object.keys()[0]).
+    const runner = fakeRunner({ stdout: resultLine({
+      result: "hi",
+      modelUsage: {
+        "claude-haiku-4-5-20251001": { inputTokens: 343, outputTokens: 13, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+        "claude-sonnet-5": { inputTokens: 2, outputTokens: 30874, cacheReadInputTokens: 12635, cacheCreationInputTokens: 7154 },
+      },
+    }) });
+    const out = await new ClaudeCodeProvider({ model: "claude-sonnet-5", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.usage?.resolvedModel).toBe("claude-sonnet-5");
+  });
+
   it("throws an actionable error when the CLI binary is missing", async () => {
     const runner = fakeRunner({ code: null, spawnError: Object.assign(new Error("nope"), { code: "ENOENT" }) });
     const p = new ClaudeCodeProvider({ model: "haiku", runner });
