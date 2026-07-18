@@ -191,4 +191,75 @@ describe("run-to-run hunt diffing (#80)", () => {
       isFirstRun: false, addedRows: 1, removedRows: 0, addedHosts: ["host-b"],
     });
   });
+
+  it("advances the baseline on same-huntId re-collects so a later re-run doesn't re-report stragglers", async () => {
+    // Fleet hunt results trickle in: an analyst clicks "Collect" several times on the SAME huntId as
+    // clients check in. The stored baseline must track the LATEST full result set of the run, not stay
+    // frozen at the first (partial) collect — otherwise rows that arrived in the 2nd/3rd collect are
+    // falsely reported as "new" when the hunt is later re-deployed under a fresh huntId.
+    let huntSeq = 0;
+    // Rows returned for the current H.RUN1 collect — mutated between collect requests to simulate
+    // stragglers checking in. H.RUN2 (the re-deploy) returns the SAME complete set as H.RUN1 ended with.
+    const completeRows = [
+      { Fqdn: "host-a", Message: "m1" },
+      { Fqdn: "host-b", Message: "m2" },
+      { Fqdn: "host-c", Message: "m3" },
+    ];
+    let run1Rows: unknown[] = [completeRows[0]];
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=")) {
+        huntSeq += 1;
+        return { rows: [{ Hunt: { HuntId: `H.RUN${huntSeq}`, state: "RUNNING" } }], raw: "" };
+      }
+      if (p.includes("hunt_results(")) {
+        const m = p.match(/hunt_id='([^']+)'/);
+        const id = m && m[1];
+        if (id === "H.RUN1") return { rows: run1Rows, raw: "" };
+        if (id === "H.RUN2") return { rows: completeRows, raw: "" };
+        return { rows: [], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp({ runner });
+    const vql = "SELECT * FROM pslist()";
+
+    // Poll until the outcome's resultRows reflects a collect that returned `rows` rows — the only visible
+    // signal that a same-huntId re-collect (which never changes status away from "collected") completed.
+    async function waitForResultRows(huntId: string, rows: number) {
+      for (let i = 0; i < 100; i++) {
+        const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+        const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
+        if (h && h.resultRows === rows) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error(`hunt ${huntId} never reported ${rows} result rows`);
+    }
+
+    // First deploy + first (partial) collect — one host so far.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 1);
+
+    // Two more collects on the SAME huntId as stragglers check in (2 hosts, then 3). These must update
+    // the baseline but NOT surface a run-diff of their own.
+    run1Rows = [completeRows[0], completeRows[1]];
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 2);
+
+    run1Rows = [...completeRows];
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 3);
+
+    // Re-deploy the SAME vql under a fresh huntId (a genuine re-run) whose result set equals H.RUN1's
+    // COMPLETE final set. Because the baseline advanced on every collect, nothing is new: had the
+    // baseline stayed frozen at the first partial collect (1 host), host-b and host-c would be falsely
+    // reported as added here.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN2" })).status).toBe(202);
+    const hunts = await waitForCollected(app, "H.RUN2");
+    expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
+      isFirstRun: false, addedRows: 0, removedRows: 0, addedHosts: [], removedHosts: [],
+    });
+  });
 });

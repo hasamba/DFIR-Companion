@@ -1822,17 +1822,23 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           // computed when this collect belongs to a DIFFERENT huntId than the fingerprint's last
           // recorded run (a genuine re-deploy, not just pulling stragglers off the same running hunt).
           let runDiff: HuntRunDiff | undefined;
-          const fp = cur.find((o) => o.huntId === job.huntId)?.vqlFingerprint || "";
+          const fp = cur.find((o) => o.huntId === huntId)?.vqlFingerprint || "";   // `huntId` (param) === job.huntId, and stays non-null inside this closure (job is a reassignable `let`)
           if (fp && options.huntRunSnapshotStore) {
             try {
               const records = await options.huntRunSnapshotStore.load(caseId);
               const prevRecord = findHuntRunRecord(records, fp);
               const snapshot = buildHuntRunSnapshot(map);
-              if (!prevRecord || prevRecord.huntId !== job.huntId) {
-                runDiff = diffHuntRuns(prevRecord?.snapshot, snapshot);
-                const next = upsertHuntRunRecord(records, { vqlFingerprint: fp, huntId: job.huntId, capturedAt: new Date().toISOString(), snapshot });
-                await options.huntRunSnapshotStore.save(caseId, next);
-              }
+              // A run-diff is only SURFACED for a genuinely new run — no prior snapshot, or a different
+              // huntId (a real re-deploy). A same-huntId re-collect is just stragglers checking into the
+              // SAME running hunt, so it produces no diff of its own.
+              const isNewRun = !prevRecord || prevRecord.huntId !== job.huntId;
+              if (isNewRun) runDiff = diffHuntRuns(prevRecord?.snapshot, snapshot);
+              // But ALWAYS advance the stored baseline to this collect's full result set — including
+              // same-huntId re-collects — so the NEXT run diffs against the COMPLETE previous run rather
+              // than its first partial collect (which would otherwise falsely report later-arriving rows
+              // as "new since last run").
+              const next = upsertHuntRunRecord(records, { vqlFingerprint: fp, huntId: job.huntId, capturedAt: new Date().toISOString(), snapshot });
+              await options.huntRunSnapshotStore.save(caseId, next);
             } catch (e) { logLine(`[hunt-run-diff] snapshot failed for hunt ${job.huntId}: ${(e as Error).message}`); }
           }
           // resultRows = the rows the hunt RETURNED (what the analyst sees); addedEvents = new-to-case
