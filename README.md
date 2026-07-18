@@ -593,6 +593,14 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 
 The split is **vision vs text**: `DFIR_VISION_MODEL` reads screenshots (must be multimodal); the `DFIR_AI_SYNTH_*` model does **all text work** — CSV extraction, log triage, synthesis, ask/explain. If unset, text work reuses `DFIR_VISION_MODEL`.
 
+**Codex** — set `DFIR_AI_SYNTH_PROVIDER=codex` (also valid for the velo / second-opinion providers)
+to run text work through the local OpenAI **Codex CLI** (`codex exec`), using your ambient codex
+auth — `codex login` or `OPENAI_API_KEY`, **no `DFIR_AI_KEY`**. Codex is **text-only** (it can't
+read screenshots), so pair it with a vision provider for extraction; it sends data to OpenAI
+(non-local). Requires `@openai/codex` installed. Optional `DFIR_AI_CODEX_BIN` points at a
+non-PATH `codex`. Settings → AI shows a codex connection status (not installed / not connected /
+connected) with a one-click Connect action.
+
 Recommended: cheap vision model for screenshots, strong reasoning model for text. Don't economise on the text model — a weak one fails log triage *silently*, returning no events rather than wrong ones (`npm run eval:real` measures exactly this).
 
 | Variable | Default | Meaning |

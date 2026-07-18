@@ -2413,6 +2413,7 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
@@ -2421,6 +2422,58 @@
           <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
+        <div id="codex-status" class="sfield" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="cx-status-dot" style="width:9px;height:9px;border-radius:50%;background:#6b7280"></span>
+            <span id="cx-status-msg" style="font-size:12px">Checking Codex…</span>
+            <button type="button" id="cx-recheck" class="btn-mini" style="margin-left:auto">Re-check</button>
+            <button type="button" id="cx-connect" class="btn-mini" style="display:none">Connect</button>
+          </div>
+          <div id="cx-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
+        </div>
+        <script>
+        (function () {
+          var sel = document.getElementById('env-DFIR_AI_SYNTH_PROVIDER');
+          var card = document.getElementById('codex-status');
+          if (!sel || !card) return;
+          var dot = document.getElementById('cx-status-dot');
+          var msg = document.getElementById('cx-status-msg');
+          var connectBtn = document.getElementById('cx-connect');
+          var hint = document.getElementById('cx-connect-hint');
+          function paint(s) {
+            var colors = { connected: '#16a34a', not_connected: '#d97706', not_installed: '#dc2626' };
+            dot.style.background = colors[s.state] || '#6b7280';
+            msg.textContent = s.message || s.state;
+            connectBtn.style.display = s.state === 'not_connected' ? '' : 'none';
+          }
+          function refresh() {
+            msg.textContent = 'Checking Codex…';
+            fetch('/diagnostics/codex-status').then(function (r) { return r.json(); })
+              .then(paint).catch(function () { msg.textContent = 'Status check failed.'; });
+          }
+          function toggle() {
+            var on = sel.value === 'codex';
+            card.style.display = on ? '' : 'none';
+            if (on) refresh();
+          }
+          sel.addEventListener('change', toggle);
+          document.getElementById('cx-recheck').addEventListener('click', refresh);
+          connectBtn.addEventListener('click', function () {
+            hint.style.display = '';
+            hint.textContent = 'Starting sign-in…';
+            fetch('/diagnostics/codex-login', { method: 'POST' }).then(function (r) { return r.json(); })
+              .then(function (r) {
+                if (r.url) hint.innerHTML = 'Open this URL to finish signing in, then click Re-check:<br><a href="' + escAttr(r.url) + '" target="_blank" rel="noopener">' + esc(r.url) + '</a>';
+                else if (r.started) hint.textContent = 'Sign-in started on the host. Complete it in the browser that opened, then click Re-check.';
+                else hint.textContent = (r.error || 'Could not start sign-in') + '. Run `codex login` (or set OPENAI_API_KEY) on the host, then click Re-check.';
+              }).catch(function () { hint.textContent = 'Run `codex login` (or set OPENAI_API_KEY) on the host, then click Re-check.'; });
+          });
+          toggle();
+          // The settings panel populates selects asynchronously without firing 'change', so re-check
+          // shortly after load to reflect a previously-saved codex synth provider.
+          setTimeout(toggle, 1200);
+        })();
+        </script>
         <div class="settings-group-head">Velociraptor hunt model (used ONLY for generating Velociraptor VQL hunts — many models botch VQL)</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Dedicated model for <strong>✨ Suggest Velociraptor hunts</strong> (and the Fleet Hunts suggester), separate from the synthesis/OCR models. Default: <code>openrouter</code> / <code>anthropic/claude-haiku-4.5</code>. Leave the key blank to reuse the main AI key.</p>
         <div class="sfield-row">
@@ -2434,6 +2487,7 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>Velo model<span class="sfield-hint">DFIR_AI_VELO_MODEL</span></label><input id="env-DFIR_AI_VELO_MODEL" placeholder="anthropic/claude-haiku-4.5" /></div>
@@ -2455,6 +2509,7 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
@@ -3552,6 +3607,7 @@
                   <option value="litellm">LiteLLM (local proxy)</option>
                   <option value="gemini">Gemini</option>
                   <option value="anthropic">Anthropic</option>
+                  <option value="codex">Codex (text-only, no key)</option>
                 </select>
               </div>
               <div class="wiz-field">

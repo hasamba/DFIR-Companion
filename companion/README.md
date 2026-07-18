@@ -65,6 +65,7 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_VISION_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
 | **AI — text model (optional two-tier)** | — |
 | `DFIR_AI_SYNTH_PROVIDER` / `_MODEL` / `_KEY` | Stronger model for ALL text work — CSV extraction, log triage, findings/MITRE/attacker path (unset = reuses `DFIR_VISION_MODEL`). `DFIR_VISION_MODEL` itself is the vision model: screenshots only. |
+| `DFIR_AI_SYNTH_PROVIDER=codex` | Run text work through the local OpenAI Codex CLI (`codex exec`) — text-only, ambient auth (`codex login` / `OPENAI_API_KEY`), no `DFIR_AI_KEY`. Also valid for velo / second-opinion. Optional `DFIR_AI_CODEX_BIN`. Not for extraction (no vision). |
 | **AI — Velociraptor VQL generation** | — |
 | `DFIR_AI_VELO_PROVIDER` / `_MODEL` / `_KEY` | Dedicated model for VQL hunts (many models botch VQL) |
 | **AI — second LLM opinion** | — |
