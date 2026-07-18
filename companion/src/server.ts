@@ -118,6 +118,8 @@ import { type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
 import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
 import { recordDeploy, fillOutcome, HUNT_OUTCOME_MAX_DEFAULT, type HuntDeployInput } from "./analysis/huntOutcomes.js";
+import { HuntRunSnapshotStore } from "./analysis/huntRunSnapshotStore.js";
+import { buildHuntRunSnapshot, diffHuntRuns, findHuntRunRecord, upsertHuntRunRecord, type HuntRunDiff } from "./analysis/huntRunDiff.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
 import { IocAliasStore } from "./analysis/iocAlias.js";
@@ -463,6 +465,10 @@ export interface AppOptions {
   // counts). Recorded on deploy (bundle + suggested fleet/playbook/technique hunts), filled on collect,
   // read by the suggestion routes (exclude + "PRIOR HUNTS" context) and the dashboard hunting profile.
   huntOutcomeStore?: HuntOutcomeStore;
+  // Run-to-run hunt diffing (#80): the latest result-row snapshot per VQL fingerprint, so re-deploying
+  // a recurring/scheduled hunt can show what's new/gone vs its PREVIOUS run (not just vs the whole
+  // case). Sibling to huntOutcomeStore — see huntRunSnapshotStore.ts.
+  huntRunSnapshotStore?: HuntRunSnapshotStore;
   // Live Velociraptor CLIENT_EVENT monitors (#84): per-case pollers that stream a client monitoring
   // artifact's new rows into the push/import pipeline. The store persists each monitor + its cursor so
   // a restart resumes without re-ingesting; onVeloMonitor broadcasts a change to the case's clients.
@@ -1812,9 +1818,26 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (options.huntOutcomeStore) {
         try {
           const cur = await options.huntOutcomeStore.load(caseId);
+          // #80: run-to-run diff — only meaningful for a fingerprinted (non-bundle) hunt, and only
+          // computed when this collect belongs to a DIFFERENT huntId than the fingerprint's last
+          // recorded run (a genuine re-deploy, not just pulling stragglers off the same running hunt).
+          let runDiff: HuntRunDiff | undefined;
+          const fp = cur.find((o) => o.huntId === job.huntId)?.vqlFingerprint || "";
+          if (fp && options.huntRunSnapshotStore) {
+            try {
+              const records = await options.huntRunSnapshotStore.load(caseId);
+              const prevRecord = findHuntRunRecord(records, fp);
+              const snapshot = buildHuntRunSnapshot(map);
+              if (!prevRecord || prevRecord.huntId !== job.huntId) {
+                runDiff = diffHuntRuns(prevRecord?.snapshot, snapshot);
+                const next = upsertHuntRunRecord(records, { vqlFingerprint: fp, huntId: job.huntId, capturedAt: new Date().toISOString(), snapshot });
+                await options.huntRunSnapshotStore.save(caseId, next);
+              }
+            } catch (e) { logLine(`[hunt-run-diff] snapshot failed for hunt ${job.huntId}: ${(e as Error).message}`); }
+          }
           // resultRows = the rows the hunt RETURNED (what the analyst sees); addedEvents = new-to-case
           // after dedup. Showing both stops "+1 event" reading as wrong next to a 10-row result table.
-          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { resultRows: totalRows, addedEvents, addedIocs, collectedAt: new Date().toISOString() }));
+          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { resultRows: totalRows, addedEvents, addedIocs, collectedAt: new Date().toISOString(), runDiff }));
         } catch (e) { logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`); }
       }
 
@@ -2926,6 +2949,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
   const veloHuntStore = new VeloHuntStore(store);
   const huntOutcomeStore = new HuntOutcomeStore(store);   // #157 hunting feedback loop ledger
+  const huntRunSnapshotStore = new HuntRunSnapshotStore(store);   // #80 run-to-run hunt diffing
   // Live Velociraptor CLIENT_EVENT monitors + generic push ingest (#84). The monitor store persists
   // each poller's cursor (resumed on restart); the push token store holds per-case secrets, and
   // DFIR_PUSH_TOKEN is the global one. Push is OFF until a token is configured (see pushAuth.ts).
@@ -3158,6 +3182,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     kevStore,
     veloHuntStore,
     huntOutcomeStore,
+    huntRunSnapshotStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
     veloMonitorStore,
     onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),

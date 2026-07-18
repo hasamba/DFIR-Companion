@@ -13,6 +13,8 @@
 // filled if/when the analyst collects their results into the case. The VQL fingerprint is the dedup
 // key that guarantees a deployed hunt is never re-proposed.
 
+import type { HuntRunDiff } from "./huntRunDiff.js";
+
 export type HuntOutcomeSource = "fleet" | "playbook" | "technique" | "bundle";
 export type HuntOutcomeStatus = "deployed" | "collected";
 
@@ -40,6 +42,12 @@ export interface HuntOutcome {
   addedIocs?: number;         // collected: IOCs new to the case (cumulative)
   resultSummary?: string;     // collected: compact, e.g. "10 results, +1 new event" / "no results"
   collectedAt?: string;       // collected: ISO
+  // Run-to-run diff (#80): what's new/gone vs this hunt's PREVIOUS run of the same VQL fingerprint (a
+  // re-deploy of a recurring/scheduled hunt), as opposed to addedEvents/addedIocs above which are
+  // cumulative against the whole CASE. Set by the caller (server.ts, via HuntRunSnapshotStore) since
+  // computing it needs I/O; absent when this fingerprint has no prior run to diff against yet, or for
+  // bundles (no fingerprint to key a run history on).
+  runDiff?: HuntRunDiff;
 }
 
 // Cap retained outcomes per case (newest first) so the side file stays small; override per case with
@@ -123,6 +131,7 @@ export interface HuntCollectResult {
   addedEvents: number;
   addedIocs: number;
   collectedAt: string;        // ISO
+  runDiff?: HuntRunDiff;      // #80: this run vs the fingerprint's previous run, when one was computed
 }
 
 // Compact human summary of a collected hunt. Leads with the rows the hunt RETURNED (the count that
@@ -169,6 +178,7 @@ export function fillOutcome(
       addedIocs,
       resultSummary: summarizeResult(resultRows, addedEvents, addedIocs),
       collectedAt: result.collectedAt,
+      runDiff: result.runDiff ?? o.runDiff,   // keep the last-computed diff when this collect didn't recompute one
     };
   });
 }

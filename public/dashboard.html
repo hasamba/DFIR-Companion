@@ -4164,6 +4164,7 @@
       #sec-huntprofile .hp-src{color:var(--c-9aa4b2);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
       #sec-huntprofile .hp-result{color:var(--c-c9d1db)}
       #sec-huntprofile .hp-tech{color:var(--c-6aa9ff);font-size:11px}
+      #sec-huntprofile .hp-rundiff{background:#ffb84d22;color:#ffb84d;border:1px solid #ffb84d55;border-radius:3px;padding:0 6px;font-size:10px;white-space:nowrap}
       #sec-huntprofile .hp-collect{margin-left:auto;background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
       #sec-huntprofile .hp-collect:disabled{opacity:.6;cursor:default}
       #sec-huntprofile .hp-collect-err{background:var(--c-ff9f43);color:#1a1f29}
@@ -12207,6 +12208,18 @@
           const u = attackUrl(t);
           return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="hp-tech">${esc(t)}</a>` : `<span class="hp-tech">${esc(t)}</span>`;
         }).join(" ");
+        // #80: what's new vs THIS hunt's previous run (a re-deploy of the same VQL), not the whole case —
+        // only set once a second run of the same fingerprint has actually been collected.
+        const runDiffBadge = (() => {
+          const rd = h.runDiff;
+          if (!rd || rd.isFirstRun) return "";
+          const parts = [];
+          if (rd.addedRows > 0) parts.push(`+${rd.addedRows} row${rd.addedRows === 1 ? "" : "s"}`);
+          if ((rd.addedHosts || []).length) parts.push(`${rd.addedHosts.length} new host${rd.addedHosts.length === 1 ? "" : "s"}`);
+          if (!parts.length) return ` <span class="hp-rundiff" title="No new rows or hosts since this hunt's previous run">= vs last run</span>`;
+          const title = (rd.addedHosts || []).length ? `New hosts since last run: ${rd.addedHosts.join(", ")}` : "New rows since this hunt's previous run";
+          return ` <span class="hp-rundiff" title="${escAttr(title)}">↻ ${esc(parts.join(", "))} vs last run</span>`;
+        })();
         // Any hunt with a Velociraptor hunt id stays collectible — fleet results trickle in as clients
         // check in, so the button REMAINS after a collect so the analyst can re-pull stragglers (counts
         // accumulate; a hit is never downgraded). Pending → "Collect now"; collected → "Re-collect".
@@ -12225,6 +12238,7 @@
           + `<span class="hp-src">${esc(h.source || "")}</span>`
           + `<span class="hp-title">${esc(h.title || "(untitled hunt)")}</span>`
           + `<span class="hp-result">— ${esc(result)}</span>`
+          + runDiffBadge
           + (techs ? ` ${techs}` : "")
           + resultsToggle
           + collectBtn

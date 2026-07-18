@@ -3,12 +3,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
+import type { Express } from "express";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { HuntOutcomeStore } from "../../src/analysis/huntOutcomeStore.js";
+import { HuntRunSnapshotStore } from "../../src/analysis/huntRunSnapshotStore.js";
 import { recordDeploy, vqlFingerprint } from "../../src/analysis/huntOutcomes.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
@@ -38,11 +40,13 @@ async function makeApp(opts: { provider?: MockProvider; runner?: VqlRunner; with
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const huntOutcomeStore = new HuntOutcomeStore(store);
+  const huntRunSnapshotStore = new HuntRunSnapshotStore(store);
   const app = createApp(store, {
     pipeline, stateStore,
     importMetaStore: new ImportMetaStore(store),
     veloHuntStore: new VeloHuntStore(store),
     huntOutcomeStore,
+    huntRunSnapshotStore,
     aiConfigured: Boolean(provider),
     ...(opts.withVelo === false ? {} : { velociraptorClient: new VelociraptorClient(veloCfg, opts.runner ?? runner) }),
   });
@@ -136,5 +140,55 @@ describe("hunting feedback loop — routes (#157)", () => {
     const after = await request(app).post("/cases/c1/velociraptor/suggest-hunts").send({});
     expect(after.body.suggestions).toEqual([]);
     expect(vqlFingerprint(vql)).toBeTruthy();
+  });
+});
+
+// #80: run-to-run hunt diffing — re-deploying the SAME VQL fingerprint (a recurring/scheduled hunt)
+// must show what's new/gone vs its OWN previous run, not just the cumulative case delta.
+describe("run-to-run hunt diffing (#80)", () => {
+  async function waitForCollected(app: Express, huntId: string) {
+    for (let i = 0; i < 100; i++) {
+      const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+      const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
+      if (h && h.status === "collected") return profile.hunts as Array<Record<string, unknown>>;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`hunt ${huntId} never collected`);
+  }
+
+  it("diffs a re-run against its own previous run's rows/hosts, not the whole case", async () => {
+    let huntSeq = 0;
+    const rowsByHunt: Record<string, unknown[]> = {
+      "H.RUN1": [{ Fqdn: "host-a", Message: "m1" }],
+      "H.RUN2": [{ Fqdn: "host-a", Message: "m1" }, { Fqdn: "host-b", Message: "m2" }],
+    };
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=")) {
+        huntSeq += 1;
+        return { rows: [{ Hunt: { HuntId: `H.RUN${huntSeq}`, state: "RUNNING" } }], raw: "" };
+      }
+      if (p.includes("hunt_results(")) {
+        const m = p.match(/hunt_id='([^']+)'/);
+        return { rows: (m && rowsByHunt[m[1]]) || [], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp({ runner });
+    const vql = "SELECT * FROM pslist()";
+
+    // First deploy + collect: nothing to diff against yet.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    let hunts = await waitForCollected(app, "H.RUN1");
+    expect(hunts.find((h) => h.huntId === "H.RUN1")?.runDiff).toMatchObject({ isFirstRun: true });
+
+    // Re-deploy the SAME vql (a fresh huntId — a genuine re-run) + collect: diff vs H.RUN1's snapshot.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN2" })).status).toBe(202);
+    hunts = await waitForCollected(app, "H.RUN2");
+    expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
+      isFirstRun: false, addedRows: 1, removedRows: 0, addedHosts: ["host-b"],
+    });
   });
 });
