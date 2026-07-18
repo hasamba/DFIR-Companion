@@ -47,7 +47,8 @@ describe("startClaudeLogin", () => {
     expect(r.error).toBeTruthy();
   });
 
-  it("captures a printed URL and resolves started:true via finish()", async () => {
+  // Relies on the OS reading the "#!/bin/sh" shebang to exec the shim, which only POSIX does.
+  it.skipIf(process.platform === "win32")("captures a printed URL and resolves started:true via finish()", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-login-"));
     const shim = join(dir, "claude");
     // Ignores its args ("auth login"), prints a URL, exits immediately.
