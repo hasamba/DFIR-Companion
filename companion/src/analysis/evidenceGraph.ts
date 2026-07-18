@@ -345,6 +345,13 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
 // timeline, each ordered by the real timestamp of the evidence tying a host to the shared
 // hash/account, then stitches them into ordered entry → pivot → ... → target chains. Pure,
 // derived on read, no AI — same shape of guarantee as buildEvidenceGraph.
+//
+// COMPLETENESS GUARANTEE (a forensics correctness requirement, not just enumeration): every
+// derived hop appears in at least one returned path, so a host the attacker actually reached is
+// NEVER dropped. The primary narratives are built greedily from entry points (longest-tail at each
+// fork) for readability, then a PATH COVER seeds an additional chain from every hop still uncovered
+// — including the onward branch(es) a fork's longest-tail walk discarded. This is bounded (total
+// paths ≤ number of hops, no combinatorial blow-up) and identical full chains are de-duplicated.
 
 export interface LateralHop {
   from: string;                 // host node id — where the artifact/account was before this hop
@@ -449,9 +456,10 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   // ── stitch hops into ordered chains ───────────────────────────────────────────────────
   // A chain is a sequence of hops where each hop's target feeds the next hop's source AND time
   // only moves forward (the next hop's arrival ≥ this hop's). At each step the LONGEST available
-  // continuation is taken — a fork (two possible next hops) picks one branch, not every
-  // combination, so a host with multiple onward pivots still yields one path per entry point
-  // instead of a combinatorial blow-up.
+  // continuation is taken — a fork (two possible next hops) picks one branch for the PRIMARY
+  // narrative, not every combination, so there's no combinatorial blow-up. The onward branch a
+  // fork discards is NOT lost: the path-cover pass below re-seeds it as its own path so its
+  // destination host still appears in the output.
   const hopTime = (h: LateralHop) => timeOf(h.toTimestamp);
   const outByHost = new Map<string, LateralHop[]>();
   for (const hop of hops) {
@@ -487,21 +495,44 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   }
 
   const paths: LateralPath[] = [];
+  const coveredHops = new Set<LateralHop>();   // hop identity — same objects flow through extend()
+  const seenChains = new Set<string>();        // de-dup identical full chains (never emitted twice)
   let idx = 0;
-  for (const hop of hops) {
-    if (!isRoot(hop)) continue;
-    const chain = extend(hop, new Set([hop.from, hop.to]));
-    const hostIds = [chain[0].from, ...chain.map((h) => h.to)];
+  // A chain's identity is its ordered (from→to, rule, backing events) sequence — two chains that
+  // trace the same hosts via different evidence are legitimately distinct and both kept.
+  const chainKey = (chain: readonly LateralHop[]): string =>
+    chain.map((h) => `${h.from}>${h.to}|${h.rule}|${h.eventIds.join(",")}`).join("::");
+  function emit(chain: LateralHop[]): void {
+    const key = chainKey(chain);
+    if (seenChains.has(key)) return;
+    seenChains.add(key);
+    for (const h of chain) coveredHops.add(h);
     let confidence: Confidence = "high";
     for (const h of chain) confidence = weakerConf(confidence, h.confidence);
     paths.push({
       id: `lateral-path:${idx++}`,
-      hostIds,
+      hostIds: [chain[0].from, ...chain.map((h) => h.to)],
       hops: chain,
       confidence,
       startTime: chain[0].fromTimestamp,
       endTime: chain[chain.length - 1].toTimestamp,
     });
+  }
+
+  // 1) Primary narratives: greedy longest-tail chains from each entry point (unchanged).
+  for (const hop of hops) {
+    if (!isRoot(hop)) continue;
+    emit(extend(hop, new Set([hop.from, hop.to])));
+  }
+
+  // 2) Path cover: any hop not yet covered — e.g. the onward branch a fork's longest-tail walk
+  // discarded, or a hop whose root was suppressed — seeds an ADDITIONAL chain, extended forward
+  // with the SAME greedy logic. Each seed marks itself covered, so a single pass covers every hop;
+  // total paths stay ≤ number of hops (no exponential blow-up). This is what guarantees no reached
+  // host ever disappears from the output.
+  for (const hop of hops) {
+    if (coveredHops.has(hop)) continue;
+    emit(extend(hop, new Set([hop.from, hop.to])));
   }
 
   // Longest chains first (the most complete reconstructed pivot sequence), then earliest-starting.

@@ -455,6 +455,29 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     const scoped = buildLateralPaths(s, { from: "2026-05-20T08:00:00Z", until: "2026-05-20T10:00:00Z" });
     expect(scoped).toEqual([]); // only e1 in range — below the ≥2-host threshold
   });
+
+  it("never drops a forked destination host: both branches of a fork appear across the paths", () => {
+    // Fork at HOST-B: a by-hash chain A→B→D AND a by-account hop B→C from a DIFFERENT group.
+    // The greedy longest-tail walk keeps only ONE onward branch from B — before the path-cover
+    // fix the other branch's destination vanished from EVERY returned path. Both must survive.
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+      ev({ id: "e3", asset: "HOST-D", sha256: HASH, timestamp: "2026-05-20T12:00:00Z" }), // hash: A→B→D
+      ev({ id: "e4", asset: "HOST-B", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T10:30:00Z" }),
+      ev({ id: "e5", asset: "HOST-C", description: "logon by CORP\\jdoe", timestamp: "2026-05-20T11:00:00Z" }), // account: B→C
+    );
+    const paths = buildLateralPaths(s);
+    const reached = new Set(paths.flatMap((p) => p.hostIds));
+    // Both forked destinations reached by the attacker must be present somewhere in the output.
+    expect(reached.has("host:host-c")).toBe(true);
+    expect(reached.has("host:host-d")).toBe(true);
+    // The B→C and B→D hops are both represented (completeness: every hop covered).
+    const hopPairs = paths.flatMap((p) => p.hops.map((h) => `${h.from}->${h.to}`));
+    expect(hopPairs).toContain("host:host-b->host:host-c");
+    expect(hopPairs).toContain("host:host-b->host:host-d");
+  });
 });
 
 describe("buildEvidenceGraph — time window (#83)", () => {
