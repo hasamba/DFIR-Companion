@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -55,6 +55,17 @@ describe("ReportVersionStore", () => {
 
   it("returns null for a missing version id", async () => {
     expect(await versions.get("c1", "ghost")).toBeNull();
+  });
+
+  it("refuses a path-traversal id even when it would resolve to a real sibling file", async () => {
+    // Plant a JSON file one level above the report-versions dir. Without id validation,
+    // get("c1", "../secret") would resolve to <report-versions>/../secret.json and read it.
+    const stateDir = caseStore.stateDir("c1");
+    await writeFile(join(stateDir, "secret.json"), JSON.stringify({ markdown: "TOP SECRET" }), "utf8");
+
+    expect(await versions.get("c1", "../secret")).toBeNull();
+    expect(await versions.get("c1", "..%2Fsecret")).toBeNull();
+    expect(await versions.get("c1", "/etc/hostname")).toBeNull();
   });
 
   it("prunes the oldest versions beyond DFIR_REPORT_VERSION_MAX", async () => {

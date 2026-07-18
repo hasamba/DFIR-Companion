@@ -102,4 +102,21 @@ describe("report-versions routes", () => {
     expect((await request(app).get("/cases/c1/report-versions/diff?from=ghost&to=ghost2")).status).toBe(404);
     expect((await request(app).post("/cases/c1/report-versions/ghost/restore")).status).toBe(404);
   });
+
+  it("rejects a path-traversal version id instead of reading an arbitrary file (404, not 200/500)", async () => {
+    const { app } = await harness();
+    // Generate one real version so a valid `to` exists and can't be the reason for a 404.
+    await request(app).post("/cases/c1/report");
+    const real = (await request(app).get("/cases/c1/report-versions")).body[0];
+    const traversal = encodeURIComponent("../../../../../../../../etc/hostname");
+
+    const diffFrom = await request(app).get(`/cases/c1/report-versions/diff?from=${traversal}&to=${real.id}`);
+    expect(diffFrom.status).toBe(404);
+
+    const diffTo = await request(app).get(`/cases/c1/report-versions/diff?from=${real.id}&to=${traversal}`);
+    expect(diffTo.status).toBe(404);
+
+    const restore = await request(app).post(`/cases/c1/report-versions/${traversal}/restore`);
+    expect(restore.status).toBe(404);
+  });
 });

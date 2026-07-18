@@ -51,6 +51,17 @@ function maxVersions(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_VERSIONS;
 }
 
+// Version ids are generated internally as `${iso-timestamp}-${uuid8}` (see snapshot()), so they only
+// ever contain [A-Za-z0-9-]. The diff/restore routes accept the id straight from user-controlled
+// query/path params, so anything outside this shape (a path separator, `..`, a null byte) must be
+// rejected before it reaches join()/readFile — otherwise `from=../../../../etc/hostname` would escape
+// the report-versions directory and read an arbitrary .json off disk (path traversal).
+const VALID_VERSION_ID = /^[A-Za-z0-9_-]+$/;
+
+function isValidVersionId(id: string): boolean {
+  return VALID_VERSION_ID.test(id);
+}
+
 export class ReportVersionStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -63,6 +74,9 @@ export class ReportVersionStore {
   }
 
   private recordPath(caseId: string, id: string): string {
+    // Defence in depth — snapshot() only ever passes a freshly generated id, but never build a path
+    // from an id that could contain traversal sequences.
+    if (!isValidVersionId(id)) throw new Error(`invalid report version id: ${id}`);
     return join(this.dir(caseId), `${id}.json`);
   }
 
@@ -86,6 +100,9 @@ export class ReportVersionStore {
   // The full snapshot (markdown + meta + diff state) for one version id, or null if it doesn't exist
   // (already pruned, or never existed).
   async get(caseId: string, id: string): Promise<ReportVersionRecord | null> {
+    // The diff/restore routes pass this id straight from user input. A malformed id can't correspond
+    // to a real version, so treat it as "not found" (404) rather than risk a traversal in recordPath.
+    if (!isValidVersionId(id)) return null;
     try {
       return JSON.parse(await readFile(this.recordPath(caseId, id), "utf8")) as ReportVersionRecord;
     } catch (err) {
