@@ -4172,6 +4172,11 @@
       #sec-huntprofile .hp-detail{margin:0 0 2px 4px}
       #sec-huntprofile .hp-preview-note{color:var(--c-ffb454);font-size:11px;margin:0 0 4px 0}
       #sec-huntprofile .hp-collect-inline{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
+      #sec-huntprofile .hp-pivots{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+      #sec-huntprofile .hp-pivot{display:flex;align-items:center;gap:5px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-radius:5px;padding:3px 8px;font-size:11px;color:var(--c-c9d1db)}
+      #sec-huntprofile .hp-pivot-type{text-transform:capitalize;color:var(--c-d6deea);font-weight:bold}
+      #sec-huntprofile .hp-pivot-rate{color:#6bcb77}
+      #sec-huntprofile .hp-pivot-rate.hp-pivot-rate-low{color:#9aa4b2}
       #sec-huntprofile .hp-collect-inline:disabled{opacity:.6;cursor:default}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
@@ -12198,6 +12203,19 @@
         + `<span><b>${profile.missed}</b> no results</span>`
         + `<span style="color:#6aa9ff"><b>${profile.pending}</b> pending</span>`
         + `</div>`;
+      // Pivot-class productivity (#72): which pivot type (hash/process/path/network/registry) has
+      // actually found evidence in this case — the same aggregate signal fed into the hunt-suggestion
+      // prompt, surfaced here so the analyst can see why the model is favoring/avoiding a class.
+      const pivots = (profile.pivotProductivity || []).filter((p) => p.hit + p.missed > 0);
+      const pivotsBlock = pivots.length ? `<div class="hp-pivots">` + pivots.map((p) => {
+        const collected = p.hit + p.missed;
+        const rate = Math.round((p.hit / collected) * 100);
+        const rateCls = rate >= 50 ? "" : " hp-pivot-rate-low";
+        return `<span class="hp-pivot" title="${escAttr(`${p.hit}/${collected} hunts found evidence${p.pending ? `, ${p.pending} pending` : ""}`)}">`
+          + `<span class="hp-pivot-type">${esc(p.type)}</span>`
+          + `<span class="hp-pivot-rate${rateCls}">${p.hit}/${collected} (${rate}%)</span>`
+          + `</span>`;
+      }).join("") + `</div>` : "";
       const rows = hunts.map((h, i) => {
         const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
         // "not collected yet" not "results not yet collected": ▸ results can show LIVE rows from Velociraptor
@@ -12232,7 +12250,7 @@
           + `<div class="hp-detail" id="hpDetail${i}" hidden></div>`
           + `</div>`;
       }).join("");
-      el.innerHTML = tally + `<div class="hp-list">${rows}</div>`;
+      el.innerHTML = tally + pivotsBlock + `<div class="hp-list">${rows}</div>`;
       const caseId = document.getElementById("caseId").value.trim();
       // Collect (import) a hunt's results into the case + record the outcome. On success (202) the
       // velo_hunt_changed WS event re-renders the panel; only an error restores the button + flags it.
