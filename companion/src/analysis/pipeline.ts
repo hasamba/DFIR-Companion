@@ -1767,8 +1767,12 @@ export class AnalysisPipeline {
     const cache =
       (u.cacheReadTokens ? ` cacheRead=${u.cacheReadTokens}` : "") +
       (u.cacheCreationTokens ? ` cacheWrite=${u.cacheCreationTokens}` : "");
+    // resolvedModel: the concrete model id actually served, when the provider reports one — e.g.
+    // claude-code's --model alias ("sonnet") resolves to "claude-sonnet-4-6" server-side; surfacing
+    // it here means DFIR_AI_SYNTH_MODEL=sonnet doesn't leave the exact version silently ambiguous.
+    const resolved = u.resolvedModel && u.resolvedModel !== provider.model ? ` resolvedModel=${u.resolvedModel}` : "";
     this.log.debug(
-      `AI call [${label}] done provider=${provider.name} in=${u.inputTokens ?? "?"} out=${u.outputTokens ?? "?"}${cache}`,
+      `AI call [${label}] done provider=${provider.name} model=${provider.model}${resolved} in=${u.inputTokens ?? "?"} out=${u.outputTokens ?? "?"}${cache}`,
       { caseId },
     );
   }

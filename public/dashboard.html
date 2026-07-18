@@ -10359,8 +10359,14 @@
         // routes only reuse this AI-status channel to drive the progress bar, so relabel their
         // updates honestly instead of claiming "AI: processing…" while the AI is off. Import
         // updates are recognisable by the detail text ("importing …" / "<kind> import — N/M");
-        // screenshot extraction + synthesis (genuine AI) keep the AI label. Belt-and-suspenders:
-        // when AI is off, ANY activity on this channel can only be ingest, so treat it as such.
+        // screenshot extraction + synthesis (genuine AI) keep the AI label.
+        // NOTE: the `!aiEnabled` fallback below is belt-and-suspenders for the AUTO live-analysis loop
+        // ONLY — aiEnabled is the per-case "live analysis paused/resumed" toggle, not "is AI configured".
+        // Manual on-demand AI (Re-synthesize, Second opinion, Ask …) can run while that toggle is OFF,
+        // so every server route emitting one of those MUST set `phase: "synthesizing"` (checked first,
+        // below) rather than relying on this fallback — otherwise a genuine AI call gets mislabeled
+        // "deterministic import — not AI" whenever the analyst has paused live analysis (found live: the
+        // second-opinion badge showed that exact false label with the toggle off — see aiSynthesis.ts).
         const isIngest = !!m || (evt.detail && /^importing\b/i.test(evt.detail)) || !aiEnabled;
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
         else if (evt.detail && /^enriching IOC/.test(evt.detail)) {

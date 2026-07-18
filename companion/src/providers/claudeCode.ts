@@ -25,6 +25,11 @@ interface ClaudeResultEvent {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
+  // Keyed by the CONCRETE model id actually served (e.g. "claude-sonnet-4-6") — present even when
+  // --model was given as an alias ("sonnet"/"haiku"/"opus"), which the CLI resolves before billing.
+  // Confirmed live: a single-key object in the normal case; more than one key would mean the CLI
+  // fell back to a different model mid-call, so we just report the first for a resolved-model label.
+  modelUsage?: Record<string, unknown>;
 }
 
 // Isolation flags: replace the default system prompt, load NO settings/hooks/CLAUDE.md, no MCP,
@@ -110,13 +115,15 @@ export class ClaudeCodeProvider implements AIProvider {
     if (!text) throw new ProviderError("Claude Code returned no content", "other");
 
     const u = resultEvent.usage;
-    const hasUsage = !!u || resultEvent.total_cost_usd !== undefined;
+    const resolvedModel = Object.keys(resultEvent.modelUsage ?? {})[0];
+    const hasUsage = !!u || resultEvent.total_cost_usd !== undefined || !!resolvedModel;
     const usage: ProviderUsage | undefined = hasUsage ? {
       ...(u?.input_tokens !== undefined ? { inputTokens: u.input_tokens } : {}),
       ...(u?.output_tokens !== undefined ? { outputTokens: u.output_tokens } : {}),
       ...(u?.cache_creation_input_tokens !== undefined ? { cacheCreationTokens: u.cache_creation_input_tokens } : {}),
       ...(u?.cache_read_input_tokens !== undefined ? { cacheReadTokens: u.cache_read_input_tokens } : {}),
       ...(resultEvent.total_cost_usd !== undefined ? { costUSD: resultEvent.total_cost_usd } : {}),
+      ...(resolvedModel ? { resolvedModel } : {}),
     } : undefined;
 
     return { rawText: text, ...(usage ? { usage } : {}) };
