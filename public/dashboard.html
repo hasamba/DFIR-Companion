@@ -4240,8 +4240,15 @@
       .pb-task.pb-done .pb-title{text-decoration:line-through}
       .pb-task.pb-skipped{opacity:.5}
       .pb-task.pb-skipped .pb-title{text-decoration:line-through;color:var(--c-7d8696)}
+      .pb-task.pb-blocked{border-left-color:var(--c-ff7b8a)}
+      .pb-blocked-badge{font-size:10px;font-weight:bold;color:var(--c-ff7b8a);background:var(--c-5a1722);border-radius:9px;padding:1px 7px;white-space:nowrap}
       .pb-row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-      .pb-row2{display:flex;align-items:center;gap:8px;margin-top:6px}
+      .pb-row2{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+      .pb-deps-btn{background:var(--c-161d2b);color:var(--c-9aa4b2);border:1px solid var(--c-2a3346);border-radius:5px;cursor:pointer;font-size:11px;padding:3px 8px}
+      .pb-deps-btn:hover{color:#fff;border-color:var(--c-3a4658)}
+      .pb-deps-panel{width:100%;margin-top:6px;padding:8px;border:1px solid var(--c-2a3346);border-radius:6px;background:var(--c-161d2b);display:flex;flex-direction:column;gap:4px;max-height:160px;overflow:auto}
+      .pb-dep-opt{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-cdd6e3);cursor:pointer}
+      .pb-dep-opt input{cursor:pointer}
       .pb-status{background:var(--c-161d2b);color:var(--c-cdd6e3);border:1px solid var(--c-2a3346);border-radius:5px;font-size:11px;padding:2px 4px}
       .pb-title{flex:1;min-width:160px;font-size:13px;color:var(--c-e6edf3)}
       .pb-desc{font-size:11px;color:var(--c-8a94a6);margin:5px 0 0;white-space:pre-wrap}
@@ -7326,6 +7333,7 @@
     // preserved), so loading the panel always reflects the latest synthesis.
     let playbookTasks = [];
     let pbOpenOnly = false;
+    let pbDepsOpen = {};          // task id -> is its "depends on" editor panel expanded?
     let pbHuntFlat = [];          // AI-suggested Velociraptor hunts (#70), in severity order; each carries taskId
     let pbHuntCollapsed = {};     // suggestion index -> collapsed? (default false = expanded)
     const PB_STATUS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["skipped", "Skipped"]];
@@ -7370,13 +7378,20 @@
         const src = t.source === "custom" ? "custom" : (t.source === "finding" ? "from finding" : "from next step");
         const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" onclick="pbJumpFinding();return false">↳ finding</a>` : "";
         const desc = t.description ? `<div class="pb-desc">${esc(t.description)}</div>` : "";
-        return `<div class="pb-task pb-${escAttr(t.status)}" data-id="${escAttr(t.id)}" ${canDrag ? 'draggable="true"' : ""}>` +
+        const blockedByTitles = (t.blockedBy || []).map(id => {
+          const dep = playbookTasks.find(o => o.id === id);
+          return dep ? (dep.shortId || dep.title) : id;
+        });
+        const blockedBadge = t.blocked ? `<span class="pb-blocked-badge" title="Blocked by: ${escAttr(blockedByTitles.join(", "))}">⛔ blocked</span>` : "";
+        const depCount = (t.dependsOn || []).length;
+        return `<div class="pb-task pb-${escAttr(t.status)}${t.blocked ? " pb-blocked" : ""}" data-id="${escAttr(t.id)}" ${canDrag ? 'draggable="true"' : ""}>` +
           `<div class="pb-row1">` +
             `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
             (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
             `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
+            blockedBadge +
             `<span class="pb-src">${src}</span>${findingLink}` +
             `<span class="pb-move">` +
               `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
@@ -7387,7 +7402,9 @@
           `<div class="pb-row2">` +
             `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
             `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
+            `<button type="button" class="pb-deps-btn" onclick="pbToggleDeps('${escAttr(t.id)}')" title="Set which tasks must be done before this one can start">🔗 depends on${depCount ? ` (${depCount})` : ""}</button>` +
           `</div>` +
+          pbDepsPanel(t) +
           renderTaskHunts(t.id) +
         `</div>`;
       }).join("");
@@ -7429,9 +7446,38 @@
     function pbPatch(id, patch) {
       const caseId = pbCaseId(); if (!caseId) return;
       fetch(`/cases/${caseId}/playbook/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => { if (!ok) throw new Error(j && j.error ? j.error : "HTTP request failed"); })
         .then(() => loadPlaybook(caseId))
-        .catch(e => { const m = document.getElementById("pbMsg"); if (m) m.textContent = "failed (restart the companion server?): " + e.message; });
+        .catch(e => { const m = document.getElementById("pbMsg"); if (m) m.textContent = "failed: " + e.message; loadPlaybook(caseId); });
+    }
+
+    // The collapsible "depends on" checkbox panel for one task — lists every OTHER task so the
+    // analyst can pick which must be "done" before this one is considered ready. Empty string
+    // when collapsed. Kept minimal (native checkboxes, no fancy widget) to match the rest of the
+    // playbook panel's plain-HTML style.
+    function pbDepsPanel(t) {
+      if (!pbDepsOpen[t.id]) return "";
+      const others = playbookTasks.filter(o => o.id !== t.id);
+      if (!others.length) return `<div class="pb-deps-panel"><em style="color:var(--c-9aa4b2);font-size:11px">No other tasks yet.</em></div>`;
+      const cur = new Set(t.dependsOn || []);
+      const rows = others.map(o =>
+        `<label class="pb-dep-opt"><input type="checkbox" ${cur.has(o.id) ? "checked" : ""} onchange="pbToggleDep('${escAttr(t.id)}','${escAttr(o.id)}',this.checked)" /> ` +
+        `${o.shortId ? esc(o.shortId) + " — " : ""}${esc(o.title)}</label>`
+      ).join("");
+      return `<div class="pb-deps-panel">${rows}</div>`;
+    }
+
+    function pbToggleDeps(id) {
+      pbDepsOpen[id] = !pbDepsOpen[id];
+      renderPlaybook();
+    }
+
+    function pbToggleDep(id, depId, checked) {
+      const t = playbookTasks.find(x => x.id === id);
+      const cur = new Set((t && t.dependsOn) || []);
+      if (checked) cur.add(depId); else cur.delete(depId);
+      pbPatch(id, { dependsOn: [...cur] });
     }
 
     function pbDelete(id) {

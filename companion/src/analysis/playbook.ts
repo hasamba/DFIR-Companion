@@ -36,6 +36,7 @@ export const playbookTaskSchema = z.object({
   assignee: z.string().optional(),
   dueDate: z.string().optional(),         // free-form date, e.g. "2026-06-15"
   notes: z.string().optional(),
+  dependsOn: z.array(z.string()).optional(),   // ids of tasks that must be "done" first (issue #81)
   order: z.number().catch(0),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -308,10 +309,10 @@ export interface MergeResult {
 }
 
 // A pristine auto-task is one the analyst hasn't engaged with — still `todo`, no assignee,
-// due date, or notes. Such a task may be safely pruned when its seed disappears; anything the
-// analyst touched is kept.
+// due date, notes, or dependency edges. Such a task may be safely pruned when its seed
+// disappears; anything the analyst touched is kept.
 function isPristineAuto(t: PlaybookTask): boolean {
-  return t.source !== "custom" && !!t.sourceKey && t.status === "todo" && !t.assignee && !t.dueDate && !t.notes;
+  return t.source !== "custom" && !!t.sourceKey && t.status === "todo" && !t.assignee && !t.dueDate && !t.notes && !t.dependsOn?.length;
 }
 
 // Return the next sequential display ID (T001, T002, …) from the current task list.
@@ -387,7 +388,11 @@ export function mergePlaybook(existing: PlaybookTask[], seeds: DerivedTaskSeed[]
     }
   }
 
-  // Prune pristine auto-tasks whose seed is no longer derived.
+  // Prune pristine auto-tasks whose seed is no longer derived. A pruned task's id may still be
+  // referenced by another task's dependsOn — left as-is (not stripped): since an auto-task's id
+  // IS its stable sourceKey, if the same finding/next-step re-derives later the id reappears and
+  // the edge reconnects on its own. withBlockedState treats a currently-dangling reference as
+  // non-blocking in the meantime (see below).
   const seedKeys = new Set(seeds.map((s) => s.sourceKey));
   const pruned = result.filter((t) => {
     if (t.sourceKey && !seedKeys.has(t.sourceKey) && isPristineAuto(t)) {
@@ -397,6 +402,72 @@ export function mergePlaybook(existing: PlaybookTask[], seeds: DerivedTaskSeed[]
     return true;
   });
   return { tasks: pruned, changed };
+}
+
+// ── Dependency graph (issue #81) ──────────────────────────────────────────────────────────
+// Tasks can declare `dependsOn: string[]` (other task ids) to express "blocked until". The
+// edges live on the depending task itself (not a separate store), so they ride along with
+// mergePlaybook's normal preserve-analyst-edits path automatically.
+
+export class PlaybookValidationError extends Error {}
+
+// DFS cycle check over the CURRENT edges, with `taskId`'s edges hypothetically replaced by
+// `newDependsOn` — used to reject an edit that would introduce a cycle (including a direct
+// self-dependency) BEFORE it's persisted.
+function wouldCreateCycle(tasks: readonly PlaybookTask[], taskId: string, newDependsOn: readonly string[]): boolean {
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  const edgesOf = (id: string): readonly string[] => (id === taskId ? newDependsOn : byId.get(id)?.dependsOn ?? []);
+  const visiting = new Set<string>();
+  const done = new Set<string>();
+  const dfs = (id: string): boolean => {
+    if (visiting.has(id)) return true;
+    if (done.has(id)) return false;
+    visiting.add(id);
+    for (const dep of edgesOf(id)) {
+      if (dfs(dep)) return true;
+    }
+    visiting.delete(id);
+    done.add(id);
+    return false;
+  };
+  return dfs(taskId);
+}
+
+export interface DependsOnValidation {
+  ok: boolean;
+  error?: string;
+  dependsOn?: string[];
+}
+
+// Validate a proposed dependsOn edit for `taskId`: every id must name a task that exists in
+// this playbook (self-references are dropped rather than rejected — harmless no-op), and the
+// resulting graph must stay acyclic. Returns the normalized (deduped) edge list on success.
+export function validateDependsOn(tasks: readonly PlaybookTask[], taskId: string, dependsOn: readonly string[]): DependsOnValidation {
+  const ids = Array.from(new Set(dependsOn.filter((id) => id !== taskId)));
+  const known = new Set(tasks.map((t) => t.id));
+  const unknown = ids.filter((id) => !known.has(id));
+  if (unknown.length) return { ok: false, error: `unknown task id(s): ${unknown.join(", ")}` };
+  if (wouldCreateCycle(tasks, taskId, ids)) return { ok: false, error: "that dependency would create a cycle" };
+  return { ok: true, dependsOn: ids };
+}
+
+export interface PlaybookTaskWithGraph extends PlaybookTask {
+  blocked: boolean;
+  blockedBy: string[];   // ids of unmet dependencies that still exist in this playbook
+}
+
+// Attach derived blocked/ready state from each task's dependsOn edges — computed on read, never
+// persisted. A task is blocked while at least one dependency EXISTS and is not yet "done";
+// skipped dependencies still block (the analyst explicitly chose not to do them, so anything
+// gated on them stays blocked until they revisit that). A dependency id with no matching task
+// (pruned auto-task pending re-derive, or a deleted custom task) is treated as satisfied so a
+// stale reference can never block forever.
+export function withBlockedState(tasks: readonly PlaybookTask[]): PlaybookTaskWithGraph[] {
+  const byId = new Map(tasks.map((t) => [t.id, t] as const));
+  return tasks.map((t) => {
+    const blockedBy = (t.dependsOn ?? []).filter((depId) => byId.get(depId)?.status !== "done" && byId.has(depId));
+    return { ...t, blocked: blockedBy.length > 0, blockedBy };
+  });
 }
 
 export interface PlaybookStats {

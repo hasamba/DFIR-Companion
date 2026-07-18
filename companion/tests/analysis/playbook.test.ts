@@ -5,6 +5,8 @@ import {
   mergePlaybook,
   playbookStats,
   sortPlaybookTasks,
+  validateDependsOn,
+  withBlockedState,
   type PlaybookTask,
 } from "../../src/analysis/playbook.js";
 
@@ -219,6 +221,96 @@ describe("playbookStats", () => {
 
   it("is 0% for an empty playbook", () => {
     expect(playbookStats([]).completionPct).toBe(0);
+  });
+});
+
+describe("dependency graph (issue #81)", () => {
+  const mk = (id: string, over: Partial<PlaybookTask> = {}): PlaybookTask => ({
+    id, title: id, description: "", status: "todo", priority: "medium", source: "custom", order: 0, createdAt: NOW, updatedAt: NOW, ...over,
+  });
+
+  describe("withBlockedState", () => {
+    it("is not blocked when it has no dependencies", () => {
+      const [t] = withBlockedState([mk("a")]);
+      expect(t).toMatchObject({ blocked: false, blockedBy: [] });
+    });
+
+    it("is blocked while a dependency is not done", () => {
+      const tasks = [mk("a"), mk("b", { dependsOn: ["a"] })];
+      const [, b] = withBlockedState(tasks);
+      expect(b).toMatchObject({ blocked: true, blockedBy: ["a"] });
+    });
+
+    it("unblocks once every dependency is done", () => {
+      const tasks = [mk("a", { status: "done" }), mk("b", { dependsOn: ["a"] })];
+      const [, b] = withBlockedState(tasks);
+      expect(b).toMatchObject({ blocked: false, blockedBy: [] });
+    });
+
+    it("a skipped dependency still blocks (analyst must revisit it)", () => {
+      const tasks = [mk("a", { status: "skipped" }), mk("b", { dependsOn: ["a"] })];
+      const [, b] = withBlockedState(tasks);
+      expect(b.blocked).toBe(true);
+    });
+
+    it("a dangling dependency (task no longer exists) never blocks", () => {
+      const [b] = withBlockedState([mk("b", { dependsOn: ["ghost"] })]);
+      expect(b).toMatchObject({ blocked: false, blockedBy: [] });
+    });
+  });
+
+  describe("validateDependsOn", () => {
+    it("accepts a valid edge to an existing task", () => {
+      const tasks = [mk("a"), mk("b")];
+      expect(validateDependsOn(tasks, "b", ["a"])).toEqual({ ok: true, dependsOn: ["a"] });
+    });
+
+    it("rejects an unknown task id", () => {
+      const r = validateDependsOn([mk("a")], "a", ["nope"]);
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/unknown task id/);
+    });
+
+    it("drops a self-reference as a harmless no-op rather than rejecting it", () => {
+      const tasks = [mk("a")];
+      expect(validateDependsOn(tasks, "a", ["a"])).toEqual({ ok: true, dependsOn: [] });
+    });
+
+    it("rejects a direct 2-cycle (a depends on b, b would depend on a)", () => {
+      const tasks = [mk("a", { dependsOn: ["b"] }), mk("b")];
+      const r = validateDependsOn(tasks, "b", ["a"]);
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/cycle/);
+    });
+
+    it("rejects an indirect cycle through a longer chain", () => {
+      const tasks = [mk("a", { dependsOn: ["b"] }), mk("b", { dependsOn: ["c"] }), mk("c")];
+      const r = validateDependsOn(tasks, "c", ["a"]);
+      expect(r.ok).toBe(false);
+    });
+
+    it("dedups repeated ids", () => {
+      const tasks = [mk("a"), mk("b")];
+      expect(validateDependsOn(tasks, "b", ["a", "a"])).toEqual({ ok: true, dependsOn: ["a"] });
+    });
+  });
+
+  describe("mergePlaybook + dependsOn", () => {
+    it("preserves dependsOn edges across a re-derive (auto-task id is a stable sourceKey)", () => {
+      const seeds = derivePlaybookTasks({ ...emptyState("c1"), nextSteps: [nextStep(), nextStep({ id: "ns2", action: "Isolate host" })] });
+      const base = mergePlaybook([], seeds, NOW).tasks.map((t) =>
+        t.id === "next_step:ns2" ? { ...t, dependsOn: ["next_step:ns1"] } : t,
+      );
+      const { tasks } = mergePlaybook(base, seeds, "2026-06-12T00:00:00.000Z");
+      expect(tasks.find((t) => t.id === "next_step:ns2")!.dependsOn).toEqual(["next_step:ns1"]);
+    });
+
+    it("does NOT prune a pristine auto-task that carries a dependency edge", () => {
+      const seeds = derivePlaybookTasks({ ...emptyState("c1"), nextSteps: [nextStep()] });
+      const base = mergePlaybook([], seeds, NOW).tasks.map((t) => ({ ...t, dependsOn: ["custom:1"] }));
+      const { tasks } = mergePlaybook(base, [], NOW);   // seed disappeared, but the task has an edge
+      expect(tasks).toHaveLength(1);
+    });
   });
 });
 

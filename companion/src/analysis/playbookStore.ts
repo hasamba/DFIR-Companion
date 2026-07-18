@@ -14,6 +14,8 @@ import {
   mergePlaybook,
   nextShortId,
   sortPlaybookTasks,
+  validateDependsOn,
+  PlaybookValidationError,
 } from "./playbook.js";
 
 // Per-case playbook store: a trackable checklist auto-derived from the case's next
@@ -44,6 +46,7 @@ export interface PlaybookTaskPatch {
   assignee?: string;
   dueDate?: string;
   notes?: string;
+  dependsOn?: string[];   // task ids that must be "done" first (issue #81); [] clears all edges
 }
 
 function normalizeStatus(s: unknown): PlaybookStatus | undefined {
@@ -100,9 +103,18 @@ export class PlaybookStore {
 
   // Patch a task's editable fields. Optional string fields (assignee/dueDate/notes) are
   // SET when a non-empty value is given and CLEARED when an explicit empty string is sent.
+  // A `dependsOn` edit is validated (unknown ids / cycles) BEFORE anything is persisted —
+  // throws PlaybookValidationError on a bad edge so the route can surface a 400.
   // Returns the updated task, or null if not found.
   async update(caseId: string, taskId: string, patch: PlaybookTaskPatch): Promise<PlaybookTask | null> {
     const tasks = await this.load(caseId);
+    if (!tasks.some((t) => t.id === taskId)) return null;
+    let dependsOn: string[] | undefined;
+    if (patch.dependsOn !== undefined) {
+      const validation = validateDependsOn(tasks, taskId, patch.dependsOn);
+      if (!validation.ok) throw new PlaybookValidationError(validation.error!);
+      dependsOn = validation.dependsOn;
+    }
     let updated: PlaybookTask | null = null;
     const next = tasks.map((t) => {
       if (t.id !== taskId) return t;
@@ -119,6 +131,10 @@ export class PlaybookStore {
         const v = String(patch[field]).trim();
         if (v) merged[field] = v;
         else delete merged[field];
+      }
+      if (dependsOn !== undefined) {
+        if (dependsOn.length) merged.dependsOn = dependsOn;
+        else delete merged.dependsOn;
       }
       updated = merged;
       return merged;
