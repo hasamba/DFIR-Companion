@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { join as joinPath } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { AIProvider, AnalyzeImage, AnalyzeRequest, AnalyzeResult } from "../providers/provider.js";
+import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
 import { createAnonymizer, deriveKnownEntities, type CustomEntity } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
@@ -1540,13 +1540,29 @@ function mergePinnedQuestions(pinned: InvestigationQuestion[], current: Investig
   return [...byId.values()];
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries: number, backoffMs: number): Promise<T> {
+// Error kinds where the failure is inherent to the call (bad/expired creds, exhausted quota, a hung
+// process) rather than a transient blip — retrying just re-runs into the same wall, tripling the wait
+// before the analyst sees the same error.
+const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout"]);
+
+function isRetryableError(err: unknown): boolean {
+  return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  backoffMs: number,
+  onError?: (err: unknown, attempt: number, willRetry: boolean) => void,
+): Promise<T> {
   let attempt = 0;
   for (;;) {
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= retries) throw err;
+      const willRetry = attempt < retries && isRetryableError(err);
+      onError?.(err, attempt, willRetry);
+      if (!willRetry) throw err;
       await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt));
       attempt++;
     }
@@ -1583,6 +1599,23 @@ export class AnalysisPipeline {
   // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
   private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
+  }
+
+  // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class
+  // routes through here instead of calling withRetry() directly. Previously a failed/retried AI call
+  // was silent everywhere except the dashboard's error badge and the case Activity Log — the server
+  // console/session log showed only the DEBUG "AI call [label] ..." line for each attempt's START,
+  // never why an attempt failed. Each failed attempt now logs a WARN with the case id, call label,
+  // provider error kind (when available), and whether it's retrying or giving up.
+  private withRetry<T>(caseId: string, label: string, fn: () => Promise<T>, retries: number, backoffMs: number): Promise<T> {
+    return withRetry(fn, retries, backoffMs, (err, attempt, willRetry) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      const kind = err instanceof ProviderError ? ` kind=${err.kind}` : "";
+      this.log.warn(
+        `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
+        { caseId },
+      );
+    });
   }
 
   private async getKevCatalog(): Promise<KevCatalog | undefined> {
@@ -1734,8 +1767,12 @@ export class AnalysisPipeline {
     const cache =
       (u.cacheReadTokens ? ` cacheRead=${u.cacheReadTokens}` : "") +
       (u.cacheCreationTokens ? ` cacheWrite=${u.cacheCreationTokens}` : "");
+    // resolvedModel: the concrete model id actually served, when the provider reports one — e.g.
+    // claude-code's --model alias ("sonnet") resolves to "claude-sonnet-4-6" server-side; surfacing
+    // it here means DFIR_AI_SYNTH_MODEL=sonnet doesn't leave the exact version silently ambiguous.
+    const resolved = u.resolvedModel && u.resolvedModel !== provider.model ? ` resolvedModel=${u.resolvedModel}` : "";
     this.log.debug(
-      `AI call [${label}] done provider=${provider.name} in=${u.inputTokens ?? "?"} out=${u.outputTokens ?? "?"}${cache}`,
+      `AI call [${label}] done provider=${provider.name} model=${provider.model}${resolved} in=${u.inputTokens ?? "?"} out=${u.outputTokens ?? "?"}${cache}`,
       { caseId },
     );
   }
@@ -1794,7 +1831,7 @@ export class AnalysisPipeline {
       const retries = this.opts.retries ?? 3;
       const backoffMs = this.opts.backoffMs ?? 500;
 
-      const delta = await withRetry(async () => {
+      const delta = await this.withRetry(caseId, "extract", async () => {
         const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getSystemPrompt(), userPrompt, images }, "extract");
         return stripAiExtractedFrom(deltaSchema.parse(parsed));
       }, retries, backoffMs);
@@ -1860,7 +1897,7 @@ export class AnalysisPipeline {
           `Read each row's OWN time column for event times — do not use the current time:\n\n${csvChunk}\n\n` +
           `Return the JSON delta.`;
 
-        const delta = await withRetry(async () => {
+        const delta = await this.withRetry(caseId, "csv", async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
@@ -1950,7 +1987,7 @@ export class AnalysisPipeline {
           `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n${patternText}\n\n` +
           `Return the JSON delta.`;
 
-        const delta = await withRetry(async () => {
+        const delta = await this.withRetry(caseId, "log", async () => {
           const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
@@ -3849,7 +3886,7 @@ export class AnalysisPipeline {
       `CURRENT QUESTIONS:\n${questionsText}\n\n` +
       `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
-    return withRetry(async () => {
+    return this.withRetry(caseId, "ask", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getAskPrompt(), userPrompt, images: [] }, "ask");
       return askSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -3916,7 +3953,7 @@ export class AnalysisPipeline {
       + (contextEvents.map((e) => renderEv(e)).join("\n") || "(no context events)")
       + `\n\nExplain the focal event as JSON.`;
 
-    return withRetry(async () => {
+    return this.withRetry(caseId, "explain-event", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExplainEventPrompt(), userPrompt, images: [] }, "explain-event");
       return explainEventSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4070,7 +4107,7 @@ export class AnalysisPipeline {
       `Propose the fleet-hunts as JSON.`;
 
     const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
-    return withRetry(async () => {
+    return this.withRetry(caseId, "suggest-hunts", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "suggest-hunts");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
@@ -4103,7 +4140,7 @@ export class AnalysisPipeline {
       `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
       `Set every suggestion's mitreTechniques to ["${id}"]. Propose the hunt(s) as JSON.`;
     const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
-    return withRetry(async () => {
+    return this.withRetry(caseId, "hunt-technique", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] }, "hunt-technique");
       const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
       return this.excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
@@ -4141,7 +4178,7 @@ export class AnalysisPipeline {
       `Propose the next Volatility 3 commands as JSON.`;
 
     const limit = Number(process.env.DFIR_MEMORY_NEXTSTEP_MAX) || MEMORY_NEXTSTEP_MAX_DEFAULT;
-    return withRetry(async () => {
+    return this.withRetry(caseId, "memory-next-steps", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getMemoryNextStepPrompt(), userPrompt, images: [] }, "memory-next-steps");
       const { suggestions } = memoryNextStepResponseSchema.parse(parsed);
       return sanitizeMemoryNextSteps(suggestions, limit);
@@ -4175,7 +4212,7 @@ export class AnalysisPipeline {
       `TARGET PLATFORMS (emit one query per key, grounded in the schema shown):\n${guide}\n\n` +
       `ANALYST REQUEST: ${request.trim()}\n\nTranslate it as JSON.`;
 
-    return withRetry(async () => {
+    return this.withRetry(caseId, "translate-query", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getQueryTranslatePrompt(), userPrompt, images: [] }, "translate-query");
       const { interpretation, queries } = queryTranslationResponseSchema.parse(parsed);
       return { interpretation: sanitizeInterpretation(interpretation), queries: sanitizeQueryTranslations(queries, targets) };
@@ -4194,7 +4231,7 @@ export class AnalysisPipeline {
       `MATCHABLE FIELDS (use ONLY these): ${MATCHABLE_FIELDS.join(", ")}\n\n` +
       `ANALYST REQUEST: ${description.trim()}\n\n` +
       `Return the rule as JSON (or a decline).`;
-    return withRetry(async () => {
+    return this.withRetry(caseId, "suggest-tagger-rule", async () => {
       const parsed = await this.analyzeRestored(
         caseId, loaded, provider,
         { systemPrompt: getTaggerRulePrompt(), userPrompt, images: [] },
@@ -4239,7 +4276,7 @@ export class AnalysisPipeline {
       `${gapsText}\n\n` +
       `Hypothesise the attacker activity for each gap as JSON.`;
 
-    const aiHypotheses = await withRetry(async () => {
+    const aiHypotheses = await this.withRetry(caseId, "hypothesize-gaps", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getGapHypothesisPrompt(), userPrompt, images: [] }, "hypothesize-gaps");
       const { hypotheses } = gapHypothesesResponseSchema.parse(parsed);
       return sanitizeGapHypotheses(hypotheses, validGapIds, focusGaps.length);
@@ -4308,7 +4345,7 @@ export class AnalysisPipeline {
       `Propose the per-task hunts as JSON.`;
 
     const limit = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
-    return withRetry(async () => {
+    return this.withRetry(caseId, "suggest-playbook-hunts", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getPlaybookHuntPrompt(), userPrompt, images: [] }, "suggest-playbook-hunts");
       const { suggestions } = playbookHuntResponseSchema.parse(parsed);
       return this.excludeDeployedHunts(sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit), outcomes);
@@ -4348,7 +4385,7 @@ export class AnalysisPipeline {
       `Write the narrative timeline as JSON.`;
 
     const narrativeSchema = z.object({ narrativeTimeline: z.string().catch("") });
-    const result = await withRetry(async () => {
+    const result = await this.withRetry(caseId, "narrative", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: narrativePrompt, userPrompt, images: [] }, "narrative");
       return narrativeSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4390,7 +4427,7 @@ export class AnalysisPipeline {
       `FORENSIC TIMELINE (${scopedEvents.length} in-scope events):\n${timelineText}\n\n` +
       `Write the executive summary as JSON.`;
 
-    return withRetry(async () => {
+    return this.withRetry(caseId, "exec-summary", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] }, "exec-summary");
       return execSummarySchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4434,7 +4471,7 @@ export class AnalysisPipeline {
       `\n\nWrite the starred events report as JSON.`;
 
     const mdSchema = z.object({ markdown: z.string().min(1) });
-    const result = await withRetry(async () => {
+    const result = await this.withRetry(caseId, "starred-report", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "starred-report");
       return mdSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4461,7 +4498,7 @@ export class AnalysisPipeline {
       `\n\nWrite the overview as JSON.`;
 
     const mdSchema = z.object({ markdown: z.string().min(1) });
-    const result = await withRetry(async () => {
+    const result = await this.withRetry(caseId, "view-summary", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "view-summary");
       return mdSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4527,7 +4564,7 @@ export class AnalysisPipeline {
       `RELEVANT D3FEND COUNTERMEASURES (the defensive technique/sensor for each — cite alongside the ATT&CK mitigation where it fits):\n${d3fendText}\n\n` +
       `Write the incident-specific remediation plan as JSON.`;
 
-    return withRetry(async () => {
+    return this.withRetry(caseId, "remediation", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getRemediationPrompt(), userPrompt, images: [] }, "remediation");
       return remediationPlanSchema.parse(parsed);
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
@@ -4587,7 +4624,7 @@ export class AnalysisPipeline {
       `Review each open hypothesis for supporting AND refuting evidence, and return the JSON.`;
 
     const knownHypotheses = new Map(open.map((h) => [h.id, h.title] as const));
-    return withRetry(async () => {
+    return this.withRetry(caseId, "hypothesis-review", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getHypothesisReviewPrompt(), userPrompt, images: [] }, "hypothesis-review");
       const result = hypothesisReviewSchema.parse(parsed);
       return { reviews: sanitizeHypothesisReviews(result.reviews, knownHypotheses, validEventIds) };
@@ -4612,7 +4649,7 @@ export class AnalysisPipeline {
       `ANCHOR ITEM (just marked false positive): [${anchorId}] ${anchorLabel}\n\n` +
       `OTHER ITEMS IN THIS CASE:\n${list}\n\n` +
       "Which of the other items are likely the same false-positive pattern?";
-    return withRetry(async () => {
+    return this.withRetry(caseId, "fp-similarity", async () => {
       const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: getFpSimilarityPrompt(), userPrompt, images: [] }, "fp-similarity");
       const result = fpSimilaritySchema.parse(parsed);
       const valid = new Set(candidateIds);
@@ -4945,7 +4982,7 @@ export class AnalysisPipeline {
     // it to extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
     // synthesis reasons step-by-step — extraction stays cheap.
     const synthThinkingTokens = resolveSynthThinkingBudget(opts, Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
-    const delta = await withRetry(async () => {
+    const delta = await this.withRetry(caseId, "synthesis", async () => {
       const parsed = await this.analyzeRestored(
         caseId,
         state,
@@ -5341,7 +5378,7 @@ export class AnalysisPipeline {
       const retries = this.opts.retries ?? 3;
       const backoffMs = this.opts.backoffMs ?? 500;
       try {
-        const parsed = await withRetry(async () => {
+        const parsed = await this.withRetry(caseId, "second-opinion-reconcile", async () => {
           const raw = await this.analyzeRestored(caseId, a, provider, { systemPrompt: getReconcilePrompt(), userPrompt, images: [] }, "second-opinion-reconcile");
           return reconcileResponseSchema.parse(raw);
         }, retries, backoffMs);
