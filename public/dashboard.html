@@ -1040,6 +1040,8 @@
     .prev-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
     .prev-common { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); }
     .prev-rare { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); }
+    /* Low-relevance chip (#75) — client mirror of eventRelevance.ts's "low" tier. */
+    .lowsig-chip { color: var(--c-6b7280); border: 1px solid var(--c-2a3146); }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
       border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
@@ -5008,6 +5010,10 @@
       // Prevalence baseline (#15b): how common this activity pattern is across the case.
       const prevChip = prevalenceChip(e);
       if (prevChip) parts.push(prevChip);
+      // Relevance (#75): flag rows the deterministic scorer rates lowest — Info telemetry with no
+      // finding link, structured identity, ATT&CK tag, or corroboration.
+      const lowSigChip = lowSignalChip(e);
+      if (lowSigChip) parts.push(lowSigChip);
       const ev = (show("evidence") && caseId) ? evidenceLinks(caseId, e.sourceScreenshots) : "";
       if (ev) parts.push(ev.replace(/^<br>/, ""));
       if (!parts.length) return { title, toggle: "", panel: "" };
@@ -13848,6 +13854,24 @@
       if (st.count >= 20) return `<span class="prev-chip prev-common" title="This pattern is common in this case — likely routine baseline activity.">≈ seen ${st.count}×${esc(hosts)}</span>`;
       if (st.count <= 2) return `<span class="prev-chip prev-rare" title="This pattern is rare in this case — more likely to be signal than noise.">◆ rare (${st.count}×)</span>`;
       return "";
+    }
+
+    // Low-relevance row flag (#75, client mirror of companion/src/analysis/eventRelevance.ts's
+    // scoreEventRelevance): Critical/High severity, a finding link, a structured hash/path/process-chain
+    // identity, an ATT&CK tag, or 2+ corroborating sources all clear it — what's left is Info-severity
+    // telemetry with none of those signals, the class of row least likely to matter to the story. A
+    // display hint only; it does not change what selectSynthesisEvents feeds to synthesis.
+    function isLowSignalEvent(e) {
+      if (e.severity !== "Info") return false;
+      if (e.relatedFindingIds && e.relatedFindingIds.length) return false;
+      if (e.sha256 || e.md5 || e.path || e.processName || e.parentName || e.chainSignature) return false;
+      if (e.mitreTechniques && e.mitreTechniques.length) return false;
+      const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
+      return realSrc.length < 2;
+    }
+    function lowSignalChip(e) {
+      if (!isLowSignalEvent(e)) return "";
+      return `<span class="prev-chip lowsig-chip" title="Info-severity telemetry with no finding link, structured identity, ATT&amp;CK tag, or multi-source corroboration — likely low signal">🐇 low signal</span>`;
     }
     function renderTimelineEvents(ft) {
       // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
