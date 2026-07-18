@@ -2519,6 +2519,9 @@
           <div class="sfield"><label>Log-extraction template cap<span class="sfield-hint">DFIR_LOG_MAX_TEMPLATES — distinct collapsed log-line templates kept for the AI log-extraction prompt (unset = built-in default)</span></label><input id="env-DFIR_LOG_MAX_TEMPLATES" placeholder="(default)" /></div>
           <div class="sfield"><label>Report synthesis-coverage footnote<span class="sfield-hint">DFIR_REPORT_SYNTH_COVERAGE — add a "§3.4 Synthesis coverage" footnote to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_SYNTH_COVERAGE" placeholder="off" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Report model-performance footnote<span class="sfield-hint">DFIR_REPORT_MODEL_PERF — add a "§3.5 Model performance" footnote (synth model, findings vs safety-net backfill, second-opinion agreement rate) to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_MODEL_PERF" placeholder="off" /></div>
+        </div>
       </div>
 
       <!-- Enrichment -->
@@ -9322,7 +9325,23 @@
         const warn = cv.omittedBudget > 0;
         coverage = `<div class="sm-perf" style="margin-top:4px${warn ? ';color:var(--c-ffd93b)' : ''}" title="How much of the in-scope timeline the AI actually read this run (#62). Events omitted for the size limit are still in the case; any Critical/High among them is still covered by the deterministic safety-net backfill.">${txt}</div>`;
       }
-      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${coverage}${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
+      // Per-model quality telemetry (#74): the synthesis model used this run, how many findings it
+      // produced vs how many the deterministic safety net had to backfill (a proxy for missed
+      // detections), and any parse retries — plus the second-opinion agreement rate when one has run.
+      let modelPerf = '';
+      if (m.synthModel) {
+        const bits = [`🤖 <strong>${esc(m.synthModel)}</strong>`];
+        if (m.findingsCount !== undefined) bits.push(`${m.findingsCount.toLocaleString()} finding(s)`);
+        if (m.highSeverityBackfillCount) bits.push(`<span style="color:var(--c-ffd93b)">${m.highSeverityBackfillCount} backfilled by safety net</span>`);
+        if (m.parseRetries) bits.push(`<span style="color:var(--c-ff7a7a)">${m.parseRetries} parse retr${m.parseRetries === 1 ? 'y' : 'ies'}</span>`);
+        modelPerf = `<div class="sm-perf" style="margin-top:4px" title="The synthesis model this run, and quality signals to compare DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL choices empirically (#74)">${bits.join(' · ')}</div>`;
+      }
+      const so = m.secondOpinionPerf;
+      if (so && (so.modelA || so.modelB)) {
+        const pct = Math.round((so.agreementRate || 0) * 100);
+        modelPerf += `<div class="sm-perf" style="margin-top:4px" title="How often the second-opinion model agreed with the primary synthesis model on this case (#74)">🆚 <strong>${esc(so.modelB)}</strong> vs <strong>${esc(so.modelA)}</strong>: ${so.agreementCount} agreed, ${so.deltaCount} disagreed (${pct}%)</div>`;
+      }
+      el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${coverage}${modelPerf}${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
     }
 
     // --- Correlation profile (per-case cross-source event merge window) -------------------------

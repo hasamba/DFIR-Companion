@@ -30,6 +30,23 @@ const secondLookSchema = z.object({
 
 export type SecondLookMeta = z.infer<typeof secondLookSchema>;
 
+// Second-opinion agreement telemetry (issue #74): how often the second-opinion model (DFIR_AI_SECOND_
+// OPINION_MODEL) agrees with the primary synthesis model (DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL) on the
+// SAME case, so the two can be compared empirically rather than just eyeballed. Recorded by
+// AnalysisPipeline.secondOpinion() itself — a separate, on-demand call, not part of every synthesis run
+// — via SynthMetaStore.recordSecondOpinionPerf, the same load-merge-save pattern as recordSecondLook, so
+// a later plain record() write (from the NEXT ordinary synthesis run) never silently wipes it.
+const secondOpinionPerfSchema = z.object({
+  modelA: z.string().catch(""),        // primary synthesis model label
+  modelB: z.string().catch(""),        // second-opinion model label
+  agreementCount: z.number().catch(0), // findings BOTH models independently raised
+  deltaCount: z.number().catch(0),     // points where they disagreed (b_only/a_only/severity/mitre_*)
+  agreementRate: z.number().catch(0),  // agreementCount / (agreementCount + deltaCount); 0 when both are 0
+  at: z.string().catch(""),            // when this second-opinion run completed
+});
+
+export type SecondOpinionPerf = z.infer<typeof secondOpinionPerfSchema>;
+
 // Synthesis coverage audit (issue #62): how much of the case the LAST real synthesis run actually put
 // in front of the model, and what it left out and why. The model can only read a bounded slice of a
 // large timeline (selectSynthesisEvents caps at DFIR_AI_SYNTH_MAX_EVENTS / the token budget), so the
@@ -111,6 +128,17 @@ export const synthMetaSchema = z.object({
   selectionCounts: z.record(z.string(), z.number()).optional().catch(undefined),
   // Synthesis coverage audit (#62): what the model saw vs what was left out, and why.
   coverage: synthesisCoverageSchema.nullable().optional().catch(undefined),
+  // Per-model quality telemetry (issue #74): the synthesis model used THIS run, how many findings it
+  // produced, how many of those the deterministic Critical/High safety net had to backfill (a proxy for
+  // detections the model itself missed), and how many parse retries the call needed (withRetry silently
+  // swallowed these before). Lets DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL be compared empirically across runs.
+  // Optional/lenient; absent on old files.
+  synthModel: z.string().optional().catch(undefined),
+  findingsCount: z.number().optional().catch(undefined),
+  highSeverityBackfillCount: z.number().optional().catch(undefined),
+  parseRetries: z.number().optional().catch(undefined),
+  // Second-opinion agreement (issue #74): set only by secondOpinion() runs — see secondOpinionPerfSchema.
+  secondOpinionPerf: secondOpinionPerfSchema.nullable().optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
@@ -123,6 +151,37 @@ export interface SynthPerfMetrics {
   iocCount: number;
   selectionCounts?: Record<string, number>;   // #4: per-class counts of the events the model saw
   coverage?: SynthesisCoverage;               // #62: included/omitted coverage audit for this run
+  synthModel?: string;                        // #74: "<provider>/<model>" that ran this synthesis
+  findingsCount?: number;                     // #74: total findings after this run
+  highSeverityBackfillCount?: number;         // #74: of those, how many the deterministic safety net added
+  parseRetries?: number;                      // #74: retries the synthesis JSON parse needed
+}
+
+export type ModelPerfSnapshot = Pick<SynthMeta, "synthModel" | "findingsCount" | "highSeverityBackfillCount" | "parseRetries" | "secondOpinionPerf">;
+
+// One-line human summary of the per-model quality fields, for the report footnote. Returns null when
+// there's nothing to say (no synth model recorded and no second-opinion run). Each clause is omitted
+// when its underlying count is zero/absent, mirroring coverageLabel's style.
+export function modelPerfLabel(m: ModelPerfSnapshot): string | null {
+  const parts: string[] = [];
+  if (m.synthModel) {
+    let s = `Synthesis ran on **${m.synthModel}**`;
+    if (m.findingsCount !== undefined) s += ` — ${m.findingsCount} finding${m.findingsCount === 1 ? "" : "s"}`;
+    if (m.highSeverityBackfillCount) {
+      s += ` (${m.highSeverityBackfillCount} recovered by the high-severity safety net, not raised by the model itself)`;
+    }
+    if (m.parseRetries) s += `, ${m.parseRetries} parse retr${m.parseRetries === 1 ? "y" : "ies"}`;
+    parts.push(s + ".");
+  }
+  const so = m.secondOpinionPerf;
+  if (so && (so.modelA || so.modelB)) {
+    parts.push(
+      `Second opinion (**${so.modelB || "model B"}**) vs primary (**${so.modelA || "model A"}**): agreed on ` +
+        `${so.agreementCount} finding${so.agreementCount === 1 ? "" : "s"}, ${so.deltaCount} disagreement${so.deltaCount === 1 ? "" : "s"} ` +
+        `(${Math.round(so.agreementRate * 100)}% agreement).`,
+    );
+  }
+  return parts.length ? parts.join(" ") : null;
 }
 
 export class SynthMetaStore {
@@ -155,6 +214,16 @@ export class SynthMetaStore {
   async recordSecondLook(caseId: string, secondLook: SecondLookMeta | null): Promise<SynthMeta> {
     const cur = await this.load(caseId);
     const meta: SynthMeta = { ...cur, secondLook };
+    await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+    return meta;
+  }
+
+  // Stamp a second-opinion agreement snapshot onto the CURRENT synth-meta (#74). Same load-merge-save
+  // shape as recordSecondLook: secondOpinion() runs on demand (not as part of every synthesize() call),
+  // so this must merge onto whatever the last record() wrote rather than replace it. `null` clears it.
+  async recordSecondOpinionPerf(caseId: string, perf: SecondOpinionPerf | null): Promise<SynthMeta> {
+    const cur = await this.load(caseId);
+    const meta: SynthMeta = { ...cur, secondOpinionPerf: perf };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;
   }
