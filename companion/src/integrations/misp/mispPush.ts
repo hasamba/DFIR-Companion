@@ -9,6 +9,7 @@
 import type { ForensicEvent, InvestigationState, IOC } from "../../analysis/stateTypes.js";
 import type { MispPushClientLike, MispEventCreate, MispAttrBody } from "./mispPushClient.js";
 import { byEventTime } from "../../analysis/forensicSort.js";
+import { severityRank } from "../../analysis/dashboardViews.js";
 
 export interface MispPushInput {
   caseId: string;              // Companion case id — used for idempotency tag and event title
@@ -19,7 +20,21 @@ export interface MispPushOptions {
   distribution?: string;       // MISP distribution: "0"=org (default), "1"=community, "2"=connected, "3"=all
   analysis?: string;           // MISP analysis: "0"=initial, "1"=ongoing (default), "2"=complete
   baseUrl?: string;            // to build a clickable event URL in the result
+  // Max forensic-timeline events pushed in one call. The timeline is UNBOUNDED (a big
+  // MFT/USN import can carry tens of thousands of rows) and each event costs one sequential
+  // HTTP round-trip, so an uncapped push would hang the request for hours. Excess events are
+  // reported as skipped with a warning; the highest-value events go first (see sort below).
+  timelineLimit?: number;      // default DEFAULT_TIMELINE_LIMIT
 }
+
+// Bounds a single push. Chosen so a worst-case run stays in the low minutes against a real
+// (network-latency) MISP rather than running unbounded.
+const DEFAULT_TIMELINE_LIMIT = 5000;
+
+// Stop hammering MISP once it is clearly unhealthy. Without this, a hung/erroring instance
+// costs `timeoutMs` (default 30 s) PER event — a 5000-event case would block the push route
+// for over 40 hours before returning.
+const MAX_CONSECUTIVE_FAILURES = 10;
 
 export interface MispPushResult {
   eventId: string;
@@ -178,7 +193,24 @@ export async function pushCaseToMisp(
   // 4b. Push the forensic timeline as attributes carrying the time window (first_seen/last_seen)
   //     plus a description/metadata comment. Same value-based dedupe set as IOCs above, so a
   //     re-push only adds events that aren't already on the event.
-  for (const event of [...input.state.forensicTimeline].sort(byEventTime)) {
+  //     The timeline is unbounded, so it is capped: the most severe events are selected first
+  //     (so the cut drops Info noise rather than the findings that matter), then pushed in
+  //     chronological order so the MISP event still reads as a timeline.
+  const limit = options.timelineLimit ?? DEFAULT_TIMELINE_LIMIT;
+  const allEvents = input.state.forensicTimeline;
+  const selected = (allEvents.length > limit
+    ? [...allEvents].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)).slice(0, limit)
+    : [...allEvents]).sort(byEventTime);
+  if (allEvents.length > limit) {
+    timeline.skipped += allEvents.length - limit;
+    warnings.push(
+      `timeline truncated: pushed the ${limit} most severe of ${allEvents.length} events ` +
+      `(raise options.timelineLimit to push more)`,
+    );
+  }
+
+  let consecutiveFailures = 0;
+  for (const [idx, event] of selected.entries()) {
     const mapped = mapTimelineEvent(event);
     if (!mapped) {
       timeline.skipped += 1;
@@ -191,9 +223,23 @@ export async function pushCaseToMisp(
       await client.addAttribute(eventId, mapped);
       existingValues.add(key);
       timeline.added += 1;
+      consecutiveFailures = 0;
     } catch (err) {
       timeline.skipped += 1;
+      consecutiveFailures += 1;
       warnings.push(`timeline event "${event.id}": ${(err as Error).message}`);
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        // MISP is down/hung — abandon the rest rather than paying the request timeout per
+        // remaining event. The push stays idempotent: a later re-push resumes where this
+        // stopped, because everything already added is deduped by value.
+        const remaining = selected.length - idx - 1;
+        if (remaining > 0) timeline.skipped += remaining;
+        warnings.push(
+          `timeline push aborted after ${MAX_CONSECUTIVE_FAILURES} consecutive MISP failures ` +
+          `(${remaining} event(s) not attempted) — re-push once MISP is healthy`,
+        );
+        break;
+      }
     }
   }
 

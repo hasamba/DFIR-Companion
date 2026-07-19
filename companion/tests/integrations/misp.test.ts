@@ -226,6 +226,43 @@ describe("pushCaseToMisp", () => {
     expect(m.addedAttributes.filter((a) => a.body.type === "text")).toHaveLength(0);
   });
 
+  it("caps an oversized timeline, keeping the most severe events", async () => {
+    const m = new MockMispClient();
+    const noise = Array.from({ length: 20 }, (_, i) =>
+      event({ id: `info${i}`, timestamp: `2026-06-08T00:00:${String(i).padStart(2, "0")}Z`, description: `noise ${i}`, severity: "Info" }));
+    const critical = event({ id: "crit", timestamp: "2026-06-08T23:00:00Z", description: "ransomware deployed", severity: "Critical" });
+    const state = { ...emptyState("c12"), forensicTimeline: [...noise, critical] };
+
+    const res = await pushCaseToMisp(m, { caseId: "c12", state }, { timelineLimit: 5 });
+
+    expect(res.timeline.added).toBe(5);
+    // 21 events, 5 pushed -> 16 dropped by the cap.
+    expect(res.timeline.skipped).toBe(16);
+    expect(res.warnings.some((w) => w.includes("timeline truncated"))).toBe(true);
+    // The Critical event must survive the cut even though it is last chronologically.
+    const values = m.addedAttributes.filter((a) => a.body.type === "text").map((a) => a.body.value);
+    expect(values.some((v) => v.includes("ransomware deployed"))).toBe(true);
+  });
+
+  it("aborts the timeline push after repeated MISP failures instead of retrying every event", async () => {
+    const m = new MockMispClient();
+    let calls = 0;
+    m.addAttribute = async () => { calls += 1; throw new Error("MISP HTTP 500"); };
+    const state = {
+      ...emptyState("c13"),
+      forensicTimeline: Array.from({ length: 500 }, (_, i) =>
+        event({ id: `e${i}`, timestamp: `2026-06-08T01:00:00Z`, description: `event ${i}` })),
+    };
+
+    const res = await pushCaseToMisp(m, { caseId: "c13", state });
+
+    // Bails out after the consecutive-failure threshold rather than calling all 500 times.
+    expect(calls).toBe(10);
+    expect(res.timeline.added).toBe(0);
+    expect(res.timeline.skipped).toBe(500);
+    expect(res.warnings.some((w) => w.includes("aborted after"))).toBe(true);
+  });
+
   it("skips timeline events with an unparseable timestamp and records a warning", async () => {
     const m = new MockMispClient();
     const state = {
