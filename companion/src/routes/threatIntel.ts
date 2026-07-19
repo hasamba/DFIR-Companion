@@ -281,6 +281,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
           providers: enabledProviders,
           delayMs: options.enrichDelayMs,
           perProviderDelayMs: options.enrichProviderDelayMs,
+          jitterMs: options.enrichJitterMs,
+          retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
           maxIocs: options.enrichMaxIocs,
           force,
           health: ctx.enrichHealth(),
