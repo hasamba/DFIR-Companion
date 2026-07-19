@@ -7383,7 +7383,12 @@
           return dep ? (dep.shortId || dep.title) : id;
         });
         const blockedBadge = t.blocked ? `<span class="pb-blocked-badge" title="Blocked by: ${escAttr(blockedByTitles.join(", "))}">⛔ blocked</span>` : "";
-        const depCount = (t.dependsOn || []).length;
+        // Count only edges that still resolve to a live task. A dependency whose task was
+        // deleted stays in `dependsOn` on purpose (an auto-task's id is its stable sourceKey, so
+        // the edge reconnects if the seed re-derives), but such a ghost edge is never listed in
+        // the picker below — counting it would show "(2)" over a panel with one box ticked, and
+        // the analyst would have no way to clear the difference.
+        const depCount = (t.dependsOn || []).filter(id => playbookTasks.some(o => o.id === id)).length;
         return `<div class="pb-task pb-${escAttr(t.status)}${t.blocked ? " pb-blocked" : ""}" data-id="${escAttr(t.id)}" ${canDrag ? 'draggable="true"' : ""}>` +
           `<div class="pb-row1">` +
             `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
