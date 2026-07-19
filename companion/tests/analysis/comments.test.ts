@@ -63,6 +63,16 @@ describe("CommentsStore", () => {
     expect(parseMentions("path/to@v2/thing")).toEqual([]);
   });
 
+  it("does not swallow trailing sentence punctuation into the handle", () => {
+    // `.`/`-`/`_` are legal inside a handle but never at the end, so a mention that closes a
+    // sentence still resolves to the real handle (and de-dups against the same handle elsewhere).
+    expect(parseMentions("ping @bob.")).toEqual(["bob"]);
+    expect(parseMentions("@bob, @carol; @dave-")).toEqual(["bob", "carol", "dave"]);
+    expect(parseMentions("@bob. and @bob again")).toEqual(["bob"]);
+    // ...but interior punctuation is still part of the handle.
+    expect(parseMentions("@some-user_name.v2 ok")).toEqual(["some-user_name.v2"]);
+  });
+
   it("returns [] mentions when the text has no @tokens", async () => {
     const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", text: "no mentions here" });
     expect(c.mentions).toEqual([]);

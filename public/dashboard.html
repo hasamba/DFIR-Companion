@@ -5710,8 +5710,10 @@
     // inject markup), then the @token regex only ever matches already-escaped, HTML-safe text.
     function mentionHtml(text) {
       // `@` must not follow a word/handle char so emails/IOCs (bob@example.com) aren't chipped as
-      // mentions. Runs over esc()'d text; keep in sync with MENTION_RE in analysis/comments.ts.
-      return esc(text).replace(/(?<![A-Za-z0-9._@-])@([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})/g, '<span class="mention-chip">@$1</span>');
+      // mentions, and a handle must start AND end alphanumeric so trailing sentence punctuation
+      // ("ping @bob.") stays outside the chip. Runs over esc()'d text; keep in sync with
+      // MENTION_RE in analysis/comments.ts.
+      return esc(text).replace(/(?<![A-Za-z0-9._@-])@([a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,62}[a-zA-Z0-9])?)/g, '<span class="mention-chip">@$1</span>');
     }
 
     function loadComments(caseId) {
