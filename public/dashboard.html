@@ -8224,8 +8224,26 @@
     // it's a convenience export, not a certified rule, so it's explicitly `status: experimental` and
     // the analyst is expected to review/tighten it before deploying.
     // A YAML single-quoted scalar: '' escapes an embedded quote (per the YAML 1.1/1.2 spec) — the
-    // only escaping single-quoted style needs.
-    const yq = (s) => `'${String(s).replace(/'/g, "''")}'`;
+    // only *character* escaping single-quoted style needs. But quoting alone is not enough: a
+    // quoted scalar must stay on ONE line. An embedded newline continues the scalar onto the next
+    // line at column 0, which YAML then reads as a new mapping key — the string breaks out of its
+    // quotes and the whole rule fails to parse (or silently parses as something else). Finding
+    // titles and IOC values are attacker-influenced free text, so collapse every whitespace run
+    // (newlines, CRs, tabs) to a single space before quoting.
+    const yqNorm = (s) => String(s).replace(/\s+/g, " ").trim();
+    const yq = (s) => `'${yqNorm(s).replace(/'/g, "''")}'`;
+    // Normalize + dedupe a list of indicator values, dropping any that reduce to nothing. An empty
+    // selector value (`TargetFilename|contains: ''`, or a bare `Image|endswith: '\'`) matches every
+    // event, which would turn the draft into a false-positive cannon rather than a detection.
+    const sigmaVals = (arr, limit, fn) => {
+      const out = [];
+      for (const v of arr) {
+        if (out.length >= limit) break;
+        const t = yqNorm(fn ? fn(v) : v);
+        if (t) pushUniq(out, t);
+      }
+      return out;
+    };
     // Merge one entity's huntContextFor() output into the accumulating finding-level context.
     function mergeSigmaCtx(c, ec) {
       if (!c.host && ec.host) c.host = ec.host;
@@ -8259,31 +8277,38 @@
     // Returns "" when the finding carries no indicator the deterministic templates understand.
     function findingSigmaYaml(f, c) {
       const sel = [];
-      if (c.processes.length || c.parent) {
+      // Normalize every indicator list up front, so both the selection blocks below and the
+      // logsource-category choice see the same post-filter view of what the finding actually has.
+      const procs = sigmaVals(c.processes, 10, baseName);
+      const parentBase = yqNorm(baseName(c.parent || ""));
+      const hashes = sigmaVals(c.hashes, 10);
+      const ips = sigmaVals(c.ips, 20);
+      const netNames = sigmaVals([...c.domains, ...c.urls], 20);
+      const paths = sigmaVals(c.paths, 10, baseName);
+      if (procs.length || parentBase) {
         const lines = [];
-        if (c.processes.length) {
+        if (procs.length) {
           lines.push(`    Image|endswith:`);
-          c.processes.slice(0, 10).forEach((p) => lines.push(`      - ${yq("\\" + baseName(p))}`));
+          procs.forEach((p) => lines.push(`      - ${yq("\\" + p)}`));
         }
-        if (c.parent) lines.push(`    ParentImage|endswith: ${yq("\\" + baseName(c.parent))}`);
+        if (parentBase) lines.push(`    ParentImage|endswith: ${yq("\\" + parentBase)}`);
         sel.push({ name: "sel_process", lines });
       }
-      if (c.hashes.length) {
-        sel.push({ name: "sel_hash", lines: [`    Hashes|contains:`, ...c.hashes.slice(0, 10).map((h) => `      - ${yq(h)}`)] });
+      if (hashes.length) {
+        sel.push({ name: "sel_hash", lines: [`    Hashes|contains:`, ...hashes.map((h) => `      - ${yq(h)}`)] });
       }
-      if (c.ips.length) {
-        sel.push({ name: "sel_network_ip", lines: [`    DestinationIp:`, ...c.ips.slice(0, 20).map((ip) => `      - ${yq(ip)}`)] });
+      if (ips.length) {
+        sel.push({ name: "sel_network_ip", lines: [`    DestinationIp:`, ...ips.map((ip) => `      - ${yq(ip)}`)] });
       }
-      if (c.domains.length || c.urls.length) {
-        const vals = [...c.domains, ...c.urls].slice(0, 20);
-        sel.push({ name: "sel_network_domain", lines: [`    DestinationHostname|contains:`, ...vals.map((v) => `      - ${yq(v)}`)] });
+      if (netNames.length) {
+        sel.push({ name: "sel_network_domain", lines: [`    DestinationHostname|contains:`, ...netNames.map((v) => `      - ${yq(v)}`)] });
       }
-      if (c.paths.length) {
-        sel.push({ name: "sel_file_path", lines: [`    TargetFilename|contains:`, ...c.paths.slice(0, 10).map((p) => `      - ${yq(baseName(p))}`)] });
+      if (paths.length) {
+        sel.push({ name: "sel_file_path", lines: [`    TargetFilename|contains:`, ...paths.map((p) => `      - ${yq(p)}`)] });
       }
       if (!sel.length) return "";
-      const hasProcessSel = c.processes.length || c.hashes.length || c.parent;
-      const hasNetSel = c.ips.length || c.domains.length || c.urls.length;
+      const hasProcessSel = procs.length || hashes.length || parentBase;
+      const hasNetSel = ips.length || netNames.length;
       const category = hasProcessSel ? "process_creation" : hasNetSel ? "network_connection" : "file_event";
       const level = f.severity === "Critical" ? "critical" : f.severity === "High" ? "high"
         : f.severity === "Medium" ? "medium" : f.severity === "Low" ? "low" : "informational";
