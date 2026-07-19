@@ -91,15 +91,22 @@ export class CodexProvider implements AIProvider {
 }
 
 // ── output parsing ────────────────────────────────────────────────────────────────────────────
-// `codex exec --json` emits newline-delimited JSON events. Verified against codex-cli 0.39.0, every
-// event is wrapped in an envelope — `{"id":"0","msg":{"type":"agent_message","message":"..."}}` —
-// so the `msg` body is unwrapped before reading fields; older/other shapes are flat, and those still
-// work because the unwrap falls back to the event itself. Kept deliberately defensive (several field
-// spellings, raw-stdout fallback) since the schema is not a stable contract across CLI versions.
+// `codex exec --json` emits newline-delimited JSON events. The schema is NOT a stable contract —
+// two materially different shapes are already confirmed in the wild, so both are handled:
+//
+//   codex-cli 0.39.x   {"id":"0","msg":{"type":"agent_message","message":"PONG"}}
+//                      usage at msg.info.total_token_usage
+//   codex-cli 0.144.x  {"type":"item.completed","item":{"type":"agent_message","text":"PONG"}}
+//                      usage at turn.completed.usage
+//
+// Hence the layered unwrap (`msg`, then `item`, each falling back to the event itself) and the
+// several accepted field spellings. Anything unrecognised degrades to the raw-stdout fallback
+// rather than silently yielding an empty synthesis.
 interface ParsedCodex { text?: string; usage?: ProviderUsage; errors: string[]; }
 
 function parseCodexOutput(stdout: string): ParsedCodex {
-  let text: string | undefined;
+  let agentText: string | undefined;  // from an explicit agent_message — the actual answer
+  let anyText: string | undefined;    // fallback: any other message-like event
   let usage: ProviderUsage | undefined;
   const errors: string[] = [];
   for (const line of stdout.split("\n")) {
@@ -109,23 +116,31 @@ function parseCodexOutput(stdout: string): ParsedCodex {
     try { evt = JSON.parse(t); } catch { continue; }
     const e = asRecord(evt);
     if (!e) continue;
-    const body = asRecord(e.msg) ?? e;   // unwrap the { id, msg } envelope when present
-    const type = typeof body.type === "string" ? body.type : "";
-    // Match ANY error-ish event type — codex-cli 0.39.0 emits both `error` (MCP startup failures)
-    // and `stream_error` (e.g. "model not found", with a human-readable `message` field). These
-    // must never become the answer: they look exactly like a message event, so a substring match
-    // is used deliberately rather than an equality check on a fixed list of type names. Returning
-    // one as the synthesis result would report a hard failure as a confident finding.
-    if (/error/i.test(type)) {
-      const m = firstString(body.message, body.text);
+    const body = asRecord(e.msg) ?? e;          // 0.39.x envelope
+    const payload = asRecord(body.item) ?? body; // 0.144.x item wrapper
+    const outerType = typeof body.type === "string" ? body.type : "";
+    const innerType = typeof payload.type === "string" ? payload.type : "";
+    // Match ANY error-ish type at either level — 0.39.x emits `error` (MCP startup failures) and
+    // `stream_error` (e.g. "model not found"), each with a human-readable `message` that is
+    // shape-identical to an answer. A substring match is used deliberately rather than equality
+    // against a fixed list, because returning one of these as the synthesis result would report a
+    // hard failure as a confident finding.
+    if (/error/i.test(outerType) || /error/i.test(innerType)) {
+      const m = firstString(payload.message, payload.text, body.message, body.text);
       if (m) errors.push(m);
       continue;
     }
-    const msg = extractText(body);
-    if (msg) text = msg; // last message-like event wins (the final answer)
-    const u = extractUsage(body);
+    const msg = extractText(payload);
+    if (msg) {
+      // Prefer a real agent_message: a turn also emits reasoning / command / tool items that carry
+      // their own text, and those must never stand in for the model's answer.
+      if (innerType === "agent_message" || outerType === "agent_message") agentText = msg;
+      else anyText = msg;
+    }
+    const u = extractUsage(body) ?? extractUsage(payload);
     if (u) usage = u;
   }
+  let text = agentText ?? anyText;
   if (!text) {
     const raw = stdout.split("\n").filter((l) => { const t = l.trim(); return t && t[0] !== "{"; }).join("\n").trim();
     if (raw) text = raw;

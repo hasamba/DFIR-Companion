@@ -76,6 +76,35 @@ describe("CodexProvider", () => {
     expect(out.usage).toEqual({ inputTokens: 6717, outputTokens: 4 });
   });
 
+  // Captured verbatim from codex-cli 0.144.6 — a completely different schema from 0.39.x: no `msg`
+  // envelope, the answer nested under `item`, usage on turn.completed. Parsing only the 0.39 shape
+  // yielded no text at all, surfacing a SUCCESSFUL run as "Codex returned no content".
+  it("parses the codex-cli 0.144 schema: item.completed + turn.completed usage", async () => {
+    const stdout = [
+      '{"type":"thread.started","thread_id":"019f7a40-cb5e-75f0-93da-4649cb9664b5"}',
+      '{"type":"turn.started"}',
+      '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"PONG"}}',
+      '{"type":"turn.completed","usage":{"input_tokens":14174,"cached_input_tokens":9984,"output_tokens":6,"reasoning_output_tokens":0}}',
+    ].join("\n");
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }) })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe("PONG");
+    expect(out.usage).toEqual({ inputTokens: 14174, outputTokens: 6 });
+  });
+
+  // A turn also emits reasoning / command / tool items that carry their own text. Only the
+  // agent_message is the model's answer — a reasoning item must never stand in for it.
+  it("prefers the agent_message over other item types that also carry text", async () => {
+    const stdout = [
+      '{"type":"item.completed","item":{"id":"i0","type":"reasoning","text":"thinking out loud"}}',
+      '{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"the real answer"}}',
+      '{"type":"item.completed","item":{"id":"i2","type":"command_execution","text":"ls -la"}}',
+    ].join("\n");
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe("the real answer");
+  });
+
   // codex logs MCP-client startup failures as `error` events on runs that otherwise SUCCEED.
   it("ignores error events when a real answer is present", async () => {
     const stdout = [
