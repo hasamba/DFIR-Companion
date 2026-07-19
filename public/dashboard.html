@@ -13866,8 +13866,11 @@
       if (e.relatedFindingIds && e.relatedFindingIds.length) return false;
       if (e.sha256 || e.md5 || e.path || e.processName || e.parentName || e.chainSignature) return false;
       if (e.mitreTechniques && e.mitreTechniques.length) return false;
-      const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
-      return realSrc.length < 2;
+      // realSourceCount() is the shared corroboration unit: it drops the "unknown source" placeholder
+      // AND dedups, so a repeated source name can't fake corroboration and clear the flag. Called with
+      // no `hidden` set on purpose — relevance is a property of the event, not of the analyst's current
+      // source filter, so the chip must not appear/disappear as they toggle sources.
+      return realSourceCount(e.sources) < 2;
     }
     function lowSignalChip(e) {
       if (!isLowSignalEvent(e)) return "";
