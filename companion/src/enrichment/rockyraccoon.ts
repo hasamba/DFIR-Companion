@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
 
 export interface RockyRaccoonOptions {
   apiKey: string;    // et_live_… (Authorization: Bearer)
@@ -61,7 +61,7 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
       return { source: this.name, verdict: "unknown", score: "not seen in ~346M events (uncommon process)" };
     }
     if (res.status === 401 || res.status === 403) throw new Error("RockyRaccoon auth/tier error (check DFIR_ROCKYRACCOON_KEY / plan)");
-    if (res.status === 429) throw new Error("RockyRaccoon rate/quota limit");
+    if (res.status === 429) throw new RateLimitError("RockyRaccoon rate/quota limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
     const p = (await res.json()) as ProcessProfile;
@@ -100,7 +100,7 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
     const res = await this.fetchFn(url, { headers: this.headers(), signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000) });
     if (res.status === 404) return { observed: false, note: `${p} → ${c} not seen; child '${c}' is unknown to the dataset` };
     if (res.status === 401 || res.status === 403) throw new Error("RockyRaccoon auth/tier error");
-    if (res.status === 429) throw new Error("RockyRaccoon rate/quota limit");
+    if (res.status === 429) throw new RateLimitError("RockyRaccoon rate/quota limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`RockyRaccoon HTTP ${res.status}`);
 
     const j = (await res.json()) as { observed?: boolean; percentage?: number; common_parents?: Array<{ parent?: string; percentage?: number }> };

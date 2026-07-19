@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind } from "./provider.js";
 
 // Geo-IP lookup for an IP IOC — "what country (and city / ASN / hosting org) did this address
 // come from?". Answers the analyst's first question about any external IP. Pure geo/network
@@ -106,7 +106,7 @@ export class GeoIpProvider implements EnrichmentProvider {
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
     if (res.status === 401 || res.status === 403) throw new Error("GeoIP auth failed / blocked (set DFIR_GEOIP_URL or DFIR_GEOIP_KEY)");
-    if (res.status === 429) throw new Error("GeoIP rate limit");
+    if (res.status === 429) throw new RateLimitError("GeoIP rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`GeoIP HTTP ${res.status}`);
 
     const json = (await res.json()) as GeoResponse;

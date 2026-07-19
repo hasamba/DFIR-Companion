@@ -242,7 +242,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
 - **Two-phase** — cheap per-window vision (extraction) + strong text-only synthesis (findings/IOCs/MITRE/attacker path)
-- **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini; optional two-tier (cheap extract + strong synth) with context budgeting
+- **Providers** — OpenAI, OpenRouter, Ollama, LiteLLM, Gemini, Anthropic, Claude Code; optional two-tier (cheap extract + strong synth) with context budgeting
 - **EDR/SIEM consoles as evidence** — detections extracted; analyst navigation filtered (real detections never dropped)
 - **Severity-aware findings** — Critical/High rows become findings; deterministic auto-creation for missed high-severity events
 - **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand
@@ -572,9 +572,10 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DFIR_VISION_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic`; unset = capture-only |
+| `DFIR_VISION_PROVIDER` | — | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic` \| `claude-code`; unset = capture-only |
 | `DFIR_VISION_MODEL` | — | Model id (e.g. `gpt-4o-mini`, `gemini-2.5-flash`); **must support vision** for screenshot extraction |
-| `DFIR_VISION_KEY` | — | Provider API key; leave blank for an auth-less local proxy |
+| `DFIR_VISION_KEY` | — | Provider API key; leave blank for an auth-less local proxy or for `claude-code` (uses your logged-in `claude` CLI subscription instead) |
+| `DFIR_AI_CLAUDE_CODE_BIN` | `claude` on PATH | `claude-code` only: absolute path to the `claude` binary if it isn't on PATH |
 | `DFIR_VISION_BASE_URL` | provider default | Override base URL — for a local LiteLLM proxy or any OpenAI-compatible endpoint |
 | `DFIR_AI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); raise for strong models on large timelines |
 | `DFIR_AI_MAX_TOKENS` | `16000` | Max completion tokens; too low truncates synthesis, prevents OpenRouter 402 on low balance |
@@ -589,9 +590,23 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 
 > The screenshot/vision vars above (`DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` / `DFIR_VISION_IMAGE_DETAIL`) were renamed from the `DFIR_AI_*` prefix; the legacy `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY` / `DFIR_AI_BASE_URL` / `DFIR_AI_IMAGE_DETAIL` names still work as a deprecated fallback (the new name wins when both are set).
 
+**Claude Code** — uses your logged-in Claude subscription via the `claude` CLI, no API key; handles
+vision + text (screenshot extraction *and* synthesis). Requires the `claude` CLI installed and
+`claude auth login` completed on the host. Consumes your subscription rate limits (heavy extraction
+can exhaust them); reported cost is API-equivalent, not out-of-pocket. Settings → AI shows a
+connection status (not installed / not connected / connected) with a one-click Connect action.
+
 ### AI — text model (two-tier, optional)
 
 The split is **vision vs text**: `DFIR_VISION_MODEL` reads screenshots (must be multimodal); the `DFIR_AI_SYNTH_*` model does **all text work** — CSV extraction, log triage, synthesis, ask/explain. If unset, text work reuses `DFIR_VISION_MODEL`.
+
+**Codex** — set `DFIR_AI_SYNTH_PROVIDER=codex` (also valid for the velo / second-opinion providers)
+to run text work through the local OpenAI **Codex CLI** (`codex exec`), using your ambient codex
+auth — `codex login` or `OPENAI_API_KEY`, **no `DFIR_AI_KEY`**. Codex is **text-only** (it can't
+read screenshots), so pair it with a vision provider for extraction; it sends data to OpenAI
+(non-local). Requires `@openai/codex` installed. Optional `DFIR_AI_CODEX_BIN` points at a
+non-PATH `codex`. Settings → AI shows a codex connection status (not installed / not connected /
+connected) with a one-click Connect action.
 
 Recommended: cheap vision model for screenshots, strong reasoning model for text. Don't economise on the text model — a weak one fails log triage *silently*, returning no events rather than wrong ones (`npm run eval:real` measures exactly this).
 
@@ -667,6 +682,9 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_SHODAN_KEY` | — | Shodan API key — also powers the Shodan host-lookup IP enricher (shared with customer exposure) |
 | `DFIR_HASHLOOKUP_URL` | `https://hashlookup.circl.lu` | CIRCL hashlookup base (keyless known-file lookup for hash IOCs); override for a self-hosted / air-gapped mirror |
 | `DFIR_ENRICH_DELAY_MS` | `1500` | Throttle between lookups (ms) |
+| `DFIR_ENRICH_JITTER_MS` | `0` | ± random jitter added to the inter-call wait (ms); spreads out aligned/parallel runs so they don't all hit a provider's rate-limit window together |
+| `DFIR_ENRICH_RETRIES` | `2` | Retry attempts for a provider call that hits a 429, honouring `Retry-After` when the provider sends one, before it's counted as an error |
+| `DFIR_ENRICH_RETRY_BACKOFF_MS` | `1000` | Base backoff before the first 429 retry (doubles each attempt, capped at 30s) when the provider gave no `Retry-After` |
 | `DFIR_ENRICH_MAX` | `100` | Max IOCs per enrich run |
 | `DFIR_ENRICH_HEALTH_TTL_MS` | `60000` | Cache up/down verdict for self-hosted providers (ms) |
 | `DFIR_ENRICH_HEALTH_POLL_MS` | `60000` | Re-probe interval for down providers; `0` disables background poller |
