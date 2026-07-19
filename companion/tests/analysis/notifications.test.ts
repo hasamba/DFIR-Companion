@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -288,6 +288,23 @@ describe("NotificationConfigStore", () => {
     expect(await store.update("nope", blank)).toBeNull();
     expect(await store.remove(added.id)).toBe(true);
     expect(await store.load()).toEqual([]);
+  });
+
+  it("does not auto-opt a pre-#88 channel into mention notifications", async () => {
+    // A config written before @mentions existed has no `mention` key. Its owner never opted in,
+    // so upgrading must NOT silently start pushing comment text to their existing destination.
+    const path = join(await mkdtemp(join(tmpdir(), "dfir-notify-legacy-")), "config.json");
+    const legacy = new NotificationConfigStore(path);
+    await writeFile(path, JSON.stringify([{
+      id: "legacy-1", type: "slack", name: "SOC", enabled: true, minSeverity: "High",
+      events: { critical_finding: true, playbook_update: true, milestone: false },
+      webhookUrl: "https://hooks/legacy", createdAt: NOW, updatedAt: NOW,
+    }]), "utf8");
+    const [ch] = await legacy.load();
+    expect(ch.events.mention).toBe(false);
+    expect(ch.events.critical_finding).toBe(true); // the settings they DID choose are untouched
+    // A channel created now still defaults mentions on — that's a deliberate, visible opt-in.
+    expect(parseChannelInput({ type: "slack", webhookUrl: "https://hooks/new" }).draft!.events.mention).toBe(true);
   });
 
   it("drops malformed channels on read", async () => {
