@@ -139,6 +139,7 @@ import {
 import {
   deployedFingerprints,
   renderPriorHuntsBlock,
+  renderHuntProductivityBlock,
   vqlFingerprint,
   type HuntOutcome,
 } from "./huntOutcomes.js";
@@ -4077,13 +4078,18 @@ export class AnalysisPipeline {
     // there are no recorded outcomes (or no store wired). Also drives the deterministic exclusion below.
     const outcomes = await this.loadHuntOutcomes(caseId);
     const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+    // Productivity tuning (#72): the aggregate hit-rate by pivot class (hash/process/path/network/
+    // registry) across this case's hunt history, so the model biases toward classes that have found
+    // evidence rather than only avoiding exact repeats (priorHuntsBlock is the per-hunt signal; this
+    // is the aggregate one). "" until there's collected history to bias on.
+    const productivityBlock = renderHuntProductivityBlock(outcomes);
     // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases, likely-
     // next techniques) so suggested hunts target what's MISSING, not just re-confirm what's known.
     const knownUnknownsBlock = await this.knownUnknownsBlock(loaded, scopedEvents, caseId);
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getHuntSuggestPrompt())
-      + estimateTokens(priorHuntsBlock + contextBlock + knownUnknownsBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + productivityBlock + contextBlock + knownUnknownsBlock + graphBlock + findingsText + iocText + techText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -4095,6 +4101,7 @@ export class AnalysisPipeline {
       : "";
     const userPrompt =
       priorHuntsBlock +
+      productivityBlock +
       contextBlock +
       knownUnknownsBlock +
       graphBlock +
@@ -4129,8 +4136,10 @@ export class AnalysisPipeline {
     const label = techniqueName ? `${id} (${techniqueName})` : id;
     const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
     const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+    const productivityBlock = renderHuntProductivityBlock(outcomes);   // #72: aggregate hit-rate by pivot class
     const userPrompt =
       priorHuntsBlock +
+      productivityBlock +
       `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
       `  ${label}\n\n` +
       `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
@@ -4321,10 +4330,11 @@ export class AnalysisPipeline {
     const contextBlock = buildSynthesisContext(loaded, scopedEvents, kevCatalog);
     const outcomes = await this.loadHuntOutcomes(caseId);   // #157 feedback loop (exclude + prior-hunts context)
     const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
+    const productivityBlock = renderHuntProductivityBlock(outcomes);   // #72: aggregate hit-rate by pivot class
 
     // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
     const overhead = estimateTokens(getPlaybookHuntPrompt())
-      + estimateTokens(priorHuntsBlock + contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
+      + estimateTokens(priorHuntsBlock + productivityBlock + contextBlock + tasksText + endpointsText + artifactsText + findingsText + (loaded.attackerPath || "")) + 300;
     const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
     if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
     const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
@@ -4334,6 +4344,7 @@ export class AnalysisPipeline {
       : "";
     const userPrompt =
       priorHuntsBlock +
+      productivityBlock +
       contextBlock +
       `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
       `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
