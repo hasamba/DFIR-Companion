@@ -86,6 +86,22 @@ describe("ReportVersionStore", () => {
     }
   });
 
+  it("keeps auto-numbered labels unique after pruning at the retention cap", async () => {
+    const prev = process.env.DFIR_REPORT_VERSION_MAX;
+    process.env.DFIR_REPORT_VERSION_MAX = "2";
+    try {
+      for (let i = 1; i <= 4; i++) {
+        await versions.snapshot("c1", { markdown: `# ${i}`, meta: emptyReportMeta(), state: emptyDiffState() });
+      }
+      // Once the cap is reached the list stops growing, so a length-derived label would repeat "v3"
+      // for every later version. Labels must keep counting up from the newest retained one.
+      expect((await versions.list("c1")).map((v) => v.version)).toEqual(["v4", "v3"]);
+    } finally {
+      if (prev === undefined) delete process.env.DFIR_REPORT_VERSION_MAX;
+      else process.env.DFIR_REPORT_VERSION_MAX = prev;
+    }
+  });
+
   it("carries the manual revision label from report-meta when present", async () => {
     const meta = { ...emptyReportMeta(), revisions: [{ version: "1.0", date: "2026-01-01", author: "a", comments: "initial" }] };
     const summary = await versions.snapshot("c1", { markdown: "# report", meta, state: emptyDiffState() });

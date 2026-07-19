@@ -62,6 +62,16 @@ function isValidVersionId(id: string): boolean {
   return VALID_VERSION_ID.test(id);
 }
 
+// The next auto-numbered display label. Derived from the newest retained summary's own label rather
+// than from the list length: once the history hits the retention cap (maxVersions) the list stops
+// growing, so `v${list.length + 1}` would hand out the SAME label to every subsequent version (with a
+// cap of 2 you get v3, v3, v3…). Counting up from the newest label keeps them monotonic and unique.
+function nextVersionLabel(existing: readonly ReportVersionSummary[]): string {
+  const latest = existing[0];
+  const n = latest ? /^v(\d+)$/.exec(latest.version)?.[1] : undefined;
+  return `v${n ? Number(n) + 1 : existing.length + 1}`;
+}
+
 export class ReportVersionStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -134,7 +144,7 @@ export class ReportVersionStore {
     const summary: ReportVersionSummary = {
       id,
       createdAt,
-      version: `v${existing.length + 1}`,
+      version: nextVersionLabel(existing),
       manualVersion,
       contentHash,
       findingsCount: input.state.findings.length,
