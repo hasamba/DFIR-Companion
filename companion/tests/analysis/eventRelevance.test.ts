@@ -44,6 +44,21 @@ describe("scoreEventRelevance", () => {
     expect(scoreEventRelevance(e).tier).toBe("medium");
   });
 
+  // Corroboration is counted in DISTINCT REAL tools, the same unit correlate.ts/sourceTrust.ts/
+  // iocCorroboration.ts and the dashboard's realSourceCount() use. A placeholder or a repeated name
+  // must not fake a second tool — otherwise a pure Info hunt row gets promoted out of "low" and the
+  // dashboard chip (which does filter/dedup) disagrees with this module it claims to mirror.
+  it("does not count the 'unknown source' placeholder as corroboration", () => {
+    const e = ev("i-placeholder", "Info", { sources: ["unknown source", "ToolA"] });
+    expect(scoreEventRelevance(e).tier).toBe("low");
+    expect(isLowRelevance(e)).toBe(true);
+  });
+
+  it("does not count a repeated source name as corroboration", () => {
+    const e = ev("i-dupe", "Info", { sources: ["ToolA", "ToolA"] });
+    expect(scoreEventRelevance(e).tier).toBe("low");
+  });
+
   it("scores a rare event (via rarityOf) as medium, and ignores rarityOf when omitted", () => {
     const e = ev("j", "Info");
     expect(scoreEventRelevance(e, () => 0.9).tier).toBe("medium");

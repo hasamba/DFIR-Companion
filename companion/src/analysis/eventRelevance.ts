@@ -28,6 +28,17 @@ function hasStructuredIdentity(e: ForensicEvent): boolean {
 // same thing it means to the selector's reserved RARE fill.
 const RARE_SCORE_MIN = 0.34;
 
+// Count of DISTINCT REAL tool sources backing an event — the same unit correlate.ts, sourceTrust.ts,
+// iocCorroboration.ts and the dashboard's realSourceCount() all use. Empty strings and the legacy
+// "unknown source" placeholder are not tools, and a repeated source name is still ONE tool, so
+// neither may inflate the count. Over-claiming that two tools agree is worse than missing a match:
+// an uncorroborated Info row must not be promoted out of the "low" tier by a placeholder.
+function realSourceCount(e: ForensicEvent): number {
+  const set = new Set<string>();
+  for (const s of e.sources ?? []) if (s && s !== "unknown source") set.add(s);
+  return set.size;
+}
+
 export function scoreEventRelevance(
   e: ForensicEvent,
   rarityOf?: (e: ForensicEvent) => number,
@@ -42,7 +53,7 @@ export function scoreEventRelevance(
   const reasons: string[] = [];
   if (hasStructuredIdentity(e)) reasons.push("structured identity (hash/path/process chain)");
   if (e.mitreTechniques.length > 0) reasons.push("ATT&CK technique tagged");
-  if ((e.sources?.length ?? 0) >= 2) reasons.push("corroborated by multiple sources");
+  if (realSourceCount(e) >= 2) reasons.push("corroborated by multiple sources");
   if (rarityOf && rarityOf(e) >= RARE_SCORE_MIN) reasons.push("rare pattern in this case");
 
   if (reasons.length > 0) {
