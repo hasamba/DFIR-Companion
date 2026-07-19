@@ -190,7 +190,7 @@ describe("run-to-run hunt diffing (#80)", () => {
     expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
       isFirstRun: false, addedRows: 1, removedRows: 0, addedHosts: ["host-b"],
     });
-  });
+  }, 30_000);   // two sequential collect polls (100 x 20ms each) can exceed vitest's 5s default under a loaded parallel run
 
   it("advances the baseline on same-huntId re-collects so a later re-run doesn't re-report stragglers", async () => {
     // Fleet hunt results trickle in: an analyst clicks "Collect" several times on the SAME huntId as
@@ -261,5 +261,5 @@ describe("run-to-run hunt diffing (#80)", () => {
     expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
       isFirstRun: false, addedRows: 0, removedRows: 0, addedHosts: [], removedHosts: [],
     });
-  });
+  }, 30_000);   // four sequential collect polls (100 x 20ms each) exceed vitest's 5s default under a loaded parallel run
 });
