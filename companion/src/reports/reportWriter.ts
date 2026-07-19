@@ -13,7 +13,7 @@ import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } fro
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
-import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildEvidenceGraph, buildLateralPaths, type EvidenceGraph, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
 import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
@@ -211,6 +211,13 @@ export class ReportWriter {
   // narrows it to events in that range.
   async evidenceGraph(caseId: string, window?: TimeWindow): Promise<EvidenceGraph> {
     return buildEvidenceGraph(await this.loadFilteredState(caseId), window);
+  }
+
+  // Ordered lateral-movement chains (entry host → pivot → ... → target, #92) for the case, derived
+  // on demand with the same scope/legitimate filtering as the report. An optional time `window`
+  // (#83) narrows it to events in that range.
+  async lateralPaths(caseId: string, window?: TimeWindow): Promise<LateralPath[]> {
+    return buildLateralPaths(await this.loadFilteredState(caseId), window);
   }
 
   // Temporal attack phases (bursts of activity grouped by time gap) for the case, derived on
