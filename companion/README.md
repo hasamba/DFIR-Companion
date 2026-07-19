@@ -58,9 +58,10 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 | `DFIR_LOG_LEVEL` | `debug`/`info`/`warn`/`error` (default `info`); live toggle via Settings |
 | `DFIR_LOG_DIR` | Global session log folder (beside cases root) |
 | **AI — extraction** | — |
-| `DFIR_VISION_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` (unset = capture-only) |
+| `DFIR_VISION_PROVIDER` | `openai` \| `openrouter` \| `ollama` \| `litellm` \| `gemini` \| `anthropic` \| `claude-code` (unset = capture-only) |
 | `DFIR_VISION_MODEL` | Model id (must support vision for screenshot extraction) |
-| `DFIR_VISION_KEY` | Provider API key (blank for auth-less local proxy) |
+| `DFIR_VISION_KEY` | Provider API key (blank for auth-less local proxy, or for `claude-code` — uses your logged-in `claude` CLI subscription) |
+| `DFIR_AI_CLAUDE_CODE_BIN` | `claude-code` only: path to the `claude` binary if it isn't on PATH |
 | `DFIR_VISION_BASE_URL` | Override API base URL (for LiteLLM or OpenAI-compatible endpoints) |
 | `DFIR_VISION_IMAGE_DETAIL` | `high` \| `low` \| `auto` (default `high` for OCR) |
 | **AI — text model (optional two-tier)** | — |
@@ -94,6 +95,15 @@ can skip LiteLLM entirely — set `DFIR_VISION_PROVIDER=ollama`, `DFIR_VISION_BA
 and `DFIR_VISION_MODEL` to a pulled model (a **vision** model such as `llama3.2-vision` for screenshot
 extraction). Leave `DFIR_VISION_KEY` blank — Ollama ignores it. *Without* `DFIR_VISION_BASE_URL` the `ollama`
 provider targets hosted Ollama Cloud (`https://ollama.com/v1`), which does need a key.
+
+**Claude Code** — uses your logged-in Claude subscription via the `claude` CLI, no API key; handles
+vision + text (screenshot extraction *and* synthesis). Requires the `claude` CLI installed and
+`claude auth login` completed on the host. Set `DFIR_AI_PROVIDER=claude-code` and `DFIR_AI_MODEL`
+to `haiku` / `sonnet` / `opus` / a full model id; optional `DFIR_AI_CLAUDE_CODE_BIN` points at a
+non-PATH `claude` binary. Caveats: consumes your subscription rate limits (heavy extraction can
+exhaust them); the reported cost is API-equivalent, not out-of-pocket; higher fixed per-call
+overhead than the raw API. Settings → AI (and the setup wizard) show a live connection status
+(not installed / not connected / connected) with a one-click Connect action.
 
 Self-hosted enrichment TLS: if your **MISP**, **YETI**, or **OpenCTI** instance presents an internal-CA
 or self-signed cert, set `DFIR_MISP_CA` / `DFIR_YETI_CA` / `DFIR_OPENCTI_CA` to a PEM CA-bundle path to trust a

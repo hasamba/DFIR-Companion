@@ -2443,6 +2443,7 @@ import { OllamaCloudProvider } from "./providers/ollama.js";
 import { LiteLlmProvider } from "./providers/litellm.js";
 import { GeminiProvider } from "./providers/gemini.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
+import { ClaudeCodeProvider } from "./providers/claudeCode.js";
 import { CodexProvider } from "./providers/codex.js";
 import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
@@ -2490,6 +2491,7 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   registry.register(new AnthropicProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
+  registry.register(new ClaudeCodeProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CLAUDE_CODE_BIN }));
   registry.register(new CodexProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CODEX_BIN }));
   return registry.get(name);
 }
