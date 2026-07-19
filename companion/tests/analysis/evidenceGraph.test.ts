@@ -436,6 +436,151 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     expect(buildLateralPaths(s)).toEqual([]);
   });
 
+  // Spread the same binary over three hosts from a given on-disk location.
+  function estateWide(path: string, extra: Partial<ForensicEvent> = {}) {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, path, timestamp: "2026-05-20T09:00:00Z", ...extra }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
+      ev({ id: "e3", asset: "WS-03", sha256: HASH, path, timestamp: "2026-05-20T11:00:00Z" }),
+    );
+    return s;
+  }
+
+  it("does NOT infer lateral movement from vendor software installed across the estate", () => {
+    // chrome.exe / OUTLOOK.EXE / vpnui.exe share a hash on every workstation BY DESIGN. Treating
+    // "same binary on two hosts" as high-confidence movement made ordinary software the longest,
+    // top-sorted chain in a real case (10 hosts, entirely browsers, VPN clients and updaters).
+    for (const path of [
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Windows\\System32\\svchost.exe",
+      "C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe",
+      // Modern apps install per user — these are vendor install roots too, not attacker drops.
+      "C:\\Users\\samuel.roth\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+      "C:\\Users\\grace.lin\\AppData\\Roaming\\Zoom\\bin\\Zoom.exe",
+      "C:\\Users\\grace.lin\\AppData\\Local\\Microsoft\\Teams\\current\\Teams.exe",
+    ]) {
+      expect(buildLateralPaths(estateWide(path)), `${path} must not imply movement`).toEqual([]);
+    }
+  });
+
+  it("suppresses vendor software at ANY spread, including just two hosts", () => {
+    // Prevalence is not part of the test: System32 binaries paired across two hosts were the bulk
+    // of the surviving noise, and a vendor binary on two hosts is the same non-event as on ten.
+    const s = emptyState("c1");
+    const path = "C:\\Windows\\System32\\dllhost.exe";
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, path, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    expect(buildLateralPaths(s)).toEqual([]);
+  });
+
+  it("being flagged does NOT rescue vendor software (grading is not the discriminator)", () => {
+    // The pipeline registers every observed binary hash as an IOC and puts MITRE techniques on
+    // process events, so "is it flagged?" is true of chrome.exe too. If these rescued a binary the
+    // filter would do nothing at all on real data — which is exactly what happened when tried.
+    const withIoc = estateWide("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
+    withIoc.iocs.push({ id: "i1", type: "hash", value: HASH, firstSeen: "2026-05-20T09:00:00Z" });
+    expect(buildLateralPaths(withIoc)).toEqual([]);
+
+    const withMitre = estateWide("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", { mitreTechniques: ["T1021"] });
+    expect(buildLateralPaths(withMitre)).toEqual([]);
+  });
+
+  it("keeps a widespread binary running from a user-writable location", () => {
+    // Provenance is the discriminator: vendor software lives under Windows/Program Files, attacker
+    // tooling lands somewhere writable — and prevalence must never bury that.
+    for (const path of [
+      "C:\\Users\\jdoe\\AppData\\Local\\Temp\\svchost.exe",
+      "C:\\ProgramData\\update\\tool.exe",
+      "D:\\tools\\psexec.exe",
+    ]) {
+      const paths = buildLateralPaths(estateWide(path));
+      expect(paths.length, `${path} must still imply movement`).toBeGreaterThan(0);
+      expect(paths[0].hostIds).toEqual(["host:ws-01", "host:ws-02", "host:ws-03"]);
+    }
+  });
+
+  it("keeps a trusted-directory binary that the content tagger graded High (LOLbin abuse)", () => {
+    const paths = buildLateralPaths(estateWide("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", { severity: "High" }));
+    expect(paths.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a widespread binary whose on-disk path was never recorded (no provenance ⇒ no filtering)", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+      ev({ id: "e3", asset: "WS-03", sha256: HASH, timestamp: "2026-05-20T11:00:00Z" }),
+    );
+    expect(buildLateralPaths(s).length).toBeGreaterThan(0);
+  });
+
+  it("keeps a tool dropped in a writable location on only two hosts", () => {
+    const s = emptyState("c1");
+    const path = "C:\\Users\\jdoe\\Downloads\\psexec.exe";
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, path, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    expect(buildLateralPaths(s)).toHaveLength(1);
+  });
+
+  it("terminates on a densely connected host graph (no simple-path enumeration blow-up)", () => {
+    // Real cases produce MANY parallel hops between the same hosts: 8 accounts each seen on the
+    // same 10 hosts = 8 interchangeable choices at each of 9 steps, i.e. 8^9 ≈ 134M distinct
+    // simple paths. Exploring every combination to find the longest tail pegs a core forever —
+    // this hung the whole server on a real 12-host case. The chain must be derived without
+    // enumerating combinations.
+    const s = emptyState("c1");
+    const base = Date.parse("2026-05-20T00:00:00Z");
+    for (let a = 0; a < 8; a++) {
+      for (let h = 0; h < 10; h++) {
+        // Same per-host timestamp across every account, so all 8 accounts' hops are freely
+        // interchangeable at each step — that is what creates the combinatorial fan-out.
+        s.forensicTimeline.push(ev({
+          id: `e-${a}-${h}`,
+          asset: `HOST-${h}`,
+          description: `logon by CORP\\user${a}`,
+          timestamp: new Date(base + h * 3600_000).toISOString(),
+        }));
+      }
+    }
+
+    const t0 = Date.now();
+    const paths = buildLateralPaths(s);
+    const elapsed = Date.now() - t0;
+
+    expect(elapsed).toBeLessThan(2000);
+    // Still reconstructs the full 10-host chain — the fix must not cost correctness.
+    expect(paths[0].hostIds).toEqual(Array.from({ length: 10 }, (_, h) => `host:host-${h}`));
+  });
+
+  it("does NOT treat truncated NT AUTHORITY pseudo-principals as a shared account", () => {
+    // extractAccounts() splits "NT AUTHORITY\LOCAL SERVICE" on the space, yielding the truncated
+    // pair AUTHORITY\LOCAL — which slipped past a filter listing only the untruncated
+    // "nt authority" / "local service". Every Windows host runs these, so letting them through
+    // chains unrelated hosts into a confident-looking attack path.
+    for (const acct of ["NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE", "NT AUTHORITY\\ANONYMOUS LOGON", "NT SERVICE\\TrustedInstaller"]) {
+      const s = emptyState("c1");
+      s.forensicTimeline.push(
+        ev({ id: "e1", asset: "HOST-A", description: `logon by ${acct}`, timestamp: "2026-05-20T09:00:00Z" }),
+        ev({ id: "e2", asset: "HOST-B", description: `logon by ${acct}`, timestamp: "2026-05-20T10:00:00Z" }),
+      );
+      expect(buildLateralPaths(s), `${acct} must not produce a lateral path`).toEqual([]);
+    }
+  });
+
+  it("still derives a path for a real account whose name merely resembles a service principal", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "HOST-A", description: "logon by CORP\\network.admin", timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "HOST-B", description: "logon by CORP\\network.admin", timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    expect(buildLateralPaths(s)).toHaveLength(1);
+  });
+
   it("every hop carries its two backing events (per-hop evidence)", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
