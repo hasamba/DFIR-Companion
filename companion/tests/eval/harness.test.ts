@@ -92,6 +92,23 @@ describe("eval harness — real screenshot loader (#135)", () => {
     expect(produced).toHaveLength(1);
     expect(produced[0].description).toContain("powershell");
   });
+
+  // A real vision model can answer with prose, a refusal, or nothing at all. runRealScreenshotFixture
+  // surfaces all three as a rejection — which is why the --real runner grades each fixture inside its
+  // own try/catch (see runRealScreenshots in run.ts). Without that, one such response aborts the entire
+  // run and every remaining fixture goes ungraded.
+  it.each([
+    ["non-JSON prose", "I'm looking at the screenshot and here is what I see..."],
+    ["a refusal", "I'm sorry, I can't help with analyzing this image."],
+    ["an empty completion", ""],
+  ])("rejects (rather than silently scoring) when the model returns %s", async (_label, canned) => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-eval-screenshots-"));
+    await writeFile(join(dir, "task.webp"), "placeholder bytes");
+    await writeFile(join(dir, "task.json"), JSON.stringify({ golden: [] }));
+    const [fx] = await loadRealScreenshotFixtures(dir);
+
+    await expect(runRealScreenshotFixture(fx, mockProvider(canned))).rejects.toThrow();
+  });
 });
 
 describe("eval harness — synthesis fixtures (#64)", () => {

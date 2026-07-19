@@ -79,7 +79,20 @@ async function runRealScreenshots(): Promise<boolean> {
   console.log(`\neval --real screenshots: provider ${provider.name}, model ${provider.model}, ${fixtures.length} image(s) from ${dir}`);
   let allPass = true;
   for (const fx of fixtures) {
-    const produced = await runRealScreenshotFixture(fx, provider);
+    // Grade each fixture in isolation. A real vision model can legitimately return non-JSON prose, a
+    // refusal, or an empty completion — and analyzeWindow throws on all three. Letting that escape
+    // would abort the whole run, leave every remaining fixture ungraded, and surface as a bare stack
+    // trace with no indication of WHICH image caused it. Instead: attribute the error to its fixture,
+    // count it as a failure, and keep going.
+    let produced;
+    try {
+      produced = await runRealScreenshotFixture(fx, provider);
+    } catch (err) {
+      console.log(`\n[FAIL] extraction: ${fx.name} (screenshot) — errored, not graded`);
+      console.log(`  ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+      allPass = false;
+      continue;
+    }
     const thresholds = fx.thresholds ?? REAL_THRESHOLDS;
     const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
     console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, thresholds));
