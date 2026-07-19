@@ -59,6 +59,82 @@ describe("CodexProvider", () => {
     expect(out.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
   });
 
+  // Captured verbatim from a real `codex exec --json` run (codex-cli 0.39.0). Every event is
+  // wrapped in an { id, msg } envelope — the shape the original parser missed, which made a
+  // SUCCESSFUL run surface as "synthesis failed" with stderr noise as the message.
+  it("parses the real codex-cli 0.39 envelope: msg.message + msg.info.total_token_usage", async () => {
+    const stdout = [
+      '{"provider":"openai","workdir":"C:\\\\tmp","approval":"never","model":"gpt-5-codex","sandbox":"read-only"}',
+      '{"prompt":"Reply with exactly: PONG"}',
+      '{"id":"0","msg":{"type":"task_started","model_context_window":null}}',
+      '{"id":"0","msg":{"type":"agent_message","message":"PONG"}}',
+      '{"id":"0","msg":{"type":"token_count","info":{"total_token_usage":{"input_tokens":6717,"cached_input_tokens":0,"output_tokens":4,"total_tokens":6721}}}}',
+    ].join("\n");
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }) })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe("PONG");
+    expect(out.usage).toEqual({ inputTokens: 6717, outputTokens: 4 });
+  });
+
+  // codex logs MCP-client startup failures as `error` events on runs that otherwise SUCCEED.
+  it("ignores error events when a real answer is present", async () => {
+    const stdout = [
+      '{"id":"","msg":{"type":"error","message":"MCP client for `n8n` failed to start: program not found"}}',
+      '{"id":"0","msg":{"type":"agent_message","message":"the answer"}}',
+    ].join("\n");
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe("the answer");
+  });
+
+  // stderr is non-empty on EVERY successful run ("Reading prompt from stdin..."), so it must not
+  // be treated as a failure signal on its own — and when there IS no answer, codex's own error
+  // events are the useful message, not the stderr noise.
+  it("surfaces codex error events, not stderr noise, when no answer came back", async () => {
+    const stdout = '{"id":"0","msg":{"type":"error","message":"stream error: connection refused"}}';
+    const runner = fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\nERROR MCP client blah\n" });
+    await expect(
+      new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
+    ).rejects.toThrow(/stream error: connection refused/);
+  });
+
+  // Regression: captured verbatim from a real failing run (exit code 0, no agent_message, only
+  // `stream_error` events). `stream_error` carries a human-readable `message`, so a parser that
+  // only skips type === "error" returns the ERROR TEXT as the synthesis result — a hard failure
+  // reported as a confident finding. Must reject instead.
+  it("never returns a stream_error as the answer (exit 0, retries exhausted)", async () => {
+    const stdout = [
+      '{"id":"0","msg":{"type":"task_started","model_context_window":null}}',
+      '{"id":"0","msg":{"type":"stream_error","message":"stream error: unexpected status 404 Not Found: {\\"error\\":{\\"message\\":\\"model \'gpt-5-codex\' not found\\"}}; retrying 5/5 in 3.263s…"}}',
+    ].join("\n");
+    const runner = fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" });
+    const call = new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    await expect(call).rejects.toBeInstanceOf(ProviderError);
+    await expect(call).rejects.toThrow(/model 'gpt-5-codex' not found/);
+  });
+
+  // The real cause must lead the message: MCP-client startup failures come from the user's own
+  // ~/.codex/config.toml, are emitted even on successful runs, and would otherwise push the
+  // actionable error past the 300-char truncation in the dashboard.
+  it("leads with the real error, not MCP-client startup noise", async () => {
+    const stdout = [
+      '{"id":"","msg":{"type":"error","message":"MCP client for `n8n` failed to start: program not found"}}',
+      '{"id":"","msg":{"type":"error","message":"MCP client for `playwright` failed to start: program not found"}}',
+      '{"id":"0","msg":{"type":"stream_error","message":"stream error: unexpected status 404 Not Found: model \'gpt-5\' not found"}}',
+    ].join("\n");
+    const runner = fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" });
+    await expect(
+      new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
+    ).rejects.toThrow(/^Codex: stream error: unexpected status 404/);
+  });
+
+  it("does not fail a successful run just because stderr has content", async () => {
+    const stdout = '{"id":"0","msg":{"type":"agent_message","message":"fine"}}';
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" }) })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe("fine");
+  });
+
   it("falls back to raw stdout when there is no JSON message event", async () => {
     const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout: "plain text answer\n" }) })
       .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
