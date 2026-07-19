@@ -18,7 +18,8 @@ export interface CodexRunResult {
 
 export interface CodexRunOptions {
   bin: string;
-  args: string[];       // the prompt is passed as an argument, NOT via stdin (see below)
+  args: string[];
+  stdin: string;         // the prompt, written to the child's stdin and then closed (see below)
   timeoutMs: number;
   signal?: AbortSignal; // external cancellation
   cwd?: string;
@@ -26,9 +27,12 @@ export interface CodexRunOptions {
 
 export type CodexRunner = (opts: CodexRunOptions) => Promise<CodexRunResult>;
 
-// Default runner: spawn the codex CLI, collect stdout/stderr, resolve on close. stdin is IGNORED
-// (not piped) on purpose — some Codex CLI versions deadlock reading stdin, so the prompt is passed
-// as an argument and the child's stdin is closed (/dev/null-like) from the start.
+// Default runner: spawn the codex CLI, feed the prompt via stdin, collect stdout/stderr, resolve on
+// close. The prompt goes over stdin — NOT argv — because `.cmd`-shimmed CLIs (npm-installed `codex`
+// on Windows) run through cmd.exe, whose command-line length limit (~8KB) is far below a typical
+// DFIR synthesis prompt (routinely 20-30K+ chars); `codex exec --help` documents stdin as exactly
+// this large-input path when no PROMPT argument is given. Live-verified this doesn't deadlock on a
+// real `codex exec --json` invocation with a 29K-char stdin payload.
 export const defaultCodexRunner: CodexRunner = (opts) =>
   new Promise<CodexRunResult>((resolve) => {
     let stdout = "";
@@ -37,7 +41,7 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     let timedOut = false;
 
     const child = spawn(opts.bin, opts.args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
 
@@ -54,9 +58,12 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     const done = (r: CodexRunResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
 
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
-    // Non-null: stdio: ["ignore", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
-    // return type is the generic ChildProcess (stdout/stderr typed nullable for other stdio configs).
+    // Non-null: stdio: ["pipe", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
+    // return type is the generic ChildProcess (stdout/stderr/stdin typed nullable for other stdio configs).
     child.stdout!.on("data", (d) => { stdout += d.toString(); });
     child.stderr!.on("data", (d) => { stderr += d.toString(); });
     child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
+
+    child.stdin!.on("error", () => { /* ignore EPIPE if the child exits before we finish writing */ });
+    child.stdin!.end(opts.stdin);
   });

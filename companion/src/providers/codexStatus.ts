@@ -34,7 +34,7 @@ export async function getCodexStatus(opts: GetCodexStatusOptions = {}): Promise<
   const env = opts.env ?? process.env;
   const authFileExists = opts.authFileExists ?? (() => defaultAuthFileExists(env));
 
-  const run = await runner({ bin, args: ["--version"], timeoutMs: opts.timeoutMs ?? 10_000 });
+  const run = await runner({ bin, args: ["--version"], stdin: "", timeoutMs: opts.timeoutMs ?? 10_000 });
   if (run.spawnError) {
     const msg = run.spawnError.code === "ENOENT"
       ? "Codex CLI isn't installed on this machine. Install it (`npm i -g @openai/codex`), then click Re-check."

@@ -39,6 +39,9 @@ export class CodexProvider implements AIProvider {
 
     const prompt = `${req.systemPrompt}\n\n${req.userPrompt}`;
     const cwd = tmpdir(); // a neutral dir: codex exec runs read-only, outside any git repo
+    // No PROMPT argument — codex reads it from stdin instead (see codexRunner.ts for why: a
+    // `.cmd`-shimmed CLI on Windows runs through cmd.exe's ~8KB command-line limit, well below a
+    // typical synthesis prompt).
     const args = [
       "exec",
       "--json",
@@ -46,10 +49,9 @@ export class CodexProvider implements AIProvider {
       "--sandbox", "read-only",
       "-C", cwd,
       ...(this.model ? ["-m", this.model] : []),
-      prompt,
     ];
 
-    const run = await this.runner({ bin: this.bin, args, timeoutMs: this.timeoutMs, signal: req.signal, cwd });
+    const run = await this.runner({ bin: this.bin, args, stdin: prompt, timeoutMs: this.timeoutMs, signal: req.signal, cwd });
 
     if (run.spawnError) {
       if (run.spawnError.code === "ENOENT") {

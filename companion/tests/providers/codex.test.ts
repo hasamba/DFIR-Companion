@@ -23,7 +23,7 @@ describe("CodexProvider", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  it("builds the codex exec invocation with the prompt as one arg", async () => {
+  it("builds the codex exec invocation with the prompt sent over stdin", async () => {
     let captured: CodexRunOptions | undefined;
     const runner = fakeRunner({ stdout: JSON.stringify({ type: "agent_message", text: "ok" }) }, (o) => { captured = o; });
     const p = new CodexProvider({ model: "gpt-5-codex", runner });
@@ -34,8 +34,9 @@ describe("CodexProvider", () => {
     expect(a[0]).toBe("exec");
     expect(a).toEqual(expect.arrayContaining(["--json", "--skip-git-repo-check", "--sandbox", "read-only"]));
     expect(a).toEqual(expect.arrayContaining(["-m", "gpt-5-codex"]));
-    // prompt is the final argument and combines system + user
-    expect(a[a.length - 1]).toBe("SYS\n\nUSER");
+    // no PROMPT argument — it's sent over stdin (Windows argv length limit; see codexRunner.ts)
+    expect(a).not.toContain("SYS\n\nUSER");
+    expect(captured!.stdin).toBe("SYS\n\nUSER");
   });
 
   it("omits -m when the model is empty", async () => {
