@@ -19,8 +19,10 @@ export const socratesAdapter: Adapter = {
   },
 
   // Fallback for a reverse-proxied deployment where the socrates.html filename isn't in the path.
+  // The SPA titles itself with the product name, which is hyphenated ("SO-CRATES") — so the
+  // hyphen must be optional to also cover an unhyphenated "SOCRATES" spelling.
   matchDom(doc: Document): boolean {
-    return /socrates/i.test(doc.title);
+    return /so-?crates/i.test(doc.title);
   },
 
   apiPatterns: ["/api/events", "/api/sigma-alerts"],
