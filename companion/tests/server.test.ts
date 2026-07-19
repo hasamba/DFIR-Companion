@@ -1196,7 +1196,9 @@ describe("state and report routes", () => {
     expect(post.status).toBe(201);
     expect(post.body.mentions).toEqual(["bob"]);
 
-    await new Promise((r) => setTimeout(r, 0)); // dispatchNotify is fire-and-forget
+    // dispatchNotify is fire-and-forget AND the notifier loads its channel config from disk before
+    // it fetches, so one microtask tick isn't enough — poll until the send lands (or give up).
+    for (let i = 0; i < 200 && !sent.length; i++) await new Promise((r) => setTimeout(r, 10));
     expect(sent).toEqual(["https://hooks.slack.com/services/mentions"]);
   });
 
