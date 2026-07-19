@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+// cross-spawn: see codexRunner.ts — resolves the Windows `.cmd` shim without a raw shell string.
+import spawn from "cross-spawn";
 import { type CodexRunner, defaultCodexRunner } from "./codexRunner.js";
 
 export type CodexAuthState = "not_installed" | "not_connected" | "connected";

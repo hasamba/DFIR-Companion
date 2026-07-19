@@ -1,4 +1,10 @@
-import { spawn } from "node:child_process";
+// cross-spawn, NOT node:child_process directly: on Windows, an npm-installed CLI (like `codex`) is a
+// `.cmd` shim, and Node refuses to spawn `.cmd`/`.bat` files without `shell: true` (CVE-2024-27980).
+// Naively adding `shell: true` here would be a command-injection hole, since argv is the forensic-
+// evidence prompt (attacker-controlled text) — cross-spawn resolves the shim AND safely quotes each
+// argument instead of using a raw shell string, matching this codebase's no-raw-shell convention
+// (see toolRunner.ts / velociraptorApi.ts) while still working on Windows.
+import spawn from "cross-spawn";
 
 // Result of one Codex CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
@@ -48,7 +54,9 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     const done = (r: CodexRunResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
 
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
-    child.stdout.on("data", (d) => { stdout += d.toString(); });
-    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    // Non-null: stdio: ["ignore", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
+    // return type is the generic ChildProcess (stdout/stderr typed nullable for other stdio configs).
+    child.stdout!.on("data", (d) => { stdout += d.toString(); });
+    child.stderr!.on("data", (d) => { stderr += d.toString(); });
     child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
   });
