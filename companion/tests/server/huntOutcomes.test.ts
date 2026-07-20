@@ -3,12 +3,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
+import type { Express } from "express";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { HuntOutcomeStore } from "../../src/analysis/huntOutcomeStore.js";
+import { HuntRunSnapshotStore } from "../../src/analysis/huntRunSnapshotStore.js";
 import { recordDeploy, vqlFingerprint } from "../../src/analysis/huntOutcomes.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
@@ -38,11 +40,13 @@ async function makeApp(opts: { provider?: MockProvider; runner?: VqlRunner; with
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const huntOutcomeStore = new HuntOutcomeStore(store);
+  const huntRunSnapshotStore = new HuntRunSnapshotStore(store);
   const app = createApp(store, {
     pipeline, stateStore,
     importMetaStore: new ImportMetaStore(store),
     veloHuntStore: new VeloHuntStore(store),
     huntOutcomeStore,
+    huntRunSnapshotStore,
     aiConfigured: Boolean(provider),
     ...(opts.withVelo === false ? {} : { velociraptorClient: new VelociraptorClient(veloCfg, opts.runner ?? runner) }),
   });
@@ -137,4 +141,125 @@ describe("hunting feedback loop — routes (#157)", () => {
     expect(after.body.suggestions).toEqual([]);
     expect(vqlFingerprint(vql)).toBeTruthy();
   });
+});
+
+// #80: run-to-run hunt diffing — re-deploying the SAME VQL fingerprint (a recurring/scheduled hunt)
+// must show what's new/gone vs its OWN previous run, not just the cumulative case delta.
+describe("run-to-run hunt diffing (#80)", () => {
+  async function waitForCollected(app: Express, huntId: string) {
+    for (let i = 0; i < 100; i++) {
+      const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+      const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
+      if (h && h.status === "collected") return profile.hunts as Array<Record<string, unknown>>;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`hunt ${huntId} never collected`);
+  }
+
+  it("diffs a re-run against its own previous run's rows/hosts, not the whole case", async () => {
+    let huntSeq = 0;
+    const rowsByHunt: Record<string, unknown[]> = {
+      "H.RUN1": [{ Fqdn: "host-a", Message: "m1" }],
+      "H.RUN2": [{ Fqdn: "host-a", Message: "m1" }, { Fqdn: "host-b", Message: "m2" }],
+    };
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=")) {
+        huntSeq += 1;
+        return { rows: [{ Hunt: { HuntId: `H.RUN${huntSeq}`, state: "RUNNING" } }], raw: "" };
+      }
+      if (p.includes("hunt_results(")) {
+        const m = p.match(/hunt_id='([^']+)'/);
+        return { rows: (m && rowsByHunt[m[1]]) || [], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp({ runner });
+    const vql = "SELECT * FROM pslist()";
+
+    // First deploy + collect: nothing to diff against yet.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    let hunts = await waitForCollected(app, "H.RUN1");
+    expect(hunts.find((h) => h.huntId === "H.RUN1")?.runDiff).toMatchObject({ isFirstRun: true });
+
+    // Re-deploy the SAME vql (a fresh huntId — a genuine re-run) + collect: diff vs H.RUN1's snapshot.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN2" })).status).toBe(202);
+    hunts = await waitForCollected(app, "H.RUN2");
+    expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
+      isFirstRun: false, addedRows: 1, removedRows: 0, addedHosts: ["host-b"],
+    });
+  }, 30_000);   // two sequential collect polls (100 x 20ms each) can exceed vitest's 5s default under a loaded parallel run
+
+  it("advances the baseline on same-huntId re-collects so a later re-run doesn't re-report stragglers", async () => {
+    // Fleet hunt results trickle in: an analyst clicks "Collect" several times on the SAME huntId as
+    // clients check in. The stored baseline must track the LATEST full result set of the run, not stay
+    // frozen at the first (partial) collect — otherwise rows that arrived in the 2nd/3rd collect are
+    // falsely reported as "new" when the hunt is later re-deployed under a fresh huntId.
+    let huntSeq = 0;
+    // Rows returned for the current H.RUN1 collect — mutated between collect requests to simulate
+    // stragglers checking in. H.RUN2 (the re-deploy) returns the SAME complete set as H.RUN1 ended with.
+    const completeRows = [
+      { Fqdn: "host-a", Message: "m1" },
+      { Fqdn: "host-b", Message: "m2" },
+      { Fqdn: "host-c", Message: "m3" },
+    ];
+    let run1Rows: unknown[] = [completeRows[0]];
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=")) {
+        huntSeq += 1;
+        return { rows: [{ Hunt: { HuntId: `H.RUN${huntSeq}`, state: "RUNNING" } }], raw: "" };
+      }
+      if (p.includes("hunt_results(")) {
+        const m = p.match(/hunt_id='([^']+)'/);
+        const id = m && m[1];
+        if (id === "H.RUN1") return { rows: run1Rows, raw: "" };
+        if (id === "H.RUN2") return { rows: completeRows, raw: "" };
+        return { rows: [], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const { app } = await makeApp({ runner });
+    const vql = "SELECT * FROM pslist()";
+
+    // Poll until the outcome's resultRows reflects a collect that returned `rows` rows — the only visible
+    // signal that a same-huntId re-collect (which never changes status away from "collected") completed.
+    async function waitForResultRows(huntId: string, rows: number) {
+      for (let i = 0; i < 100; i++) {
+        const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+        const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
+        if (h && h.resultRows === rows) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error(`hunt ${huntId} never reported ${rows} result rows`);
+    }
+
+    // First deploy + first (partial) collect — one host so far.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 1);
+
+    // Two more collects on the SAME huntId as stragglers check in (2 hosts, then 3). These must update
+    // the baseline but NOT surface a run-diff of their own.
+    run1Rows = [completeRows[0], completeRows[1]];
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 2);
+
+    run1Rows = [...completeRows];
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" })).status).toBe(202);
+    await waitForResultRows("H.RUN1", 3);
+
+    // Re-deploy the SAME vql under a fresh huntId (a genuine re-run) whose result set equals H.RUN1's
+    // COMPLETE final set. Because the baseline advanced on every collect, nothing is new: had the
+    // baseline stayed frozen at the first partial collect (1 host), host-b and host-c would be falsely
+    // reported as added here.
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql, title: "recurring hunt", source: "fleet" });
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN2" })).status).toBe(202);
+    const hunts = await waitForCollected(app, "H.RUN2");
+    expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
+      isFirstRun: false, addedRows: 0, removedRows: 0, addedHosts: [], removedHosts: [],
+    });
+  }, 30_000);   // four sequential collect polls (100 x 20ms each) exceed vitest's 5s default under a loaded parallel run
 });
