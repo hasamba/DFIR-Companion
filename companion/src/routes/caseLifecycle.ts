@@ -644,9 +644,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     res.status(200).json({ configured: !!options.mispPushClient, baseUrl: options.mispPushOptions?.baseUrl });
   });
 
-  // Push a case to MISP: find-or-create the event by the idempotency tag, then push
-  // IOCs as attributes and MITRE techniques as tags. Idempotent: re-push adds only
-  // what's missing (attributes deduplicated by value).
+  // Push a case to MISP: find-or-create the event by the idempotency tag, then push IOCs and
+  // the forensic timeline as attributes and MITRE techniques as tags. Idempotent: re-push adds
+  // only what's missing (attributes deduplicated by value).
   app.post("/cases/:id/push/misp", async (req: Request, res: Response) => {
     if (!options.mispPushClient) return res.status(501).json({ error: "MISP not configured (set DFIR_MISP_URL and DFIR_MISP_KEY)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
@@ -656,7 +656,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       logLine(`[misp] ${caseId} push START`);
       const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
       logLine(`[misp] ${caseId} push DONE -> event ${result.eventId} (${result.created ? "created" : "updated"}); ` +
-        `attributes +${result.attributes.added}/${result.attributes.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
+        `attributes +${result.attributes.added}/${result.attributes.existing}, timeline +${result.timeline.added}/${result.timeline.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-misp", detail: `pushed to MISP event ${result.eventId} (${result.created ? "created" : "updated"})`,
       });

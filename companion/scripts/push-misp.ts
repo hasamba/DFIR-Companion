@@ -40,6 +40,7 @@ async function main(): Promise<void> {
 
   console.log(`\nMISP event #${res.eventId} ${res.created ? "CREATED" : "UPDATED"} ("${res.eventInfo}")`);
   console.log(`  attributes: +${res.attributes.added}  (${res.attributes.existing} existing, ${res.attributes.skipped} skipped)`);
+  console.log(`  timeline:   +${res.timeline.added}  (${res.timeline.existing} existing, ${res.timeline.skipped} skipped)`);
   console.log(`  tags:       +${res.tags}`);
   if (res.eventUrl) console.log(`  open:       ${res.eventUrl}`);
   if (res.warnings.length) {

@@ -17263,7 +17263,12 @@
         addPushOption("timesketch-super", "Timesketch export (Super Timeline)");
       }
     }).catch(() => {});
-    fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP"); }).catch(() => {});
+    // Names what actually goes: IOCs + the FORENSIC timeline (never the super-timeline). Timesketch
+    // above offers both timelines because it's a timeline viewer; MISP is an intel platform, so
+    // shipping raw Info-severity telemetry there would be noise — and at one round-trip per
+    // attribute, a large MFT import would take hours and hit the push cap immediately. Spelling out
+    // the scope stops the single entry reading as a missing "(Super Timeline)" counterpart.
+    fetch("/misp/status").then((r) => r.json()).then((s) => { if (s && s.configured) addPushOption("misp", "Push to MISP (IOCs + Forensic Timeline)"); }).catch(() => {});
     // Notion export: a configured token shows the option; a default DB/parent hides the modal's
     // target input (it's only needed for a "new page" when no default is set).
     let notionHasDefault = false;
@@ -17307,6 +17312,8 @@
             document.getElementById("status").textContent =
               `MISP event #${res.eventId} ${verb}: ${res.attributes.added} attribute(s) added` +
               (res.attributes.existing ? ` (${res.attributes.existing} existing)` : "") +
+              (res.timeline ? `, ${res.timeline.added} timeline event(s) added` : "") +
+              (res.timeline && res.timeline.existing ? ` (${res.timeline.existing} existing)` : "") +
               (res.tags ? `, ${res.tags} tag(s)` : "") +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.eventUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.eventUrl)}" target="_blank" rel="noopener">Open in MISP</a>`;

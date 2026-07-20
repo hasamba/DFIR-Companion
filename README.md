@@ -668,6 +668,7 @@ Add a key to enable that provider. All external providers are opt-in per case fr
 | `DFIR_MISP_INSECURE` | — | `=1` to skip TLS verification (lab only) |
 | `DFIR_MISP_DISTRIBUTION` | `0` | New event distribution: `0`=org, `1`=community, `2`=connected, `3`=all |
 | `DFIR_MISP_ANALYSIS` | `1` | New event analysis state: `0`=initial, `1`=ongoing, `2`=complete |
+| `DFIR_MISP_TIMELINE_LIMIT` | `5000` | Max forensic-timeline events per push; past the cap the most severe are kept and the push warns |
 | `DFIR_YETI_URL` | — | YETI instance URL — both URL + key required |
 | `DFIR_YETI_KEY` | — | YETI API key |
 | `DFIR_YETI_CA` | — | PEM CA bundle for internal-CA YETI |

@@ -1,13 +1,15 @@
 // Orchestrates a full Companion → MISP push. Find-or-create the MISP event by the case's
-// idempotency tag (`dfir-companion:case-{id}`), then push IOCs as attributes and MITRE
-// techniques from findings as tags. Idempotent: re-pushing skips attributes already present
-// in the event (deduplicated by value) and creates the event only once.
+// idempotency tag (`dfir-companion:case-{id}`), then push IOCs and the forensic timeline as
+// attributes, and MITRE techniques from findings as tags. Idempotent: re-pushing skips
+// attributes already present in the event (deduplicated by value) and creates the event only once.
 //
 // The client is injected as a structural interface so this is unit-testable with a mock (no
 // network), matching the IRIS/Timesketch push pattern.
 
-import type { InvestigationState, IOC } from "../../analysis/stateTypes.js";
+import type { ForensicEvent, InvestigationState, IOC } from "../../analysis/stateTypes.js";
 import type { MispPushClientLike, MispEventCreate, MispAttrBody } from "./mispPushClient.js";
+import { byEventTime } from "../../analysis/forensicSort.js";
+import { severityRank } from "../../analysis/dashboardViews.js";
 
 export interface MispPushInput {
   caseId: string;              // Companion case id — used for idempotency tag and event title
@@ -18,13 +20,28 @@ export interface MispPushOptions {
   distribution?: string;       // MISP distribution: "0"=org (default), "1"=community, "2"=connected, "3"=all
   analysis?: string;           // MISP analysis: "0"=initial, "1"=ongoing (default), "2"=complete
   baseUrl?: string;            // to build a clickable event URL in the result
+  // Max forensic-timeline events pushed in one call. The timeline is UNBOUNDED (a big
+  // MFT/USN import can carry tens of thousands of rows) and each event costs one sequential
+  // HTTP round-trip, so an uncapped push would hang the request for hours. Excess events are
+  // reported as skipped with a warning; the highest-value events go first (see sort below).
+  timelineLimit?: number;      // default DEFAULT_TIMELINE_LIMIT
 }
+
+// Bounds a single push. Chosen so a worst-case run stays in the low minutes against a real
+// (network-latency) MISP rather than running unbounded.
+const DEFAULT_TIMELINE_LIMIT = 5000;
+
+// Stop hammering MISP once it is clearly unhealthy. Without this, a hung/erroring instance
+// costs `timeoutMs` (default 30 s) PER event — a 5000-event case would block the push route
+// for over 40 hours before returning.
+const MAX_CONSECUTIVE_FAILURES = 10;
 
 export interface MispPushResult {
   eventId: string;
   eventInfo: string;
   created: boolean;            // true = the event was newly created
   attributes: { added: number; existing: number; skipped: number };
+  timeline: { added: number; existing: number; skipped: number };
   tags: number;                // MITRE + idempotency tags attached
   eventUrl?: string;
   warnings: string[];
@@ -64,6 +81,32 @@ function mapIocType(ioc: IOC): { type: string; category: string } | null {
   }
 }
 
+// Map a forensic timeline event to a MISP attribute. MISP ships no default "timeline" object
+// template, so the event's time window is carried via the native attribute `first_seen`/
+// `last_seen` fields instead — a portable equivalent that needs no template registered on the
+// target instance. `value` embeds the timestamp + description so re-pushing the same event
+// dedupes the same way IOC attributes do (existing attribute value, case-insensitive).
+// Returns null for an unparseable timestamp (mirrors the Timesketch mapper's skip behaviour).
+function mapTimelineEvent(event: ForensicEvent): MispAttrBody | null {
+  if (Number.isNaN(Date.parse(event.timestamp))) return null;
+
+  const meta: string[] = [];
+  if (event.asset) meta.push(`asset: ${event.asset}`);
+  if (event.sources?.length) meta.push(`source: ${event.sources.join(", ")}`);
+  if (event.mitreTechniques?.length) meta.push(`mitre: ${event.mitreTechniques.join(", ")}`);
+  if (event.count && event.count > 1) meta.push(`occurrences: ${event.count}`);
+
+  return {
+    type: "text",
+    category: "Internal reference",
+    value: `[${event.timestamp}] ${event.description || "(event)"}`.slice(0, 65000),
+    to_ids: false,
+    comment: meta.join(" | ") || undefined,
+    first_seen: event.timestamp,
+    last_seen: event.endTimestamp,
+  };
+}
+
 // Collect unique MITRE technique IDs from all findings.
 function collectMitre(state: InvestigationState): string[] {
   const seen = new Set<string>();
@@ -78,6 +121,7 @@ export async function pushCaseToMisp(
 ): Promise<MispPushResult> {
   const warnings: string[] = [];
   const attributes = { added: 0, existing: 0, skipped: 0 };
+  const timeline = { added: 0, existing: 0, skipped: 0 };
   let tags = 0;
 
   // 1. Connectivity / auth (fatal — nothing works without this).
@@ -100,12 +144,18 @@ export async function pushCaseToMisp(
     };
     eventId = await client.createEvent(body);
     created = true;
-    // Tag with the idempotency tag so subsequent pushes find this event.
+    // Tag with the idempotency tag so subsequent pushes find this event. This one is load-bearing:
+    // without it findEventByTag can't match, so the NEXT push creates a second event carrying a
+    // duplicate copy of the whole timeline. Say that plainly rather than emitting a bare error.
     try {
       await client.addTagToEvent(eventId, caseTag);
       tags += 1;
     } catch (err) {
-      warnings.push(`case tag: ${(err as Error).message}`);
+      warnings.push(
+        `could not attach the case tag "${caseTag}" (${err instanceof Error ? err.message : String(err)}) — ` +
+        `re-pushing this case will CREATE A DUPLICATE EVENT instead of updating event ${eventId}, ` +
+        `because that tag is how a prior push is found`,
+      );
     }
   }
 
@@ -146,14 +196,77 @@ export async function pushCaseToMisp(
     }
   }
 
-  // 5. Attach MITRE technique tags (non-fatal — MISP may reject unknown tags gracefully).
+  // 4b. Push the forensic timeline as attributes carrying the time window (first_seen/last_seen)
+  //     plus a description/metadata comment. Same value-based dedupe set as IOCs above, so a
+  //     re-push only adds events that aren't already on the event.
+  //     The timeline is unbounded, so it is capped: the most severe events are selected first
+  //     (so the cut drops Info noise rather than the findings that matter), then pushed in
+  //     chronological order so the MISP event still reads as a timeline.
+  const limit = options.timelineLimit ?? DEFAULT_TIMELINE_LIMIT;
+  const allEvents = input.state.forensicTimeline;
+  const selected = (allEvents.length > limit
+    ? [...allEvents].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)).slice(0, limit)
+    : [...allEvents]).sort(byEventTime);
+  if (allEvents.length > limit) {
+    timeline.skipped += allEvents.length - limit;
+    warnings.push(
+      `timeline truncated: pushed the ${limit} most severe of ${allEvents.length} events ` +
+      `(raise options.timelineLimit to push more)`,
+    );
+  }
+
+  let consecutiveFailures = 0;
+  for (const [idx, event] of selected.entries()) {
+    const mapped = mapTimelineEvent(event);
+    if (!mapped) {
+      timeline.skipped += 1;
+      warnings.push(`timeline event skipped (unparseable timestamp): ${event.id}`);
+      continue;
+    }
+    const key = mapped.value.trim().toLowerCase();
+    if (existingValues.has(key)) { timeline.existing += 1; continue; }
+    try {
+      await client.addAttribute(eventId, mapped);
+      existingValues.add(key);
+      timeline.added += 1;
+      consecutiveFailures = 0;
+    } catch (err) {
+      timeline.skipped += 1;
+      consecutiveFailures += 1;
+      warnings.push(`timeline event "${event.id}": ${(err as Error).message}`);
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        // MISP is down/hung — abandon the rest rather than paying the request timeout per
+        // remaining event. The push stays idempotent: a later re-push resumes where this
+        // stopped, because everything already added is deduped by value.
+        const remaining = selected.length - idx - 1;
+        if (remaining > 0) timeline.skipped += remaining;
+        warnings.push(
+          `timeline push aborted after ${MAX_CONSECUTIVE_FAILURES} consecutive MISP failures ` +
+          `(${remaining} event(s) not attempted) — re-push once MISP is healthy`,
+        );
+        break;
+      }
+    }
+  }
+
+  // 5. Attach MITRE technique tags (non-fatal — MISP may reject a tag this instance won't accept).
+  // `tags` counts tags that ACTUALLY attached: addTagToEvent throws on MISP's HTTP-200-with-
+  // `saved:false` rejection, so a rejected tag is no longer counted as applied. Failures are
+  // summarised as ONE warning rather than one per technique, which would drown the warning list.
+  const tagFailures: string[] = [];
   for (const tech of collectMitre(input.state)) {
     try {
       await client.addTagToEvent(eventId, `mitre-attack:${tech}`);
       tags += 1;
-    } catch {
-      // Silently skip: the tag may not be defined in this MISP instance.
+    } catch (err) {
+      tagFailures.push(tech);
+      if (tagFailures.length === 1) {
+        warnings.push(`MITRE tag "mitre-attack:${tech}" was rejected by MISP: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+  }
+  if (tagFailures.length > 1) {
+    warnings.push(`${tagFailures.length} MITRE tags could not be attached (first reason above): ${tagFailures.slice(0, 8).join(", ")}${tagFailures.length > 8 ? ", …" : ""}`);
   }
 
   return {
@@ -161,6 +274,7 @@ export async function pushCaseToMisp(
     eventInfo,
     created,
     attributes,
+    timeline,
     tags,
     eventUrl: options.baseUrl
       ? `${options.baseUrl.replace(/\/+$/, "")}/events/view/${eventId}`

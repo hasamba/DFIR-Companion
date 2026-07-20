@@ -2,10 +2,17 @@ import { describe, it, expect } from "vitest";
 import { pushCaseToMisp } from "../../src/integrations/misp/mispPush.js";
 import type { MispPushInput } from "../../src/integrations/misp/mispPush.js";
 import type { MispPushClientLike, MispEventCreate, MispAttrRef, MispAttrBody } from "../../src/integrations/misp/mispPushClient.js";
-import { emptyState, type InvestigationState, type IOC, type Finding } from "../../src/analysis/stateTypes.js";
+import { emptyState, type InvestigationState, type IOC, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ioc(over: Partial<IOC> & { value: string; type: IOC["type"] }): IOC {
   return { id: over.value, firstSeen: "2026-06-08T00:00:00Z", ...over };
+}
+
+function event(over: Partial<ForensicEvent> & { id: string; timestamp: string; description: string }): ForensicEvent {
+  return {
+    severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    ...over,
+  };
 }
 
 function finding(over: Partial<Finding> & { id: string; title: string }): Finding {
@@ -174,5 +181,97 @@ describe("pushCaseToMisp", () => {
     expect(attrMap["ip-dst"]).toBe(true);
     expect(attrMap["filename"]).toBe(false);
     expect(attrMap["url"]).toBe(true);
+  });
+
+  it("pushes the forensic timeline as attributes carrying first_seen/last_seen", async () => {
+    const m = new MockMispClient();
+    const state = {
+      ...emptyState("c9"),
+      forensicTimeline: [
+        event({ id: "e1", timestamp: "2026-06-08T01:00:00Z", description: "Malicious process launched", asset: "HOST-01", sources: ["Velociraptor"], mitreTechniques: ["T1059"] }),
+        event({ id: "e2", timestamp: "2026-06-08T02:00:00Z", endTimestamp: "2026-06-08T02:05:00Z", description: "C2 beacon burst", count: 12 }),
+      ],
+    };
+    const res = await pushCaseToMisp(m, { caseId: "c9", state });
+
+    expect(res.timeline.added).toBe(2);
+    expect(res.timeline.existing).toBe(0);
+    const texts = m.addedAttributes.filter((a) => a.body.type === "text");
+    expect(texts).toHaveLength(2);
+    const e1 = texts.find((a) => a.body.value.includes("Malicious process launched"))!;
+    expect(e1.body.first_seen).toBe("2026-06-08T01:00:00Z");
+    expect(e1.body.category).toBe("Internal reference");
+    expect(e1.body.comment).toContain("asset: HOST-01");
+    expect(e1.body.comment).toContain("source: Velociraptor");
+    expect(e1.body.comment).toContain("mitre: T1059");
+
+    const e2 = texts.find((a) => a.body.value.includes("C2 beacon burst"))!;
+    expect(e2.body.last_seen).toBe("2026-06-08T02:05:00Z");
+    expect(e2.body.comment).toContain("occurrences: 12");
+  });
+
+  it("dedupes timeline events already present on re-push (idempotent)", async () => {
+    const m = new MockMispClient();
+    m.existingEventId = "77";
+    const state = {
+      ...emptyState("c10"),
+      forensicTimeline: [event({ id: "e1", timestamp: "2026-06-08T01:00:00Z", description: "Malicious process launched" })],
+    };
+    // Pre-seed the exact value the mapper would produce for this event.
+    m.existingAttrs = [{ type: "text", value: "[2026-06-08T01:00:00Z] Malicious process launched" }];
+
+    const res = await pushCaseToMisp(m, { caseId: "c10", state });
+    expect(res.timeline.existing).toBe(1);
+    expect(res.timeline.added).toBe(0);
+    expect(m.addedAttributes.filter((a) => a.body.type === "text")).toHaveLength(0);
+  });
+
+  it("caps an oversized timeline, keeping the most severe events", async () => {
+    const m = new MockMispClient();
+    const noise = Array.from({ length: 20 }, (_, i) =>
+      event({ id: `info${i}`, timestamp: `2026-06-08T00:00:${String(i).padStart(2, "0")}Z`, description: `noise ${i}`, severity: "Info" }));
+    const critical = event({ id: "crit", timestamp: "2026-06-08T23:00:00Z", description: "ransomware deployed", severity: "Critical" });
+    const state = { ...emptyState("c12"), forensicTimeline: [...noise, critical] };
+
+    const res = await pushCaseToMisp(m, { caseId: "c12", state }, { timelineLimit: 5 });
+
+    expect(res.timeline.added).toBe(5);
+    // 21 events, 5 pushed -> 16 dropped by the cap.
+    expect(res.timeline.skipped).toBe(16);
+    expect(res.warnings.some((w) => w.includes("timeline truncated"))).toBe(true);
+    // The Critical event must survive the cut even though it is last chronologically.
+    const values = m.addedAttributes.filter((a) => a.body.type === "text").map((a) => a.body.value);
+    expect(values.some((v) => v.includes("ransomware deployed"))).toBe(true);
+  });
+
+  it("aborts the timeline push after repeated MISP failures instead of retrying every event", async () => {
+    const m = new MockMispClient();
+    let calls = 0;
+    m.addAttribute = async () => { calls += 1; throw new Error("MISP HTTP 500"); };
+    const state = {
+      ...emptyState("c13"),
+      forensicTimeline: Array.from({ length: 500 }, (_, i) =>
+        event({ id: `e${i}`, timestamp: `2026-06-08T01:00:00Z`, description: `event ${i}` })),
+    };
+
+    const res = await pushCaseToMisp(m, { caseId: "c13", state });
+
+    // Bails out after the consecutive-failure threshold rather than calling all 500 times.
+    expect(calls).toBe(10);
+    expect(res.timeline.added).toBe(0);
+    expect(res.timeline.skipped).toBe(500);
+    expect(res.warnings.some((w) => w.includes("aborted after"))).toBe(true);
+  });
+
+  it("skips timeline events with an unparseable timestamp and records a warning", async () => {
+    const m = new MockMispClient();
+    const state = {
+      ...emptyState("c11"),
+      forensicTimeline: [event({ id: "e1", timestamp: "not-a-date", description: "bad event" })],
+    };
+    const res = await pushCaseToMisp(m, { caseId: "c11", state });
+    expect(res.timeline.skipped).toBe(1);
+    expect(res.timeline.added).toBe(0);
+    expect(res.warnings.some((w) => w.includes("e1"))).toBe(true);
   });
 });

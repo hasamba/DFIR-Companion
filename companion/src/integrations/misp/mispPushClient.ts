@@ -28,6 +28,9 @@ export interface MispAttrBody {
   value: string;
   category: string;
   to_ids: boolean;
+  comment?: string;      // free-text annotation, separate from `value`
+  first_seen?: string;   // ISO8601 — start of the attribute's validity/observation window
+  last_seen?: string;    // ISO8601 — end of the window (native MISP attribute fields)
 }
 
 // Structural subset of MispPushClient used by the orchestrator — lets tests pass a mock.
@@ -44,6 +47,48 @@ class MispApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
     this.name = "MispApiError";
+  }
+}
+
+// Flatten MISP's `errors` field, which is either a bare string ("Invalid Tag.") or a per-field map
+// ({"value":["IP address has an invalid format."]}). Returns "" when there's nothing useful to say.
+function flattenMispErrors(errors: unknown): string {
+  if (typeof errors === "string") return errors.trim();
+  if (Array.isArray(errors)) return errors.map((e) => flattenMispErrors(e)).filter(Boolean).join("; ");
+  if (errors && typeof errors === "object") {
+    return Object.entries(errors as Record<string, unknown>)
+      .map(([field, msgs]) => {
+        const text = flattenMispErrors(msgs);
+        return text ? `${field}: ${text}` : "";
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  return "";
+}
+
+// Reason for a 2xx response that actually FAILED. MISP signals several write failures with
+// HTTP 200 + `{"saved":false,...}` rather than an error status, so status alone can't be trusted.
+function saveFailureReason(data: unknown): string {
+  if (!data || typeof data !== "object") return "";
+  const d = data as { saved?: unknown; errors?: unknown; message?: unknown; name?: unknown };
+  if (d.saved !== false) return "";
+  return flattenMispErrors(d.errors)
+    || (typeof d.message === "string" && d.message.trim())
+    || (typeof d.name === "string" && d.name.trim())
+    || "MISP reported saved:false with no reason";
+}
+
+// MISP's own explanation for a rejected request, when the body carries one.
+async function readErrorDetail(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { errors?: unknown; message?: unknown; name?: unknown };
+    return flattenMispErrors(body.errors)
+      || (typeof body.message === "string" && body.message.trim())
+      || (typeof body.name === "string" && body.name.trim())
+      || "";
+  } catch {
+    return "";   // non-JSON body (an HTML error page) — nothing to quote
   }
 }
 
@@ -79,9 +124,31 @@ export class MispPushClient implements MispPushClientLike {
       throw new MispApiError(`MISP request failed: ${(err as Error).message}`, 0);
     }
     if (res.status === 401) throw new MispApiError("MISP auth failed — check DFIR_MISP_KEY", res.status);
-    if (res.status === 403) throw new MispApiError(`MISP permission denied on ${method} ${path} — the API key needs write access (Site Admin or Org Admin role; read-only keys work for enrichment but cannot create events or attributes)`, res.status);
+    if (res.status === 403) {
+      // A 403 here is NOT necessarily a permissions problem: MISP also returns 403 when it REJECTS
+      // the payload (e.g. `{"errors":{"value":["IP address has an invalid format."]}}` for a value
+      // like "10.10.20.15 (DC01)"). Blaming the API key sends the operator hunting through MISP roles
+      // for a problem that doesn't exist — especially misleading when other attributes wrote fine
+      // with the same key. Surface MISP's own reason when it gives one; only fall back to the
+      // permissions hint when the body says nothing useful.
+      const detail = await readErrorDetail(res);
+      throw new MispApiError(
+        detail
+          ? `MISP rejected ${method} ${path}: ${detail}`
+          : `MISP permission denied on ${method} ${path} — the API key needs write access (Site Admin or Org Admin role; read-only keys work for enrichment but cannot create events or attributes)`,
+        res.status,
+      );
+    }
     if (!res.ok) throw new MispApiError(`MISP HTTP ${res.status} on ${path}`, res.status);
-    return (await res.json()) as T;
+    const data = (await res.json()) as T;
+    // MISP reports several write failures as HTTP 200 with the error IN THE BODY —
+    // `{"saved":false,"errors":"Invalid Tag."}` is the common one. Treating that as success made
+    // every addTag silently no-op while still being counted, which left the idempotency tag off the
+    // event and broke re-push dedup entirely (every push created a duplicate event). Any 2xx whose
+    // body says `saved:false` is a failure.
+    const failure = saveFailureReason(data);
+    if (failure) throw new MispApiError(`MISP rejected ${method} ${path}: ${failure}`, res.status);
+    return data;
   }
 
   async ping(): Promise<void> {
@@ -90,14 +157,24 @@ export class MispPushClient implements MispPushClientLike {
 
   // Search events by tag to find a prior push's event. Returns the event id or null.
   // Auth errors (401/403) propagate — only network/parse failures fall back to empty.
+  //
+  // Uses POST /events/restSearch, NOT GET /events/index?searchTag=. Verified against a live MISP:
+  // /events/index IGNORES both `searchTag` and `limit` (it returned the entire 8800-event index) and
+  // returns events FLAT — so reading `[0].Event.id` was always undefined. The net effect was that a
+  // prior event could never be found, and every push created a duplicate event carrying a full
+  // duplicate copy of the timeline. restSearch honours the tag filter and wraps each hit in `Event`.
   async findEventByTag(tag: string): Promise<string | null> {
-    const events = await this.req<Array<{ Event?: { id?: string } }>>(
-      "GET", `/events/index?searchTag=${encodeURIComponent(tag)}&limit=1`,
+    const body = await this.req<{ response?: Array<{ Event?: { id?: string } }> }>(
+      "POST", "/events/restSearch", { returnFormat: "json", tags: [tag], limit: 1 },
     ).catch((err: unknown) => {
       if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
-      return [] as Array<{ Event?: { id?: string } }>;
+      return {} as { response?: Array<{ Event?: { id?: string } }> };
     });
-    const id = events[0]?.Event?.id;
+    // Tolerate either wrapping — restSearch returns {response:[{Event:{...}}]}, but be lenient in
+    // case a MISP version hands back the flat array instead.
+    const hits = Array.isArray(body) ? body as Array<{ Event?: { id?: string }; id?: string }> : (body.response ?? []);
+    const first = hits[0] as { Event?: { id?: string }; id?: string } | undefined;
+    const id = first?.Event?.id ?? first?.id;
     return id ? String(id) : null;
   }
 
@@ -108,7 +185,21 @@ export class MispPushClient implements MispPushClientLike {
     return String(id);
   }
 
+  // Attach a tag, creating it first if the instance doesn't already know it.
+  //
+  // /events/addTag does NOT auto-create tags: against a live MISP it answers HTTP 200 with
+  // `{"saved":false,"errors":"Invalid Tag."}` for an unknown name. That 200 used to read as success,
+  // so every tag silently no-opped while still being counted — including the per-case idempotency
+  // tag that re-push dedup keys on, which is why each push created a duplicate event. Creating the
+  // tag first makes the attach succeed; /tags/add on an existing tag is a harmless no-op, so this
+  // stays idempotent.
   async addTagToEvent(eventId: string, tagName: string): Promise<void> {
+    try {
+      await this.req<unknown>("POST", "/tags/add", { name: tagName });
+    } catch {
+      // Already exists (or this key can't manage the taxonomy) — let the attach below be the
+      // authoritative check, so a genuine failure still surfaces with MISP's own reason.
+    }
     await this.req<unknown>("POST", "/events/addTag", { event: eventId, tag: tagName, local: false });
   }
 
