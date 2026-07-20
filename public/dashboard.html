@@ -793,6 +793,7 @@
     .hyp-outcome { font-size: 12px; color: var(--c-cbd3df); margin-top: 6px; }
     .hyp-outcome b { color: var(--c-9aa4b2); font-weight: 600; }
     .hyp-desc { font-size: 12px; color: var(--c-9aa4b2); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+    .hyp-history { font-size: 11px; color: var(--c-52617a); margin-top: 5px; }
     .hyp-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
     .hyp-chip { font-size: 10px; border: 1px solid var(--c-2a2f3a); border-radius: 4px; padding: 1px 6px; color: var(--c-9aa4b2); }
     .hyp-row2 { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
@@ -6512,6 +6513,7 @@
     // panel groups by status and survives synthesis (never wiped).
     let hypotheses = [];
     const HYP_STATUS = [["open", "Open"], ["supported", "Supported"], ["refuted", "Refuted"], ["unknown", "Unknown"]];
+    const HYP_STATUS_LABEL = Object.fromEntries(HYP_STATUS);
 
     function loadHypotheses(caseId) {
       fetch(`/cases/${caseId}/hypotheses`).then(r => r.json()).then(list => {
@@ -6569,6 +6571,12 @@
       const review = h.needsReview ? `<span class="hyp-needs-review" title="An event or IOC that supported this hypothesis was marked false positive — re-judge it. Editing any field clears this flag.">⚠️ needs review</span>` : "";
       // ACH exhaustion (#14): hunts for this hypothesis came back empty → treated as negative knowledge.
       const exhausted = h.exhausted ? `<span class="hyp-exhausted" title="${escAttr(h.exhaustedReason || "Hunts for this hypothesis came back empty — treated as settled negative knowledge.")}">⊘ exhausted</span>` : "";
+      // Dated status-change audit trail (#95) — skipped when there's only the initial entry (nothing
+      // has changed since the hypothesis was created).
+      const statusHistory = h.statusHistory || [];
+      const history = statusHistory.length > 1
+        ? `<div class="hyp-history" title="Dated status-change history">🕘 ${statusHistory.map(s => `${esc(HYP_STATUS_LABEL[s.status] || s.status)} (${esc(String(s.changedAt || "").slice(0, 10))})`).join(" → ")}</div>`
+        : "";
       return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
         `<div class="hyp-row1">` +
           `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
@@ -6576,7 +6584,7 @@
           // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
           (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" onclick="linkNextHuntToHypothesis('${id}', this.getAttribute('data-t'))" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
           `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
-        `</div>${outcome}${desc}${discrim}${meta}` +
+        `</div>${outcome}${desc}${discrim}${meta}${history}` +
         `<div class="hyp-row2">` +
           `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" onchange="hypPatch('${id}',{assignee:this.value})" />` +
           `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" onchange="hypPatch('${id}',{notes:this.value})" />` +

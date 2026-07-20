@@ -154,6 +154,51 @@ describe("buildAnalystHypothesis / applyHypothesisPatch", () => {
   });
 });
 
+describe("statusHistory (issue #95)", () => {
+  it("a freshly built hypothesis is born with a single status-history entry", () => {
+    const h = buildAnalystHypothesis({ title: "Idea", status: "supported" }, "id1", NOW);
+    expect(h.statusHistory).toEqual([{ status: "supported", changedAt: NOW }]);
+  });
+
+  it("a patch that changes status appends an entry; a patch that doesn't leaves history untouched", () => {
+    const h = buildAnalystHypothesis({ title: "Idea" }, "id1", NOW);
+    const sameStatus = applyHypothesisPatch(h, { notes: "n" }, LATER);
+    expect(sameStatus.statusHistory).toEqual([{ status: "open", changedAt: NOW }]);
+
+    const changed = applyHypothesisPatch(h, { status: "supported" }, LATER);
+    expect(changed.statusHistory).toEqual([
+      { status: "open", changedAt: NOW },
+      { status: "supported", changedAt: LATER },
+    ]);
+  });
+
+  it("an unknown/ignored status patch does not append a spurious history entry", () => {
+    const h = buildAnalystHypothesis({ title: "Idea" }, "id1", NOW);
+    const patched = applyHypothesisPatch(h, { status: "bogus" as Hypothesis["status"] }, LATER);
+    expect(patched.statusHistory).toEqual([{ status: "open", changedAt: NOW }]);
+  });
+
+  it("a fresh synthesis hypothesis is born with its seed status in history", () => {
+    const { hypotheses } = mergeHypotheses([], [seed({ title: "Phishing", status: "supported" })], NOW);
+    expect(hypotheses[0].statusHistory).toEqual([{ status: "supported", changedAt: NOW }]);
+  });
+
+  it("a pristine synthesis refresh that changes status appends to history", () => {
+    const first = mergeHypotheses([], [seed({ title: "Phishing", status: "open" })], NOW).hypotheses;
+    const { hypotheses } = mergeHypotheses(first, [seed({ title: "Phishing", status: "refuted" })], LATER);
+    expect(hypotheses[0].statusHistory).toEqual([
+      { status: "open", changedAt: NOW },
+      { status: "refuted", changedAt: LATER },
+    ]);
+  });
+
+  it("a same-status refresh (other fields changed) does not duplicate the history entry", () => {
+    const first = mergeHypotheses([], [seed({ title: "Phishing", description: "old", status: "open" })], NOW).hypotheses;
+    const { hypotheses } = mergeHypotheses(first, [seed({ title: "Phishing", description: "new", status: "open" })], LATER);
+    expect(hypotheses[0].statusHistory).toEqual([{ status: "open", changedAt: NOW }]);
+  });
+});
+
 describe("hypothesisStats", () => {
   it("counts by status", () => {
     const mk = (id: string, status: Hypothesis["status"]): Hypothesis => ({

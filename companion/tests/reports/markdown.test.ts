@@ -487,6 +487,34 @@ describe("renderMarkdownReport", () => {
     expect(renderMarkdownReport(emptyState("c1"))).not.toContain("## Hypotheses");
   });
 
+  it("surfaces refuted/exhausted hypotheses as negative knowledge and renders a dated status history (#95)", () => {
+    const s = emptyState("c1");
+    const now = "2026-06-22T00:00:00.000Z";
+    const hyp = [
+      { id: "h1", title: "Initial access was an unpatched VPN CVE", description: "", expectedOutcome: "",
+        status: "refuted" as const, relatedTechniques: [], relatedEventIds: [], relatedIocIds: [],
+        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
+        assignee: "", notes: "VPN was fully patched at time of breach.", source: "analyst" as const,
+        analystTouched: true, needsReview: false, createdAt: now, updatedAt: "2026-06-23T00:00:00.000Z",
+        statusHistory: [
+          { status: "open" as const, changedAt: now },
+          { status: "refuted" as const, changedAt: "2026-06-23T00:00:00.000Z" },
+        ] },
+      { id: "h2", title: "Attacker persisted via a scheduled task", description: "", expectedOutcome: "",
+        status: "open" as const, relatedTechniques: [], relatedEventIds: [], relatedIocIds: [],
+        contradictingEventIds: [], discriminator: "", exhausted: true,
+        exhaustedReason: "2 hunt(s) for its expected outcome came back empty",
+        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, needsReview: false,
+        createdAt: now, updatedAt: now, statusHistory: [{ status: "open" as const, changedAt: now }] },
+    ];
+    const md = renderMarkdownReport(s, undefined, undefined, undefined, undefined, undefined, undefined, undefined, hyp);
+    expect(md).toContain("**Negative knowledge — ruled out.**");
+    expect(md).toContain("- **[Refuted]** Initial access was an unpatched VPN CVE — VPN was fully patched at time of breach.");
+    expect(md).toContain("- **[Exhausted]** Attacker persisted via a scheduled task — 2 hunt(s) for its expected outcome came back empty");
+    expect(md).toContain("### Attacker persisted via a scheduled task — Open ⊘ Exhausted");
+    expect(md).toContain("**Status history:** Open (2026-06-22) → Refuted (2026-06-23)");
+  });
+
   describe("geographic distribution section (#133)", () => {
     it("renders a §4.10 table for geo-located IPs", () => {
       const s = emptyState("c1");
