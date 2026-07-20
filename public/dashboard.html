@@ -1040,6 +1040,8 @@
     .prev-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
     .prev-common { color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); }
     .prev-rare { color: var(--c-ffb454, #ffb454); border: 1px solid var(--c-5a4a2a, #5a4a2a); }
+    /* Low-relevance chip (#75) — client mirror of eventRelevance.ts's "low" tier. */
+    .lowsig-chip { color: var(--c-6b7280); border: 1px solid var(--c-2a3146); }
     /* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
     .raw-banner { font-size: 13px; color: var(--c-e6e9ef); margin: 0 0 12px; padding: 11px 14px;
       border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
@@ -2400,10 +2402,65 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><input id="env-DFIR_VISION_MODEL" placeholder="gpt-4o-mini" /></div>
         </div>
+        <div id="claude-code-status" class="sfield" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="cc-status-dot" style="width:9px;height:9px;border-radius:50%;background:#6b7280;flex:0 0 auto"></span>
+            <span id="cc-status-msg" style="font-size:12px">Checking Claude Code…</span>
+            <button type="button" id="cc-recheck" style="margin-left:auto;font-size:11px;padding:3px 10px">Re-check</button>
+            <button type="button" id="cc-connect" style="display:none;font-size:11px;padding:3px 10px">Connect</button>
+          </div>
+          <div id="cc-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
+        </div>
+        <script>
+        (function () {
+          var sel = document.getElementById('env-DFIR_VISION_PROVIDER');
+          var card = document.getElementById('claude-code-status');
+          if (!sel || !card) return;
+          var dot = document.getElementById('cc-status-dot');
+          var msg = document.getElementById('cc-status-msg');
+          var connectBtn = document.getElementById('cc-connect');
+          var hint = document.getElementById('cc-connect-hint');
+
+          function paint(s) {
+            var colors = { connected: '#16a34a', not_connected: '#d97706', not_installed: '#dc2626' };
+            dot.style.background = colors[s.state] || '#6b7280';
+            msg.textContent = s.message || s.state;
+            connectBtn.style.display = s.state === 'not_connected' ? '' : 'none';
+          }
+          function refresh() {
+            msg.textContent = 'Checking Claude Code…';
+            fetch('/diagnostics/claude-code-status').then(function (r) { return r.json(); })
+              .then(paint).catch(function () { msg.textContent = 'Status check failed.'; });
+          }
+          function toggle() {
+            var on = sel.value === 'claude-code';
+            card.style.display = on ? '' : 'none';
+            if (on) refresh();
+          }
+          sel.addEventListener('change', toggle);
+          document.getElementById('cc-recheck').addEventListener('click', refresh);
+          connectBtn.addEventListener('click', function () {
+            hint.style.display = '';
+            hint.textContent = 'Starting sign-in…';
+            fetch('/diagnostics/claude-code-login', { method: 'POST' }).then(function (r) { return r.json(); })
+              .then(function (r) {
+                if (r.url) hint.innerHTML = 'Open this URL to finish signing in, then click Re-check:<br><a href="' + escAttr(r.url) + '" target="_blank" rel="noopener">' + esc(r.url) + '</a>';
+                else if (r.started) hint.textContent = 'Sign-in started on the host. Complete it in the browser that opened, then click Re-check.';
+                else hint.textContent = (r.error || 'Could not start sign-in') + '. Run `claude auth login` in a terminal on the host, then click Re-check.';
+              }).catch(function () { hint.textContent = 'Run `claude auth login` in a terminal on the host, then click Re-check.'; });
+          });
+          // Settings modal re-opens can populate env-DFIR_VISION_PROVIDER's value programmatically
+          // (fetchEnvSettings sets .value directly, which does not fire a 'change' event), so also
+          // re-check whenever that happens (see the matching dispatchEvent in fetchEnvSettings).
+          sel.addEventListener('dfir:envloaded', toggle);
+          toggle();
+        })();
+        </script>
         <div class="sfield-row">
           <div class="sfield"><label>API key<span class="sfield-hint">DFIR_VISION_KEY</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_VISION_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
@@ -2437,6 +2494,8 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
@@ -2445,6 +2504,58 @@
           <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
+        <div id="codex-status" class="sfield" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span id="cx-status-dot" style="width:9px;height:9px;border-radius:50%;background:#6b7280"></span>
+            <span id="cx-status-msg" style="font-size:12px">Checking Codex…</span>
+            <button type="button" id="cx-recheck" class="btn-mini" style="margin-left:auto">Re-check</button>
+            <button type="button" id="cx-connect" class="btn-mini" style="display:none">Connect</button>
+          </div>
+          <div id="cx-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
+        </div>
+        <script>
+        (function () {
+          var sel = document.getElementById('env-DFIR_AI_SYNTH_PROVIDER');
+          var card = document.getElementById('codex-status');
+          if (!sel || !card) return;
+          var dot = document.getElementById('cx-status-dot');
+          var msg = document.getElementById('cx-status-msg');
+          var connectBtn = document.getElementById('cx-connect');
+          var hint = document.getElementById('cx-connect-hint');
+          function paint(s) {
+            var colors = { connected: '#16a34a', not_connected: '#d97706', not_installed: '#dc2626' };
+            dot.style.background = colors[s.state] || '#6b7280';
+            msg.textContent = s.message || s.state;
+            connectBtn.style.display = s.state === 'not_connected' ? '' : 'none';
+          }
+          function refresh() {
+            msg.textContent = 'Checking Codex…';
+            fetch('/diagnostics/codex-status').then(function (r) { return r.json(); })
+              .then(paint).catch(function () { msg.textContent = 'Status check failed.'; });
+          }
+          function toggle() {
+            var on = sel.value === 'codex';
+            card.style.display = on ? '' : 'none';
+            if (on) refresh();
+          }
+          sel.addEventListener('change', toggle);
+          document.getElementById('cx-recheck').addEventListener('click', refresh);
+          connectBtn.addEventListener('click', function () {
+            hint.style.display = '';
+            hint.textContent = 'Starting sign-in…';
+            fetch('/diagnostics/codex-login', { method: 'POST' }).then(function (r) { return r.json(); })
+              .then(function (r) {
+                if (r.url) hint.innerHTML = 'Open this URL to finish signing in, then click Re-check:<br><a href="' + escAttr(r.url) + '" target="_blank" rel="noopener">' + esc(r.url) + '</a>';
+                else if (r.started) hint.textContent = 'Sign-in started on the host. Complete it in the browser that opened, then click Re-check.';
+                else hint.textContent = (r.error || 'Could not start sign-in') + '. Run `codex login` (or set OPENAI_API_KEY) on the host, then click Re-check.';
+              }).catch(function () { hint.textContent = 'Run `codex login` (or set OPENAI_API_KEY) on the host, then click Re-check.'; });
+          });
+          toggle();
+          // The settings panel populates selects asynchronously without firing 'change', so re-check
+          // shortly after load to reflect a previously-saved codex synth provider.
+          setTimeout(toggle, 1200);
+        })();
+        </script>
         <div class="settings-group-head">Velociraptor hunt model (used ONLY for generating Velociraptor VQL hunts — many models botch VQL)</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Dedicated model for <strong>✨ Suggest Velociraptor hunts</strong> (and the Fleet Hunts suggester), separate from the synthesis/OCR models. Default: <code>openrouter</code> / <code>anthropic/claude-haiku-4.5</code>. Leave the key blank to reuse the main AI key.</p>
         <div class="sfield-row">
@@ -2458,6 +2569,8 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>Velo model<span class="sfield-hint">DFIR_AI_VELO_MODEL</span></label><input id="env-DFIR_AI_VELO_MODEL" placeholder="anthropic/claude-haiku-4.5" /></div>
@@ -2479,6 +2592,8 @@
               <option value="litellm">litellm</option>
               <option value="gemini">gemini</option>
               <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
           <div class="sfield"><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
@@ -3542,7 +3657,17 @@
                 <option value="litellm">LiteLLM (local proxy)</option>
                 <option value="gemini">Gemini</option>
                 <option value="anthropic">Anthropic</option>
+                <option value="claude-code">Claude Code (subscription, no key)</option>
               </select>
+            </div>
+            <div id="claude-code-status-wizard" class="wiz-field" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span id="cc-status-dot-wizard" style="width:9px;height:9px;border-radius:50%;background:#6b7280;flex:0 0 auto"></span>
+                <span id="cc-status-msg-wizard" style="font-size:12px">Checking Claude Code…</span>
+                <button type="button" id="cc-recheck-wizard" style="margin-left:auto;font-size:11px;padding:3px 10px">Re-check</button>
+                <button type="button" id="cc-connect-wizard" style="display:none;font-size:11px;padding:3px 10px">Connect</button>
+              </div>
+              <div id="cc-connect-hint-wizard" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
             </div>
             <div class="wiz-row">
               <div class="wiz-field">
@@ -3576,6 +3701,8 @@
                   <option value="litellm">LiteLLM (local proxy)</option>
                   <option value="gemini">Gemini</option>
                   <option value="anthropic">Anthropic</option>
+                  <option value="claude-code">Claude Code (subscription, no key)</option>
+                  <option value="codex">Codex (text-only, no key)</option>
                 </select>
               </div>
               <div class="wiz-field">
@@ -3965,6 +4092,8 @@
           <div id="evGraph" class="login-graph"></div>
           <div id="evSidePanel" class="lg-side-panel" style="display:none"></div>
         </div>
+        <h3 class="asset-subhead">Lateral movement paths<span class="ev-sub"> — ordered entry → pivot → target chains reconstructed from lateral_move + ran_on evidence, by real timestamp (#92)</span></h3>
+        <div id="evPathsList">—</div>
       </div>
     </section>
 
@@ -4196,6 +4325,11 @@
       #sec-huntprofile .hp-detail{margin:0 0 2px 4px}
       #sec-huntprofile .hp-preview-note{color:var(--c-ffb454);font-size:11px;margin:0 0 4px 0}
       #sec-huntprofile .hp-collect-inline{background:var(--c-2d6cdf);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer}
+      #sec-huntprofile .hp-pivots{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+      #sec-huntprofile .hp-pivot{display:flex;align-items:center;gap:5px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-radius:5px;padding:3px 8px;font-size:11px;color:var(--c-c9d1db)}
+      #sec-huntprofile .hp-pivot-type{text-transform:capitalize;color:var(--c-d6deea);font-weight:bold}
+      #sec-huntprofile .hp-pivot-rate{color:#6bcb77}
+      #sec-huntprofile .hp-pivot-rate.hp-pivot-rate-low{color:#9aa4b2}
       #sec-huntprofile .hp-collect-inline:disabled{opacity:.6;cursor:default}
       /* ── Query Translator (NL → hunt queries, #100) ── */
       #sec-nlquery .nlq-empty{color:var(--c-9aa4b2);font-size:12px}
@@ -5032,6 +5166,10 @@
       // Prevalence baseline (#15b): how common this activity pattern is across the case.
       const prevChip = prevalenceChip(e);
       if (prevChip) parts.push(prevChip);
+      // Relevance (#75): flag rows the deterministic scorer rates lowest — Info telemetry with no
+      // finding link, structured identity, ATT&CK tag, or corroboration.
+      const lowSigChip = lowSignalChip(e);
+      if (lowSigChip) parts.push(lowSigChip);
       const ev = (show("evidence") && caseId) ? evidenceLinks(caseId, e.sourceScreenshots) : "";
       if (ev) parts.push(ev.replace(/^<br>/, ""));
       if (!parts.length) return { title, toggle: "", panel: "" };
@@ -5474,6 +5612,7 @@
 
     // --- Evidence Chain graph (causal: process trees + lateral movement) ----------
     let evGraphData = null;                                 // { nodes, edges }
+    let evPathsData = null;                                 // ordered lateral-movement chains (#92)
     let evGraphTimer = null;
     const evTypesEnabled = new Set(
       [...document.querySelectorAll(".ev-type-toggle")].filter(cb => cb.checked).map(cb => cb.value)
@@ -5505,6 +5644,15 @@
       if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style)
       fetch(`/cases/${caseId}/evidence-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
         evGraphData = g; renderEvidenceGraph();
+      }).catch(() => {});
+      loadLateralPaths(caseId);
+    }
+    // Lateral chains, optionally including the ones the analyst dismissed (review/undo view).
+    function loadLateralPaths(caseId) {
+      const q = _graphTimeQuery();
+      const url = `/cases/${caseId}/lateral-paths${q}${evPathsShowDismissed ? (q ? "&" : "?") + "includeDismissed=1" : ""}`;
+      return fetch(url).then(r => r.json()).then(paths => {
+        evPathsData = paths; renderEvidencePaths();
       }).catch(() => {});
     }
     // State changes (imports / synthesis) re-derive the graph — debounced.
@@ -5670,6 +5818,46 @@
       }
       renderEvKcLegend();
       gv.render();
+    }
+
+    // Lateral-movement PATHS (#92): the ordered entry→pivot→target chains the server reconstructs
+    // from lateral_move + ran_on evidence by real timestamp (buildLateralPaths), listed alongside
+    // the pairwise evidence graph. "Highlight" turns on the lateral_move layer (off by default,
+    // since it's usually the noisiest) and dims everything except this chain's hosts.
+    // Show analyst-dismissed chains too (the review/undo view). Off by default: a dismissed chain
+    // is one the analyst has already rejected, so it stays out of the way until asked for.
+    let evPathsShowDismissed = false;
+    const evPathBtnStyle = "background:none;border:1px solid var(--c-6b7585);border-radius:3px;cursor:pointer;padding:0 5px;color:var(--c-cbd3df);font-size:10px";
+
+    function renderEvidencePaths() {
+      const el = document.getElementById("evPathsList");
+      const toggle = evPathsShowDismissed
+        ? `<button type="button" id="evPathsHideDismissed" style="${evPathBtnStyle}">Hide dismissed</button>`
+        : `<button type="button" id="evPathsShowDismissed" style="${evPathBtnStyle}">Show dismissed</button>`;
+      if (!evPathsData || !evPathsData.length) {
+        el.innerHTML = "<div style='padding:8px 0;color:var(--c-9aa4b2)'>No multi-hop lateral chains reconstructed yet. " + toggle + "</div>";
+        return;
+      }
+      const confClass = (c) => c === "high" ? "ev-leg-high" : c === "medium" ? "ev-leg-med" : "ev-leg-ran";
+      el.innerHTML = evPathsData.map((p, i) => {
+        const route = p.hostIds.map((id) => esc((evGraphData?.nodes || []).find((n) => n.id === id)?.label || id)).join(" → ");
+        // WHO/WHAT actually moved — the route alone doesn't say. Read from the hop's structured
+        // `actor` field (never parsed out of `basis`), de-duplicated across the chain.
+        const actors = [...new Set((p.hops || []).map((h) => h.actor).filter(Boolean))];
+        const via = actors.length ? ` <span class="ev-sub">via <b>${actors.map(esc).join("</b>, <b>")}</b></span>` : "";
+        // A dismissed row is shown struck-through and dimmed, with Restore in place of Dismiss.
+        const action = p.dismissed
+          ? `<button type="button" class="ev-path-restore" data-path-idx="${i}" style="${evPathBtnStyle}">Restore</button>`
+          : `<button type="button" class="ev-path-dismiss" data-path-idx="${i}" style="${evPathBtnStyle}" title="Reject this chain as a wrong conclusion. The underlying evidence stays in the case.">Dismiss</button>`;
+        return `<div class="ev-path-row" style="margin-bottom:4px${p.dismissed ? ";opacity:.55" : ""}">`
+          + `<span class="ev-leg-line ${confClass(p.confidence)}"></span>`
+          + `<b${p.dismissed ? " style='text-decoration:line-through'" : ""}>${route}</b>${via} <span class="ev-sub">${esc(p.confidence)} confidence, ${p.hops.length} hop(s)`
+          + (p.startTime ? `, ${esc(p.startTime)} → ${esc(p.endTime)}` : "")
+          + (p.dismissed ? ` — dismissed${p.dismissalNote ? ": " + esc(p.dismissalNote) : ""}` : "") + `</span> `
+          + `<button type="button" class="ev-path-highlight" data-path-idx="${i}" style="${evPathBtnStyle}">Highlight</button> `
+          + action
+          + `</div>`;
+      }).join("") + `<div style="margin-top:6px">${toggle}</div>`;
     }
 
     // Kill-chain legend (#93): swatches for the tactics that actually appear in the current graph,
@@ -10314,8 +10502,14 @@
         // routes only reuse this AI-status channel to drive the progress bar, so relabel their
         // updates honestly instead of claiming "AI: processing…" while the AI is off. Import
         // updates are recognisable by the detail text ("importing …" / "<kind> import — N/M");
-        // screenshot extraction + synthesis (genuine AI) keep the AI label. Belt-and-suspenders:
-        // when AI is off, ANY activity on this channel can only be ingest, so treat it as such.
+        // screenshot extraction + synthesis (genuine AI) keep the AI label.
+        // NOTE: the `!aiEnabled` fallback below is belt-and-suspenders for the AUTO live-analysis loop
+        // ONLY — aiEnabled is the per-case "live analysis paused/resumed" toggle, not "is AI configured".
+        // Manual on-demand AI (Re-synthesize, Second opinion, Ask …) can run while that toggle is OFF,
+        // so every server route emitting one of those MUST set `phase: "synthesizing"` (checked first,
+        // below) rather than relying on this fallback — otherwise a genuine AI call gets mislabeled
+        // "deterministic import — not AI" whenever the analyst has paused live analysis (found live: the
+        // second-opinion badge showed that exact false label with the toggle off — see aiSynthesis.ts).
         const isIngest = !!m || (evt.detail && /^importing\b/i.test(evt.detail)) || !aiEnabled;
         if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
         else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
@@ -12222,6 +12416,19 @@
         + `<span><b>${profile.missed}</b> no results</span>`
         + `<span style="color:#6aa9ff"><b>${profile.pending}</b> pending</span>`
         + `</div>`;
+      // Pivot-class productivity (#72): which pivot type (hash/process/path/network/registry) has
+      // actually found evidence in this case — the same aggregate signal fed into the hunt-suggestion
+      // prompt, surfaced here so the analyst can see why the model is favoring/avoiding a class.
+      const pivots = (profile.pivotProductivity || []).filter((p) => p.hit + p.missed > 0);
+      const pivotsBlock = pivots.length ? `<div class="hp-pivots">` + pivots.map((p) => {
+        const collected = p.hit + p.missed;
+        const rate = Math.round((p.hit / collected) * 100);
+        const rateCls = rate >= 50 ? "" : " hp-pivot-rate-low";
+        return `<span class="hp-pivot" title="${escAttr(`${p.hit}/${collected} hunts found evidence${p.pending ? `, ${p.pending} pending` : ""}`)}">`
+          + `<span class="hp-pivot-type">${esc(p.type)}</span>`
+          + `<span class="hp-pivot-rate${rateCls}">${p.hit}/${collected} (${rate}%)</span>`
+          + `</span>`;
+      }).join("") + `</div>` : "";
       const rows = hunts.map((h, i) => {
         const st = h.status === "collected" ? (h.foundEvidence ? HP_STATUS.collectedHit : HP_STATUS.collectedMiss) : HP_STATUS.pending;
         // "not collected yet" not "results not yet collected": ▸ results can show LIVE rows from Velociraptor
@@ -12256,7 +12463,7 @@
           + `<div class="hp-detail" id="hpDetail${i}" hidden></div>`
           + `</div>`;
       }).join("");
-      el.innerHTML = tally + `<div class="hp-list">${rows}</div>`;
+      el.innerHTML = tally + pivotsBlock + `<div class="hp-list">${rows}</div>`;
       const caseId = document.getElementById("caseId").value.trim();
       // Collect (import) a hunt's results into the case + record the outcome. On success (202) the
       // velo_hunt_changed WS event re-renders the panel; only an error restores the button + flags it.
@@ -13873,6 +14080,27 @@
       if (st.count <= 2) return `<span class="prev-chip prev-rare" title="This pattern is rare in this case — more likely to be signal than noise.">◆ rare (${st.count}×)</span>`;
       return "";
     }
+
+    // Low-relevance row flag (#75, client mirror of companion/src/analysis/eventRelevance.ts's
+    // scoreEventRelevance): Critical/High severity, a finding link, a structured hash/path/process-chain
+    // identity, an ATT&CK tag, or 2+ corroborating sources all clear it — what's left is Info-severity
+    // telemetry with none of those signals, the class of row least likely to matter to the story. A
+    // display hint only; it does not change what selectSynthesisEvents feeds to synthesis.
+    function isLowSignalEvent(e) {
+      if (e.severity !== "Info") return false;
+      if (e.relatedFindingIds && e.relatedFindingIds.length) return false;
+      if (e.sha256 || e.md5 || e.path || e.processName || e.parentName || e.chainSignature) return false;
+      if (e.mitreTechniques && e.mitreTechniques.length) return false;
+      // realSourceCount() is the shared corroboration unit: it drops the "unknown source" placeholder
+      // AND dedups, so a repeated source name can't fake corroboration and clear the flag. Called with
+      // no `hidden` set on purpose — relevance is a property of the event, not of the analyst's current
+      // source filter, so the chip must not appear/disappear as they toggle sources.
+      return realSourceCount(e.sources) < 2;
+    }
+    function lowSignalChip(e) {
+      if (!isLowSignalEvent(e)) return "";
+      return `<span class="prev-chip lowsig-chip" title="Info-severity telemetry with no finding link, structured identity, ATT&amp;CK tag, or multi-source corroboration — likely low signal">🐇 low signal</span>`;
+    }
     function renderTimelineEvents(ft) {
       // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
       // filtered/paged subset, so counts are stable as the analyst filters.
@@ -15424,6 +15652,58 @@
     }));
     document.querySelector("#sec-evidence h2").addEventListener("click", () => {
       setTimeout(() => { if (evGV) evGV.onExpand(); }, 0);
+    });
+    // Dismiss / restore a reconstructed chain. Dismissing rejects the CONCLUSION ("the attacker did
+    // not pivot A → B → C"); it does NOT mark the underlying events as false positives, so the
+    // evidence stays in the timeline and every other view.
+    document.getElementById("evPathsList").addEventListener("click", async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (e.target.id === "evPathsShowDismissed" || e.target.id === "evPathsHideDismissed") {
+        evPathsShowDismissed = e.target.id === "evPathsShowDismissed";
+        if (caseId) await loadLateralPaths(caseId);
+        return;
+      }
+      const dismissBtn = e.target.closest(".ev-path-dismiss");
+      if (dismissBtn && evPathsData && caseId) {
+        const path = evPathsData[Number(dismissBtn.dataset.pathIdx)];
+        if (!path) return;
+        const note = prompt("Why is this chain wrong? (optional)") ?? "";
+        const res = await fetch(`/cases/${caseId}/lateral-path-dismissals`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostIds: path.hostIds, note }),
+        }).catch(() => null);
+        if (res && res.ok) await loadLateralPaths(caseId);
+        return;
+      }
+      const restoreBtn = e.target.closest(".ev-path-restore");
+      if (restoreBtn && evPathsData && caseId) {
+        const path = evPathsData[Number(restoreBtn.dataset.pathIdx)];
+        if (!path) return;
+        const key = path.hostIds.map((h) => String(h).trim().toLowerCase()).join(">");
+        const res = await fetch(`/cases/${caseId}/lateral-path-dismissals/${encodeURIComponent(key)}`, { method: "DELETE" }).catch(() => null);
+        if (res && res.ok) await loadLateralPaths(caseId);
+        return;
+      }
+    });
+    // Highlight a reconstructed lateral-movement path (#92) in the evidence graph: switch on the
+    // lateral_move layer (off by default) if needed, re-render, then dim everything except this
+    // chain's hosts and their immediate neighborhood.
+    document.getElementById("evPathsList").addEventListener("click", (e) => {
+      const btn = e.target.closest(".ev-path-highlight");
+      if (!btn || !evPathsData) return;
+      const path = evPathsData[Number(btn.dataset.pathIdx)];
+      if (!path) return;
+      if (!evTypesEnabled.has("lateral_move")) {
+        evTypesEnabled.add("lateral_move");
+        const cb = document.querySelector('.ev-type-toggle[value="lateral_move"]');
+        if (cb) cb.checked = true;
+        renderEvidenceGraph();
+      }
+      const gv = evEnsureGV();
+      if (!gv || !gv.cy) return;
+      let coll = gv.cy.collection();
+      for (const id of path.hostIds) coll = coll.union(gv.cy.getElementById(id));
+      gv.dimExcept(coll);
     });
     document.getElementById("saveReportMeta").onclick = saveReportMeta;
     document.getElementById("rm-companyLogoFile").addEventListener("change", (e) => {
@@ -17402,6 +17682,7 @@
           if (!el) continue;
           if (el.tagName === "SELECT") {
             el.value = val || "";
+            el.dispatchEvent(new Event("dfir:envloaded"));
           } else if (el.type === "password") {
             el.value = "";
             el.placeholder = val === "••••••••" ? "(already set)" : "(not set)";
@@ -17622,7 +17903,50 @@
       wizEl("wizBaseUrlField").style.display = "none"; wizEl("wizTestSaveBtn").disabled = false;
       wizEl("wizSynthProvider").value = ""; wizEl("wizSynthModel").value = ""; wizEl("wizSynthKey").value = "";
       wizEl("wizSynthBaseUrl").value = ""; wizEl("wizSynthResult").textContent = ""; wizEl("wizSynthSaveBtn").disabled = false;
+      const ccWizCard = wizEl("claude-code-status-wizard"); if (ccWizCard) ccWizCard.style.display = "none";
     }
+    // Claude Code connection-status card mirrored inside the wizard's own AI step (distinct
+    // cc-*-wizard ids so it doesn't collide with the Settings → AI instance). No hard "ready" gate
+    // exists anywhere in this wizard — Next/Back/Done are never blocked on step completion (every
+    // step, including AI, is explicitly optional/skippable) — so this only surfaces status, it does
+    // not gate navigation.
+    (function () {
+      var sel = wizEl("wizProvider");
+      var card = wizEl("claude-code-status-wizard");
+      if (!sel || !card) return;
+      var dot = wizEl("cc-status-dot-wizard");
+      var msg = wizEl("cc-status-msg-wizard");
+      var connectBtn = wizEl("cc-connect-wizard");
+      var hint = wizEl("cc-connect-hint-wizard");
+      function paint(s) {
+        var colors = { connected: "#16a34a", not_connected: "#d97706", not_installed: "#dc2626" };
+        dot.style.background = colors[s.state] || "#6b7280";
+        msg.textContent = s.message || s.state;
+        connectBtn.style.display = s.state === "not_connected" ? "" : "none";
+      }
+      function refresh() {
+        msg.textContent = "Checking Claude Code…";
+        fetch("/diagnostics/claude-code-status").then(r => r.json()).then(paint)
+          .catch(() => { msg.textContent = "Status check failed."; });
+      }
+      function toggleCcWizCard() {
+        const on = sel.value === "claude-code";
+        card.style.display = on ? "" : "none";
+        if (on) refresh();
+      }
+      sel.addEventListener("change", toggleCcWizCard);
+      connectBtn.addEventListener("click", () => {
+        hint.style.display = "";
+        hint.textContent = "Starting sign-in…";
+        fetch("/diagnostics/claude-code-login", { method: "POST" }).then(r => r.json())
+          .then(r => {
+            if (r.url) hint.innerHTML = "Open this URL to finish signing in, then click Re-check:<br><a href=\"" + escAttr(r.url) + "\" target=\"_blank\" rel=\"noopener\">" + esc(r.url) + "</a>";
+            else if (r.started) hint.textContent = "Sign-in started on the host. Complete it in the browser that opened, then click Re-check.";
+            else hint.textContent = (r.error || "Could not start sign-in") + ". Run `claude auth login` in a terminal on the host, then click Re-check.";
+          }).catch(() => { hint.textContent = "Run `claude auth login` in a terminal on the host, then click Re-check."; });
+      });
+      wizEl("cc-recheck-wizard").addEventListener("click", refresh);
+    })();
     wizEl("wizProvider").addEventListener("change", e => {
       const p = e.target.value, hint = wizEl("wizModelHint");
       hint.innerHTML = WIZ_MODEL_HINTS[p] || "";
@@ -17632,7 +17956,9 @@
     async function wizSaveAndTestAi() {
       const provider = wizEl("wizProvider").value, model = wizEl("wizModel").value.trim();
       const key = wizEl("wizKey").value.trim(), baseUrl = wizEl("wizBaseUrl").value.trim();
-      const result = wizEl("wizResult"), local = LOCAL_PROVIDERS.has(provider);
+      // claude-code needs no API key (it shells out to the locally-signed-in Claude Code CLI), same
+      // as the LOCAL_PROVIDERS (ollama/litellm) exemption below.
+      const result = wizEl("wizResult"), local = LOCAL_PROVIDERS.has(provider) || provider === "claude-code";
       if (!provider) { result.style.color = "#ffb05a"; result.textContent = "Pick a provider first."; return; }
       if (!model) { result.style.color = "#ffb05a"; result.textContent = "Enter an extraction model."; return; }
       if (!key && !local) { result.style.color = "#ffb05a"; result.textContent = "Enter an API key (or pick a local provider)."; return; }

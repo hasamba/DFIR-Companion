@@ -137,7 +137,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
     const reqThinking = Number((req.body as { thinkingTokens?: unknown })?.thinkingTokens);
     const thinkingTokens = Number.isFinite(reqThinking) && reqThinking > 0 ? Math.floor(reqThinking) : undefined;
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: deepReasoning ? "synthesizing (deep reasoning)" : "synthesizing conclusions" });
     // #225: track this manual synthesis as a cancellable job so the analyst can abort a long run.
     // exclusive: a second re-synthesize for the same case (double-click, or racing the "Generate
     // hypotheses" button / a live auto-synthesis) supersedes rather than running alongside it.
@@ -201,7 +201,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const caseId = req.params.id;
     // Same per-run deep-reasoning toggle (#121) as /synthesize — flows into both model A & B passes.
     const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;
-    options.onAiStatus?.(caseId, { status: "analyzing", at: new Date().toISOString(), detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion" });
+    options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: deepReasoning ? "running second opinion (deep reasoning)" : "running second opinion" });
     try {
       const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });

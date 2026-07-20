@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
 
 export interface AbuseIpdbOptions {
   apiKey: string;
@@ -27,7 +27,7 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
     if (res.status === 401 || res.status === 403) throw new Error("AbuseIPDB auth failed (check DFIR_ABUSEIPDB_KEY)");
-    if (res.status === 429) throw new Error("AbuseIPDB rate limit");
+    if (res.status === 429) throw new RateLimitError("AbuseIPDB rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`AbuseIPDB HTTP ${res.status}`);
 
     const json = (await res.json()) as { data?: { abuseConfidenceScore?: number; totalReports?: number; countryCode?: string; isp?: string; domain?: string } };
