@@ -1,9 +1,11 @@
 // Content-script (isolated world) orchestration for automated artifact fetching (issue #102).
 //
 // Flow on a recognized DFIR console:
-//   1. adapterForUrl() decides if this tab is a known tool. Unless the popup forces an override
-//      (see applyAdapter() / onExtensionMessage() below), an unrecognized page does nothing here
-//      — plain screenshot capture still works via content.ts.
+//   1. adapterForPage() decides if this tab is a known tool — by URL first, falling back to each
+//      adapter's DOM signature (matchDom) for tools behind a reverse proxy or vanity hostname/path
+//      that the URL alone doesn't reveal (issue #76). Unless the popup forces an override (see
+//      applyAdapter() / onExtensionMessage() below), an unrecognized page does nothing here — plain
+//      screenshot capture still works via content.ts.
 //   2. We ask the service worker to inject pageHook.js into the MAIN world (executeScript bypasses
 //      page CSP) and hand the hook the adapter's API URL patterns via postMessage.
 //   3. The hook forwards matching API response bodies back; we extract clean rows via the adapter and
@@ -15,7 +17,7 @@
 // All browser-only glue; the pure logic it calls (adapter matching/extraction, matrixToRows) is
 // unit-tested separately.
 
-import { adapterForUrl, adapterById } from "./adapters/registry.js";
+import { adapterForPage, adapterById } from "./adapters/registry.js";
 import type { Adapter, CapturedArtifact } from "./adapters/types.js";
 import { resolveActiveAdapter } from "./adapters/override.js";
 import { matrixToRows } from "./adapters/domTable.js";
@@ -42,7 +44,7 @@ let buttonPos: ButtonPos | null = null;
 let suppressClick = false;
 
 export async function initArtifactCapture(): Promise<void> {
-  detectedAdapterId = adapterForUrl(location.href)?.id ?? null;
+  detectedAdapterId = adapterForPage(location.href, document)?.id ?? null;
 
   // Attach listeners BEFORE activating so we never miss the hook's "ready" handshake or a popup
   // override sent immediately after injection.
@@ -88,7 +90,7 @@ export async function initArtifactCapture(): Promise<void> {
 // an adapter is now active — (re)request the MAIN-world hook with its API patterns. Called once at
 // init, and again whenever the popup changes the override for this tab. Unlike before manual
 // override existed, this now runs (and the listeners above are registered) even on pages
-// adapterForUrl doesn't recognize — cheaply, since applyAdapter() itself no-ops until an adapter
+// adapterForPage doesn't recognize — cheaply, since applyAdapter() itself no-ops until an adapter
 // is actually active — so a later popup override can still activate capture on that page.
 function applyAdapter(): void {
   const id = resolveActiveAdapter(detectedAdapterId, overrideAdapterId);
@@ -109,7 +111,7 @@ function applyAdapter(): void {
 }
 
 // ── Manual override (popup ⇄ this content script) ────────────────────────────────────────────
-// The popup can't reach adapterForUrl's result directly — it lives here, in the tab. These two
+// The popup can't reach adapterForPage's result directly — it lives here, in the tab. These two
 // message kinds (sent via chrome.tabs.sendMessage, which — unlike chrome.runtime.sendMessage from
 // a content script — targets THIS listener, not the service worker's onMessage in
 // serviceWorker.ts) let the popup read and override it. See adapters/override.ts for the

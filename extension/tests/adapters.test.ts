@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { adapterForUrl, adapterById, ADAPTERS } from "../src/adapters/registry.js";
+import { adapterForUrl, adapterForPage, adapterById, ADAPTERS } from "../src/adapters/registry.js";
 import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
 import { elasticAdapter } from "../src/adapters/elastic.js";
@@ -83,6 +83,90 @@ describe("adapterForUrl", () => {
     expect(adapterById("socrates")?.label).toBe("SO-CRATES");
     expect(adapterById("volweb")?.label).toBe("VolWeb");
     expect(adapterById("nope")).toBeNull();
+  });
+});
+
+// Minimal Document stand-in — matchDom implementations only touch .title / getElementById /
+// querySelector, so a hand-rolled fake (no jsdom dependency) is enough to unit-test them.
+function fakeDoc(opts: { title?: string; ids?: string[]; selectors?: string[] } = {}): Document {
+  const { title = "", ids = [], selectors = [] } = opts;
+  return {
+    title,
+    getElementById: (id: string) => (ids.includes(id) ? ({} as Element) : null),
+    querySelector: (sel: string) => (selectors.includes(sel) ? ({} as Element) : null),
+  } as unknown as Document;
+}
+
+describe("adapter.matchDom (pure, per-adapter DOM signatures)", () => {
+  it("elastic: recognizes Kibana's #kibana-body root, chrome data-test-subj, or a Kibana/Elastic title", () => {
+    expect(elasticAdapter.matchDom!(fakeDoc({ ids: ["kibana-body"] }))).toBe(true);
+    expect(elasticAdapter.matchDom!(fakeDoc({ selectors: ['[data-test-subj="kibanaChrome"]'] }))).toBe(true);
+    expect(elasticAdapter.matchDom!(fakeDoc({ title: "Discover - Kibana" }))).toBe(true);
+    expect(elasticAdapter.matchDom!(fakeDoc({ title: "Discover - Elastic" }))).toBe(true);
+    expect(elasticAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+  });
+
+  it("velociraptor: recognizes the GUI's fixed 'Velociraptor' document title", () => {
+    expect(velociraptorAdapter.matchDom!(fakeDoc({ title: "Velociraptor" }))).toBe(true);
+    expect(velociraptorAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+  });
+
+  it("splunk / crowdstrike / securityonion / socrates / volweb: recognize their product name in the title", () => {
+    expect(splunkAdapter.matchDom!(fakeDoc({ title: "Search | Splunk" }))).toBe(true);
+    expect(splunkAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+    expect(crowdstrikeAdapter.matchDom!(fakeDoc({ title: "Detections | Falcon" }))).toBe(true);
+    expect(crowdstrikeAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+    expect(securityOnionAdapter.matchDom!(fakeDoc({ title: "Security Onion Console" }))).toBe(true);
+    expect(securityOnionAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+    expect(socratesAdapter.matchDom!(fakeDoc({ title: "SO-CRATES" }))).toBe(true);
+    expect(socratesAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+    expect(volwebAdapter.matchDom!(fakeDoc({ title: "VolWeb" }))).toBe(true);
+    expect(volwebAdapter.matchDom!(fakeDoc({ title: "Home" }))).toBe(false);
+  });
+});
+
+describe("adapterForPage (URL match first, DOM signature as fallback)", () => {
+  it("detects Kibana on an unrecognized host/path via its DOM signature (issue #76 acceptance criteria)", () => {
+    expect(adapterForUrl("https://analytics.corp.internal/soc/")).toBeNull();
+    expect(adapterForPage("https://analytics.corp.internal/soc/", fakeDoc({ ids: ["kibana-body"] }))?.id).toBe("elastic");
+    expect(adapterForPage("https://analytics.corp.internal/soc/", fakeDoc({ title: "Discover - Kibana" }))?.id).toBe("elastic");
+  });
+
+  it("detects a self-hosted Velociraptor on an arbitrary host via its DOM signature", () => {
+    expect(adapterForUrl("https://ops.corp.internal/")).toBeNull();
+    expect(adapterForPage("https://ops.corp.internal/", fakeDoc({ title: "Velociraptor" }))?.id).toBe("velociraptor");
+  });
+
+  it("URL match still takes precedence over a conflicting DOM signature", () => {
+    // Splunk-by-URL, but the injected doc's title happens to say "Kibana" — matchUrl must win.
+    expect(adapterForPage("https://splunk.corp.local/en-US/app/search/search", fakeDoc({ title: "Kibana" }))?.id).toBe("splunk");
+  });
+
+  it("falls back to URL-only behavior when no Document is supplied", () => {
+    expect(adapterForPage("https://splunk.corp.local/en-US/app/search/search")?.id).toBe("splunk");
+    expect(adapterForPage("https://example.com/foo")).toBeNull();
+  });
+
+  it("returns null for an unrecognized site even with a doc that matches nothing", () => {
+    expect(adapterForPage("https://example.com/foo", fakeDoc({ title: "Example Domain" }))).toBeNull();
+  });
+
+  it("returns null for non-http schemes and invalid URLs regardless of the doc", () => {
+    expect(adapterForPage("chrome://extensions", fakeDoc({ title: "Velociraptor" }))).toBeNull();
+    expect(adapterForPage("not a url", fakeDoc({ title: "Velociraptor" }))).toBeNull();
+  });
+
+  it("a matchDom that throws does not break detection by a later adapter", () => {
+    // splunk/velociraptor/securityonion/socrates are all tried (in registry order) before elastic,
+    // and are all title-only matchers — a `.title` getter that always throws makes every one of
+    // them throw. Detection must still fall through to elastic, whose matchDom checks
+    // getElementById() first (no title access needed to succeed here).
+    const throwingTitleDoc = {
+      getElementById: (id: string) => (id === "kibana-body" ? ({} as Element) : null),
+      querySelector: () => null,
+      get title(): string { throw new Error("boom"); },
+    } as unknown as Document;
+    expect(adapterForPage("https://analytics.corp.internal/soc/", throwingTitleDoc)?.id).toBe("elastic");
   });
 });
 

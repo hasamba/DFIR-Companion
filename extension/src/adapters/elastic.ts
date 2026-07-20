@@ -21,6 +21,16 @@ export const elasticAdapter: Adapter = {
     return false;
   },
 
+  // Fallback for a Kibana behind a reverse proxy on an unbranded host/path (e.g. a vanity URL like
+  // `/soc/`) that matchUrl's host/path/port checks can't recognize. Kibana's SPA has rendered its
+  // root into a `#kibana-body` element since 6.x; the document <title> also carries "Kibana" or
+  // "Elastic" (recent rebrand) for every app view ("Discover - Kibana", "Discover - Elastic").
+  matchDom(doc: Document): boolean {
+    if (doc.getElementById("kibana-body")) return true;
+    if (doc.querySelector('[data-test-subj="kibanaChrome"]')) return true;
+    return /\b(kibana|elastic)\b/i.test(doc.title);
+  },
+
   apiPatterns: [
     "/_search",
     "/_async_search",
