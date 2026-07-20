@@ -30,6 +30,7 @@ import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
+import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -93,6 +94,7 @@ import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "./reports/iocBlocklist.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
+import { ReportVersionStore } from "./reports/reportVersionStore.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
@@ -254,6 +256,10 @@ export interface AppOptions {
   // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
   // edited from the dashboard and merged into report.md.
   reportMetaStore?: ReportMetaStore;
+  // Report versioning (#77): one snapshot per report regeneration (markdown + meta + content hash +
+  // the diff-relevant slice of state), powering a version list, a diff view, and rollback of the
+  // editable report-meta.
+  reportVersionStore?: ReportVersionStore;
   // Custom report templates (issue #60): GLOBAL branded layouts (accent, cover, header/footer,
   // section selection) + the per-case selection of which template renders the report.
   reportTemplateStore?: ReportTemplateStore;
@@ -801,6 +807,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
+  registerReportVersionsRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
   // then the case-core catch-all (lifecycle, archives, integration pushes, importers, jobs, settings, static
   // app shell). Both register before the terminal error handler at the end of createApp.
@@ -2961,6 +2968,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     max: Number(process.env.DFIR_JOBS_MAX) || undefined,
   });
   const reportMetaStore = new ReportMetaStore(store);
+  const reportVersionStore = new ReportVersionStore(store);   // #77 report versioning (diff & rollback)
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const activityLogStore = new ActivityLogStore(store);
   const commentsStore = new CommentsStore(store);
@@ -2993,7 +3001,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);
   const lateralPathDismissStore = new LateralPathDismissStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore, lateralPathDismissStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore, lateralPathDismissStore, reportVersionStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
@@ -3083,6 +3091,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // ocrRunner is undefined in that case), so give createApp its own always-available runner.
     ocrRunner: ocrRunner ?? new TesseractOcrRunner(),
     reportMetaStore,
+    reportVersionStore,
     reportTemplateStore,
     reportTemplateControlStore,
     dashboardViewStore,
