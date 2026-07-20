@@ -6,7 +6,7 @@ import { getCodexStatus, startCodexLogin } from "../providers/codexStatus.js";
 import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "../analysis/diskWarn.js";
 import {
   buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
-  type DiagnosticsReport, type ScannedFile,
+  summarizeImporterHealth, type DiagnosticsReport, type ScannedFile,
 } from "../analysis/diagnostics.js";
 import { getClaudeCodeStatus, startClaudeLogin } from "../providers/claudeCodeStatus.js";
 import {
@@ -242,6 +242,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
           attempts: summarizeImportAttempts(importTimestamps, now),
           recentFailures: recentImportFailures.slice(0, 20),
           customImporters: importerRegistry.importers.size,
+          perImporter: summarizeImporterHealth(importerRegistry.meta, ctx.importerRunStats),
+          loadErrors: importerRegistry.errors,
         },
         backups: options.backupManager
           ? await (async () => {

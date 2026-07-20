@@ -10,7 +10,7 @@ import type { TimesketchClient } from "../integrations/timesketch/timesketchClie
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { ProviderHealthCache } from "../enrichment/providerHealth.js";
 import type { NsrlDb } from "../analysis/nsrlDb.js";
-import type { ImporterFailure, AiError } from "../analysis/diagnostics.js";
+import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diagnostics.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
@@ -54,6 +54,7 @@ export interface RouteContext {
   readonly appStartedAt: number;
   readonly recentImportFailures: ImporterFailure[]; // diagnostics ring, mutated in place by recordImportFailure
   readonly recentAiErrors: AiError[]; // diagnostics ring, mutated in place by recordAiError
+  readonly importerRunStats: Map<string, ImporterRunStat>; // per-custom-importer last-run health (#84), keyed by importer id, mutated in place by dispatchImport
   // The HMAC secret (persisted next to the cases root) that signs/verifies case-unlock cookies. Graduated
   // for routes/casePassword.ts's unlock route: the staying case-lock GATE (createCaseLockGate) + readUnlockState
   // use the SAME secret, so it's graduated (a stable readonly value), not recomputed per module.

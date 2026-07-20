@@ -7,8 +7,10 @@ import {
   countByKind,
   aggregateCaseSizes,
   buildDiagnosticsText,
+  summarizeImporterHealth,
   type AiError,
   type DiagnosticsReport,
+  type ImporterRunStat,
 } from "../../src/analysis/diagnostics.js";
 
 describe("formatBytes", () => {
@@ -195,9 +197,41 @@ function sampleReport(): DiagnosticsReport {
         { at: "2026-06-17T00:00:00.000Z", caseId: "case-1", kind: "siem", filename: "alerts.json", error: "bad JSON" },
       ],
       customImporters: 0,
+      perImporter: [],
+      loadErrors: [],
     },
   };
 }
+
+describe("summarizeImporterHealth", () => {
+  const meta = [
+    { id: "acme-edr", label: "Acme EDR", file: "acme-edr.json", priority: 10 },
+    { id: "acme-proxy", label: "Acme Proxy", file: "acme-proxy.json", priority: 20 },
+  ];
+
+  it("shows null stat fields for an importer that loaded but never ran", () => {
+    const health = summarizeImporterHealth(meta, new Map());
+    expect(health).toEqual([
+      { id: "acme-edr", label: "Acme EDR", file: "acme-edr.json", priority: 10, lastRunAt: null, lastStatus: null, total: null, kept: null, dropped: null, lastError: null },
+      { id: "acme-proxy", label: "Acme Proxy", file: "acme-proxy.json", priority: 20, lastRunAt: null, lastStatus: null, total: null, kept: null, dropped: null, lastError: null },
+    ]);
+  });
+
+  it("merges in the live run stat for an importer that has run", () => {
+    const stat: ImporterRunStat = { lastRunAt: "2026-06-17T00:00:00.000Z", lastStatus: "ok", total: 100, kept: 40, dropped: 60, lastError: null };
+    const runStats = new Map([["acme-edr", stat]]);
+    const health = summarizeImporterHealth(meta, runStats);
+    expect(health[0]).toEqual({ id: "acme-edr", label: "Acme EDR", file: "acme-edr.json", priority: 10, ...stat });
+    expect(health[1].lastStatus).toBeNull(); // untouched importer stays "never run"
+  });
+
+  it("surfaces the last error for a failed run", () => {
+    const stat: ImporterRunStat = { lastRunAt: "2026-06-17T00:00:00.000Z", lastStatus: "error", total: 0, kept: 0, dropped: 0, lastError: "malformed record at row 3" };
+    const health = summarizeImporterHealth(meta, new Map([["acme-proxy", stat]]));
+    expect(health[1].lastStatus).toBe("error");
+    expect(health[1].lastError).toBe("malformed record at row 3");
+  });
+});
 
 describe("buildDiagnosticsText", () => {
   it("produces a human-readable, key-free blob", () => {
@@ -209,6 +243,22 @@ describe("buildDiagnosticsText", () => {
     expect(text).toContain("recent AI errors: billing=1");
     expect(text).toContain("attempts: 2 (24h) · 9 (7d) · 12 total");
     expect(text).toContain("case-1 siem alerts.json: bad JSON");
+  });
+
+  it("lists per-importer health and spec load errors when present", () => {
+    const r = sampleReport();
+    r.importers.perImporter = [
+      { id: "acme-edr", label: "Acme EDR", file: "acme-edr.json", priority: 10, lastRunAt: "2026-06-17T00:00:00.000Z", lastStatus: "ok", total: 100, kept: 40, dropped: 60, lastError: null },
+      { id: "acme-proxy", label: "Acme Proxy", file: "acme-proxy.json", priority: 20, lastRunAt: null, lastStatus: null, total: null, kept: null, dropped: null, lastError: null },
+    ];
+    r.importers.loadErrors = [
+      { file: "broken.json", errors: [{ path: "(file)", message: "not valid JSON: Unexpected token" }] },
+    ];
+    const text = buildDiagnosticsText(r);
+    expect(text).toContain("acme-edr (Acme EDR): ok — 40/100 kept, 60 dropped");
+    expect(text).toContain("acme-proxy (Acme Proxy): never run");
+    expect(text).toContain("spec load errors (1)");
+    expect(text).toContain("broken.json: (file): not valid JSON: Unexpected token");
   });
 
   it("renders the not-configured AI case", () => {
