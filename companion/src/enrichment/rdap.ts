@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind } from "./provider.js";
 
 // WHOIS-equivalent registration lookup for an IP IOC, over RDAP (the modern, JSON-over-HTTPS
 // replacement for port-43 WHOIS). Resolves which network block owns the address: net name,
@@ -94,7 +94,7 @@ export class RdapProvider implements EnrichmentProvider {
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
     if (res.status === 404) return null;                          // no allocation found for this IP
-    if (res.status === 429) throw new Error("RDAP/WHOIS rate limit");
+    if (res.status === 429) throw new RateLimitError("RDAP/WHOIS rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`RDAP/WHOIS HTTP ${res.status}`);
 
     const json = (await res.json()) as RdapIpResponse;
