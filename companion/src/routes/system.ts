@@ -2,11 +2,13 @@ import type { Express, Request, Response } from "express";
 import { join, relative } from "node:path";
 import { readFile, stat, readdir, mkdir } from "node:fs/promises";
 import { isLogLevel } from "../logging/logger.js";
+import { getCodexStatus, startCodexLogin } from "../providers/codexStatus.js";
 import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "../analysis/diskWarn.js";
 import {
   buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
   summarizeImporterHealth, type DiagnosticsReport, type ScannedFile,
 } from "../analysis/diagnostics.js";
+import { getClaudeCodeStatus, startClaudeLogin } from "../providers/claudeCodeStatus.js";
 import {
   buildPreflightReport, buildPreflightText,
   type PreflightItem, type PreflightReport,
@@ -314,6 +316,32 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       serverLogger.info(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
       return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
     }
+  });
+
+  // Claude Code connection status (installed / signed-in) for Settings → AI and the wizard.
+  app.get("/diagnostics/claude-code-status", async (_req: Request, res: Response) => {
+    const status = await getClaudeCodeStatus({ bin: process.env.DFIR_AI_CLAUDE_CODE_BIN });
+    return res.status(200).json({ ok: true, ...status });
+  });
+
+  // Best-effort "Connect" action: start `claude auth login` on the host and return any auth URL.
+  // Only meaningful when the server runs on the operator's own machine; Re-check confirms success.
+  app.post("/diagnostics/claude-code-login", async (_req: Request, res: Response) => {
+    const r = await startClaudeLogin({ bin: process.env.DFIR_AI_CLAUDE_CODE_BIN });
+    return res.status(200).json({ ok: r.started, ...r });
+  });
+
+  // Codex CLI connection status (installed / signed-in) for Settings → AI and the wizard.
+  app.get("/diagnostics/codex-status", async (_req: Request, res: Response) => {
+    const status = await getCodexStatus({ bin: process.env.DFIR_AI_CODEX_BIN });
+    return res.status(200).json({ ok: true, ...status });
+  });
+
+  // Best-effort "Connect" action: start `codex login` on the host and return any auth URL.
+  // Only meaningful when the server runs on the operator's own machine; Re-check confirms success.
+  app.post("/diagnostics/codex-login", async (_req: Request, res: Response) => {
+    const r = await startCodexLogin({ bin: process.env.DFIR_AI_CODEX_BIN });
+    return res.status(200).json({ ok: r.started, ...r });
   });
 
   // ── Startup pre-flight (#179) ─────────────────────────────────────────────────────────

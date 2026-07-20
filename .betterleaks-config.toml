@@ -27,7 +27,7 @@ targetRules = ["internal-hostname"]
 regexTarget = "line"
 regexes = [
   '''(?i)[\w.-]+\.corp\b''',
-  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme)\.local\b''',
+  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
 ]

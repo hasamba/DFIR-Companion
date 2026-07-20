@@ -35,6 +35,14 @@ describe("VirusTotalProvider", () => {
     await expect(rl.lookup("hash", "x")).rejects.toThrow(/rate limit/i);
   });
 
+  it("throws a RateLimitError carrying the parsed Retry-After on 429 (#78)", async () => {
+    const rl = new VirusTotalProvider({
+      apiKey: "k",
+      fetchFn: vi.fn(async () => new Response("", { status: 429, headers: { "retry-after": "20" } })),
+    });
+    await expect(rl.lookup("hash", "x")).rejects.toMatchObject({ name: "RateLimitError", retryAfterMs: 20_000 });
+  });
+
   it("addresses a URL by unpadded base64url", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ data: { id: "u", attributes: { last_analysis_stats: { malicious: 0, harmless: 80 } } } }));
     const vt = new VirusTotalProvider({ apiKey: "k", fetchFn });

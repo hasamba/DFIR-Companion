@@ -113,7 +113,7 @@ describe("hunting feedback loop — routes (#157)", () => {
 
   it("GET hunt-outcomes returns an empty profile for a fresh case", async () => {
     const { app } = await makeApp();
-    expect((await request(app).get("/cases/c1/hunt-outcomes")).body).toEqual({ total: 0, hit: 0, missed: 0, pending: 0, hunts: [] });
+    expect((await request(app).get("/cases/c1/hunt-outcomes")).body).toEqual({ total: 0, hit: 0, missed: 0, pending: 0, hunts: [], pivotProductivity: [] });
   });
 
   it("suggest-hunts excludes a VQL that was already deployed", async () => {
