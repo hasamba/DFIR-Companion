@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
 
 // CIRCL hashlookup (https://www.circl.lu/services/hashlookup/) — a large, free, keyless
 // KNOWN-FILE database (NSRL-derived corpus + Linux distro packages + more). For DFIR this is
@@ -72,7 +72,7 @@ export class HashlookupProvider implements EnrichmentProvider {
     });
     // Unknown hash (404) or malformed (400) → a clean miss, cached as "checked, nothing".
     if (res.status === 404 || res.status === 400) return null;
-    if (res.status === 429) throw new Error("Hashlookup rate limit");
+    if (res.status === 429) throw new RateLimitError("Hashlookup rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`Hashlookup HTTP ${res.status}`);
 
     const json = (await res.json()) as Record<string, unknown>;

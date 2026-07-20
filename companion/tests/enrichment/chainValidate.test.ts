@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateProcessChains, hasChainWork } from "../../src/enrichment/chainValidate.js";
+import { RateLimitError } from "../../src/enrichment/provider.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { ParentChildResult } from "../../src/enrichment/rockyraccoon.js";
 
@@ -55,6 +56,33 @@ describe("validateProcessChains", () => {
     const many = [ev({ id: "1", parentName: "a", processName: "x" }), ev({ id: "2", parentName: "b", processName: "y" })];
     const capped = await validateProcessChains(many, { check, sleep: noSleep, now, maxChecks: 1 });
     expect(capped.summary.checked).toBe(1);
+  });
+
+  it("applies ± jitterMs on top of delayMs between checks", async () => {
+    const slept: number[] = [];
+    const check = async (): Promise<ParentChildResult> => ({ observed: true, note: "ok" });
+    const events = [
+      ev({ id: "a", parentName: "p1.exe", processName: "c1.exe" }),
+      ev({ id: "b", parentName: "p2.exe", processName: "c2.exe" }),
+    ];
+    await validateProcessChains(events, {
+      check, now, sleep: async (ms) => { slept.push(ms); }, delayMs: 1000, jitterMs: 200, random: () => 1,
+    });
+    expect(slept).toEqual([1200]);   // random()=1 → +jitterMs edge
+  });
+
+  it("retries a check() that throws RateLimitError instead of counting it as an immediate error", async () => {
+    let attempts = 0;
+    const check = async (): Promise<ParentChildResult> => {
+      attempts++;
+      if (attempts < 3) throw new RateLimitError("rate limited");
+      return { observed: true, note: "ok" };
+    };
+    const events = [ev({ id: "a", parentName: "p.exe", processName: "c.exe" })];
+    const { summary } = await validateProcessChains(events, { check, now, sleep: noSleep, retry: { retries: 3, backoffMs: 1 } });
+    expect(attempts).toBe(3);
+    expect(summary.checked).toBe(1);
+    expect(summary.errors).toBe(0);
   });
 });
 
