@@ -44,13 +44,11 @@ function setYear(ts: string, year: number): string {
   )).toISOString();
 }
 
-// Re-anchor events whose year is an outlier onto the timeline's dominant year (see module header).
-// Returns a new array; events already on the dominant year (or undated) pass through unchanged. When no
-// year dominates, or the timeline is too small, the input is returned as-is.
-export function clampOutlierYears(events: readonly ForensicEvent[], opts: YearClampOptions = {}): ForensicEvent[] {
-  const dominantFraction = opts.dominantFraction ?? DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION;
-  const minEvents = opts.minEvents ?? YEAR_CLAMP_MIN_EVENTS;
-
+// The modal (most frequent) year among an event array's DATED timestamps, or null when none are dated.
+// Shared by clampOutlierYears (post-hoc correction across the whole timeline) and pickImportYear
+// (a pre-emptive default for a year-less parser) — both need "what year does this case's evidence
+// actually live in."
+function modalYear(events: readonly ForensicEvent[]): { year: number; count: number; dated: number } | null {
   const byYear = new Map<number, number>();
   let dated = 0;
   for (const e of events) {
@@ -59,12 +57,24 @@ export function clampOutlierYears(events: readonly ForensicEvent[], opts: YearCl
     dated++;
     byYear.set(y, (byYear.get(y) ?? 0) + 1);
   }
-  if (dated < minEvents || byYear.size < 2) return [...events];
+  if (dated === 0) return null;
+  let year = 0;
+  let count = -1;
+  for (const [y, c] of byYear) if (c > count) { year = y; count = c; }
+  return { year, count, dated };
+}
 
-  let dominantYear = 0;
-  let dominantCount = -1;
-  for (const [y, c] of byYear) if (c > dominantCount) { dominantYear = y; dominantCount = c; }
-  if (dominantCount / dated < dominantFraction) return [...events]; // no clear anchor → leave untouched
+// Re-anchor events whose year is an outlier onto the timeline's dominant year (see module header).
+// Returns a new array; events already on the dominant year (or undated) pass through unchanged. When no
+// year dominates, or the timeline is too small, the input is returned as-is.
+export function clampOutlierYears(events: readonly ForensicEvent[], opts: YearClampOptions = {}): ForensicEvent[] {
+  const dominantFraction = opts.dominantFraction ?? DEFAULT_YEAR_CLAMP_DOMINANT_FRACTION;
+  const minEvents = opts.minEvents ?? YEAR_CLAMP_MIN_EVENTS;
+
+  const m = modalYear(events);
+  if (!m || m.dated < minEvents) return [...events];
+  if (m.count / m.dated < dominantFraction) return [...events]; // no clear anchor → leave untouched
+  const dominantYear = m.year;
 
   return events.map((e) => {
     const y = yearOf(e.timestamp);
@@ -76,4 +86,24 @@ export function clampOutlierYears(events: readonly ForensicEvent[], opts: YearCl
     }
     return next;
   });
+}
+
+// Best-guess year for a NEW year-less import (Cisco ASA / Snort / syslog), to use as the parser's
+// `assumeYear` instead of blindly stamping the current calendar year.
+//
+// Blindly defaulting to "now" is wrong whenever the evidence is historical (the common case), and
+// clampOutlierYears cannot always fix it after the fact: that guard is a MINORITY-outlier correction
+// (≥90% of the timeline must already agree on the real year). A single large year-less import — e.g. a
+// Cisco ASA or Snort log covering the whole incident window — can itself contribute a big enough slice
+// of the merged timeline that the wrong year is no longer a small minority, so the ≥90% bar is never
+// crossed and the stray year survives (see the "meridian espionage" ground-truth benchmark, where an
+// ASA log alone was ~27% of the final timeline).
+//
+// Picks the case's already-established modal year among its existing DATED events (when there are
+// enough to trust); otherwise returns undefined so the caller falls back to its current-year default —
+// there's no better guess for the very first import of a case. Pure.
+export function pickImportYear(existingEvents: readonly ForensicEvent[], minEvents = 3): number | undefined {
+  const m = modalYear(existingEvents);
+  if (!m || m.dated < minEvents) return undefined;
+  return m.year;
 }

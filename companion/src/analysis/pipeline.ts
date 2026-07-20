@@ -90,6 +90,7 @@ import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImpo
 import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
 import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
 import { parseSyslog, SYSLOG_SOURCE, type SyslogImportOptions } from "./syslogImport.js";
+import { pickImportYear } from "./timeYearClamp.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
 import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
@@ -2607,7 +2608,12 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa });
+    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
+    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
+    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
+    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
+    const assumeYear = opts.ciscoAsa?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
+    const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -2655,7 +2661,12 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsedRaw = parseSnortLog(text, { ...opts.snort });
+    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
+    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
+    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
+    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
+    const assumeYear = opts.snort?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
+    const parsedRaw = parseSnortLog(text, { ...opts.snort, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
@@ -2754,7 +2765,12 @@ export class AnalysisPipeline {
       onProgress?: (done: number, total: number) => void;
     },
   ): Promise<InvestigationState> {
-    const parsedRaw = parseSyslog(text, { ...opts.syslog });
+    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
+    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
+    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
+    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
+    const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
+    const parsedRaw = parseSyslog(text, { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
 
