@@ -87,6 +87,25 @@ describe("importEncryptedCase", () => {
     expect(importsRestored[0].caseId).toBe("INC-2");
   });
 
+  it("rewrites investigation.json compact and case.json pretty", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-1");
+    const archive = await exportEncryptedCase(store, "INC-1", PASSWORD);
+    await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-2" });
+
+    // investigation.json can be huge; re-inflating it on import would undo StateStore's
+    // compact write and push a near-ceiling case back over the ~512 MB load limit.
+    const inv = await readFile(join(store.stateDir("INC-2"), "investigation.json"), "utf8");
+    expect(inv).not.toContain("\n");
+    expect(JSON.parse(inv).caseId).toBe("INC-2");
+
+    // case.json stays pretty — it's small and CaseStore writes it pretty, so compacting it
+    // here would only flip formatting until the next save.
+    const caseJson = await readFile(join(store.caseDir("INC-2"), "case.json"), "utf8");
+    expect(caseJson).toContain("\n  ");
+    expect(JSON.parse(caseJson).caseId).toBe("INC-2");
+  });
+
   it("imports under the archive's own id into a fresh store when no target is given", async () => {
     const store1 = await harness();
     await seedCase(store1, "INC-1");
