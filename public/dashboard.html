@@ -7666,9 +7666,17 @@
       renderPlaybook();
     }
 
+    // Send only dependencies that still name a LIVE task. A stale edge (the dependency's task was
+    // deleted) is retained on the server so an auto-derived task re-derived later reconnects — but it
+    // is never listed in this picker, and the server rejects any dependsOn naming an unknown id. So
+    // resending it made every toggle fail with "unknown task id(s): ..." against an id the analyst
+    // cannot see or untick, permanently freezing that task's dependencies. Filtering to live ids keeps
+    // the picker WYSIWYG: what's ticked is what gets saved, and the stale edge is pruned as a side
+    // effect of the analyst explicitly restating the list.
     function pbToggleDep(id, depId, checked) {
       const t = playbookTasks.find(x => x.id === id);
-      const cur = new Set((t && t.dependsOn) || []);
+      const live = new Set(playbookTasks.map(x => x.id));
+      const cur = new Set(((t && t.dependsOn) || []).filter(d => live.has(d)));
       if (checked) cur.add(depId); else cur.delete(depId);
       pbPatch(id, { dependsOn: [...cur] });
     }
