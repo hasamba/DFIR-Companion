@@ -13,7 +13,7 @@ import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timeline
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { corroborationLabel } from "../analysis/findingGrounding.js";
-import { coverageLabel, type SynthesisCoverage } from "../analysis/synthMeta.js";
+import { coverageLabel, modelPerfLabel, type SynthesisCoverage, type ModelPerfSnapshot } from "../analysis/synthMeta.js";
 import { collectSummary } from "../analysis/collectDirective.js";
 import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -290,6 +290,18 @@ function synthesisCoverageNote(coverage: SynthesisCoverage | null | undefined, l
   if (!coverage || coverage.inWindow <= 0) return;
   lines.push("### 3.4 Synthesis coverage", "");
   lines.push(`_${coverageLabel(coverage)}. Events omitted for the prompt size limit remain in the case; any Critical/High among them is still covered by the deterministic safety-net backfill._`, "");
+}
+
+// Model-performance footnote (issue #74) — which model ran the last synthesis, how many findings it
+// produced vs how many the deterministic safety net had to backfill, and (when a second opinion has
+// run) how often the second-opinion model agreed with the primary. Opt-in via DFIR_REPORT_MODEL_PERF
+// (the report writer passes null when the flag is off or nothing was recorded), same posture as the
+// synthesis-coverage footnote — internal methodology detail, not every report should carry it.
+function modelPerformanceNote(modelPerf: ModelPerfSnapshot | null | undefined, lines: string[]): void {
+  const label = modelPerf ? modelPerfLabel(modelPerf) : null;
+  if (!label) return;
+  lines.push("### 3.5 Model performance", "");
+  lines.push(`_${label}_`, "");
 }
 
 function timelineCoverage(state: InvestigationState, lines: string[]): void {
@@ -1025,6 +1037,7 @@ export function renderMarkdownReport(
   secondLookLeads: string[] = [],   // #11 deferred: unresolved second-look collection leads
   coverage?: SynthesisCoverage | null,   // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
   lateralPaths?: LateralPath[],   // prebuilt with analyst dismissals applied; derived here when absent
+  modelPerf?: ModelPerfSnapshot | null,  // #74: model-performance footnote (opt-in via DFIR_REPORT_MODEL_PERF)
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -1059,6 +1072,7 @@ export function renderMarkdownReport(
       attackPhases(state, lines);
       timelineCoverage(state, lines);
       synthesisCoverageNote(coverage, lines);
+      modelPerformanceNote(modelPerf, lines);
       timelineAnomalies(state, lines);
     },
     investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads, lateralPaths),

@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { SynthMetaStore, buildSynthesisCoverage, coverageLabel } from "../../src/analysis/synthMeta.js";
+import { SynthMetaStore, buildSynthesisCoverage, coverageLabel, modelPerfLabel } from "../../src/analysis/synthMeta.js";
 import type { FindingsDiff } from "../../src/analysis/findingsDiff.js";
 
 const DIFF: FindingsDiff = {
@@ -64,6 +64,88 @@ describe("SynthMetaStore", () => {
     await store.record("c1", DIFF, "2026-07-14T10:00:00.000Z", { durationMs: 1, eventCount: 287, iocCount: 3, coverage });
     const meta = await store.load("c1");
     expect(meta.coverage).toEqual(coverage);
+  });
+
+  // Per-model quality telemetry (issue #74).
+  it("stores and loads per-model quality fields", async () => {
+    await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z", {
+      durationMs: 1, eventCount: 287, iocCount: 3,
+      synthModel: "anthropic/claude-sonnet-5",
+      findingsCount: 12,
+      highSeverityBackfillCount: 2,
+      parseRetries: 1,
+    });
+    const meta = await store.load("c1");
+    expect(meta.synthModel).toBe("anthropic/claude-sonnet-5");
+    expect(meta.findingsCount).toBe(12);
+    expect(meta.highSeverityBackfillCount).toBe(2);
+    expect(meta.parseRetries).toBe(1);
+  });
+
+  it("loads fine when per-model quality fields are absent (old record format)", async () => {
+    await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z");
+    const meta = await store.load("c1");
+    expect(meta.synthModel).toBeUndefined();
+    expect(meta.findingsCount).toBeUndefined();
+    expect(meta.highSeverityBackfillCount).toBeUndefined();
+    expect(meta.parseRetries).toBeUndefined();
+    expect(meta.secondOpinionPerf).toBeUndefined();
+  });
+
+  it("records a second-opinion agreement snapshot without disturbing the rest of the meta", async () => {
+    await store.record("c1", DIFF, "2026-07-18T10:00:00.000Z", { durationMs: 1, eventCount: 287, iocCount: 3, synthModel: "anthropic/claude-sonnet-5" });
+    const perf = { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" };
+    await store.recordSecondOpinionPerf("c1", perf);
+    const meta = await store.load("c1");
+    expect(meta.secondOpinionPerf).toEqual(perf);
+    expect(meta.synthModel).toBe("anthropic/claude-sonnet-5"); // untouched by the merge
+  });
+
+  it("clears the second-opinion snapshot with null", async () => {
+    const perf = { modelA: "a", modelB: "b", agreementCount: 1, deltaCount: 1, agreementRate: 0.5, at: "2026-07-18T10:05:00.000Z" };
+    await store.recordSecondOpinionPerf("c1", perf);
+    await store.recordSecondOpinionPerf("c1", null);
+    const meta = await store.load("c1");
+    expect(meta.secondOpinionPerf).toBeNull();
+  });
+
+  it("a plain record() wipes a previously-recorded second-opinion snapshot (same posture as secondLook)", async () => {
+    const perf = { modelA: "a", modelB: "b", agreementCount: 1, deltaCount: 1, agreementRate: 0.5, at: "2026-07-18T10:05:00.000Z" };
+    await store.recordSecondOpinionPerf("c1", perf);
+    await store.record("c1", DIFF, "2026-07-18T11:00:00.000Z", { durationMs: 1, eventCount: 1, iocCount: 0 });
+    const meta = await store.load("c1");
+    expect(meta.secondOpinionPerf).toBeUndefined();
+  });
+});
+
+describe("modelPerfLabel", () => {
+  it("returns null when nothing was recorded", () => {
+    expect(modelPerfLabel({})).toBeNull();
+  });
+
+  it("describes the synthesis model, findings, and backfill/retry counts", () => {
+    const label = modelPerfLabel({ synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 2, parseRetries: 1 });
+    expect(label).toMatch(/anthropic\/claude-sonnet-5/);
+    expect(label).toMatch(/12 finding/);
+    expect(label).toMatch(/2 recovered by the high-severity safety net/);
+    expect(label).toMatch(/1 parse retry/);
+  });
+
+  it("omits the backfill/retry clauses when zero", () => {
+    const label = modelPerfLabel({ synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 0, parseRetries: 0 });
+    expect(label).not.toMatch(/safety net/);
+    expect(label).not.toMatch(/retry/);
+  });
+
+  it("adds a second-opinion agreement clause", () => {
+    const label = modelPerfLabel({
+      secondOpinionPerf: { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" },
+    });
+    expect(label).toMatch(/openai\/gpt-5/);
+    expect(label).toMatch(/anthropic\/claude-sonnet-5/);
+    expect(label).toMatch(/8 finding/);
+    expect(label).toMatch(/2 disagreement/);
+    expect(label).toMatch(/80% agreement/);
   });
 });
 

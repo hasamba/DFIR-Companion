@@ -48,7 +48,7 @@ import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
-import type { SynthMetaStore, SynthesisCoverage } from "../analysis/synthMeta.js";
+import type { SynthMetaStore, SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -113,6 +113,19 @@ export class ReportWriter {
     const flag = (process.env.DFIR_REPORT_SYNTH_COVERAGE ?? "").trim().toLowerCase();
     if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
     try { return (await this.synthMeta.load(caseId)).coverage ?? null; } catch { return null; }
+  }
+
+  // Model-performance footnote (#74) — OPT-IN via DFIR_REPORT_MODEL_PERF, same posture as the
+  // synthesis-coverage footnote (internal methodology detail, not every report should carry it).
+  private async loadModelPerf(caseId: string): Promise<ModelPerfSnapshot | null> {
+    const flag = (process.env.DFIR_REPORT_MODEL_PERF ?? "").trim().toLowerCase();
+    if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
+    try {
+      const meta = await this.synthMeta.load(caseId);
+      return { synthModel: meta.synthModel, findingsCount: meta.findingsCount, highSeverityBackfillCount: meta.highSeverityBackfillCount, parseRetries: meta.parseRetries, secondOpinionPerf: meta.secondOpinionPerf };
+    } catch {
+      return null;
+    }
   }
 
   // Resolve the report template selected for the case (issue #60). Falls back to the default
@@ -429,9 +442,10 @@ export class ReportWriter {
     secondLookLeads?: string[],
     coverage?: SynthesisCoverage | null,
     lateralPaths?: LateralPath[],
+    modelPerf?: ModelPerfSnapshot | null,
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -466,7 +480,8 @@ export class ReportWriter {
     const coverage = await this.loadCoverage(caseId);
     // Lateral chains the analyst dismissed must not reappear in the written report.
     const lateralPaths = filterDismissedPaths(buildLateralPaths(state), await this.loadLateralPathDismissals(caseId));
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths);
+    const modelPerf = await this.loadModelPerf(caseId);
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");

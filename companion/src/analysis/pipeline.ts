@@ -4993,15 +4993,26 @@ export class AnalysisPipeline {
     // it to extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
     // synthesis reasons step-by-step — extraction stays cheap.
     const synthThinkingTokens = resolveSynthThinkingBudget(opts, Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0);
+    // Per-model quality telemetry (#74): count retries the synthesis call actually needed (a failed
+    // parse/schema-mismatch attempt increments this). Counted on catch INSIDE the retried closure
+    // rather than via this.withRetry's onRetry hook, because that hook is the shared server-logging
+    // callback — routing through this.withRetry keeps master's per-attempt WARN logging intact while
+    // the local catch keeps the count. Surfaced on synth-meta so a flaky model shows up empirically.
+    let synthParseRetries = 0;
     const delta = await this.withRetry(caseId, "synthesis", async () => {
-      const parsed = await this.analyzeRestored(
-        caseId,
-        state,
-        synthProvider,
-        { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}), ...(opts.signal ? { signal: opts.signal } : {}) },
-        "synthesis",
-      );
-      return stripAiExtractedFrom(deltaSchema.parse(parsed));
+      try {
+        const parsed = await this.analyzeRestored(
+          caseId,
+          state,
+          synthProvider,
+          { systemPrompt: getSynthesisPrompt(), userPrompt, images: [], ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}), ...(opts.signal ? { signal: opts.signal } : {}) },
+          "synthesis",
+        );
+        return stripAiExtractedFrom(deltaSchema.parse(parsed));
+      } catch (err) {
+        synthParseRetries++;
+        throw err;
+      }
     }, retries, backoffMs);
 
     // Anchor finding timestamps to the last real event time (fallback: existing state time).
@@ -5041,6 +5052,8 @@ export class AnalysisPipeline {
     // missed. Restricted to the events synthesis actually considered (scopedEvents).
     const eligibleIds = new Set(scopedEvents.map((e) => e.id));
     const backfilled = backfillHighSeverityFindings(linked, eligibleIds, ts);
+    // #74: how many findings the safety net had to add — a proxy for detections synthModel itself missed.
+    const highSeverityBackfillCount = backfilled.findings.length - linked.findings.length;
     // Log gap analysis (#83): a COMPLETE-silence gap — a window where every source went dark — is the
     // classic signature of cleared logs / a stopped collector, so escalate it to a finding here too.
     // Gaps are derived on read (not persisted); only the complete ones earn a persisted finding, and
@@ -5240,6 +5253,10 @@ export class AnalysisPipeline {
       iocCount: next.iocs.length,
       selectionCounts: { ...selection.counts },   // #4: the evidence mix the model saw
       coverage: synthCoverage,                     // #62: included/omitted coverage audit
+      synthModel: this.opts.synthesisModelLabel ?? `${synthProvider.name}/${synthProvider.model}`, // #74
+      findingsCount: next.findings.length,          // #74
+      highSeverityBackfillCount,                    // #74
+      parseRetries: synthParseRetries,              // #74
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
@@ -5400,6 +5417,18 @@ export class AnalysisPipeline {
     }
 
     await this.opts.secondOpinionStore.save(caseId, record);
+    // Per-model quality telemetry (#74): stamp the agreement rate onto synth-meta so modelA vs modelB
+    // can be compared empirically across runs, not just eyeballed on this one second-opinion panel.
+    const deltaCount = record.deltas.length;
+    const denom = record.agreementCount + deltaCount;
+    await this.opts.synthMetaStore?.recordSecondOpinionPerf(caseId, {
+      modelA,
+      modelB,
+      agreementCount: record.agreementCount,
+      deltaCount,
+      agreementRate: denom > 0 ? record.agreementCount / denom : 0,
+      at: record.generatedAt,
+    });
     return record;
   }
 

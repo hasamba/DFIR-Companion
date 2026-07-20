@@ -579,4 +579,34 @@ describe("renderMarkdownReport", () => {
       expect(md).not.toContain("### 3.4 Synthesis coverage");
     });
   });
+
+  describe("model performance footnote (#74)", () => {
+    const modelPerf = { synthModel: "anthropic/claude-sonnet-5", findingsCount: 12, highSeverityBackfillCount: 2, parseRetries: 1 };
+
+    // NOTE the argument count: modelPerf is the LAST parameter, with master's `lateralPaths`
+    // immediately before it. These are positional, so an off-by-one silently passes the snapshot
+    // as lateralPaths and leaves modelPerf undefined — the footnote then never renders.
+    it("renders the model-performance section when a snapshot is passed", () => {
+      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], undefined, undefined, modelPerf);
+      expect(md).toContain("### 3.5 Model performance");
+      expect(md).toContain("anthropic/claude-sonnet-5");
+      expect(md).toContain("12 findings");
+      expect(md).toContain("safety net");
+    });
+
+    it("adds the second-opinion agreement clause when recorded", () => {
+      const withSecondOpinion = {
+        ...modelPerf,
+        secondOpinionPerf: { modelA: "anthropic/claude-sonnet-5", modelB: "openai/gpt-5", agreementCount: 8, deltaCount: 2, agreementRate: 0.8, at: "2026-07-18T10:05:00.000Z" },
+      };
+      const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], undefined, undefined, withSecondOpinion);
+      expect(md).toContain("openai/gpt-5");
+      expect(md).toContain("80% agreement");
+    });
+
+    it("omits the model-performance section by default (no snapshot passed)", () => {
+      const md = renderMarkdownReport(emptyState("c1"));
+      expect(md).not.toContain("### 3.5 Model performance");
+    });
+  });
 });
