@@ -1333,6 +1333,17 @@
     .tip { position: fixed; z-index: 1000; max-width: 360px; background: var(--c-0b0e13); color: var(--c-cbd3df);
       border: 1px solid var(--c-2a3340); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
       box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none; white-space: normal; }
+    /* Transient toast for an action whose ONLY feedback would otherwise be the #status line in the
+       toolbar — which is scrolled out of view for anyone working further down the page, making a
+       refusal (e.g. "nothing to seed a Sigma draft from") look like a dead button. Fixed to the
+       viewport so it is seen wherever the click happened. Borrows the .tip tokens for consistency. */
+    .toast { position: fixed; z-index: 1200; left: 50%; bottom: 24px; transform: translateX(-50%);
+      max-width: min(560px, 92vw); background: var(--c-0b0e13); color: var(--c-cbd3df);
+      border: 1px solid var(--c-2a3340); border-radius: 6px; padding: 10px 14px; font-size: 13px;
+      line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none;
+      opacity: 0; transition: opacity .15s ease; }
+    .toast.show { opacity: 1; }
+    .toast.warn { border-color: var(--c-ffd93b); color: var(--c-ffd93b); }
     /* Kill-chain tactic phase view */
     .kc-strip { display: flex; flex-wrap: wrap; gap: 6px; }
     .kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid var(--c-2a2f3a); border-radius: 6px;
@@ -8527,13 +8538,38 @@
     function sigmaExportChip(id) {
       return `<button class="sigma-export-btn" data-sigma-fid="${escAttr(String(id))}" title="Export this finding as a Sigma detection-rule draft (.yml)">${ICON_DOWNLOAD}</button>`;
     }
+    // Transient viewport-anchored message. The #status line lives in the toolbar, so for anything
+    // triggered from a row further down the page it is scrolled out of sight — a refusal then reads
+    // as a dead button. Still writes #status too, so the last action stays inspectable there.
+    let toastTimer = null;
+    function showToast(text, kind) {
+      const statusEl = document.getElementById("status");
+      if (statusEl) statusEl.textContent = text;
+      let el = document.getElementById("toast");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "toast";
+        document.body.appendChild(el);
+      }
+      el.className = "toast" + (kind === "warn" ? " warn" : "");
+      el.textContent = text;
+      // Force a reflow, then add .show, so the opacity transition has a frame to animate FROM.
+      // Deliberately NOT requestAnimationFrame: rAF does not fire while the tab is hidden, which
+      // would leave the toast permanently at opacity 0 — the failure this whole change exists to fix.
+      void el.offsetWidth;
+      el.classList.add("show");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove("show");
+      }, kind === "warn" ? 6000 : 3500);   // a refusal needs longer to read than a confirmation
+    }
+
     function exportFindingSigma(findingId) {
       const f = ((lastState && lastState.findings) || []).find((x) => x.id === findingId);
-      const statusEl = document.getElementById("status");
       if (!f) return;
       const yaml = findingSigmaYaml(f, findingSigmaContext(f));
       if (!yaml) {
-        if (statusEl) statusEl.textContent = "no hash / IP / domain / path / process indicators on this finding's related events or IOCs — nothing to seed a Sigma draft from";
+        showToast("No Sigma draft: this finding has no hash / IP / domain / path / process indicators on its related events or IOCs to key a rule on.", "warn");
         return;
       }
       const blob = new Blob([yaml], { type: "application/x-yaml" });
@@ -8541,7 +8577,7 @@
       const a = document.createElement("a");
       a.href = url; a.download = `sigma-draft-${String(f.id).replace(/[^A-Za-z0-9_-]+/g, "_")}.yml`; a.click();
       URL.revokeObjectURL(url);
-      if (statusEl) statusEl.textContent = "Sigma draft downloaded — review before deploying (status: experimental)";
+      showToast("Sigma draft downloaded — review before deploying (status: experimental)");
     }
 
     // Elastic ES|QL — one piped query over ECS fields, runnable in Kibana Discover / Security.
