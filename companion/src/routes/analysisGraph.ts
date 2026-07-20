@@ -14,6 +14,7 @@ import type { RouteContext } from "./context.js";
  *   - GET    /cases/:id/login-graph              — directed account→host logon graph (4624/4625, from the super-timeline).
  *   - GET    /cases/:id/login-graph/edge-events  — the events behind one login-graph edge (lazy drill-down).
  *   - GET    /cases/:id/evidence-graph           — causal evidence chain (process trees + lateral). Optional ?from/?until (#83).
+ *   - GET    /cases/:id/lateral-paths            — ordered lateral-movement chains (entry→pivot→target, #92). Optional ?from/?until (#83).
  *   - GET    /cases/:id/phases                   — temporal attack phases (activity bursts).
  *   - GET    /cases/:id/beacon-candidates        — regular-interval C2 candidates (#82).
  *   - GET    /cases/:id/anomalies                — per-asset event-rate spikes (#175).
@@ -130,6 +131,59 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       return res.status(200).json(await options.reportWriter.evidenceGraph(req.params.id, timeWindow(req)));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Ordered lateral-movement chains (#92): entry host → pivot → ... → target, derived on demand
+  // from the current state with the same scope/legitimate filtering as the report. Optional
+  // ?from/?until (#83). Complements /evidence-graph's pairwise lateral_move edges with the
+  // temporal sequencing they deliberately don't encode.
+  // ?includeDismissed=1 returns analyst-dismissed chains too, each flagged — that is what powers
+  // the review/undo view; without it they are omitted.
+  app.get("/cases/:id/lateral-paths", async (req: Request, res: Response) => {
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    try {
+      const includeDismissed = req.query.includeDismissed === "1" || req.query.includeDismissed === "true";
+      return res.status(200).json(await options.reportWriter.lateralPaths(req.params.id, timeWindow(req), includeDismissed));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Analyst dismissal of a reconstructed lateral chain. Distinct from a false-positive marker: this
+  // rejects the INFERENCE ("the attacker did not pivot A → B → C") without discarding the underlying
+  // evidence, which is usually real and still belongs in the timeline. Keyed on the ordered host
+  // sequence because paths are derived per read and their ids are positional (see lateralPathDismiss.ts).
+  app.get("/cases/:id/lateral-path-dismissals", async (req: Request, res: Response) => {
+    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    try {
+      return res.status(200).json(await options.lateralPathDismissStore.load(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post("/cases/:id/lateral-path-dismissals", async (req: Request, res: Response) => {
+    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    try {
+      const hostIds = Array.isArray(req.body?.hostIds) ? (req.body.hostIds as unknown[]).filter((h): h is string => typeof h === "string") : [];
+      const dismissal = await options.lateralPathDismissStore.add(req.params.id, hostIds, typeof req.body?.note === "string" ? req.body.note : "");
+      if (!dismissal) return res.status(400).json({ error: "hostIds must name at least two hosts" });
+      return res.status(201).json(dismissal);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Restore a dismissed chain. The key is the ordered host sequence (a>b>c), URL-encoded.
+  app.delete("/cases/:id/lateral-path-dismissals/:key", async (req: Request, res: Response) => {
+    if (!options.lateralPathDismissStore) return res.status(501).json({ error: "lateral path dismissals not configured" });
+    try {
+      const removed = await options.lateralPathDismissStore.remove(req.params.id, req.params.key);
+      if (!removed) return res.status(404).json({ error: "dismissal not found" });
+      return res.status(204).end();
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
