@@ -641,7 +641,7 @@
     .comment-chip:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
     .comment-chip.has { color: var(--c-6aa9ff); border-color: var(--c-2d4a6a); background: var(--c-11202e); }
     .comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg,
-    .hunt-add svg, .explain-btn svg, .ioc-chain-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+    .hunt-add svg, .explain-btn svg, .ioc-chain-btn svg, .sigma-export-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
     .anon-chip { display:inline-block; background:var(--c-22272e); border:1px solid var(--c-30363d); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
     .anon-chip.anon-chip-sup { opacity:.6; }
     .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--c-8a93a3); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
@@ -817,6 +817,10 @@
     .ioc-chain-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .ioc-chain-btn:hover { color: var(--c-6bcb77); border-color: var(--c-1f5a35); }
+    /* Per-finding "Export as Sigma draft" button (#89) — matches the other row-action chips. */
+    .sigma-export-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
+      padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .sigma-export-btn:hover { color: var(--c-6bcb77); border-color: var(--c-1f5a35); }
     /* Super-timeline ⌖ context button + its inline ±window chips — match the other row-action chips. */
     .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
@@ -1329,6 +1333,17 @@
     .tip { position: fixed; z-index: 1000; max-width: 360px; background: var(--c-0b0e13); color: var(--c-cbd3df);
       border: 1px solid var(--c-2a3340); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
       box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none; white-space: normal; }
+    /* Transient toast for an action whose ONLY feedback would otherwise be the #status line in the
+       toolbar — which is scrolled out of view for anyone working further down the page, making a
+       refusal (e.g. "nothing to seed a Sigma draft from") look like a dead button. Fixed to the
+       viewport so it is seen wherever the click happened. Borrows the .tip tokens for consistency. */
+    .toast { position: fixed; z-index: 1200; left: 50%; bottom: 24px; transform: translateX(-50%);
+      max-width: min(560px, 92vw); background: var(--c-0b0e13); color: var(--c-cbd3df);
+      border: 1px solid var(--c-2a3340); border-radius: 6px; padding: 10px 14px; font-size: 13px;
+      line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none;
+      opacity: 0; transition: opacity .15s ease; }
+    .toast.show { opacity: 1; }
+    .toast.warn { border-color: var(--c-ffd93b); color: var(--c-ffd93b); }
     /* Kill-chain tactic phase view */
     .kc-strip { display: flex; flex-wrap: wrap; gap: 6px; }
     .kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid var(--c-2a2f3a); border-radius: 6px;
@@ -5916,6 +5931,7 @@
     const ICON_WARN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 14.3 13H1.7z"/><path d="M8 6.3v2.8"/><circle cx="8" cy="11" r=".9" fill="currentColor" stroke="none"/></svg>';
     const ICON_EXTERNAL = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5h6v6"/><path d="M12.3 3.7 3.7 12.3"/></svg>';
     const ICON_TARGET = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15" stroke-linecap="round"/></svg>';
+    const ICON_DOWNLOAD = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v7.5M5 6.8 8 9.8l3-3"/><path d="M3 12.5h10"/></svg>';
 
     function commentChip(type, id) {
       const list = commentsByTarget.get(targetKey(type, id)) || [];
@@ -8481,6 +8497,171 @@
       const tags = (lastState && Array.isArray(c._mitre) && c._mitre.length)
         ? c._mitre.map((t) => `  - attack.${String(t).toLowerCase()}`).join("\n") : "  - attack.execution";
       return `title: Hunt - ${String(c.label).slice(0, 60)}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
+    }
+
+    // --- Per-finding "Export as Sigma draft" (#89) -----------------------------------
+    // Unlike huntSigma() above (a single-indicator skeleton off ONE entity), this seeds a fuller
+    // Sigma DRAFT from a whole finding: every related event's + related IOC's structured indicators
+    // (merged, deduped) plus the finding's own MITRE techniques. Still deterministic templating —
+    // no AI, no server round-trip — consistent with the pivot generator's "post-detection" philosophy;
+    // it's a convenience export, not a certified rule, so it's explicitly `status: experimental` and
+    // the analyst is expected to review/tighten it before deploying.
+    // A YAML single-quoted scalar: '' escapes an embedded quote (per the YAML 1.1/1.2 spec) — the
+    // only *character* escaping single-quoted style needs. But quoting alone is not enough: a
+    // quoted scalar must stay on ONE line. An embedded newline continues the scalar onto the next
+    // line at column 0, which YAML then reads as a new mapping key — the string breaks out of its
+    // quotes and the whole rule fails to parse (or silently parses as something else). Finding
+    // titles and IOC values are attacker-influenced free text, so collapse every whitespace run
+    // (newlines, CRs, tabs) to a single space before quoting.
+    const yqNorm = (s) => String(s).replace(/\s+/g, " ").trim();
+    const yq = (s) => `'${yqNorm(s).replace(/'/g, "''")}'`;
+    // Normalize + dedupe a list of indicator values, dropping any that reduce to nothing. An empty
+    // selector value (`TargetFilename|contains: ''`, or a bare `Image|endswith: '\'`) matches every
+    // event, which would turn the draft into a false-positive cannon rather than a detection.
+    const sigmaVals = (arr, limit, fn) => {
+      const out = [];
+      for (const v of arr) {
+        if (out.length >= limit) break;
+        const t = yqNorm(fn ? fn(v) : v);
+        if (t) pushUniq(out, t);
+      }
+      return out;
+    };
+    // Merge one entity's huntContextFor() output into the accumulating finding-level context.
+    function mergeSigmaCtx(c, ec) {
+      if (!c.host && ec.host) c.host = ec.host;
+      if (!c.parent && ec.parent) c.parent = ec.parent;
+      ec.hashes.forEach((v) => pushUniq(c.hashes, v));
+      ec.ips.forEach((v) => pushUniq(c.ips, v));
+      ec.domains.forEach((v) => pushUniq(c.domains, v));
+      ec.urls.forEach((v) => pushUniq(c.urls, v));
+      ec.paths.forEach((v) => pushUniq(c.paths, v));
+      ec.processes.forEach((v) => pushUniq(c.processes, v));
+    }
+    // Gather the finding's structured indicators from its related events + related IOCs. Mirrors the
+    // citeIds fallback in render(): prefer the finding's own relatedEventIds, else fall back to the
+    // events that back-link to it via relatedFindingIds (findings persisted before relatedEventIds existed).
+    function findingSigmaContext(f) {
+      const c = { hashes: [], ips: [], domains: [], urls: [], paths: [], processes: [], parent: "", host: "" };
+      const wantIds = f.relatedEventIds && f.relatedEventIds.length ? new Set(f.relatedEventIds) : null;
+      const events = (lastFt || []).filter((e) => wantIds ? wantIds.has(e.id) : (e.relatedFindingIds || []).includes(f.id));
+      for (const e of events) mergeSigmaCtx(c, huntContextFor("event", e));
+      const iocsById = new Map(((lastState && lastState.iocs) || []).map((i) => [i.id, i]));
+      for (const id of (f.relatedIocs || [])) {
+        const ioc = iocsById.get(id);
+        if (ioc) mergeSigmaCtx(c, huntContextFor("ioc", ioc));
+      }
+      return c;
+    }
+    // Build the Sigma detection-rule draft YAML. Each indicator TYPE becomes its own selection block
+    // (matching Sigma field conventions per platform hint in queryTranslate.ts) so the analyst can see
+    // — and prune — exactly which signal each one contributes; condition ORs them ("1 of sel_*") since
+    // these are independent pivots gathered from possibly-unrelated events, not a single AND'd pattern.
+    // Returns "" when the finding carries no indicator the deterministic templates understand.
+    function findingSigmaYaml(f, c) {
+      const sel = [];
+      // Normalize every indicator list up front, so both the selection blocks below and the
+      // logsource-category choice see the same post-filter view of what the finding actually has.
+      const procs = sigmaVals(c.processes, 10, baseName);
+      const parentBase = yqNorm(baseName(c.parent || ""));
+      const hashes = sigmaVals(c.hashes, 10);
+      const ips = sigmaVals(c.ips, 20);
+      const netNames = sigmaVals([...c.domains, ...c.urls], 20);
+      const paths = sigmaVals(c.paths, 10, baseName);
+      if (procs.length || parentBase) {
+        const lines = [];
+        if (procs.length) {
+          lines.push(`    Image|endswith:`);
+          procs.forEach((p) => lines.push(`      - ${yq("\\" + p)}`));
+        }
+        if (parentBase) lines.push(`    ParentImage|endswith: ${yq("\\" + parentBase)}`);
+        sel.push({ name: "sel_process", lines });
+      }
+      if (hashes.length) {
+        sel.push({ name: "sel_hash", lines: [`    Hashes|contains:`, ...hashes.map((h) => `      - ${yq(h)}`)] });
+      }
+      if (ips.length) {
+        sel.push({ name: "sel_network_ip", lines: [`    DestinationIp:`, ...ips.map((ip) => `      - ${yq(ip)}`)] });
+      }
+      if (netNames.length) {
+        sel.push({ name: "sel_network_domain", lines: [`    DestinationHostname|contains:`, ...netNames.map((v) => `      - ${yq(v)}`)] });
+      }
+      if (paths.length) {
+        sel.push({ name: "sel_file_path", lines: [`    TargetFilename|contains:`, ...paths.map((p) => `      - ${yq(p)}`)] });
+      }
+      if (!sel.length) return "";
+      const hasProcessSel = procs.length || hashes.length || parentBase;
+      const hasNetSel = ips.length || netNames.length;
+      const category = hasProcessSel ? "process_creation" : hasNetSel ? "network_connection" : "file_event";
+      const level = f.severity === "Critical" ? "critical" : f.severity === "High" ? "high"
+        : f.severity === "Medium" ? "medium" : f.severity === "Low" ? "low" : "informational";
+      const tags = (f.mitreTechniques || []).map((t) => `  - attack.${String(t).toLowerCase()}`).join("\n");
+      const detection = sel.map((s) => `  ${s.name}:\n${s.lines.join("\n")}`).join("\n");
+      const condition = sel.length > 1 ? "1 of sel_*" : sel[0].name;
+      const desc = String(f.description || "").replace(/\s+/g, " ").trim().slice(0, 400);
+      return [
+        `title: ${yq(String(f.title || "Untitled finding").slice(0, 120))}`,
+        `status: experimental`,
+        desc ? `description: ${yq(desc)}` : null,
+        `references:`,
+        `  - ${yq(`DFIR Companion finding ${f.id}`)}`,
+        `logsource:`,
+        `  category: ${category}`,
+        `  product: windows`,
+        `detection:`,
+        detection,
+        `  condition: ${condition}`,
+        `falsepositives:`,
+        `  - Unknown`,
+        `level: ${level}`,
+        tags ? `tags:\n${tags}` : null,
+      ].filter((l) => l !== null).join("\n") + "\n";
+    }
+    // Per-finding action-row button: exports a Sigma draft, or leaves a status message when the
+    // finding carries no structured indicator (nothing for the deterministic templates to seed from).
+    function sigmaExportChip(id) {
+      return `<button class="sigma-export-btn" data-sigma-fid="${escAttr(String(id))}" title="Export this finding as a Sigma detection-rule draft (.yml)">${ICON_DOWNLOAD}</button>`;
+    }
+    // Transient viewport-anchored message. The #status line lives in the toolbar, so for anything
+    // triggered from a row further down the page it is scrolled out of sight — a refusal then reads
+    // as a dead button. Still writes #status too, so the last action stays inspectable there.
+    let toastTimer = null;
+    function showToast(text, kind) {
+      const statusEl = document.getElementById("status");
+      if (statusEl) statusEl.textContent = text;
+      let el = document.getElementById("toast");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "toast";
+        document.body.appendChild(el);
+      }
+      el.className = "toast" + (kind === "warn" ? " warn" : "");
+      el.textContent = text;
+      // Force a reflow, then add .show, so the opacity transition has a frame to animate FROM.
+      // Deliberately NOT requestAnimationFrame: rAF does not fire while the tab is hidden, which
+      // would leave the toast permanently at opacity 0 — the failure this whole change exists to fix.
+      void el.offsetWidth;
+      el.classList.add("show");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove("show");
+      }, kind === "warn" ? 6000 : 3500);   // a refusal needs longer to read than a confirmation
+    }
+
+    function exportFindingSigma(findingId) {
+      const f = ((lastState && lastState.findings) || []).find((x) => x.id === findingId);
+      if (!f) return;
+      const yaml = findingSigmaYaml(f, findingSigmaContext(f));
+      if (!yaml) {
+        showToast("No Sigma draft: this finding has no hash / IP / domain / path / process indicators on its related events or IOCs to key a rule on.", "warn");
+        return;
+      }
+      const blob = new Blob([yaml], { type: "application/x-yaml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `sigma-draft-${String(f.id).replace(/[^A-Za-z0-9_-]+/g, "_")}.yml`; a.click();
+      URL.revokeObjectURL(url);
+      showToast("Sigma draft downloaded — review before deploying (status: experimental)");
     }
 
     // Elastic ES|QL — one piped query over ECS fields, runnable in Kibana Discover / Security.
@@ -14890,7 +15071,7 @@
               (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
             `</span>` +
             `<span class="finding-conf-cell">${confMeter}</span>` +
-            `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${fpBtn("finding", f.title)}</span>` +
+            `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${fpBtn("finding", f.title)}</span>` +
             (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
             `</div>`;
         }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
@@ -15959,6 +16140,8 @@
         const caseId = document.getElementById("caseId").value.trim();
         if (caseId) openIocChainPanel(caseId, iocChain.getAttribute("data-iocchain"));
       }
+      const sigmaExport = e.target.closest && e.target.closest(".sigma-export-btn");
+      if (sigmaExport) { e.stopPropagation(); exportFindingSigma(sigmaExport.getAttribute("data-sigma-fid")); return; }
     });
     // Row checkboxes + select-all (change, not click, so we read the post-toggle checked state)
     document.querySelector("main").addEventListener("change", (e) => {
