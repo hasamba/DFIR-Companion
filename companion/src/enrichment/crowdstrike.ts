@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
 
 export interface CrowdStrikeOptions {
   clientId: string;
@@ -94,7 +94,7 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
     let res = await call(await this.ensureToken());
     if (res.status === 401) res = await call(await this.ensureToken(true));   // token expired → refresh once
     if (res.status === 403) throw new CsAuthError(`CrowdStrike 403 — API client is missing scope: ${scopeHint}`);
-    if (res.status === 429) throw new Error("CrowdStrike rate limit");
+    if (res.status === 429) throw new RateLimitError("CrowdStrike rate limit", parseRetryAfterMs(res.headers.get("retry-after")));
     if (res.status === 404) return {};
     if (!res.ok) throw new Error(`CrowdStrike HTTP ${res.status}`);
     return (await res.json()) as Record<string, unknown>;

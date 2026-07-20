@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { RateLimitError, parseRetryAfterMs, type EnrichmentProvider, type EnrichmentResult, type FetchFn, type IocKind, type Verdict } from "./provider.js";
 
 export interface VirusTotalOptions {
   apiKey: string;
@@ -50,7 +50,7 @@ export class VirusTotalProvider implements EnrichmentProvider {
     });
     if (res.status === 404) return null;                       // unknown to VT
     if (res.status === 401 || res.status === 403) throw new Error("VirusTotal auth failed (check DFIR_VT_KEY)");
-    if (res.status === 429) throw new Error("VirusTotal rate limit (free tier is ~4/min)");
+    if (res.status === 429) throw new RateLimitError("VirusTotal rate limit (free tier is ~4/min)", parseRetryAfterMs(res.headers.get("retry-after")));
     if (!res.ok) throw new Error(`VirusTotal HTTP ${res.status}`);
 
     const json = (await res.json()) as { data?: { id?: string; attributes?: Record<string, unknown> } };

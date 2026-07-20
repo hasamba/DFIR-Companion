@@ -6,10 +6,14 @@
 
 import type { ForensicEvent, ProcessChainCheck } from "../analysis/stateTypes.js";
 import type { ParentChildResult } from "./rockyraccoon.js";
+import { withRateLimitRetry, type RetryPolicy } from "./provider.js";
 
 export interface ChainValidateOptions {
   check: (parent: string, child: string) => Promise<ParentChildResult | null>;
   delayMs?: number;
+  jitterMs?: number;         // ± random jitter added to the inter-call wait (default 0 = none)
+  random?: () => number;     // injected jitter source (default Math.random), returns [0, 1)
+  retry?: RetryPolicy;       // retry policy for a check() that throws RateLimitError (HTTP 429)
   maxChecks?: number;        // cap on distinct (parent,child) pairs queried per run
   force?: boolean;           // re-check events that already have a chainCheck
   now?: () => string;
@@ -41,6 +45,8 @@ export async function validateProcessChains(
   const now = opts.now ?? (() => new Date().toISOString());
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const delayMs = opts.delayMs ?? 1500;
+  const jitterMs = opts.jitterMs ?? 0;
+  const random = opts.random ?? Math.random;
   const maxChecks = opts.maxChecks ?? 100;
 
   const candidates = events.filter((e) => e.parentName && e.processName && (opts.force || !e.chainCheck));
@@ -58,10 +64,13 @@ export async function validateProcessChains(
   const results = new Map<string, ProcessChainCheck>();
   let calls = 0;
   for (const { parent, child, key } of order.slice(0, maxChecks)) {
-    if (calls > 0) await sleep(delayMs);
+    if (calls > 0) {
+      const jitter = jitterMs > 0 ? Math.round((random() * 2 - 1) * jitterMs) : 0;
+      await sleep(Math.max(0, delayMs + jitter));
+    }
     calls += 1;
     try {
-      const r = await opts.check(parent, child);
+      const r = await withRateLimitRetry(() => opts.check(parent, child), { ...opts.retry, sleep, random });
       if (r) {
         results.set(key, { observed: r.observed, note: r.note, link: r.link, checkedAt: now() });
         if (!r.observed) summary.anomalies += 1;

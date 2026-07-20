@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "../../src/enrichment/enrichService.js";
 import { ProviderHealthCache } from "../../src/enrichment/providerHealth.js";
-import type { EnrichmentProvider, EnrichmentResult, IocKind } from "../../src/enrichment/provider.js";
+import { RateLimitError, type EnrichmentProvider, type EnrichmentResult, type IocKind } from "../../src/enrichment/provider.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
 
 function ioc(over: Partial<IOC> & { value: string; type: IOC["type"] }): IOC {
@@ -321,6 +321,30 @@ describe("enrichIocs", () => {
       expect(slept).toEqual([999]);   // Unknown not in map → falls back to global 999
     });
 
+    it("applies ± jitterMs on top of the delay when configured", async () => {
+      const slept: number[] = [];
+      const calls: string[] = [];
+      const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "harmless" }, calls);
+      // random() → 1 picks the +jitterMs edge: 1500 + (1*2-1)*300 = 1800
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })],
+        { providers: [vt], now, monotonic: () => 0, sleep: async (ms) => { slept.push(ms); }, delayMs: 1500, jitterMs: 300, random: () => 1 },
+      );
+      expect(slept).toEqual([1800]);
+    });
+
+    it("defaults jitterMs to 0 (no jitter) when not configured", async () => {
+      const slept: number[] = [];
+      const calls: string[] = [];
+      const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "harmless" }, calls);
+      await enrichIocs(
+        [ioc({ value: "h1", type: "hash" }), ioc({ value: "h2", type: "hash" })],
+        // random() would throw if ever called with jitterMs unset — proves jitter math is skipped
+        { providers: [vt], now, monotonic: () => 0, sleep: async (ms) => { slept.push(ms); }, delayMs: 1500, random: () => { throw new Error("should not be called"); } },
+      );
+      expect(slept).toEqual([1500]);
+    });
+
     it("skips the sleep when elapsed time already exceeds the provider delay", async () => {
       const slept: number[] = [];
       let t = 0;
@@ -334,6 +358,53 @@ describe("enrichIocs", () => {
         { providers: [vtFast], now, monotonic: () => t, sleep: async (ms) => { slept.push(ms); }, perProviderDelayMs: { VirusTotal: 500 } },
       );
       expect(slept).toHaveLength(0);   // 600ms elapsed > 500ms delay → no sleep needed
+    });
+  });
+
+  describe("429 retry", () => {
+    it("retries a provider that throws RateLimitError instead of counting it as an immediate error", async () => {
+      let attempts = 0;
+      const flaky: EnrichmentProvider = {
+        name: "Flaky", scope: "external", supports: () => true,
+        lookup: async () => {
+          attempts++;
+          if (attempts < 3) throw new RateLimitError("rate limited");
+          return { source: "Flaky", verdict: "malicious" };
+        },
+      };
+      const { iocs: out, summary } = await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+        providers: [flaky], sleep: noSleep, now, retry: { retries: 3, backoffMs: 1 },
+      });
+      expect(attempts).toBe(3);
+      expect(summary.errors).toBe(0);
+      expect(out[0].enrichments!.map((e) => e.source)).toEqual(["Flaky"]);
+    });
+
+    it("counts it as an error once the retry budget is exhausted", async () => {
+      let attempts = 0;
+      const alwaysLimited: EnrichmentProvider = {
+        name: "Limited", scope: "external", supports: () => true,
+        lookup: async () => { attempts++; throw new RateLimitError("rate limited"); },
+      };
+      const { iocs: out, summary } = await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+        providers: [alwaysLimited], sleep: noSleep, now, retry: { retries: 1, backoffMs: 1 },
+      });
+      expect(attempts).toBe(2);          // initial + 1 retry
+      expect(summary.errors).toBe(1);
+      expect(out[0].enrichments).toBeUndefined();
+    });
+
+    it("honours Retry-After (via the sleep it drives) before retrying", async () => {
+      let attempts = 0;
+      const slept: number[] = [];
+      const limited: EnrichmentProvider = {
+        name: "Limited", scope: "external", supports: () => true,
+        lookup: async () => { attempts++; if (attempts === 1) throw new RateLimitError("rate limited", 7000); return { source: "Limited", verdict: "harmless" }; },
+      };
+      await enrichIocs([ioc({ value: "h1", type: "hash" })], {
+        providers: [limited], now, sleep: async (ms) => { slept.push(ms); }, random: () => 0,
+      });
+      expect(slept).toEqual([7000]);
     });
   });
 });

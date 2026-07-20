@@ -25,6 +25,11 @@ export interface ProviderUsage {
   cacheCreationTokens?: number; // input tokens written to the cache on this call
   cacheReadTokens?: number;     // input tokens served from the cache on this call
   costUSD?: number;             // real dollar cost, when the provider reports one (OpenRouter only today)
+  // The concrete model id the provider actually served the request with, when it differs from (or
+  // resolves) the configured DFIR_*_MODEL — e.g. an alias like "sonnet" resolving to
+  // "claude-sonnet-4-6". Only the claude-code provider reports this today (its CLI's result event
+  // echoes the resolved id back); other providers leave it unset.
+  resolvedModel?: string;
 }
 
 export interface AnalyzeResult {
