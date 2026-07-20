@@ -12,7 +12,11 @@
 
 import { config as loadDotenv } from "dotenv";
 import { visionEnv } from "../../src/config/aiEnv.js";
-import { runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider, realProviderOrNull } from "./harness.js";
+import { buildProvider } from "../../src/server.js";
+import {
+  runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider, realProviderOrNull,
+  loadRealScreenshotFixtures, runRealScreenshotFixture,
+} from "./harness.js";
 import {
   scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis,
   formatExtractionReport, formatSynthesisReport, REAL_THRESHOLDS,
@@ -38,8 +42,7 @@ async function runExtraction(providerFor: ProviderFor<(typeof EXTRACTION_FIXTURE
 }
 
 // Screenshot fixtures drive the vision path (analyzeWindow). MOCK-ONLY: each is driven by its own canned
-// delta against a stub image, so it gates the plumbing + scorer without shipping evidence. Real vision
-// grading is deferred (see README), so the runner never invokes this in --real mode.
+// delta against a stub image, so it gates the plumbing + scorer without shipping evidence.
 async function runScreenshots(): Promise<boolean> {
   let allPass = true;
   for (const fx of SCREENSHOT_FIXTURES) {
@@ -47,6 +50,53 @@ async function runScreenshots(): Promise<boolean> {
     const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
     console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, fx.thresholds));
     allPass = passesExtraction(score, fx.thresholds) && allPass;
+  }
+  return allPass;
+}
+
+// Real vision-model grading for analyzeWindow (issue #135). Sourced entirely from a local, uncommitted
+// directory (DFIR_EVAL_SCREENSHOT_DIR — real case screenshots are sensitive and can never be committed)
+// and graded against the VISION provider (buildProvider(), DFIR_VISION_*) — NOT the text provider the
+// other --real fixtures use (realProviderOrNull() resolves DFIR_AI_SYNTH_*/text, the wrong model for this
+// modality). Skips cleanly (returns true / exit 0) whenever the dir, the provider, or any images are
+// absent, so CI never depends on a local screenshot set existing.
+async function runRealScreenshots(): Promise<boolean> {
+  const dir = process.env.DFIR_EVAL_SCREENSHOT_DIR;
+  if (!dir) {
+    console.log("\nscreenshot fixtures: DFIR_EVAL_SCREENSHOT_DIR not set — real vision grading skipped (see README)");
+    return true;
+  }
+  const provider = buildProvider();
+  if (!provider) {
+    console.log("\nscreenshot fixtures: no vision provider configured (DFIR_VISION_*) — real vision grading skipped (see README)");
+    return true;
+  }
+  const fixtures = await loadRealScreenshotFixtures(dir);
+  if (fixtures.length === 0) {
+    console.log(`\nscreenshot fixtures: no images (with a valid sidecar) found in ${dir} — real vision grading skipped`);
+    return true;
+  }
+  console.log(`\neval --real screenshots: provider ${provider.name}, model ${provider.model}, ${fixtures.length} image(s) from ${dir}`);
+  let allPass = true;
+  for (const fx of fixtures) {
+    // Grade each fixture in isolation. A real vision model can legitimately return non-JSON prose, a
+    // refusal, or an empty completion — and analyzeWindow throws on all three. Letting that escape
+    // would abort the whole run, leave every remaining fixture ungraded, and surface as a bare stack
+    // trace with no indication of WHICH image caused it. Instead: attribute the error to its fixture,
+    // count it as a failure, and keep going.
+    let produced;
+    try {
+      produced = await runRealScreenshotFixture(fx, provider);
+    } catch (err) {
+      console.log(`\n[FAIL] extraction: ${fx.name} (screenshot) — errored, not graded`);
+      console.log(`  ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+      allPass = false;
+      continue;
+    }
+    const thresholds = fx.thresholds ?? REAL_THRESHOLDS;
+    const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
+    console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, thresholds));
+    allPass = passesExtraction(score, thresholds) && allPass;
   }
   return allPass;
 }
@@ -66,7 +116,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const real = argv.includes("--real");
   const positional = argv.find((a) => !a.startsWith("--"));
-  const mode = positional === "extraction" || positional === "synthesis" ? positional : "all";
+  const mode = positional === "extraction" || positional === "synthesis" || positional === "screenshots" ? positional : "all";
 
   // Resolve the provider selector + gate. Real mode uses the env-configured model (dotenv-loaded like
   // verify-ai); if none is configured it's a graceful skip, not a failure.
@@ -90,13 +140,8 @@ async function main(): Promise<void> {
   }
 
   let ok = true;
-  if (mode === "extraction" || mode === "all") {
-    ok = (await runExtraction(extractionProvider, override)) && ok;
-    // Screenshot fixtures are mock-only. In --real mode there's no committed evidence to grade the vision
-    // model against, so skip them (deliberate — see README) rather than run them against a stub image.
-    if (real) console.log("\nscreenshot fixtures: mock-only — skipped in --real mode (see README)");
-    else ok = (await runScreenshots()) && ok;
-  }
+  if (mode === "extraction" || mode === "all") ok = (await runExtraction(extractionProvider, override)) && ok;
+  if (mode === "screenshots" || mode === "all") ok = (await (real ? runRealScreenshots() : runScreenshots())) && ok;
   if (mode === "synthesis" || mode === "all") ok = (await runSynthesis(synthesisProvider)) && ok;
   console.log(ok ? "\nEVAL PASSED" : "\nEVAL FAILED");
   process.exit(ok ? 0 : 1);

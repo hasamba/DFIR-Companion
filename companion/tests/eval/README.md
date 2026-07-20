@@ -9,7 +9,11 @@ The original issue asked for a single harness with "CI-friendly exit codes" that
 - **Phase 1 — mock (CI-gating):** every fixture is driven by a `MockProvider` built from its canned response. Deterministic, zero-cost, runs in normal CI. Gates the *plumbing and the scoring math*.
 - **Phase 2 — `--real` (non-blocking):** the env-configured provider (`realProviderOrNull()` → `buildProvider()`) scores the **current prompt's actual output** against the golden expectations — the real regression signal. Gated on `DFIR_AI_*`: if no provider is configured it **skips (exit 0)**, so it never breaks CI. Uses `REAL_THRESHOLDS` (recall-gated — see *Why `--real` gates on recall* below) because a real model won't reproduce a golden set exactly. Run it manually or on a nightly/labeled workflow; it is **not** in `npm test`.
 
-Screenshots (`analyzeWindow`, the vision path) are covered **mock-only**: a synthetic capture + canned delta drives the plumbing through a stub image, so it gates the analyzeWindow→scorer path without committing any evidence. **Real** vision grading stays deferred — real case screenshots are sensitive, so `--real` skips the screenshot fixtures; a future step can point them at a local screenshot directory via env. The committed golden set (CSV, log, screenshot, synthesis) is entirely synthetic.
+Screenshots (`analyzeWindow`, the vision path) are covered two ways:
+- **Mock (CI-gating):** `SCREENSHOT_FIXTURES` in `fixtures.ts` — a synthetic capture + canned delta drives the plumbing through a stub image, gating the analyzeWindow→scorer path without committing any evidence.
+- **Real (non-blocking, opt-in):** `npm run eval:real:screenshots` (or `eval:real`, which includes it) points `analyzeWindow` at actual screenshots in a **local, uncommitted** directory (`DFIR_EVAL_SCREENSHOT_DIR`) and grades them against the **vision** provider (`DFIR_VISION_*`) — see *Real screenshot grading* below. It skips cleanly (exit 0) whenever the directory, the vision provider, or any images are absent, so CI never depends on it.
+
+The committed golden set (CSV, log, screenshot, synthesis) is entirely synthetic.
 
 ## Files
 
@@ -26,17 +30,51 @@ Screenshots (`analyzeWindow`, the vision path) are covered **mock-only**: a synt
 
 ```bash
 # Phase 1 — deterministic (MockProvider), safe to gate PRs
-npm run eval             # both extraction + synthesis
+npm run eval             # extraction + screenshots(mock) + synthesis
 npm run eval:extraction  # precision/recall per fixture
+npm run eval:screenshots # mock-only analyzeWindow plumbing check
 npm run eval:synthesis   # coverage / hallucination per fixture
 
 # Phase 2 — real provider (needs DFIR_VISION_PROVIDER / DFIR_VISION_KEY in env or .env); non-blocking
 npm run eval:real
 npm run eval:real:extraction
+npm run eval:real:screenshots  # needs DFIR_EVAL_SCREENSHOT_DIR too — see below; skips cleanly without it
 npm run eval:real:synthesis
 ```
 
 Exit code `0` = all pass (or `--real` skipped for no provider), `1` = a gate failed, `2` = a runner error.
+
+### Real screenshot grading (issue #135)
+
+`eval:real:screenshots` (and `eval:real`, which includes it) runs `analyzeWindow` against ACTUAL screenshots and the REAL, vision-scoped provider (`buildProvider()` / `DFIR_VISION_*`) — deliberately **not** the text provider `realProviderOrNull()` resolves for the other `--real` fixtures, since that's a different model in production.
+
+Real case screenshots are sensitive and must never be committed to this repo, so the images and their goldens live entirely **outside** the repo, in a local directory you point at via:
+
+```bash
+export DFIR_EVAL_SCREENSHOT_DIR=/path/to/local/screenshot-set
+```
+
+Layout: each screenshot image (`.png`, `.jpg`, `.jpeg`, or `.webp`) is paired with a same-basename `.json` sidecar:
+
+```
+screenshot-set/
+  scheduled-task.webp
+  scheduled-task.json
+```
+
+```json
+{
+  "tabTitle": "Velociraptor — Windows.System.TaskScheduler on WS02",
+  "url": "https://velociraptor.local/app/index.html#/collected/C.case1/WS02",
+  "golden": [
+    { "timestamp": "2026-06-01T02:13:00Z", "keywords": ["powershell"], "mitreTechniques": ["T1053.005"], "asset": "WS02" }
+  ]
+}
+```
+
+`tabTitle` / `url` default to a generic placeholder if omitted; `golden` uses the same `GoldenEvent[]` shape as every other fixture (see *Scoring model* below). An optional per-image `"thresholds": { "minPrecision": 0, "minRecall": 0.7 }` overrides the default `REAL_THRESHOLDS`. An image without a valid sidecar is skipped with a warning, not a hard failure, so you can build the set up incrementally.
+
+If `DFIR_EVAL_SCREENSHOT_DIR` is unset, no vision provider is configured, or the directory has no valid image+sidecar pairs, the run prints a message and exits `0` — CI never depends on a local screenshot set existing.
 
 > `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` were formerly `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY`; the legacy names still work as a deprecated fallback.
 
@@ -70,4 +108,4 @@ Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the mod
 
 ## Adding a golden case
 
-Append to `EXTRACTION_FIXTURES` (input + canned delta + `golden`), `SCREENSHOT_FIXTURES` (synthetic captures + canned delta + `golden`, mock-only), or `SYNTHESIS_FIXTURES` (seed timeline + canned synthesis delta) in `fixtures.ts`. Keep golden data **synthetic or sanitized** — never snapshot real case evidence.
+Append to `EXTRACTION_FIXTURES` (input + canned delta + `golden`), `SCREENSHOT_FIXTURES` (synthetic captures + canned delta + `golden`, mock-only), or `SYNTHESIS_FIXTURES` (seed timeline + canned synthesis delta) in `fixtures.ts`. Keep golden data **synthetic or sanitized** — never snapshot real case evidence. To add a *real* screenshot case, drop an image + sidecar `.json` into your local `DFIR_EVAL_SCREENSHOT_DIR` — see *Real screenshot grading* above; nothing is added to the repo.
