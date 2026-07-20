@@ -7,6 +7,9 @@ import {
   deployedFingerprints,
   renderPriorHuntsBlock,
   buildHuntingProfile,
+  classifyPivotType,
+  buildPivotProductivity,
+  renderHuntProductivityBlock,
   HUNT_OUTCOME_MAX_DEFAULT,
   type HuntOutcome,
 } from "../../src/analysis/huntOutcomes.js";
@@ -253,6 +256,90 @@ describe("buildHuntingProfile", () => {
   });
 
   it("handles an empty case", () => {
-    expect(buildHuntingProfile([])).toEqual({ total: 0, hit: 0, missed: 0, pending: 0, hunts: [] });
+    expect(buildHuntingProfile([])).toEqual({ total: 0, hit: 0, missed: 0, pending: 0, hunts: [], pivotProductivity: [] });
+  });
+});
+
+describe("classifyPivotType", () => {
+  const outcome = (vql: string, title = ""): HuntOutcome =>
+    recordDeploy([], { source: "fleet", title: title || vql, vql, huntId: "H.x", deployedAt: T0 })[0];
+
+  it("classifies hash pivots", () => {
+    expect(classifyPivotType(outcome("SELECT * FROM hash(path=Path) WHERE MD5 = '...'"))).toBe("hash");
+  });
+
+  it("classifies process pivots", () => {
+    expect(classifyPivotType(outcome("SELECT * FROM pslist() WHERE CommandLine =~ 'evil'"))).toBe("process");
+  });
+
+  it("classifies path/filesystem pivots", () => {
+    expect(classifyPivotType(outcome("SELECT FullPath FROM glob(globs='C:/inetpub/**/*.aspx')"))).toBe("path");
+  });
+
+  it("classifies network pivots", () => {
+    expect(classifyPivotType(outcome("SELECT * FROM netstat() WHERE Raddr = '1.2.3.4'"))).toBe("network");
+  });
+
+  it("classifies registry pivots", () => {
+    expect(classifyPivotType(outcome("SELECT * FROM glob(globs='HKLM\\\\Software\\\\Run\\\\*')", "registry run keys"))).toBe("registry");
+  });
+
+  it("falls back to other when nothing matches", () => {
+    expect(classifyPivotType(outcome("SELECT * FROM info()"))).toBe("other");
+  });
+
+  it("falls back to the title for a bundle with no VQL", () => {
+    const bundle = recordDeploy([], { source: "bundle", title: "Fast Triage pslist sweep", huntId: "H.b", deployedAt: T0 })[0];
+    expect(classifyPivotType(bundle)).toBe("process");
+  });
+});
+
+describe("buildPivotProductivity", () => {
+  it("returns [] for no outcomes", () => {
+    expect(buildPivotProductivity([])).toEqual([]);
+  });
+
+  it("tallies hit/missed/pending per pivot class and ranks by hit-rate", () => {
+    let out = recordDeploy([], { source: "fleet", title: "hash a", vql: "SELECT * FROM hash(path=Path)", huntId: "H.1", deployedAt: T0 });
+    out = recordDeploy(out, { source: "fleet", title: "hash b", vql: "SELECT * FROM hash(path=Path)", huntId: "H.2", deployedAt: T0 });
+    out = recordDeploy(out, { source: "fleet", title: "ps a", vql: "SELECT * FROM pslist()", huntId: "H.3", deployedAt: T0 });
+    out = recordDeploy(out, { source: "fleet", title: "ps b", vql: "SELECT * FROM pslist()", huntId: "H.4", deployedAt: T0 });
+    out = fillOutcome(out, "H.1", { addedEvents: 3, addedIocs: 0, collectedAt: T1 });   // hash: hit
+    out = fillOutcome(out, "H.2", { addedEvents: 2, addedIocs: 0, collectedAt: T1 });   // hash: hit
+    out = fillOutcome(out, "H.3", { addedEvents: 0, addedIocs: 0, collectedAt: T1 });   // process: miss
+    // H.4 (process) stays pending
+
+    const stats = buildPivotProductivity(out);
+    expect(stats[0]).toMatchObject({ type: "hash", total: 2, hit: 2, missed: 0, pending: 0 });
+    expect(stats[1]).toMatchObject({ type: "process", total: 2, hit: 0, missed: 1, pending: 1 });
+  });
+
+  it("only includes pivot classes that have at least one outcome", () => {
+    const out = recordDeploy([], { source: "fleet", title: "hash a", vql: "SELECT * FROM hash(path=Path)", huntId: "H.1", deployedAt: T0 });
+    const stats = buildPivotProductivity(out);
+    expect(stats).toHaveLength(1);
+    expect(stats[0].type).toBe("hash");
+  });
+});
+
+describe("renderHuntProductivityBlock", () => {
+  it("is empty when there is no collected history", () => {
+    expect(renderHuntProductivityBlock([])).toBe("");
+    const pendingOnly = recordDeploy([], { source: "fleet", title: "a", vql: "SELECT * FROM pslist()", huntId: "H.1", deployedAt: T0 });
+    expect(renderHuntProductivityBlock(pendingOnly)).toBe("");
+  });
+
+  it("renders hit-rate per pivot class, most productive first, ending in a blank line", () => {
+    let out = recordDeploy([], { source: "fleet", title: "hash a", vql: "SELECT * FROM hash(path=Path)", huntId: "H.1", deployedAt: T0 });
+    out = recordDeploy(out, { source: "fleet", title: "ps a", vql: "SELECT * FROM pslist()", huntId: "H.2", deployedAt: T0 });
+    out = fillOutcome(out, "H.1", { addedEvents: 3, addedIocs: 0, collectedAt: T1 });   // hash: hit
+    out = fillOutcome(out, "H.2", { addedEvents: 0, addedIocs: 0, collectedAt: T1 });   // process: miss
+
+    const block = renderHuntProductivityBlock(out);
+    expect(block).toContain("HUNT PRODUCTIVITY BY PIVOT CLASS");
+    expect(block).toContain("hash: 1/1 hunts found evidence (100%)");
+    expect(block).toContain("process: 0/1 hunts found evidence (0%)");
+    expect(block.indexOf("hash:")).toBeLessThan(block.indexOf("process:"));   // more productive class listed first
+    expect(block.endsWith("\n\n")).toBe(true);
   });
 });
