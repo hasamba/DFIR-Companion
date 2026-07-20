@@ -2616,7 +2616,20 @@ export function mispPushOptions(): MispPushOptions {
     baseUrl: process.env.DFIR_MISP_URL,
     distribution: process.env.DFIR_MISP_DISTRIBUTION || undefined,
     analysis: process.env.DFIR_MISP_ANALYSIS || undefined,
+    // Cap on forensic-timeline events per push. The push costs one sequential round-trip per
+    // event, so an unbounded timeline can block the export route for hours; past the cap the
+    // most severe events are kept (Info noise is cut first) and truncation is warned about.
+    // Exposed here because the cap is a property of the operator's MISP instance and case sizes,
+    // not of the code — the warning text tells the analyst to raise it, so it must be raisable.
+    timelineLimit: positiveIntEnv(process.env.DFIR_MISP_TIMELINE_LIMIT),
   };
+}
+
+// Parse a positive-integer env var, ignoring blank/garbage/non-positive values so a typo falls
+// back to the documented default rather than silently pushing nothing (a `0` cap would).
+function positiveIntEnv(raw: string | undefined): number | undefined {
+  const n = Number(String(raw ?? "").trim());
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 // Build the Notion export client from env (DFIR_NOTION_TOKEN). Returns undefined when not
