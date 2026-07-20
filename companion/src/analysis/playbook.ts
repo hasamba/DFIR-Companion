@@ -462,11 +462,17 @@ export interface PlaybookTaskWithGraph extends PlaybookTask {
 // gated on them stays blocked until they revisit that). A dependency id with no matching task
 // (pruned auto-task pending re-derive, or a deleted custom task) is treated as satisfied so a
 // stale reference can never block forever.
+// A task that is itself already resolved (done or skipped) is never reported as blocked: "blocked"
+// means "you cannot start this yet", which is meaningless once the work is finished or waived, and a
+// finished task still flying a red `blocked` badge makes the badge harder to trust at a glance.
+// blockedBy is still populated so the unmet dependencies remain inspectable.
+const RESOLVED_STATUSES = new Set<PlaybookStatus>(["done", "skipped"]);
+
 export function withBlockedState(tasks: readonly PlaybookTask[]): PlaybookTaskWithGraph[] {
   const byId = new Map(tasks.map((t) => [t.id, t] as const));
   return tasks.map((t) => {
     const blockedBy = (t.dependsOn ?? []).filter((depId) => byId.get(depId)?.status !== "done" && byId.has(depId));
-    return { ...t, blocked: blockedBy.length > 0, blockedBy };
+    return { ...t, blocked: blockedBy.length > 0 && !RESOLVED_STATUSES.has(t.status), blockedBy };
   });
 }
 

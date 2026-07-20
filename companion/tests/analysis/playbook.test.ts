@@ -257,6 +257,18 @@ describe("dependency graph (issue #81)", () => {
       const [b] = withBlockedState([mk("b", { dependsOn: ["ghost"] })]);
       expect(b).toMatchObject({ blocked: false, blockedBy: [] });
     });
+
+    it.each(["done", "skipped"] as const)(
+      "a %s task is never itself reported blocked, however unmet its dependencies are",
+      (status) => {
+        // "blocked" means "you cannot start this yet" — meaningless once the work is finished or
+        // waived. A completed task still flying a red `blocked` badge devalues the badge everywhere.
+        const tasks = [mk("a", { status: "todo" }), mk("b", { status, dependsOn: ["a"] })];
+        const [, b] = withBlockedState(tasks);
+        expect(b.blocked).toBe(false);
+        expect(b.blockedBy).toEqual(["a"]);   // still inspectable — only the flag is suppressed
+      },
+    );
   });
 
   describe("validateDependsOn", () => {
