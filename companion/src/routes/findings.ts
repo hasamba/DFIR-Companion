@@ -13,6 +13,7 @@ import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
 import { FINDING_WORKFLOW_STATUSES, type FindingWorkflowStatus } from "../analysis/findingWorkflow.js";
 import { type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "../analysis/notebookStore.js";
+import { mentionEvent } from "../analysis/notifications.js";
 import { sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { STARRED_LABEL } from "../analysis/superTimeline.js";
 import type { ForensicEvent, Finding } from "../analysis/stateTypes.js";
@@ -58,7 +59,7 @@ import type { RouteContext } from "./context.js";
  * floor, which belongs to the aiSynthesis domain, not analyst annotations).
  */
 export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, resynthesizeInBackground } = ctx;
+  const { store, options, resynthesizeInBackground, dispatchNotify } = ctx;
 
   // Domain-local stateless disk-backed stores, rebuilt from ctx.store (see module header).
   const falsePositives = new FalsePositiveStore(store);
@@ -450,6 +451,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         category: "collaboration", action: "comment-added", actor: comment.author,
         detail: `comment on ${targetType} ${targetId}`, targetType, targetId,
       });
+      if (comment.mentions.length) {
+        dispatchNotify(mentionEvent(
+          req.params.id, targetType, targetId, comment.author, comment.mentions, comment.text,
+          comment.createdAt,
+        ));
+      }
       return res.status(201).json(comment);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

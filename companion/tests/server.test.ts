@@ -14,6 +14,8 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../src/providers
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
 import { CommentsStore } from "../src/analysis/comments.js";
+import { NotificationConfigStore } from "../src/analysis/notificationStore.js";
+import { createNotifier } from "../src/integrations/notify/notifyDispatch.js";
 import { PlaybookStore } from "../src/analysis/playbookStore.js";
 import { PlaybookControlStore } from "../src/analysis/playbookControl.js";
 import { IocWhitelistStore } from "../src/analysis/iocWhitelistStore.js";
@@ -1175,6 +1177,29 @@ describe("state and report routes", () => {
     expect((await request(app).get("/cases/c1/comments")).body).toHaveLength(0);
 
     expect((await request(app).delete("/cases/c1/comments/nope")).status).toBe(404);
+  });
+
+  it("comments: an @mention fires one notification via a configured channel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-comments-mention-"));
+    const store = new CaseStore(root);
+    const commentsStore = new CommentsStore(store);
+    const notificationStore = new NotificationConfigStore(join(root, "notifications", "config.json"));
+    const sent: string[] = [];
+    const fetchFn = (async (u: string) => { sent.push(String(u)); return new Response("ok", { status: 200 }); }) as typeof fetch;
+    const notifier = createNotifier({ store: notificationStore, fetchFn });
+    const app = createApp(store, { commentsStore, notificationStore, notifier });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await request(app).post("/notifications").send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/mentions" });
+
+    const post = await request(app).post("/cases/c1/comments")
+      .send({ targetType: "finding", targetId: "f1", author: "Alice", text: "cc @bob can you take a look?" });
+    expect(post.status).toBe(201);
+    expect(post.body.mentions).toEqual(["bob"]);
+
+    // dispatchNotify is fire-and-forget AND the notifier loads its channel config from disk before
+    // it fetches, so one microtask tick isn't enough — poll until the send lands (or give up).
+    for (let i = 0; i < 200 && !sent.length; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(sent).toEqual(["https://hooks.slack.com/services/mentions"]);
   });
 
   it("false-positive: onFalsePositive callback fires on add, batch add, and remove", async () => {

@@ -27,8 +27,9 @@ export function isWebhookChannelType(type: NotificationChannelType): boolean {
   return WEBHOOK_CHANNEL_TYPES.includes(type);
 }
 
-// The three signal classes from the issue. The kind is also the per-channel toggle key.
-export const NOTIFICATION_EVENT_KINDS = ["critical_finding", "playbook_update", "milestone"] as const;
+// The signal classes from the issue, plus `mention` (issue #88 — an @name in a case comment). The
+// kind is also the per-channel toggle key.
+export const NOTIFICATION_EVENT_KINDS = ["critical_finding", "playbook_update", "milestone", "mention"] as const;
 export type NotificationEventKind = (typeof NOTIFICATION_EVENT_KINDS)[number];
 
 export const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"] as const;
@@ -107,13 +108,13 @@ export interface NotificationChannel {
 // ── Filtering ──────────────────────────────────────────────────────────────────────────────
 
 // Does this channel want this event? Gates on: enabled, the per-kind toggle, and — for
-// severity-bearing events (findings/playbook) — the channel's minSeverity. Milestones are
-// lifecycle pings and bypass the threshold (gated only by the `milestone` toggle), so a
-// "critical-only" channel still doesn't get spammed but a milestone-opted channel always does.
+// severity-bearing events (findings/playbook) — the channel's minSeverity. Milestones and mentions
+// are not severity-ranked (a mention has no "how bad" axis), so both bypass the threshold and are
+// gated only by their own toggle.
 export function shouldNotify(channel: NotificationChannel, event: NotificationEvent): boolean {
   if (!channel.enabled) return false;
   if (!channel.events[event.kind]) return false;
-  if (event.kind === "milestone") return true;
+  if (event.kind === "milestone" || event.kind === "mention") return true;
   return SEVERITY_RANK[event.severity] >= SEVERITY_RANK[channel.minSeverity];
 }
 
@@ -195,6 +196,29 @@ export function milestoneEvent(caseId: string, title: string, lines: string[], a
   return { kind: "milestone", caseId, title, severity: "Info", lines: [...lines, `Case: ${caseId}`], at };
 }
 
+// Build a `mention` event for a comment that @mentioned one or more investigators (issue #88).
+// Severity is Info (mentions bypass the threshold — see shouldNotify), so the per-channel
+// `mention` toggle is the only gate.
+export function mentionEvent(
+  caseId: string,
+  targetType: string,
+  targetId: string,
+  author: string,
+  mentions: readonly string[],
+  text: string,
+  at: string,
+): NotificationEvent {
+  const who = mentions.map((m) => `@${m}`).join(", ");
+  return {
+    kind: "mention",
+    caseId,
+    title: `${author} mentioned ${who} in a comment`,
+    severity: "Info",
+    lines: [`On ${targetType} ${targetId}`, truncate(text, 300), `Case: ${caseId}`],
+    at,
+  };
+}
+
 // A generic test event so the analyst can verify a channel end-to-end from Settings.
 export function testEvent(at: string): NotificationEvent {
   return {
@@ -232,6 +256,7 @@ const eventsInputSchema = z
     critical_finding: z.coerce.boolean().optional(),
     playbook_update: z.coerce.boolean().optional(),
     milestone: z.coerce.boolean().optional(),
+    mention: z.coerce.boolean().optional(),
   })
   .optional();
 
@@ -271,6 +296,7 @@ const defaultEvents = (): Record<NotificationEventKind, boolean> => ({
   critical_finding: true,
   playbook_update: true,
   milestone: false,
+  mention: true,
 });
 
 // Validate + normalize a create/update payload into a full channel draft. Webhook channels require

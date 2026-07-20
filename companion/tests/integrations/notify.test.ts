@@ -38,7 +38,7 @@ function event(over: Partial<NotificationEvent> = {}): NotificationEvent {
 function channel(over: Partial<NotificationChannel> = {}): NotificationChannel {
   return {
     id: "c1", type: "slack", name: "SOC", enabled: true, minSeverity: "High",
-    events: { critical_finding: true, playbook_update: true, milestone: false },
+    events: { critical_finding: true, playbook_update: true, milestone: false, mention: true },
     webhookUrl: "https://hooks.slack.com/services/x", createdAt: NOW, updatedAt: NOW, ...over,
   };
 }

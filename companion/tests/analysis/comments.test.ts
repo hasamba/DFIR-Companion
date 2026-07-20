@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { CommentsStore } from "../../src/analysis/comments.js";
+import { CommentsStore, parseMentions } from "../../src/analysis/comments.js";
 
 describe("CommentsStore", () => {
   let store: CommentsStore;
@@ -39,5 +39,42 @@ describe("CommentsStore", () => {
     expect(await store.remove("c1", c.id)).toBe(true);
     expect(await store.load("c1")).toHaveLength(0);
     expect(await store.remove("c1", "does-not-exist")).toBe(false);
+  });
+
+  it("parses @name mentions and stores them on the comment", async () => {
+    const c = await store.add("c1", {
+      targetType: "finding", targetId: "f1", author: "Bob",
+      text: "cc @alice and @Charlie-99 can you check this?",
+    });
+    expect(c.mentions).toEqual(["alice", "Charlie-99"]);
+  });
+
+  it("de-dupes mentions case-insensitively, keeping first-seen casing and order", () => {
+    expect(parseMentions("@Alice ping @alice again, @bob")).toEqual(["Alice", "bob"]);
+  });
+
+  it("does not treat email addresses / IOCs as mentions", () => {
+    // The `@` in an email is preceded by a handle char, so it must not parse as a mention.
+    expect(parseMentions("contact bob@example.com about this")).toEqual([]);
+    expect(parseMentions("beacon to admin@evil-domain.net was seen")).toEqual([]);
+    // A real leading mention alongside an email: only the mention, never the email domain.
+    expect(parseMentions("@alice can you check bob@example.com?")).toEqual(["alice"]);
+    // Mid-word @ (e.g. within a token) is not a mention either.
+    expect(parseMentions("path/to@v2/thing")).toEqual([]);
+  });
+
+  it("does not swallow trailing sentence punctuation into the handle", () => {
+    // `.`/`-`/`_` are legal inside a handle but never at the end, so a mention that closes a
+    // sentence still resolves to the real handle (and de-dups against the same handle elsewhere).
+    expect(parseMentions("ping @bob.")).toEqual(["bob"]);
+    expect(parseMentions("@bob, @carol; @dave-")).toEqual(["bob", "carol", "dave"]);
+    expect(parseMentions("@bob. and @bob again")).toEqual(["bob"]);
+    // ...but interior punctuation is still part of the handle.
+    expect(parseMentions("@some-user_name.v2 ok")).toEqual(["some-user_name.v2"]);
+  });
+
+  it("returns [] mentions when the text has no @tokens", async () => {
+    const c = await store.add("c1", { targetType: "event", targetId: "e1", author: "Bob", text: "no mentions here" });
+    expect(c.mentions).toEqual([]);
   });
 });

@@ -659,6 +659,8 @@
     .comment-item { border-left: 2px solid var(--c-2a2f3a); padding: 6px 10px; margin: 8px 0; }
     .comment-item .meta { color: var(--c-9aa4b2); font-size: 11px; }
     .comment-item .body { white-space: pre-wrap; margin-top: 2px; }
+    .mention-chip { background: var(--c-11202e); color: var(--c-6aa9ff); border: 1px solid var(--c-2d4a6a);
+      border-radius: 8px; padding: 0 5px; font-weight: 600; white-space: nowrap; }
     .comment-del { background: transparent; border: 0; color: var(--c-ff7a7a); cursor: pointer; font-size: 11px; padding: 0 4px; }
     #commentText { width: 100%; box-sizing: border-box; background: var(--c-0f1115); color: var(--c-e6e6e6);
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
@@ -1725,7 +1727,7 @@
     <div class="comment-modal">
       <h3 id="commentTitle">Comments</h3>
       <div id="commentList"></div>
-      <textarea id="commentText" rows="3" placeholder="Add a comment for other investigators…"></textarea>
+      <textarea id="commentText" rows="3" placeholder="Add a comment for other investigators… (@name to mention someone)"></textarea>
       <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button id="commentPost">Post comment</button>
         <button id="commentClose" style="background:var(--c-2a2f3a);">Close</button>
@@ -3411,8 +3413,8 @@
            playbook updates, and investigation milestones. Global, shared across cases. -->
       <div class="stab-pane" id="stab-notifications">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
-          Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, and <strong>investigation milestones</strong>
-          to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
+          Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, <strong>investigation milestones</strong>, and
+          <strong>@mentions</strong> in comments to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
         </div>
         <div style="background:var(--c-211405);border:1px solid var(--c-5a4a1a);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--c-ffce8a);margin-bottom:12px">
           ⚠ Notifications send case content (finding/task titles) to a third party. Off by default — each channel is opt-in. Don't enable on a sensitive case unless the destination is trusted.
@@ -3470,6 +3472,7 @@
             <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtFinding" type="checkbox" checked /> findings</label>
             <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtPlaybook" type="checkbox" checked /> playbook</label>
             <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtMilestone" type="checkbox" /> milestones</label>
+            <label style="display:flex;align-items:center;gap:4px"><input id="ntfEvtMention" type="checkbox" checked /> mentions</label>
             <label style="display:flex;align-items:center;gap:4px"><input id="ntfEnabled" type="checkbox" checked /> enabled</label>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
@@ -5943,6 +5946,15 @@
         + `title="Comments — collaborate with other investigators">${ICON_COMMENT}${list.length ? " " + list.length : ""}</button>`;
     }
     const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
+    // Highlight @name tokens as chips in a comment body. esc() first (so the raw text can never
+    // inject markup), then the @token regex only ever matches already-escaped, HTML-safe text.
+    function mentionHtml(text) {
+      // `@` must not follow a word/handle char so emails/IOCs (bob@example.com) aren't chipped as
+      // mentions, and a handle must start AND end alphanumeric so trailing sentence punctuation
+      // ("ping @bob.") stays outside the chip. Runs over esc()'d text; keep in sync with
+      // MENTION_RE in analysis/comments.ts.
+      return esc(text).replace(/(?<![A-Za-z0-9._@-])@([a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,62}[a-zA-Z0-9])?)/g, '<span class="mention-chip">@$1</span>');
+    }
 
     function loadComments(caseId) {
       fetch(`/cases/${caseId}/comments`).then(r => r.json()).then(list => {
@@ -5977,7 +5989,7 @@
       document.getElementById("commentList").innerHTML = list.length
         ? list.map(c => `<div class="comment-item"><div class="meta"><strong style="color:var(--c-cbd3df)">${esc(c.author)}</strong> · `
             + `${esc(new Date(c.createdAt).toLocaleString())} <button class="comment-del" data-id="${escAttr(c.id)}" title="Delete">✕</button></div>`
-            + `<div class="body">${esc(c.text)}</div></div>`).join("")
+            + `<div class="body">${mentionHtml(c.text)}</div></div>`).join("")
         : "<div style='color:var(--c-9aa4b2);font-size:12px'>No comments yet.</div>";
       document.getElementById("commentList").querySelectorAll(".comment-del").forEach(b => b.onclick = () => deleteComment(b.getAttribute("data-id")));
     }
@@ -19790,6 +19802,7 @@
       if (ev.critical_finding) on.push("findings");
       if (ev.playbook_update) on.push("playbook");
       if (ev.milestone) on.push("milestones");
+      if (ev.mention) on.push("mentions");
       return on.length ? on.join(", ") : "nothing";
     }
     function renderNotifications(channels) {
@@ -19828,6 +19841,7 @@
           critical_finding: document.getElementById("ntfEvtFinding").checked,
           playbook_update: document.getElementById("ntfEvtPlaybook").checked,
           milestone: document.getElementById("ntfEvtMilestone").checked,
+          mention: document.getElementById("ntfEvtMention").checked,
         },
       };
       if (type === "email") {
