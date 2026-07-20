@@ -177,6 +177,14 @@ describe("ShodanProvider (host lookup)", () => {
     await expect(rl.lookup("ip", "1.2.3.4")).rejects.toThrow(/rate limit/i);
   });
 
+  it("throws a RateLimitError carrying the parsed Retry-After on 429 (#78)", async () => {
+    const rl = new ShodanProvider({
+      apiKey: "k",
+      fetchFn: vi.fn(async () => new Response("", { status: 429, headers: { "retry-after": "5" } })),
+    });
+    await expect(rl.lookup("ip", "1.2.3.4")).rejects.toMatchObject({ name: "RateLimitError", retryAfterMs: 5000 });
+  });
+
   it("only supports IP IOCs", async () => {
     const sh = new ShodanProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({})) });
     expect(sh.supports("ip")).toBe(true);

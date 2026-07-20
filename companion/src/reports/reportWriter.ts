@@ -13,7 +13,7 @@ import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } fro
 import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
-import { buildEvidenceGraph, type EvidenceGraph } from "../analysis/evidenceGraph.js";
+import { buildEvidenceGraph, buildLateralPaths, type EvidenceGraph, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
 import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
@@ -52,6 +52,13 @@ import type { SynthMetaStore, SynthesisCoverage } from "../analysis/synthMeta.js
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
+import {
+  LateralPathDismissStore,
+  filterDismissedPaths,
+  annotateDismissedPaths,
+  type LateralPathDismissal,
+  type AnnotatedLateralPath,
+} from "../analysis/lateralPathDismiss.js";
 import { buildBrandingContext, defaultReportTemplate, renderTemplateString, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
@@ -86,6 +93,7 @@ export class ReportWriter {
     private readonly kevStore?: KevStore,
     private readonly hypothesisStore?: HypothesisStore,
     private readonly synthMeta?: SynthMetaStore,   // #11 deferred: second-look collection leads in the report
+    private readonly lateralPathDismissals?: LateralPathDismissStore,   // analyst-rejected lateral chains
   ) {}
 
   // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
@@ -211,6 +219,21 @@ export class ReportWriter {
   // narrows it to events in that range.
   async evidenceGraph(caseId: string, window?: TimeWindow): Promise<EvidenceGraph> {
     return buildEvidenceGraph(await this.loadFilteredState(caseId), window);
+  }
+
+  // Ordered lateral-movement chains (entry host → pivot → ... → target, #92) for the case, derived
+  // on demand with the same scope/legitimate filtering as the report. An optional time `window`
+  // (#83) narrows it to events in that range. Chains the analyst has DISMISSED are dropped — pass
+  // includeDismissed to get them back, each flagged, for the review/undo view.
+  async lateralPaths(caseId: string, window?: TimeWindow, includeDismissed = false): Promise<LateralPath[] | AnnotatedLateralPath[]> {
+    const paths = buildLateralPaths(await this.loadFilteredState(caseId), window);
+    const dismissals = await this.loadLateralPathDismissals(caseId);
+    return includeDismissed ? annotateDismissedPaths(paths, dismissals) : filterDismissedPaths(paths, dismissals);
+  }
+
+  private async loadLateralPathDismissals(caseId: string): Promise<LateralPathDismissal[]> {
+    if (!this.lateralPathDismissals) return [];
+    try { return await this.lateralPathDismissals.load(caseId); } catch { return []; }
   }
 
   // Temporal attack phases (bursts of activity grouped by time gap) for the case, derived on
@@ -403,9 +426,10 @@ export class ReportWriter {
     hypotheses?: Hypothesis[],
     secondLookLeads?: string[],
     coverage?: SynthesisCoverage | null,
+    lateralPaths?: LateralPath[],
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -438,7 +462,9 @@ export class ReportWriter {
     const kevCatalog = await this.loadKevCatalog();
     const secondLookLeads = await this.loadSecondLookLeads(caseId);
     const coverage = await this.loadCoverage(caseId);
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage);
+    // Lateral chains the analyst dismissed must not reappear in the written report.
+    const lateralPaths = filterDismissedPaths(buildLateralPaths(state), await this.loadLateralPathDismissals(caseId));
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -472,6 +498,12 @@ export class ReportWriter {
     const template = await this.loadTemplate(caseId);
     const kevCatalog = await this.loadKevCatalog();
     const secondLookLeads = applyAnonDeep(await this.loadSecondLookLeads(caseId), redact);
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads);
+    // Dismissals are anchored on REAL host ids, but this state is anonymized — so run them through
+    // the same redaction before matching, exactly as the asset overrides above are.
+    const lateralPaths = filterDismissedPaths(
+      buildLateralPaths(state),
+      applyAnonDeep(await this.loadLateralPathDismissals(caseId), redact),
+    );
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths);
   }
 }

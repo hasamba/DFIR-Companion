@@ -122,6 +122,7 @@ import { HuntRunSnapshotStore } from "./analysis/huntRunSnapshotStore.js";
 import { buildHuntRunSnapshot, diffHuntRuns, findHuntRunRecord, upsertHuntRunRecord, type HuntRunDiff } from "./analysis/huntRunDiff.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
+import { LateralPathDismissStore } from "./analysis/lateralPathDismiss.js";
 import { IocAliasStore } from "./analysis/iocAlias.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
@@ -345,6 +346,10 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Analyst-dismissed lateral-movement chains, persisted per case in
+  // state/lateral-path-dismissals.json. Rejects a derived INFERENCE without discarding the
+  // underlying evidence the way a false-positive marker would.
+  lateralPathDismissStore?: LateralPathDismissStore;
   // Entity merging for duplicate IOCs (#82). iocAliasStore persists per-case merge aliases (state/
   // ioc-aliases.json) so a future re-synthesis routes the merged-away value onto its canonical IOC
   // instead of recreating it (see pipeline.ts's mergeWithAliases). onIocMerge pings dashboard
@@ -404,6 +409,9 @@ export interface AppOptions {
   enrichmentProviders?: EnrichmentProvider[];
   enrichDelayMs?: number;
   enrichProviderDelayMs?: Record<string, number>;  // per-provider throttle overrides (keyed by provider.name)
+  enrichJitterMs?: number;          // ± random jitter added to the inter-call wait (#78)
+  enrichRetries?: number;           // retry attempts for a provider call that hits a 429 (#78)
+  enrichRetryBackoffMs?: number;    // base backoff before the first 429 retry, doubles each attempt (#78)
   enrichMaxIocs?: number;
   // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
   // sent to breach-data providers. IOC domains are never queried here.
@@ -2160,6 +2168,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         providers,
         delayMs: options.enrichDelayMs,
         perProviderDelayMs: options.enrichProviderDelayMs,
+        jitterMs: options.enrichJitterMs,
+        retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
         maxIocs: options.enrichMaxIocs,
         force,
         signal: job?.signal,    // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
@@ -2195,6 +2205,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
           check: (p, c) => rocky.checkParentChild(p, c),
           delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
+          jitterMs: options.enrichJitterMs,
+          retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
           maxChecks: options.enrichMaxIocs,
           force,
         });
@@ -2472,6 +2484,8 @@ import { OllamaCloudProvider } from "./providers/ollama.js";
 import { LiteLlmProvider } from "./providers/litellm.js";
 import { GeminiProvider } from "./providers/gemini.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
+import { ClaudeCodeProvider } from "./providers/claudeCode.js";
+import { CodexProvider } from "./providers/codex.js";
 import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
 import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
@@ -2518,6 +2532,8 @@ export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | und
   registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
   registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
   registry.register(new AnthropicProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
+  registry.register(new ClaudeCodeProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CLAUDE_CODE_BIN }));
+  registry.register(new CodexProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CODEX_BIN }));
   return registry.get(name);
 }
 
@@ -3006,7 +3022,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore);
+  const lateralPathDismissStore = new LateralPathDismissStore(store);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore, lateralPathDismissStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
@@ -3134,6 +3151,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
+    lateralPathDismissStore,
     iocAliasStore,
     onIocMerge: (caseId) => hub.broadcastTo(caseId, { type: "ioc_merge_changed" }),
     onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
@@ -3166,6 +3184,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     enrichmentProviders: buildEnrichmentProviders(),
     enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
     enrichProviderDelayMs: buildEnrichProviderDelayMap(),
+    // #78: ± jitter on the inter-call wait, and bounded retry-with-backoff on a 429 (honouring
+    // Retry-After) instead of a single rate-limit hit aborting the lookup.
+    enrichJitterMs: Number(process.env.DFIR_ENRICH_JITTER_MS) || undefined,
+    enrichRetries: Number(process.env.DFIR_ENRICH_RETRIES) || undefined,
+    enrichRetryBackoffMs: Number(process.env.DFIR_ENRICH_RETRY_BACKOFF_MS) || undefined,
     enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
     customerExposureProviders: buildCustomerExposureProviders(),
     customerExposureDelayMs: Number(process.env.DFIR_EXPOSURE_DELAY_MS) || undefined,
