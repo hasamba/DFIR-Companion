@@ -5615,7 +5615,13 @@
       fetch(`/cases/${caseId}/evidence-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
         evGraphData = g; renderEvidenceGraph();
       }).catch(() => {});
-      fetch(`/cases/${caseId}/lateral-paths${_graphTimeQuery()}`).then(r => r.json()).then(paths => {
+      loadLateralPaths(caseId);
+    }
+    // Lateral chains, optionally including the ones the analyst dismissed (review/undo view).
+    function loadLateralPaths(caseId) {
+      const q = _graphTimeQuery();
+      const url = `/cases/${caseId}/lateral-paths${q}${evPathsShowDismissed ? (q ? "&" : "?") + "includeDismissed=1" : ""}`;
+      return fetch(url).then(r => r.json()).then(paths => {
         evPathsData = paths; renderEvidencePaths();
       }).catch(() => {});
     }
@@ -5788,22 +5794,40 @@
     // from lateral_move + ran_on evidence by real timestamp (buildLateralPaths), listed alongside
     // the pairwise evidence graph. "Highlight" turns on the lateral_move layer (off by default,
     // since it's usually the noisiest) and dims everything except this chain's hosts.
+    // Show analyst-dismissed chains too (the review/undo view). Off by default: a dismissed chain
+    // is one the analyst has already rejected, so it stays out of the way until asked for.
+    let evPathsShowDismissed = false;
+    const evPathBtnStyle = "background:none;border:1px solid var(--c-6b7585);border-radius:3px;cursor:pointer;padding:0 5px;color:var(--c-cbd3df);font-size:10px";
+
     function renderEvidencePaths() {
       const el = document.getElementById("evPathsList");
+      const toggle = evPathsShowDismissed
+        ? `<button type="button" id="evPathsHideDismissed" style="${evPathBtnStyle}">Hide dismissed</button>`
+        : `<button type="button" id="evPathsShowDismissed" style="${evPathBtnStyle}">Show dismissed</button>`;
       if (!evPathsData || !evPathsData.length) {
-        el.innerHTML = "<div style='padding:8px 0;color:var(--c-9aa4b2)'>No multi-hop lateral chains reconstructed yet.</div>";
+        el.innerHTML = "<div style='padding:8px 0;color:var(--c-9aa4b2)'>No multi-hop lateral chains reconstructed yet. " + toggle + "</div>";
         return;
       }
       const confClass = (c) => c === "high" ? "ev-leg-high" : c === "medium" ? "ev-leg-med" : "ev-leg-ran";
       el.innerHTML = evPathsData.map((p, i) => {
         const route = p.hostIds.map((id) => esc((evGraphData?.nodes || []).find((n) => n.id === id)?.label || id)).join(" → ");
-        return `<div class="ev-path-row" style="margin-bottom:4px">`
+        // WHO/WHAT actually moved — the route alone doesn't say. Read from the hop's structured
+        // `actor` field (never parsed out of `basis`), de-duplicated across the chain.
+        const actors = [...new Set((p.hops || []).map((h) => h.actor).filter(Boolean))];
+        const via = actors.length ? ` <span class="ev-sub">via <b>${actors.map(esc).join("</b>, <b>")}</b></span>` : "";
+        // A dismissed row is shown struck-through and dimmed, with Restore in place of Dismiss.
+        const action = p.dismissed
+          ? `<button type="button" class="ev-path-restore" data-path-idx="${i}" style="${evPathBtnStyle}">Restore</button>`
+          : `<button type="button" class="ev-path-dismiss" data-path-idx="${i}" style="${evPathBtnStyle}" title="Reject this chain as a wrong conclusion. The underlying evidence stays in the case.">Dismiss</button>`;
+        return `<div class="ev-path-row" style="margin-bottom:4px${p.dismissed ? ";opacity:.55" : ""}">`
           + `<span class="ev-leg-line ${confClass(p.confidence)}"></span>`
-          + `<b>${route}</b> <span class="ev-sub">${esc(p.confidence)} confidence, ${p.hops.length} hop(s)`
-          + (p.startTime ? `, ${esc(p.startTime)} → ${esc(p.endTime)}` : "") + `</span> `
-          + `<button type="button" class="ev-path-highlight" data-path-idx="${i}" style="background:none;border:1px solid var(--c-6b7585);border-radius:3px;cursor:pointer;padding:0 5px;color:var(--c-cbd3df);font-size:10px">Highlight</button>`
+          + `<b${p.dismissed ? " style='text-decoration:line-through'" : ""}>${route}</b>${via} <span class="ev-sub">${esc(p.confidence)} confidence, ${p.hops.length} hop(s)`
+          + (p.startTime ? `, ${esc(p.startTime)} → ${esc(p.endTime)}` : "")
+          + (p.dismissed ? ` — dismissed${p.dismissalNote ? ": " + esc(p.dismissalNote) : ""}` : "") + `</span> `
+          + `<button type="button" class="ev-path-highlight" data-path-idx="${i}" style="${evPathBtnStyle}">Highlight</button> `
+          + action
           + `</div>`;
-      }).join("");
+      }).join("") + `<div style="margin-top:6px">${toggle}</div>`;
     }
 
     // Kill-chain legend (#93): swatches for the tactics that actually appear in the current graph,
@@ -15491,6 +15515,38 @@
     }));
     document.querySelector("#sec-evidence h2").addEventListener("click", () => {
       setTimeout(() => { if (evGV) evGV.onExpand(); }, 0);
+    });
+    // Dismiss / restore a reconstructed chain. Dismissing rejects the CONCLUSION ("the attacker did
+    // not pivot A → B → C"); it does NOT mark the underlying events as false positives, so the
+    // evidence stays in the timeline and every other view.
+    document.getElementById("evPathsList").addEventListener("click", async (e) => {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (e.target.id === "evPathsShowDismissed" || e.target.id === "evPathsHideDismissed") {
+        evPathsShowDismissed = e.target.id === "evPathsShowDismissed";
+        if (caseId) await loadLateralPaths(caseId);
+        return;
+      }
+      const dismissBtn = e.target.closest(".ev-path-dismiss");
+      if (dismissBtn && evPathsData && caseId) {
+        const path = evPathsData[Number(dismissBtn.dataset.pathIdx)];
+        if (!path) return;
+        const note = prompt("Why is this chain wrong? (optional)") ?? "";
+        const res = await fetch(`/cases/${caseId}/lateral-path-dismissals`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostIds: path.hostIds, note }),
+        }).catch(() => null);
+        if (res && res.ok) await loadLateralPaths(caseId);
+        return;
+      }
+      const restoreBtn = e.target.closest(".ev-path-restore");
+      if (restoreBtn && evPathsData && caseId) {
+        const path = evPathsData[Number(restoreBtn.dataset.pathIdx)];
+        if (!path) return;
+        const key = path.hostIds.map((h) => String(h).trim().toLowerCase()).join(">");
+        const res = await fetch(`/cases/${caseId}/lateral-path-dismissals/${encodeURIComponent(key)}`, { method: "DELETE" }).catch(() => null);
+        if (res && res.ok) await loadLateralPaths(caseId);
+        return;
+      }
     });
     // Highlight a reconstructed lateral-movement path (#92) in the evidence graph: switch on the
     // lateral_move layer (off by default) if needed, re-render, then dim everything except this

@@ -366,6 +366,12 @@ export interface LateralHop {
   toTimestamp: string;          // earliest evidence tying the TO host to this hop's hash/account — the hop's order key
   confidence: Confidence;
   rule: "shared-hash" | "shared-account";
+  // WHO/WHAT carried this hop, as a STRUCTURED field: the account for a shared-account hop, the
+  // binary's filename (falling back to a short hash when no path was recorded) for a shared-hash
+  // one. `basis` says the same thing in prose, but consumers must never parse it back out — that
+  // format-coupling is exactly what silently empties a view when the wording changes.
+  actor: string;
+  actorKind: "account" | "binary";
   basis: string;                // human one-liner
   eventIds: string[];           // the two backing events (from-host + to-host sightings) for this hop
 }
@@ -458,18 +464,31 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
     return !!rec && rec.hasPath && rec.vendorOnly && !rec.grave;
   }
 
+  // The binary's filename, for naming WHAT moved ("psexec.exe" reads far better than a hash
+  // prefix). Falls back to the short hash when no path was recorded for the file.
+  const binaryNameByHash = new Map<string, string>();
+  for (const e of timeline) {
+    const key = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
+    const p = (e.path ?? "").trim();
+    if (!key || !p || binaryNameByHash.has(key)) continue;
+    const base = p.split(/[\\/]/).pop();
+    if (base) binaryNameByHash.set(key, base);
+  }
+
   // shared-hash hops: chronological chain across every host the binary touched (high confidence).
   const byHash = earliestPerHost((e) => e.sha256 ?? e.md5);
   for (const [h, hosts] of byHash) {
     if (hosts.size < 2) continue;
     if (isInstalledSoftware(h)) continue;              // installed vendor software ≠ movement
     const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
+    const binary = binaryNameByHash.get(h) ?? shortHash(h);
     for (let i = 1; i < ordered.length; i++) {
       const from = ordered[i - 1], to = ordered[i];
       hops.push({
         from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
         fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
         confidence: "high", rule: "shared-hash",
+        actor: binary, actorKind: "binary",
         basis: `same binary ${shortHash(h)}: ${from.asset!.trim()} → ${to.asset!.trim()}`,
         eventIds: [from.id, to.id],
       });
@@ -500,6 +519,7 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
         from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
         fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
         confidence: "medium", rule: "shared-account",
+        actor: acct, actorKind: "account",
         basis: `${acct} active on ${from.asset!.trim()} then ${to.asset!.trim()}`,
         eventIds: [from.id, to.id],
       });
