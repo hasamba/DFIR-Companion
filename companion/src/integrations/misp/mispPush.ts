@@ -144,12 +144,18 @@ export async function pushCaseToMisp(
     };
     eventId = await client.createEvent(body);
     created = true;
-    // Tag with the idempotency tag so subsequent pushes find this event.
+    // Tag with the idempotency tag so subsequent pushes find this event. This one is load-bearing:
+    // without it findEventByTag can't match, so the NEXT push creates a second event carrying a
+    // duplicate copy of the whole timeline. Say that plainly rather than emitting a bare error.
     try {
       await client.addTagToEvent(eventId, caseTag);
       tags += 1;
     } catch (err) {
-      warnings.push(`case tag: ${(err as Error).message}`);
+      warnings.push(
+        `could not attach the case tag "${caseTag}" (${err instanceof Error ? err.message : String(err)}) — ` +
+        `re-pushing this case will CREATE A DUPLICATE EVENT instead of updating event ${eventId}, ` +
+        `because that tag is how a prior push is found`,
+      );
     }
   }
 
@@ -243,14 +249,24 @@ export async function pushCaseToMisp(
     }
   }
 
-  // 5. Attach MITRE technique tags (non-fatal — MISP may reject unknown tags gracefully).
+  // 5. Attach MITRE technique tags (non-fatal — MISP may reject a tag this instance won't accept).
+  // `tags` counts tags that ACTUALLY attached: addTagToEvent throws on MISP's HTTP-200-with-
+  // `saved:false` rejection, so a rejected tag is no longer counted as applied. Failures are
+  // summarised as ONE warning rather than one per technique, which would drown the warning list.
+  const tagFailures: string[] = [];
   for (const tech of collectMitre(input.state)) {
     try {
       await client.addTagToEvent(eventId, `mitre-attack:${tech}`);
       tags += 1;
-    } catch {
-      // Silently skip: the tag may not be defined in this MISP instance.
+    } catch (err) {
+      tagFailures.push(tech);
+      if (tagFailures.length === 1) {
+        warnings.push(`MITRE tag "mitre-attack:${tech}" was rejected by MISP: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
+  }
+  if (tagFailures.length > 1) {
+    warnings.push(`${tagFailures.length} MITRE tags could not be attached (first reason above): ${tagFailures.slice(0, 8).join(", ")}${tagFailures.length > 8 ? ", …" : ""}`);
   }
 
   return {
