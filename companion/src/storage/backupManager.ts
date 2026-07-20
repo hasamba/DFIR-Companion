@@ -181,7 +181,10 @@ export class BackupManager {
     const stateDir = this.cases.stateDir(caseId);
     const restored: string[] = [];
     for (const [name, content] of Object.entries(bundle.files ?? {})) {
-      await this.deps.atomicWrite(join(stateDir, name), JSON.stringify(content, null, 2));
+      // Compact, matching how StateStore writes investigation.json. Pretty-printing here would
+      // re-inflate a restored state file by ~35% — and restoring a backup is exactly the recovery
+      // path for a case that grew past the ~512 MB load ceiling, so it must not push it back over.
+      await this.deps.atomicWrite(join(stateDir, name), JSON.stringify(content));
       restored.push(name);
     }
     return { restored };

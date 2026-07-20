@@ -107,9 +107,9 @@ function isSafeZipEntryPath(path: string): boolean {
   return segments.every((seg) => seg !== "" && seg !== "." && seg !== "..");
 }
 
-function rewriteCaseIdInJson(data: Buffer, targetCaseId: string): Buffer {
+function rewriteCaseIdInJson(data: Buffer, targetCaseId: string, indent: number | undefined): Buffer {
   const parsed = JSON.parse(data.toString("utf8")) as Record<string, unknown>;
-  return Buffer.from(JSON.stringify({ ...parsed, caseId: targetCaseId }, null, 2), "utf8");
+  return Buffer.from(JSON.stringify({ ...parsed, caseId: targetCaseId }, null, indent), "utf8");
 }
 
 function rewriteCaseIdInJsonl(data: Buffer, targetCaseId: string): Buffer {
@@ -121,7 +121,15 @@ function rewriteCaseIdInJsonl(data: Buffer, targetCaseId: string): Buffer {
   return Buffer.from(rewritten.length ? rewritten.join("\n") + "\n" : "", "utf8");
 }
 
-const CASE_ID_JSON_PATHS = new Set(["case.json", "state/investigation.json"]);
+// Archive paths whose caseId must be rewritten on import, mapped to the indent they're written
+// back with. investigation.json is compact (undefined) to match how StateStore saves it — it can
+// reach hundreds of MB, and re-inflating it here would undo that and could push a case that is
+// near the ~512 MB load ceiling straight back over it. case.json is small and CaseStore writes it
+// pretty, so it stays pretty rather than flip-flopping format on the next save.
+const CASE_ID_JSON_PATHS = new Map<string, number | undefined>([
+  ["case.json", 2],
+  ["state/investigation.json", undefined],
+]);
 const CASE_ID_JSONL_PATHS = new Set(["metadata/captures.jsonl", "metadata/imports.jsonl"]);
 
 function countLines(data: Buffer | undefined): number {
@@ -221,7 +229,8 @@ export async function importEncryptedCase(
       const normalizedPath = entry.path.replace(/\\/g, "/");
       try {
         if (CASE_ID_JSON_PATHS.has(normalizedPath)) {
-          rewrittenByPath.set(entry.path, rewriteCaseIdInJson(entry.data, targetCaseId));
+          const indent = CASE_ID_JSON_PATHS.get(normalizedPath);
+          rewrittenByPath.set(entry.path, rewriteCaseIdInJson(entry.data, targetCaseId, indent));
         } else if (CASE_ID_JSONL_PATHS.has(normalizedPath)) {
           rewrittenByPath.set(entry.path, rewriteCaseIdInJsonl(entry.data, targetCaseId));
         }
