@@ -208,6 +208,7 @@ export interface HuntingProfile {
   missed: number;     // collected AND found nothing
   pending: number;    // deployed but not yet collected
   hunts: HuntOutcome[];
+  pivotProductivity: PivotProductivity[];   // #72: aggregate hit-rate by pivot class
 }
 
 export function buildHuntingProfile(outcomes: readonly HuntOutcome[]): HuntingProfile {
@@ -220,5 +221,83 @@ export function buildHuntingProfile(outcomes: readonly HuntOutcome[]): HuntingPr
     else if (o.foundEvidence) hit++;
     else missed++;
   }
-  return { total: hunts.length, hit, missed, pending, hunts };
+  return { total: hunts.length, hit, missed, pending, hunts, pivotProductivity: buildPivotProductivity(hunts) };
+}
+
+// Aggregate productivity by PIVOT CLASS (issue #72). Per-hunt outcomes already feed the "PRIOR HUNTS"
+// prompt block above, but that's a flat per-hunt list — it doesn't tell the model which KIND of pivot
+// (a hash, a process name, a filesystem path, a network indicator, a registry key) has actually been
+// paying off in this case, so a run of unproductive process-name hunts keeps getting repeated in a
+// different shape. This classifies each outcome's pivot class from its VQL (the plugin/field names are
+// a reliable tell — `glob`/`path` for filesystem, `pslist`/`CommandLine` for process, `hash`/`md5` for
+// hashes, `netstat`/`dns`/`domain` for network, `registry`/`hklm` for the registry) and tallies hit/
+// miss/pending per class so the model can bias toward classes that have found evidence.
+export type PivotType = "hash" | "process" | "path" | "network" | "registry" | "other";
+
+const PIVOT_TYPE_PATTERNS: ReadonlyArray<{ type: PivotType; re: RegExp }> = [
+  { type: "hash", re: /\b(md5|sha1|sha256|sha-1|sha-256|hash)\b/i },
+  { type: "registry", re: /\b(registry|reg_key|hkcu|hklm|hkey_)/i },
+  { type: "network", re: /\b(netstat|connections?|dns|domain|url|http|network)\b/i },
+  { type: "process", re: /\b(pslist|process|commandline|parentname|proc(ess)?tree)\b/i },
+  { type: "path", re: /\b(glob|filename|filepath|path)\b/i },
+];
+
+// Classify one outcome's pivot class from its VQL preview (falls back to the title — bundles carry no
+// VQL). Pure, order-sensitive (first pattern to match wins — hash/registry/network are checked before
+// the broader process/path patterns since e.g. a hash lookup often also globs a directory).
+export function classifyPivotType(outcome: HuntOutcome): PivotType {
+  const text = `${outcome.vqlPreview || ""} ${outcome.title || ""}`;
+  for (const { type, re } of PIVOT_TYPE_PATTERNS) if (re.test(text)) return type;
+  return "other";
+}
+
+export interface PivotProductivity {
+  type: PivotType;
+  total: number;
+  hit: number;
+  missed: number;
+  pending: number;
+}
+
+// Tally hit/missed/pending per pivot class, sorted MOST-productive first (highest hit-rate among
+// collected outcomes, ties broken by volume). Classes with no collected outcomes yet (rate undefined)
+// sort last, ahead of nothing. Only classes with at least one outcome are returned. Pure.
+export function buildPivotProductivity(outcomes: readonly HuntOutcome[]): PivotProductivity[] {
+  const order: PivotType[] = ["hash", "process", "path", "network", "registry", "other"];
+  const tally = new Map<PivotType, PivotProductivity>(order.map((type) => [type, { type, total: 0, hit: 0, missed: 0, pending: 0 }]));
+  for (const o of outcomes ?? []) {
+    const entry = tally.get(classifyPivotType(o))!;
+    entry.total++;
+    if (o.status !== "collected") entry.pending++;
+    else if (o.foundEvidence) entry.hit++;
+    else entry.missed++;
+  }
+  return order
+    .map((type) => tally.get(type)!)
+    .filter((p) => p.total > 0)
+    .sort((a, b) => {
+      const rateA = a.hit + a.missed > 0 ? a.hit / (a.hit + a.missed) : -1;
+      const rateB = b.hit + b.missed > 0 ? b.hit / (b.hit + b.missed) : -1;
+      return rateB - rateA || b.total - a.total;
+    });
+}
+
+// The "HUNT PRODUCTIVITY" prompt block fed alongside `renderPriorHuntsBlock` to the hunt-suggestion
+// prompts — the aggregate signal that lets the model bias toward pivot classes that have historically
+// found evidence in THIS case, not just avoid re-running an exact prior query. "" when there isn't
+// enough collected history yet (nothing to bias on) so the prompt stays lean on a fresh case.
+export function renderHuntProductivityBlock(outcomes: readonly HuntOutcome[]): string {
+  const stats = buildPivotProductivity(outcomes).filter((p) => p.hit + p.missed > 0);
+  if (!stats.length) return "";
+  const lines = stats.map((p) => {
+    const collected = p.hit + p.missed;
+    const rate = Math.round((p.hit / collected) * 100);
+    const pendingNote = p.pending ? `, ${p.pending} pending` : "";
+    return `- ${p.type}: ${p.hit}/${collected} hunts found evidence (${rate}%)${pendingNote}`;
+  });
+  return (
+    `HUNT PRODUCTIVITY BY PIVOT CLASS (this case's history — favor pivot classes below with a high hit ` +
+    `rate; deprioritize classes that keep coming back empty unless a new lead specifically calls for them):\n` +
+    `${lines.join("\n")}\n\n`
+  );
 }

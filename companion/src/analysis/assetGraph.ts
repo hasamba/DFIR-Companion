@@ -112,11 +112,40 @@ function worstVerdict(i: IOC): string | undefined {
 // DOMAIN\user — guarded so it doesn't match file-path segments (C:\Users\srv). UPN/email accounts.
 const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
 const UPN_ACCT = /([A-Za-z0-9._-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
-const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
+// Registry hive roots are included for the same reason as filesystem roots: "HKU\S-1-5-21-…" is a
+// path, not a logon — and because the user half is length-capped, the SID's RID gets truncated, so
+// distinct users on distinct hosts would otherwise collapse into one identical bogus "account".
+const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads|HKU|HKLM|HKCU|HKCR|HKCC|Registry)$/i;
 // The right-hand side ends in a file extension → it's a path segment (e.g. Zip\7z.exe), not a
 // DOMAIN\user. Real Windows usernames don't end in .exe/.dll/etc. Curated (not "any dotted suffix")
 // so legitimate dotted accounts like CORP\first.last are NOT rejected.
 const FILE_EXT_USER = /\.(exe|dll|sys|drv|scr|com|cpl|ocx|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msi|msp|lnk|url|reg|inf|zip|rar|7z|gz|tgz|tar|cab|iso|img|txt|log|csv|tsv|json|xml|yaml|yml|ini|cfg|conf|dat|bin|db|sqlite|tmp|temp|dmp|mem|evtx|pcap|doc|docx|xls|xlsx|ppt|pptx|pdf|rtf|png|jpe?g|gif|bmp|svg|ico|md|sh|py|pl|rb|php|jar|so|dylib|key|pem|crt|cer|pfx)$/i;
+
+// NETBIOS_ACCT's lookbehind only rejects a separator ADJACENT to the domain, so it misses every
+// path segment containing a space: in "…\Explorer\Shell Folders\Common Startup" the match begins
+// after the space and yields "Folders\Common". Same for "C:\Program Files\Windows Defender\…"
+// ("Files\Windows") and "…\Google\Drive File Stream\97.0.1.0\…" ("Stream\97.0.1"). These fake
+// accounts then look "shared" across every host that ran the same software.
+//
+// A match is inside a path when the nearest preceding separator is joined to it by nothing but
+// path-segment text (words, spaces, dots, hyphens). Three things end a path, so anything after
+// them is a real account reference: prose punctuation (", " / "=" / parens — "(EID 4624) -
+// FAIRHAVEN\jdoe"), a spaced dash ("…\Zip\7z.exe - by CORP\jdoe"), and a filename extension,
+// which terminates the path at a leaf. The gap is also capped — a long clean run is prose.
+const PATH_GAP_MAX = 40;
+const PATH_GAP = /^[A-Za-z0-9 ._$-]*$/;
+const PATH_ENDED = /\s-\s|\.[A-Za-z0-9]{1,4}\b/;     // spaced dash, or a filename extension
+function insidePathSegment(text: string, at: number): boolean {
+  if (at === 0) return false;
+  // Search the ORIGINAL string with a fromIndex rather than slicing off a prefix per match —
+  // descriptions are long and this runs for every DOMAIN\user hit, so the prefix copies alone
+  // cost ~270ms on a 10k-event report.
+  const sep = Math.max(text.lastIndexOf("\\", at - 1), text.lastIndexOf("/", at - 1));
+  if (sep < 0) return false;                         // no path anywhere before this match
+  if (at - sep - 1 > PATH_GAP_MAX) return false;     // too far from the path to be part of it
+  const gap = text.slice(sep + 1, at);
+  return PATH_GAP.test(gap) && !PATH_ENDED.test(gap);
+}
 
 export function extractAccounts(text: string): string[] {
   const out = new Set<string>();
@@ -125,6 +154,7 @@ export function extractAccounts(text: string): string[] {
   while ((m = NETBIOS_ACCT.exec(text))) {
     if (PATH_DOMAINS.test(m[1])) continue;           // skip path segments masquerading as DOMAIN\user
     if (FILE_EXT_USER.test(m[2])) continue;          // skip Folder\file.ext (e.g. Zip\7z.exe) — a file, not a user
+    if (insidePathSegment(text, m.index)) continue;  // skip "Shell Folders\Common" — a spaced path segment, not a user
     out.add(`${m[1]}\\${m[2]}`);
   }
   UPN_ACCT.lastIndex = 0;
