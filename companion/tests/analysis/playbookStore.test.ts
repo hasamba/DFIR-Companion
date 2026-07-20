@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { PlaybookStore } from "../../src/analysis/playbookStore.js";
+import { PlaybookValidationError } from "../../src/analysis/playbook.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 function stateWith(over: Partial<InvestigationState>): InvestigationState {
@@ -102,5 +103,55 @@ describe("PlaybookStore", () => {
     const state = stateWith({ nextSteps: [{ id: "ns1", priority: "low", action: "Pull logs", rationale: "", pointer: "" }] });
     const out = await store.sync("c1", state);
     expect(out.map((t) => t.source).sort()).toEqual(["custom", "next_step"]);
+  });
+
+  describe("dependsOn (issue #81)", () => {
+    it("sets a dependency edge to an existing task", async () => {
+      const a = await store.add("c1", { title: "a" });
+      const b = await store.add("c1", { title: "b" });
+      const updated = await store.update("c1", b.id, { dependsOn: [a.id] });
+      expect(updated!.dependsOn).toEqual([a.id]);
+    });
+
+    it("clears dependencies with an empty array", async () => {
+      const a = await store.add("c1", { title: "a" });
+      const b = await store.add("c1", { title: "b" });
+      await store.update("c1", b.id, { dependsOn: [a.id] });
+      const cleared = await store.update("c1", b.id, { dependsOn: [] });
+      expect(cleared!.dependsOn).toBeUndefined();
+    });
+
+    it("rejects a dependency on an unknown task id", async () => {
+      const a = await store.add("c1", { title: "a" });
+      await expect(store.update("c1", a.id, { dependsOn: ["nope"] })).rejects.toThrow(PlaybookValidationError);
+    });
+
+    it("rejects an edge that would create a cycle", async () => {
+      const a = await store.add("c1", { title: "a" });
+      const b = await store.add("c1", { title: "b" });
+      await store.update("c1", b.id, { dependsOn: [a.id] });
+      await expect(store.update("c1", a.id, { dependsOn: [b.id] })).rejects.toThrow(/cycle/);
+      // The original edge on b is untouched by the rejected attempt.
+      expect((await store.load("c1")).find((t) => t.id === b.id)!.dependsOn).toEqual([a.id]);
+    });
+
+    it("drops a self-dependency as a no-op instead of rejecting it", async () => {
+      const a = await store.add("c1", { title: "a" });
+      const r = await store.update("c1", a.id, { dependsOn: [a.id] });
+      expect(r!.dependsOn).toBeUndefined();
+    });
+
+    it("preserves a dependency edge on an auto-derived task across sync (id-is-sourceKey invariant)", async () => {
+      const state = stateWith({
+        nextSteps: [
+          { id: "ns1", priority: "high", action: "Pull logs", rationale: "r", pointer: "host" },
+          { id: "ns2", priority: "high", action: "Isolate host", rationale: "r", pointer: "host" },
+        ],
+      });
+      await store.sync("c1", state);
+      await store.update("c1", "next_step:ns2", { dependsOn: ["next_step:ns1"] });
+      const after = await store.sync("c1", state);
+      expect(after.find((t) => t.id === "next_step:ns2")!.dependsOn).toEqual(["next_step:ns1"]);
+    });
   });
 });

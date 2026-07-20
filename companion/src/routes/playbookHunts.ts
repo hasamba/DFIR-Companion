@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import type { NewPlaybookTask, PlaybookTaskPatch } from "../analysis/playbookStore.js";
-import { PLAYBOOK_STATUSES, playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
+import { PLAYBOOK_STATUSES, playbookStats, withBlockedState, PlaybookValidationError, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
 import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTED_HUNTS, PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "../analysis/playbookHunt.js";
 import { DEFAULT_PLAYBOOK_CONTROL } from "../analysis/playbookControl.js";
 import { buildHuntingProfile } from "../analysis/huntOutcomes.js";
@@ -111,7 +111,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings", action: "playbook-control", detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
       });
-      return res.status(200).json({ control, tasks, stats: playbookStats(tasks) });
+      return res.status(200).json({ control, tasks: withBlockedState(tasks), stats: playbookStats(tasks) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -125,7 +125,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // Persisted AI hunt suggestions, filtered to tasks that are UNCHANGED since generation (#70) —
       // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
       const huntSuggestions = await loadFreshHunts(req.params.id, tasks);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id), huntSuggestions });
+      return res.status(200).json({ tasks: withBlockedState(tasks), stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id), huntSuggestions });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -138,7 +138,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     try {
       const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
+      return res.status(200).json({ tasks: withBlockedState(tasks), stats: playbookStats(tasks), control: await loadPlaybookControl(req.params.id) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -238,7 +238,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     try {
       const tasks = await options.playbookStore.reorder(req.params.id, ids);
       options.onPlaybook?.(req.params.id);
-      return res.status(200).json({ tasks, stats: playbookStats(tasks) });
+      return res.status(200).json({ tasks: withBlockedState(tasks), stats: playbookStats(tasks) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -282,6 +282,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     if (typeof req.body?.assignee === "string") patch.assignee = req.body.assignee;
     if (typeof req.body?.dueDate === "string") patch.dueDate = req.body.dueDate;
     if (typeof req.body?.notes === "string") patch.notes = req.body.notes;
+    if (Array.isArray(req.body?.dependsOn)) patch.dependsOn = req.body.dependsOn.map(String);
     try {
       const updated = await options.playbookStore.update(req.params.id, req.params.taskId, patch);
       if (!updated) return res.status(404).json({ error: "playbook task not found" });
@@ -298,6 +299,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       });
       return res.status(200).json(updated);
     } catch (err) {
+      if (err instanceof PlaybookValidationError) return res.status(400).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
