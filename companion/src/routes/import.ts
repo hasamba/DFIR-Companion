@@ -1722,20 +1722,27 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Undo the latest import: restore the full pre-import state (findings/IOCs/timeline/MITRE/attacker
   // path), push the current state to redo. No AI re-synthesis — the snapshot is the exact prior state.
   app.post("/cases/:id/import/undo", async (req: Request, res: Response) => {
-    if (!options.importUndoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    const undoStore = options.importUndoStore;
+    if (!undoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
-      const stack = await options.importUndoStore.load(caseId);
       const state = await options.stateStore.load(caseId);
-      const result = applyUndo(stack, state);
-      if (!result) return res.status(400).json({ error: "nothing to undo" });
-      const next = await restoreImportState(caseId, result.restore);
-      await options.importUndoStore.save(caseId, result.stack);
+      let restore: InvestigationState | undefined;
+      // Atomic load->pop->save under the store's per-case lock (mirrors pushImportCheckpoint) so
+      // an undo/redo can't race a concurrent import's checkpoint push on the same file.
+      const summary = await undoStore.mutate(caseId, (stack) => {
+        const result = applyUndo(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
+        if (!result) return { stack, result: null };
+        restore = result.restore;
+        return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
+      });
+      if (!summary || !restore) return res.status(400).json({ error: "nothing to undo" });
+      const next = await restoreImportState(caseId, restore);
       // The "last import" banner / NEW row highlights describe a change that has now been rolled back.
       if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
       options.onImportUndo?.(caseId);
       if (next) options.onState?.(next);
-      return res.status(200).json(summarizeUndoStack(result.stack, options.importUndoStore.depth()));
+      return res.status(200).json(summary);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -1743,19 +1750,24 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
   // Redo the most-recently-undone import: re-apply its full state.
   app.post("/cases/:id/import/redo", async (req: Request, res: Response) => {
-    if (!options.importUndoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
+    const undoStore = options.importUndoStore;
+    if (!undoStore || !options.stateStore) return res.status(501).json({ error: "import undo not configured" });
     const caseId = req.params.id;
     try {
-      const stack = await options.importUndoStore.load(caseId);
       const state = await options.stateStore.load(caseId);
-      const result = applyRedo(stack, state);
-      if (!result) return res.status(400).json({ error: "nothing to redo" });
-      const next = await restoreImportState(caseId, result.restore);
-      await options.importUndoStore.save(caseId, result.stack);
+      let restore: InvestigationState | undefined;
+      const summary = await undoStore.mutate(caseId, (stack) => {
+        const result = applyRedo(stack, state, undefined, undoStore.depth(), undoStore.byteBudget());
+        if (!result) return { stack, result: null };
+        restore = result.restore;
+        return { stack: result.stack, result: summarizeUndoStack(result.stack, undoStore.depth()) };
+      });
+      if (!summary || !restore) return res.status(400).json({ error: "nothing to redo" });
+      const next = await restoreImportState(caseId, restore);
       if (options.importMetaStore) { try { await options.importMetaStore.clear(caseId); options.onImportMeta?.(caseId); } catch { /* non-fatal */ } }
       options.onImportUndo?.(caseId);
       if (next) options.onState?.(next);
-      return res.status(200).json(summarizeUndoStack(result.stack, options.importUndoStore.depth()));
+      return res.status(200).json(summary);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

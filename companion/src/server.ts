@@ -145,7 +145,7 @@ import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } fr
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
-import { ImportUndoStore, pushCheckpoint } from "./analysis/importUndo.js";
+import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches } from "./analysis/iocWhitelist.js";
 import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "./analysis/iocExclude.js";
@@ -2327,11 +2327,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // import can be rolled back. Best-effort — undo is a convenience and must NEVER break the import.
   // Callers gate on whether the import actually changed anything (no checkpoint for a no-op re-import).
   async function pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void> {
-    if (!options.importUndoStore) return;
+    const undoStore = options.importUndoStore;
+    if (!undoStore) return;
     try {
-      const stack = await options.importUndoStore.load(caseId);
-      const next = pushCheckpoint(stack, { label, at: new Date().toISOString(), state: beforeState }, options.importUndoStore.depth());
-      await options.importUndoStore.save(caseId, next);
+      // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
+      // import firing requests seconds apart while the previous one's async work is still in
+      // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge
+      // simultaneous tmp writes).
+      await undoStore.mutate(caseId, (stack) => ({
+        stack: pushCheckpoint(stack, { label, at: new Date().toISOString(), state: beforeState }, undoStore.depth(), undoStore.byteBudget()),
+        result: undefined,
+      }));
       options.onImportUndo?.(caseId);
     } catch { /* non-fatal */ }
   }
@@ -3058,7 +3064,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const importMetaStore = new ImportMetaStore(store);
   const dropStatusStore = new DropStatusStore(store);   // evidence drop-folder last-sweep summary
   // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
-  const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined);
+  const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined, undoMaxBytesFromEnv());
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);

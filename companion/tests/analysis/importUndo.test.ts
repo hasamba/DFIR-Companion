@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -12,6 +12,8 @@ import {
   applyRedo,
   summarizeUndoStack,
   normalizeStack,
+  undoMaxBytesFromEnv,
+  DEFAULT_UNDO_MAX_BYTES,
   type ImportUndoStack,
 } from "../../src/analysis/importUndo.js";
 
@@ -48,6 +50,69 @@ describe("importUndo pure operations", () => {
     stack = pushCheckpoint(stack, cp("c", 3, 3, 1, "c"), 3);
     stack = pushCheckpoint(stack, cp("d", 4, 4, 1, "d"), 3); // exceeds depth 3 -> "a" drops
     expect(stack.undo.map((c) => c.label)).toEqual(["b", "c", "d"]);
+  });
+
+  it("pushCheckpoint also evicts oldest checkpoints once the stack exceeds a byte budget, even under the depth cap", () => {
+    // Each state carries ~2000 events; a byte budget sized for ~2.5 of them forces eviction well
+    // before the depth cap (10) would ever kick in — this is the unbounded-growth regression (#?):
+    // 10 full-state snapshots of a large case is tens-to-hundreds of MB by design.
+    let stack: ImportUndoStack = emptyUndoStack();
+    const big = (tag: string, label: string) => cp(tag, 2000, 0, 0, label);
+    const oneSize = Buffer.byteLength(JSON.stringify(big("x", "x").state));
+    const budget = Math.floor(oneSize * 2.5);
+
+    stack = pushCheckpoint(stack, big("a", "a"), 10, budget);
+    stack = pushCheckpoint(stack, big("b", "b"), 10, budget);
+    stack = pushCheckpoint(stack, big("c", "c"), 10, budget);
+    stack = pushCheckpoint(stack, big("d", "d"), 10, budget);
+
+    const totalBytes = stack.undo.reduce((sum, c) => sum + Buffer.byteLength(JSON.stringify(c.state)), 0);
+    expect(totalBytes).toBeLessThanOrEqual(budget);
+    expect(stack.undo.length).toBeLessThan(4); // count cap (10) never triggered — size cap did
+    expect(stack.undo[stack.undo.length - 1].label).toBe("d"); // newest always survives
+  });
+
+  it("pushCheckpoint keeps at least the newest checkpoint even if it alone exceeds the byte budget", () => {
+    const huge = cp("huge", 500, 0, 0, "huge");
+    const tinyBudget = 10; // smaller than any real checkpoint
+    const stack = pushCheckpoint(emptyUndoStack(), huge, 10, tinyBudget);
+    expect(stack.undo).toHaveLength(1);
+    expect(stack.undo[0].label).toBe("huge");
+  });
+
+  it("a non-positive maxBytes disables the size cap (count cap still applies)", () => {
+    let stack: ImportUndoStack = emptyUndoStack();
+    stack = pushCheckpoint(stack, cp("a", 500, 0, 0, "a"), 2, 0);
+    stack = pushCheckpoint(stack, cp("b", 500, 0, 0, "b"), 2, 0);
+    expect(stack.undo.map((c) => c.label)).toEqual(["a", "b"]);
+  });
+
+  it("undoMaxBytesFromEnv reads DFIR_UNDO_MAX_MB (in MB) and falls back to the default", () => {
+    const prev = process.env.DFIR_UNDO_MAX_MB;
+    try {
+      delete process.env.DFIR_UNDO_MAX_MB;
+      expect(undoMaxBytesFromEnv()).toBe(DEFAULT_UNDO_MAX_BYTES);
+      process.env.DFIR_UNDO_MAX_MB = "50";
+      expect(undoMaxBytesFromEnv()).toBe(50 * 1024 * 1024);
+      process.env.DFIR_UNDO_MAX_MB = "not-a-number";
+      expect(undoMaxBytesFromEnv()).toBe(DEFAULT_UNDO_MAX_BYTES);
+    } finally {
+      if (prev === undefined) delete process.env.DFIR_UNDO_MAX_MB; else process.env.DFIR_UNDO_MAX_MB = prev;
+    }
+  });
+
+  it("applyUndo caps the growing redo stack by depth+size so repeated undos don't grow it unboundedly", () => {
+    let stack: ImportUndoStack = emptyUndoStack();
+    stack = pushCheckpoint(stack, cp("a", 1, 0, 0, "a"));
+    stack = pushCheckpoint(stack, cp("b", 1, 0, 0, "b"));
+    stack = pushCheckpoint(stack, cp("c", 1, 0, 0, "c"));
+    let current = mkState("cur", 1, 0, 0);
+    for (let i = 0; i < 3; i++) {
+      const r = applyUndo(stack, current, "2026-06-13T00:00:00Z", 2)!;
+      stack = r.stack;
+      current = r.restore;
+    }
+    expect(stack.redo.length).toBeLessThanOrEqual(2); // depth cap applied to redo too
   });
 
   it("applyUndo / applyRedo return null when there is nothing to do", () => {
@@ -134,9 +199,11 @@ describe("importUndo pure operations", () => {
 
 describe("ImportUndoStore", () => {
   let store: ImportUndoStore;
+  let cases: CaseStore;
+  let root: string;
   beforeEach(async () => {
-    const root = await mkdtemp(join(tmpdir(), "dfir-importundo-"));
-    const cases = new CaseStore(root);
+    root = await mkdtemp(join(tmpdir(), "dfir-importundo-"));
+    cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     store = new ImportUndoStore(cases, 5);
   });
@@ -159,5 +226,40 @@ describe("ImportUndoStore", () => {
 
   it("exposes its configured depth", () => {
     expect(store.depth()).toBe(5);
+  });
+
+  it("the persisted stack file stays under the configured byte budget after growing far past DEFAULT_UNDO_DEPTH imports (#unbounded-undo-growth)", async () => {
+    // Regression for the reported bug: a bulk import of many files against a case whose state
+    // keeps growing (mirrors 50 files ballooning a case from ~0 to 41,660 events) must not let
+    // the undo-stack file balloon into the hundreds of MB. Depth alone (5 here) is not enough to
+    // bound it — the byte budget must actually cap the file on disk.
+    const budgetBytes = 1_000_000; // 1MB — small so the test runs fast but still exercises real disk I/O
+    const bounded = new ImportUndoStore(cases, 5, budgetBytes);
+    let growingEvents = 200;
+    for (let i = 0; i < 15; i++) { // well past the depth cap of 5
+      growingEvents += 200; // each successive pre-import state is bigger, like a real bulk import
+      await bounded.mutate("c1", (stack) => ({
+        stack: pushCheckpoint(stack, cp(`s${i}`, growingEvents, 0, 0, `import ${i}`), bounded.depth(), bounded.byteBudget()),
+        result: undefined,
+      }));
+    }
+    const raw = await readFile(join(cases.stateDir("c1"), "import-undo-stack.json"), "utf8");
+    expect(Buffer.byteLength(raw)).toBeLessThan(budgetBytes * 1.5); // headroom for JSON formatting/metadata, not unbounded
+  });
+
+  it("mutate() serializes concurrent load-modify-save calls so no checkpoint is lost to a race", async () => {
+    // Regression: pushImportCheckpoint used to load(), pushCheckpoint(), save() with no lock —
+    // two overlapping imports (e.g. bulk import 1.5s apart while the previous one's async work is
+    // still in flight) race on the same file: the second save clobbers the first (lost update),
+    // and both writers spawn simultaneous multi-MB atomic-write temp files for the same case.
+    const labels = Array.from({ length: 8 }, (_, i) => `import-${i}`);
+    await Promise.all(labels.map((label) =>
+      store.mutate("c1", (stack) => ({
+        stack: pushCheckpoint(stack, cp(label, 1, 0, 0, label), 20),
+        result: undefined,
+      })),
+    ));
+    const loaded = await store.load("c1");
+    expect(loaded.undo.map((c) => c.label).sort()).toEqual([...labels].sort());
   });
 });
