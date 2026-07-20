@@ -436,6 +436,43 @@ describe("buildLateralPaths — ordered lateral-movement chains (#92)", () => {
     expect(buildLateralPaths(s)).toEqual([]);
   });
 
+  // A route is only half the story: "WKSTN → FS01 → WEB01" does not say WHO moved. The actor is a
+  // STRUCTURED field so the dashboard/report never have to parse it back out of `basis` prose.
+  it("names the account that carried a shared-account hop", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WKSTN-JSMITH", description: "logon by GLOBALTECH\\admin-deploy", timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "FS01", description: "logon by GLOBALTECH\\admin-deploy", timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    const hop = buildLateralPaths(s)[0].hops[0];
+    expect(hop.actor).toBe("GLOBALTECH\\admin-deploy");
+    expect(hop.actorKind).toBe("account");
+  });
+
+  it("names the binary that carried a shared-hash hop, by filename", () => {
+    const s = emptyState("c1");
+    const path = "C:\\Users\\jdoe\\Downloads\\psexec.exe";
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, path, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, path, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    const hop = buildLateralPaths(s)[0].hops[0];
+    expect(hop.actor).toBe("psexec.exe");        // not a hash prefix — the analyst reads a name
+    expect(hop.actorKind).toBe("binary");
+  });
+
+  it("falls back to a short hash when the binary's path was never recorded", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev({ id: "e1", asset: "WS-01", sha256: HASH, timestamp: "2026-05-20T09:00:00Z" }),
+      ev({ id: "e2", asset: "WS-02", sha256: HASH, timestamp: "2026-05-20T10:00:00Z" }),
+    );
+    const hop = buildLateralPaths(s)[0].hops[0];
+    expect(hop.actorKind).toBe("binary");
+    expect(hop.actor.length).toBeGreaterThan(0);
+    expect(HASH.startsWith(hop.actor.replace(/…$/, ""))).toBe(true);
+  });
+
   // Spread the same binary over three hosts from a given on-disk location.
   function estateWide(path: string, extra: Partial<ForensicEvent> = {}) {
     const s = emptyState("c1");

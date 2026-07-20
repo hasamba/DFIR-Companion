@@ -120,6 +120,7 @@ import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
 import { recordDeploy, fillOutcome, HUNT_OUTCOME_MAX_DEFAULT, type HuntDeployInput } from "./analysis/huntOutcomes.js";
 import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
 import { AssetOverridesStore } from "./analysis/assetOverrides.js";
+import { LateralPathDismissStore } from "./analysis/lateralPathDismiss.js";
 import { IocAliasStore } from "./analysis/iocAlias.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
@@ -343,6 +344,10 @@ export interface AppOptions {
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.
   assetOverridesStore?: AssetOverridesStore;
   onAssetOverrides?: (caseId: string) => void;
+  // Analyst-dismissed lateral-movement chains, persisted per case in
+  // state/lateral-path-dismissals.json. Rejects a derived INFERENCE without discarding the
+  // underlying evidence the way a false-positive marker would.
+  lateralPathDismissStore?: LateralPathDismissStore;
   // Entity merging for duplicate IOCs (#82). iocAliasStore persists per-case merge aliases (state/
   // ioc-aliases.json) so a future re-synthesis routes the merged-away value onto its canonical IOC
   // instead of recreating it (see pipeline.ts's mergeWithAliases). onIocMerge pings dashboard
@@ -2987,7 +2992,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const notionExportStore = new NotionExportStore(store);
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore);
+  const lateralPathDismissStore = new LateralPathDismissStore(store);
+  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore, lateralPathDismissStore);
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
@@ -3115,6 +3121,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
     assetOverridesStore,
     onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
+    lateralPathDismissStore,
     iocAliasStore,
     onIocMerge: (caseId) => hub.broadcastTo(caseId, { type: "ioc_merge_changed" }),
     onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),

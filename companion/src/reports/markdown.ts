@@ -3,7 +3,7 @@ import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
-import { buildEvidenceGraph, buildLateralPaths } from "../analysis/evidenceGraph.js";
+import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
@@ -512,7 +512,7 @@ function kevCorrelation(state: InvestigationState, exposure: CustomerExposureSum
   lines.push("");
 }
 
-function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog, secondLookLeads: string[] = []): void {
+function investigation(state: InvestigationState, lines: string[], exposure?: CustomerExposureSummary, prebuiltGraph?: AssetGraph, kevCatalog?: KevCatalog, secondLookLeads: string[] = [], prebuiltPaths?: LateralPath[]): void {
   lines.push("## 4 Investigation", "");
 
   lines.push("### 4.1 Attack path", "");
@@ -636,7 +636,7 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
     lines.push("");
   }
 
-  chainOfEvidence(state, lines);
+  chainOfEvidence(state, lines, prebuiltPaths);
   beaconCandidates(state, lines);
   geographicDistribution(state, lines);
 }
@@ -702,7 +702,7 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
 // 4.8 Chain of evidence — the causal view derived from the forensic timeline: which process
 // spawned which (process execution chains), which binary/account moved between hosts
 // (lateral movement), file write→execute lineage, and network flows (src→dst).
-function chainOfEvidence(state: InvestigationState, lines: string[]): void {
+function chainOfEvidence(state: InvestigationState, lines: string[], prebuiltPaths?: LateralPath[]): void {
   lines.push("### 4.8 Chain of evidence", "");
   const graph = buildEvidenceGraph(state);
   if (graph.edges.length === 0) {
@@ -735,13 +735,18 @@ function chainOfEvidence(state: InvestigationState, lines: string[]): void {
 
   // Ordered lateral-movement PATHS (#92) — ...→pivot→target chains reconstructed from the
   // pairwise lateral_move edges above, chronologically sequenced rather than pairwise.
-  const paths = buildLateralPaths(state);
+  // prebuiltPaths (with analyst dismissals already applied) is used when available, so a chain the
+  // analyst rejected does not reappear in the report.
+  const paths = prebuiltPaths ?? buildLateralPaths(state);
   if (paths.length > 0) {
     lines.push("**Lateral movement paths**", "");
-    lines.push("| Path | Confidence | First seen | Last seen |", "| --- | --- | --- | --- |");
+    // "Via" names the account(s)/binary(ies) that carried the chain — the route alone says where
+    // the attacker went but not who or what moved, which is the actionable half for the reader.
+    lines.push("| Path | Via | Confidence | First seen | Last seen |", "| --- | --- | --- | --- | --- |");
     for (const p of paths) {
       const route = p.hostIds.map((id) => cellMd(name(id))).join(" → ");
-      lines.push(`| ${route} | ${p.confidence} | ${p.startTime || "—"} | ${p.endTime || "—"} |`);
+      const via = [...new Set(p.hops.map((h) => h.actor).filter(Boolean))].map((a) => cellMd(a)).join(", ") || "—";
+      lines.push(`| ${route} | ${via} | ${p.confidence} | ${p.startTime || "—"} | ${p.endTime || "—"} |`);
     }
     lines.push("");
   }
@@ -1019,6 +1024,7 @@ export function renderMarkdownReport(
   hypotheses?: Hypothesis[],
   secondLookLeads: string[] = [],   // #11 deferred: unresolved second-look collection leads
   coverage?: SynthesisCoverage | null,   // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
+  lateralPaths?: LateralPath[],   // prebuilt with analyst dismissals applied; derived here when absent
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -1055,7 +1061,7 @@ export function renderMarkdownReport(
       synthesisCoverageNote(coverage, lines);
       timelineAnomalies(state, lines);
     },
-    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads),
+    investigation: () => investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads, lateralPaths),
     conclusions: () => conclusions(state, meta, lines),
     hypotheses: () => {
       if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, lines);

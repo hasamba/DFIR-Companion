@@ -2,6 +2,35 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
 describe("dashboard.html", () => {
+  it("lets the analyst dismiss a lateral chain, and review/restore dismissed ones", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Per-row Dismiss, with Restore taking its place once a chain has been dismissed.
+    expect(html).toContain("ev-path-dismiss");
+    expect(html).toContain("ev-path-restore");
+    // The button must say what dismissing does NOT do — the evidence is kept.
+    expect(html).toMatch(/ev-path-dismiss[\s\S]{0,300}underlying evidence stays in the case/);
+    // Dismissed chains are hidden by default; the toggle re-fetches with includeDismissed=1.
+    expect(html).toContain("let evPathsShowDismissed = false");
+    expect(html).toContain("evPathsShowDismissed");
+    expect(html).toMatch(/function loadLateralPaths\(caseId\)[\s\S]{0,400}includeDismissed=1/);
+    // Dismissing POSTs the route's hostIds (the durable anchor), not the positional path id.
+    expect(html).toMatch(/lateral-path-dismissals`[\s\S]{0,300}hostIds: path\.hostIds/);
+    // Restoring DELETEs by the normalized host-sequence key.
+    expect(html).toMatch(/lateral-path-dismissals\/\$\{encodeURIComponent\(key\)\}`, \{ method: "DELETE" \}/);
+    // A dismissed row is visibly struck through and carries the analyst's reason.
+    expect(html).toContain("line-through");
+    expect(html).toContain("dismissalNote");
+  });
+
+  it("names who/what carried each lateral chain, not just the hosts", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // Read from the hop's STRUCTURED actor field — never parsed back out of the `basis` prose.
+    expect(html).toMatch(/p\.hops \|\| \[\]\)\.map\(\(h\) => h\.actor\)/);
+    expect(html).toContain("via <b>");
+    // De-duplicated: one account carrying every hop is listed once, not once per hop.
+    expect(html).toMatch(/new Set\(\(p\.hops \|\| \[\]\)\.map\(\(h\) => h\.actor\)/);
+  });
+
   it("expands Host & Account Ranking rows to show contributing events + IOCs (#237)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("data-hr-key=");
