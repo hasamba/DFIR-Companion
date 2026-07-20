@@ -3,7 +3,7 @@
 // the normalized results to the IOC. Pure-ish and testable — sleep + now are injectable.
 
 import type { IOC, IocEnrichment } from "../analysis/stateTypes.js";
-import { iocKind, type EnrichmentProvider, type IocKind } from "./provider.js";
+import { iocKind, withRateLimitRetry, type EnrichmentProvider, type IocKind, type RetryPolicy } from "./provider.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
@@ -22,6 +22,15 @@ export interface EnrichOptions {
   providers: EnrichmentProvider[];
   delayMs?: number;                       // throttle between external lookups (default 1500)
   perProviderDelayMs?: Record<string, number>;  // per-provider throttle; overrides delayMs for named providers
+  // ± random jitter added to every inter-call wait (default 0 = none), so aligned/parallel runs
+  // against the same provider don't all land on the same rate-limit window. E.g. jitterMs: 300
+  // on a 1500ms delay waits somewhere in [1200, 1800].
+  jitterMs?: number;
+  random?: () => number;                  // injected jitter source (default Math.random), returns [0, 1)
+  // Retry policy for a provider call that throws RateLimitError (HTTP 429): retried with
+  // exponential backoff honouring the server's Retry-After when it sent one, instead of
+  // aborting the lookup on the first rate-limit hit. Other errors are not retried here.
+  retry?: RetryPolicy;
   maxIocs?: number;                       // cap IOCs queried per run (default 100)
   force?: boolean;                        // re-query IOCs already enriched
   now?: () => string;                     // injected timestamp
@@ -77,6 +86,8 @@ export async function enrichIocs(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const monotonic = opts.monotonic ?? (() => Date.now());
   const delayMs = opts.delayMs ?? 1500;
+  const jitterMs = opts.jitterMs ?? 0;
+  const random = opts.random ?? Math.random;
   const maxIocs = opts.maxIocs ?? 100;
 
   // For each enrichable IOC, work out which of the given providers still need to query it:
@@ -135,13 +146,18 @@ export async function enrichIocs(
       const provDelay = opts.perProviderDelayMs?.[provider.name] ?? delayMs;
       const lastAt = lastCallAt.get(provider.name);
       if (lastAt !== undefined) {
-        const wait = provDelay - (monotonic() - lastAt);
+        // ± jitterMs so a fixed delay doesn't have every parallel/scheduled run land in the
+        // exact same rate-limit window on the provider's side.
+        const jitter = jitterMs > 0 ? Math.round((random() * 2 - 1) * jitterMs) : 0;
+        const wait = provDelay + jitter - (monotonic() - lastAt);
         if (wait > 0) await sleep(wait);
       }
       const startedAt = monotonic();
       lastCallAt.set(provider.name, startedAt);
       try {
-        const r = await provider.lookup(kind, ioc.value);
+        // A single 429 doesn't abort the lookup: retry with backoff (honouring Retry-After)
+        // before giving up and counting it as an error.
+        const r = await withRateLimitRetry(() => provider.lookup(kind, ioc.value), { ...opts.retry, sleep, random });
         // A provider may return a single result, several (a fan-out source like Hunting.ch),
         // or null/[] for a miss. When a result's displayed `source` differs from the provider
         // (a fan-out emits sub-sources like "MalwareBazaar"), stamp the OWNING provider so
