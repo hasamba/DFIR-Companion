@@ -433,6 +433,13 @@ export function extractMonitoredArtifacts(rows: readonly unknown[]): string[] {
   return out;
 }
 
+// How long a fetched artifact CATALOG (listClientArtifacts) stays usable. The catalog only changes when
+// someone adds/edits an artifact on the Velociraptor server — rare — while the read costs a full
+// subprocess spawn + gRPC round-trip, and interactive UI paths (the bundle time-scope preview fires on
+// every dropdown change) hit it repeatedly. 45s is long enough to collapse a burst of UI calls into one
+// spawn and short enough that a server-side artifact change shows up on its own within a minute.
+export const ARTIFACT_CATALOG_TTL_MS = 45_000;
+
 export const ALL_CLIENTS = "*";             // sentinel client id meaning "every enrolled client"
 const ARTIFACT_RE = /^[A-Za-z0-9._]+$/;     // valid Velociraptor artifact / source name
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;        // valid hunt id
@@ -549,6 +556,13 @@ function buildHuntArtifact(name: string, statements: string[], sources: string[]
 }
 
 export class VelociraptorClient {
+  // Short-TTL artifact-catalog cache, keyed by artifact type ("client" / "client_event"). Holds the
+  // in-flight PROMISE (not just the settled value) so concurrent callers share one spawn; a REJECTED
+  // fetch is evicted immediately so an error is never served from cache. The cache lives on the
+  // INSTANCE, so POST /velociraptor/reconnect — which calls buildVelociraptorClient() for a brand-new
+  // client — always starts cold; nothing there needs to clear it explicitly.
+  private readonly artifactCache = new Map<string, { at: number; rows: Promise<VeloArtifactInfo[]> }>();
+
   constructor(
     private readonly config: VelociraptorApiConfig,
     private readonly runner: VqlRunner = spawnVqlRunner(config),
@@ -800,8 +814,36 @@ export class VelociraptorClient {
   // (not VQL): `artifact_definitions()` reports the type with inconsistent casing/spacing across
   // versions (`CLIENT_EVENT` / `client_event` / `Client Event`), and a VQL `=~`/`lowercase()` filter
   // missed them → empty picker. Fetching all + normalizing the type string in TS is version-proof.
-  async listClientArtifacts(type: "client" | "client_event" = "client"): Promise<VeloArtifactInfo[]> {
+  //
+  // The result is CACHED per type for ARTIFACT_CATALOG_TTL_MS (the catalog changes only when someone
+  // edits an artifact on the server, but every call costs a subprocess spawn). Pass `{ refresh: true }`
+  // to bypass + repopulate — used by the picker's "Browse server artifacts" button (the analyst's
+  // "I just added an artifact, why isn't it listed?" flow) and by the run-bundle pre-flight.
+  async listClientArtifacts(type: "client" | "client_event" = "client", opts: { refresh?: boolean } = {}): Promise<VeloArtifactInfo[]> {
     const wanted = type === "client_event" ? "client_event" : "client";
+    const hit = this.artifactCache.get(wanted);
+    if (opts.refresh || !hit || Date.now() - hit.at >= ARTIFACT_CATALOG_TTL_MS) {
+      const rows = this.fetchClientArtifacts(wanted);
+      this.artifactCache.set(wanted, { at: Date.now(), rows });
+      // Never serve a failure from cache: drop the entry (unless a newer fetch already replaced it) so
+      // the next call retries instead of replaying the error for the rest of the TTL.
+      rows.catch(() => { if (this.artifactCache.get(wanted)?.rows === rows) this.artifactCache.delete(wanted); });
+    }
+    // Copy: callers must not be able to mutate the cached array shared with the next caller.
+    return [...(await this.artifactCache.get(wanted)!.rows)];
+  }
+
+  // Drop the cached artifact catalog (one type, or all) so the next listClientArtifacts() re-queries.
+  // For a config change there is nothing to call — reconnect builds a whole new client (cold cache).
+  invalidateArtifactCache(type?: "client" | "client_event"): void {
+    if (type) this.artifactCache.delete(type === "client_event" ? "client_event" : "client");
+    else this.artifactCache.clear();
+  }
+
+  // The uncached catalog read behind listClientArtifacts(). `parameters` comes back too — the bundle
+  // time scope maps one collection window onto each artifact's own date parameters, and it can only do
+  // that from the server's own parameter metadata.
+  private async fetchClientArtifacts(wanted: string): Promise<VeloArtifactInfo[]> {
     const rows = await this.runRaw("SELECT name, description, type, parameters FROM artifact_definitions() ORDER BY name", this.collectCap());
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {

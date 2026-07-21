@@ -197,6 +197,8 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // enrolled MID-INVESTIGATION is resolvable at deploy time, AND fetch the server's REAL CLIENT
       // artifact names so the model only references artifacts that EXIST. Skip the artifact fetch when
       // nothing is pending (no AI call needed). Both finish before the AI call → no added latency.
+      // The artifact list may come from the client's short-TTL catalog cache — fine here: it only steers
+      // the model's suggestions (already best-effort, `catch → []`), and run-bundle/deploy re-checks.
       const [, artifactNames] = await Promise.all([
         refreshVeloClients().catch((e) => { logLine(`[velociraptor] inventory refresh before suggestions failed: ${(e as Error).message}`); return 0; }),
         pending.length && options.velociraptorClient
