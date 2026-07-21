@@ -7,7 +7,7 @@
 
 import { readFile } from "node:fs/promises";
 import type { ForensicEvent } from "../src/analysis/stateTypes.js";
-import { collapseForPrompt, groupEnvOptions } from "../src/analysis/synthGroup.js";
+import { collapseForPrompt, groupEnvOptions, maxPromptEvents } from "../src/analysis/synthGroup.js";
 import { selectSynthesisEventsAnnotated } from "../src/analysis/synthSelect.js";
 
 const file = process.argv[2];
@@ -19,7 +19,7 @@ if (!file) {
 const raw = JSON.parse(await readFile(file, "utf8")) as { forensicTimeline?: ForensicEvent[] };
 const all = raw.forensicTimeline ?? [];
 const nonInfo = all.filter((e) => e.severity !== "Info");
-const cap = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+const cap = maxPromptEvents();
 
 const { events: collapsed, memberIdsByRepresentative } = collapseForPrompt(nonInfo, groupEnvOptions());
 const selection = selectSynthesisEventsAnnotated(collapsed, cap);
