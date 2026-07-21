@@ -8,6 +8,7 @@ import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
+import { resolveTimeScope, buildTimeScopePlan } from "../analysis/veloTimeScope.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -270,6 +271,32 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       return res.status(200).json({ artifacts });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Preview how ONE time scope maps onto a bundle's artifacts, WITHOUT launching anything: which
+  // artifacts get bounded (and via which parameter), and which have no date parameter and so collect in
+  // full. Bundles are global, so this route is too. Body: {preset} or {start,end}.
+  app.post("/velociraptor/bundles/:id/time-scope-preview", async (req: Request, res: Response) => {
+    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
+    try {
+      const bundle = await options.artifactBundleStore.get(req.params.id);
+      if (!bundle) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+      const scope = resolveTimeScope(req.body ?? {});
+      if (!scope) return res.status(400).json({ error: "a time scope is required — pass a preset (24h/7d/30d/90d) or a custom start" });
+      const definitions = await options.velociraptorClient.listClientArtifacts("client");
+      const plan = buildTimeScopePlan({
+        artifacts: bundle.artifacts, definitions, scope,
+        corrections: bundle.timeScopeParamNames, bundleParams: bundle.params,
+      });
+      return res.status(200).json({ scope, scoped: plan.scoped, unscoped: plan.unscoped, degraded: plan.degraded });
+    } catch (err) {
+      // resolveTimeScope throws descriptive validation errors (bad date, end before start) — those are
+      // the analyst's input, so 400; anything else is the server failing, so 502.
+      const msg = (err as Error).message;
+      const isValidation = /must be a valid date|end must be at or after start|start is required|unknown time-scope preset/.test(msg);
+      return res.status(isValidation ? 400 : 502).json({ error: msg });
     }
   });
 
