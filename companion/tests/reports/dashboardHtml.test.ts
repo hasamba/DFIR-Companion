@@ -450,6 +450,16 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/velo-ts-p-start[\s\S]{0,400}velo-ts-p-end/);
   });
 
+  it("the inline correction save seeds its body from the bundle's stored mapping, not from the rendered rows alone", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // The route does a full REPLACE (see its doc comment), and only artifacts with a rendered row in
+    // the CURRENT preview get a ".velo-ts-row" — an artifact whose saved correction has no rendered row
+    // (e.g. an end-only correction under a relative preset) would silently lose its correction if the
+    // save body were built from rows alone. Pin that the function starts from the cached bundle's
+    // timeScopeParamNames before it ever touches ".velo-ts-row".
+    expect(html).toMatch(/function veloSaveTimeScopeParamNames\(bundleId, out\)[\s\S]{0,300}_veloBundles[\s\S]{0,150}timeScopeParamNames[\s\S]{0,150}velo-ts-row/);
+  });
+
   it("anchors a custom time-scope's datetime-local inputs to UTC, not local wall-clock", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     // The datetime-local value has no timezone of its own; the server expects a full ISO instant, so

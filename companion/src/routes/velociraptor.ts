@@ -317,8 +317,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Save the analyst's per-artifact time-scope parameter CORRECTIONS on a bundle, without re-sending the
   // whole bundle — the preview is shown from the run form, which has no bundle editor around it, so a
   // full POST /bundles would clobber fields it doesn't know about. Read-modify-write through the store
-  // so every other field is preserved verbatim. Sending {} clears the corrections and returns those
-  // artifacts to auto-detection.
+  // so every other field is preserved verbatim. This is a full REPLACE of timeScopeParamNames, not a
+  // merge: sending {} clears every correction, and sending ANY partial map silently drops every
+  // correction absent from it (not just the ones you meant to touch). The caller (the dashboard's
+  // veloSaveTimeScopeParamNames) is responsible for merging against the bundle's currently-stored
+  // corrections before calling this route — see the comment there for why that matters.
   app.put("/velociraptor/bundles/:id/time-scope-param-names", async (req: Request, res: Response) => {
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     try {
