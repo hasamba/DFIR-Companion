@@ -140,7 +140,30 @@ describe("bundle time scope — run-bundle", () => {
     const job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
     expect(job.timeScope).toEqual({
       start: "2026-06-01T00:00:00.000Z", end: "2026-06-30T00:00:00.000Z",
-      scopedArtifacts: 1, totalArtifacts: 2,
+      scopedArtifacts: 1, totalArtifacts: 2, degraded: false,
+    });
+  });
+
+  it("records degraded:true on the job when the catalog fetch fails but the hunt still launches", async () => {
+    // The pre-flight artifact_definitions() lookup throws (server unreachable/misconfigured for that
+    // call specifically) while hunt() still succeeds — run-bundle's catch logs and launches the bundle
+    // as-is, so buildTimeScopePlan runs with NO definitions at all. That's the exact case a job-card
+    // reader needs to be warned about: the recorded "0 scoped" cannot be trusted as "nothing needed
+    // bounding" versus "we couldn't tell".
+    const catalogFailsRunner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("artifact_definitions()")) throw new Error("catalog unavailable");
+      if (p.includes("hunt(") && p.includes("artifacts=[")) { launched.push(p); return { rows: [{ Hunt: { HuntId: "H.DEG1", state: "RUNNING" } }], raw: "" }; }
+      return { rows: [], raw: "" };
+    };
+    const degradedApp = await makeApp(catalogFailsRunner);
+    const run = await request(degradedApp).post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "scoped-test", waitMinutes: 30, timeScope: { start: "2026-06-01T00:00:00Z", end: "2026-06-30T00:00:00Z" } });
+    expect(run.status).toBe(202);
+    const job = (await request(degradedApp).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
+    expect(job.timeScope).toEqual({
+      start: "2026-06-01T00:00:00.000Z", end: "2026-06-30T00:00:00.000Z",
+      scopedArtifacts: 0, totalArtifacts: 2, degraded: true,
     });
   });
 

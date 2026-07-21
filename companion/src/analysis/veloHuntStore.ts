@@ -42,6 +42,11 @@ export interface VeloHuntJob {
     end?: string;             // ISO
     scopedArtifacts: number;  // how many artifacts actually received the window
     totalArtifacts: number;   // how many were launched
+    // true = the server reported no parameter metadata for this bundle's artifacts (the catalog fetch
+    // failed or came back empty), so the bounded/unbounded split above could NOT be verified — it may
+    // understate what actually got scoped. Distinguishes "this bundle genuinely has no date-parameterized
+    // artifacts" (degraded: false, benign) from "we don't actually know" (degraded: true, a real gap).
+    degraded: boolean;
   };
   error?: string;
   // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before

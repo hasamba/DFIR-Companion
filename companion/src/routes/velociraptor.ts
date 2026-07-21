@@ -8,7 +8,8 @@ import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
-import { resolveTimeScope, buildTimeScopePlan } from "../analysis/veloTimeScope.js";
+import { resolveTimeScope, buildTimeScopePlan, type TimeScope } from "../analysis/veloTimeScope.js";
+import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -313,6 +314,37 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     }
   });
 
+  // Fold the analyst's time scope (if any) into the bundle's hunt params, and derive the provenance
+  // block recorded on the job. Behavior-preserving seam pulled out of run-bundle: with no time scope,
+  // `huntParams` is `bundle.params` verbatim (same reference) and there's no provenance — exactly the
+  // pre-time-scope behavior. Logs the scope summary, including which artifacts collect in full, since
+  // that's what someone debugging a thinner-than-expected collection needs to see.
+  function resolveScopedHuntParams(
+    artifactsToRun: string[],
+    definitions: VeloArtifactInfo[],
+    timeScope: TimeScope | undefined,
+    bundle: ArtifactBundle,
+  ): { huntParams: Record<string, Record<string, string>> | undefined; timeScopeProvenance?: NonNullable<VeloHuntJob["timeScope"]> } {
+    if (!timeScope) return { huntParams: bundle.params };
+    const scopePlan = buildTimeScopePlan({
+      artifacts: artifactsToRun, definitions, scope: timeScope,
+      corrections: bundle.timeScopeParamNames, bundleParams: bundle.params,
+    });
+    const unscopedNames = scopePlan.unscoped.map((u) => u.artifact);
+    const namesSuffix = unscopedNames.length
+      ? ` (${unscopedNames.slice(0, 10).join(", ")}${unscopedNames.length > 10 ? `, +${unscopedNames.length - 10} more` : ""})`
+      : "";
+    logLine(`[velociraptor] time scope ${timeScope.start}${timeScope.end ? ` → ${timeScope.end}` : " → (open)"}: ${scopePlan.scoped.length}/${artifactsToRun.length} artifact(s) bounded, ${scopePlan.unscoped.length} collect in full${namesSuffix}${scopePlan.degraded ? " (server reported no parameter metadata)" : ""}`);
+    return {
+      huntParams: scopePlan.params,
+      timeScopeProvenance: {
+        start: timeScope.start, ...(timeScope.end ? { end: timeScope.end } : {}),
+        scopedArtifacts: scopePlan.scoped.length, totalArtifacts: artifactsToRun.length,
+        degraded: scopePlan.degraded,
+      },
+    };
+  }
+
   // Run a saved bundle as a hunt (optionally scoped by label/OS), schedule auto-collect after
   // waitMinutes (default DFIR_VELO_HUNT_WAIT_MIN / bundle default / 10; clamped 1..1440), and respond
   // immediately. The hunt stays open on the server until its expiry — we just snapshot results later.
@@ -387,16 +419,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
       // Fan the ONE chosen window out across the surviving artifacts' own date parameters, so each
       // collects less AT THE SOURCE. Artifacts with no date parameter keep collecting in full.
-      const scopePlan = timeScope
-        ? buildTimeScopePlan({
-            artifacts: artifactsToRun, definitions, scope: timeScope,
-            corrections: bundle.timeScopeParamNames, bundleParams: bundle.params,
-          })
-        : undefined;
-      const huntParams = scopePlan ? scopePlan.params : bundle.params;
-      if (scopePlan) {
-        logLine(`[velociraptor] time scope ${timeScope!.start}${timeScope!.end ? ` → ${timeScope!.end}` : " → (open)"}: ${scopePlan.scoped.length}/${artifactsToRun.length} artifact(s) bounded, ${scopePlan.unscoped.length} collect in full${scopePlan.degraded ? " (server reported no parameter metadata)" : ""}`);
-      }
+      const { huntParams, timeScopeProvenance } = resolveScopedHuntParams(artifactsToRun, definitions, timeScope, bundle);
 
       logLine(`[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
       const launch = await options.velociraptorClient.launchArtifactHunt(artifactsToRun, bundle.name, target, { timeoutSeconds, params: huntParams, expirySeconds });
@@ -406,9 +429,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
         status: "running", target, minSeverity, timeoutSeconds, expirySeconds, filters: bundle.filters, dwellWindowId,
-        ...(timeScope && scopePlan
-          ? { timeScope: { start: timeScope.start, ...(timeScope.end ? { end: timeScope.end } : {}), scopedArtifacts: scopePlan.scoped.length, totalArtifacts: artifactsToRun.length } }
-          : {}),
+        ...(timeScopeProvenance ? { timeScope: timeScopeProvenance } : {}),
       };
       // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
       await options.veloHuntStore.upsert(caseId, job);
