@@ -9,7 +9,7 @@ import {
   driftMessage,
   checkConfiguredPromptDrift,
 } from "../../src/analysis/promptCapabilities.js";
-import { BUILTIN_PROMPT_BY_NAME } from "../../src/analysis/pipeline.js";
+import { BUILTIN_PROMPT_BY_NAME, getObservePrompt } from "../../src/analysis/pipeline.js";
 
 describe("missingMarkers", () => {
   it("returns the markers absent from the text (case-sensitive)", () => {
@@ -93,5 +93,27 @@ describe("checkConfiguredPromptDrift", () => {
     const drift = checkConfiguredPromptDrift({ DFIR_AI_SYNTH_PROMPT: "findings only, no other sections" });
     expect(drift).toHaveLength(1);
     expect(drift[0].missing).toContain("hypotheses");
+  });
+});
+
+describe("OBSERVE prompt capability (deep pass)", () => {
+  it("is registered with the fields sanitizeObservations parses", () => {
+    const observe = PROMPT_CAPABILITIES.find((c) => c.name === "OBSERVE");
+    expect(observe).toBeDefined();
+    expect(observe!.envVar).toBe("DFIR_AI_OBSERVE_PROMPT_FILE");
+    for (const marker of ["observations", "eventIds", "whyItMatters"]) {
+      expect(observe!.markers).toContain(marker);
+    }
+  });
+
+  it("the shipped prompt satisfies its own markers", () => {
+    const observe = PROMPT_CAPABILITIES.find((c) => c.name === "OBSERVE")!;
+    expect(missingMarkers(getObservePrompt(), observe.markers)).toEqual([]);
+  });
+
+  it("forbids the batch from emitting severities, findings or a narrative", () => {
+    const text = getObservePrompt();
+    expect(text).toMatch(/do NOT assign a severity/i);
+    expect(text).toMatch(/do NOT create a finding/i);
   });
 });

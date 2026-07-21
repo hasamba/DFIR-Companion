@@ -701,6 +701,35 @@ export const SYNTHESIS_PROMPT = [
   ),
 ].join("\n");
 
+// Deep-pass batch prompt (spec 2026-07-21-batched-deep-pass-design.md). Its ONLY job is to surface
+// evidence from one slice of the timeline. It must not conclude: a batch that sees a prompt's worth of
+// one afternoon and is asked for "the attack story" will invent one (halcyon and fairhaven both did),
+// and thirteen such stories cannot be reconciled. deepPass.sanitizeObservations drops any severity or
+// title field anyway — this prompt states the same contract so the model does not spend output tokens
+// discovering it.
+export const OBSERVE_PROMPT = [
+  "You are a DFIR analyst reviewing ONE SLICE of a larger forensic timeline.",
+  "",
+  "You are NOT seeing the whole case. Other slices are being reviewed separately, and a final pass",
+  "will combine everything and draw the conclusions. Your only job is to report what is in THIS slice.",
+  "",
+  'Return STRICT JSON: {"observations": [...]}. Each observation has:',
+  "  summary       — one factual sentence about what happened (no speculation about intent)",
+  "  whyItMatters  — why an investigator should look at it",
+  "  eventIds      — the ids of the events this rests on, copied EXACTLY from the rows below",
+  "  hosts         — the hosts involved (optional)",
+  "  firstSeen     — ISO timestamp of the earliest event (optional)",
+  "  lastSeen      — ISO timestamp of the latest event (optional)",
+  "",
+  "Rules:",
+  "- Do NOT assign a severity, do NOT create a finding, and do NOT write a narrative or conclusion.",
+  "- Do NOT report routine or benign activity just to fill the list. Returning an empty array is a",
+  "  perfectly good answer for an uneventful slice, and is much better than inventing significance.",
+  "- Every observation MUST carry at least one eventId copied from the rows; an observation you cannot",
+  "  tie to a specific row will be discarded.",
+  "- Report at most 15 observations. Prefer the few that matter over many that do not.",
+].join("\n");
+
 // --- User-overridable prompts -------------------------------------------------------
 // Each of the four prompts above is the built-in DEFAULT. A user can override any of them
 // from the environment (`companion/.env`), in priority order:
@@ -710,7 +739,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "OBSERVE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -788,6 +817,7 @@ export const getTaggerRulePrompt = (): string => resolvePrompt("TAGGERRULE", TAG
 export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
   SYNTH: SYNTHESIS_PROMPT,
   TAGGERRULE: TAGGER_RULE_PROMPT,
+  OBSERVE: OBSERVE_PROMPT,
 };
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
@@ -1364,6 +1394,7 @@ export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROM
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
+export const getObservePrompt = (): string => resolvePrompt("OBSERVE", OBSERVE_PROMPT);
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
