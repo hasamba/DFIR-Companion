@@ -82,6 +82,27 @@ describe("ArtifactBundleStore", () => {
       expect(inList?.name).toBe("Best Practice (mine)");
       expect(inList?.customized).toBe(true);
     });
+
+    it("persists timeScopeParams and drops malformed entries", async () => {
+      const saved = await store.save({
+        name: "Scoped", artifacts: ["Windows.EventLogs.Evtx"],
+        timeScopeParams: {
+          "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
+          "Bad.Types": { start: 42, end: null },              // non-string → dropped
+          "Bad.Shape": "nope",                                 // not an object → dropped
+          "Empty.Pair": {},                                    // nothing usable → dropped
+        } as never,
+      });
+      expect(saved.timeScopeParams).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+
+      const reloaded = await store.get(saved.id);
+      expect(reloaded?.timeScopeParams).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+    });
+
+    it("leaves timeScopeParams undefined when none are given", async () => {
+      const saved = await store.save({ name: "Plain", artifacts: ["Windows.NTFS.MFT"] });
+      expect(saved.timeScopeParams).toBeUndefined();
+    });
   });
 
   describe("delete()", () => {

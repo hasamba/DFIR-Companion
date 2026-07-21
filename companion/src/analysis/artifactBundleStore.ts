@@ -25,6 +25,11 @@ export interface ArtifactBundle {
   // rows are dropped at the source (e.g. {"DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'"}).
   // Analyst-authored VQL boolean expression (no "WHERE" keyword).
   filters?: Record<string, string>;
+  // Analyst corrections for the run-time TIME SCOPE: which parameter of each artifact takes the lower
+  // and upper bound, when auto-detection from the server got it wrong (e.g.
+  // {"Windows.EventLogs.Evtx": {"start": "EarliestTime", "end": "LatestTime"}}). Only names — the
+  // window itself is chosen per run, never stored here.
+  timeScopeParams?: Record<string, { start?: string; end?: string }>;
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
   // When true, this bundle's collected results go to the SUPER-TIMELINE ONLY (never the forensic
   // timeline) — for raw host-triage artifacts (MFT/USN/Prefetch) that would otherwise flood the
@@ -56,6 +61,22 @@ function sanitizeBundleParams(raw: unknown): Record<string, Record<string, strin
       inner[String(k)] = String(v);
     }
     if (Object.keys(inner).length) out[artifact] = inner;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// Per-artifact time-scope parameter NAMES. Keeps only string start/end names; an entry with neither is
+// dropped. Returns undefined when empty, so a bundle without corrections stays clean on disk.
+function sanitizeTimeScopeParams(raw: unknown): Record<string, { start?: string; end?: string }> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, { start?: string; end?: string }> = {};
+  for (const [artifact, pair] of Object.entries(raw as Record<string, unknown>)) {
+    if (!pair || typeof pair !== "object") continue;
+    const p = pair as { start?: unknown; end?: unknown };
+    const entry: { start?: string; end?: string } = {};
+    if (typeof p.start === "string" && p.start.trim()) entry.start = p.start.trim().slice(0, 100);
+    if (typeof p.end === "string" && p.end.trim()) entry.end = p.end.trim().slice(0, 100);
+    if (entry.start || entry.end) out[artifact] = entry;
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -340,6 +361,7 @@ export class ArtifactBundleStore {
       expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
       params: sanitizeBundleParams(input.params),
       filters: sanitizeBundleFilters(input.filters),
+      timeScopeParams: sanitizeTimeScopeParams(input.timeScopeParams),
       // Carry the super-timeline routing flag through an edit/override; only `true` persists (a missing
       // field stays undefined, not `false` noise) — mirrors the other optionals above.
       superTimelineOnly: input.superTimelineOnly === true ? true : undefined,

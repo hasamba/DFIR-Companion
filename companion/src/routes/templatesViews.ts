@@ -182,7 +182,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     try {
       const { id, name, description, artifacts, defaultWaitMinutes,
-              timeoutSeconds, expirySeconds, params, filters, superTimelineOnly } = req.body ?? {};
+              timeoutSeconds, expirySeconds, params, filters, superTimelineOnly, timeScopeParams } = req.body ?? {};
       if (!name) return res.status(400).json({ error: "name is required" });
       if (!Array.isArray(artifacts) || artifacts.length === 0) return res.status(400).json({ error: "at least one artifact is required" });
       // Forward EVERY field the store supports. Destructuring a subset here silently wiped a built-in's
@@ -190,7 +190,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       // the validation layer, so passing them through is safe.
       const saved = await options.artifactBundleStore.save({
         id, name, description, artifacts, defaultWaitMinutes,
-        timeoutSeconds, expirySeconds, params, filters, superTimelineOnly,
+        timeoutSeconds, expirySeconds, params, filters, superTimelineOnly, timeScopeParams,
       });
       return res.status(201).json(saved);
     } catch (err) {
