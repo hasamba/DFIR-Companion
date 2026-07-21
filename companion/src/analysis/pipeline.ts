@@ -112,7 +112,7 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
-import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, type CollapsedPrompt } from "./synthGroup.js";
+import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, type CollapsedPrompt } from "./synthGroup.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -3880,7 +3880,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4078,7 +4078,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4395,7 +4395,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4439,7 +4439,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4540,7 +4540,7 @@ export class AnalysisPipeline {
   }
 
   // Shared event-selection for the two view-scoped summaries: cap to the synthesis event budget
-  // (DFIR_AI_SYNTH_MAX_EVENTS, default 300), token-fit against the prompt overhead, keep the most
+  // (DFIR_AI_SYNTH_MAX_EVENTS, default 600), token-fit against the prompt overhead, keep the most
   // signal-bearing subset (selectSynthesisEvents) and re-sort it chronologically for the report.
   private fitViewEvents(all: ForensicEvent[], overheadTokens: number): { events: ForensicEvent[]; render: (e: ForensicEvent) => string } {
     const render = (e: ForensicEvent): string =>
@@ -4549,7 +4549,7 @@ export class AnalysisPipeline {
       ` ${e.description.slice(0, 240)}` +
       (e.processName ? ` | process: ${e.processName}` : "") +
       (e.srcIp || e.dstIp ? ` | net: ${[e.srcIp, e.dstIp].filter(Boolean).join(" → ")}` : "");
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(all, max);
     const fit = fitItemsToBudget(events, render, Math.max(0, inputTokenBudget() - overheadTokens));
     if (fit < events.length) events = selectSynthesisEvents(all, fit);
@@ -4624,7 +4624,7 @@ export class AnalysisPipeline {
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const validEventIds = new Set(scopedEvents.map((e) => e.id));
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4748,7 +4748,7 @@ export class AnalysisPipeline {
     // request) and inside the model's context. The deterministic high-severity backfill
     // still creates findings for any Critical/High event NOT shown here (eligibleIds below
     // is the full scoped set), so capping the prompt never loses a severe detection.
-    const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const SYNTH_MAX_EVENTS = maxPromptEvents();
     // Per-case prevalence/baseline (investigation-guidance #15): how common each activity PATTERN is
     // across the WHOLE case timeline (not just the scoped subset — the baseline is a property of the
     // corpus). Feeds a rarity bias into the selection fill (a 1-off wins a seat over 500× noise) and a

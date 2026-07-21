@@ -28,6 +28,19 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { patternKey, commandShape } from "./prevalence.js";
 import { byEventTime } from "./forensicSort.js";
 
+// Default ceiling on how many forensic events (after burst grouping) reach a prompt, overridable with
+// DFIR_AI_SYNTH_MAX_EVENTS. Raised from 300 to 600 when grouping landed: collapsing repeated detections
+// roughly halves the row count on a detection-heavy import, so 600 rows cost about what 300 used to and
+// are enough to put EVERY non-Info event in front of the model on a typical Velociraptor + Sigma/YARA
+// case (measured: 1089 events → 546 rows → 100% coverage, ~49k timeline tokens against a ~105k budget).
+export const DEFAULT_MAX_PROMPT_EVENTS = 600;
+
+/** The event cap for a prompt: DFIR_AI_SYNTH_MAX_EVENTS when set and valid, else the default. */
+export function maxPromptEvents(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.DFIR_AI_SYNTH_MAX_EVENTS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_PROMPT_EVENTS;
+}
+
 export const DEFAULT_GROUP_GAP_SECONDS = 3600;   // 1 hour between occurrences starts a new burst
 export const DEFAULT_GROUP_MIN_REPEATS = 4;      // below this, collapsing costs detail and saves nothing
 export const DEFAULT_MAX_HOSTS_NAMED = 4;        // how many host names the rendered line spells out
