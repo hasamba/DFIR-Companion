@@ -70,10 +70,11 @@ function sanitizeBundleParams(raw: unknown): Record<string, Record<string, strin
 
 // Per-artifact time-scope parameter NAMES (not values — see the doc comment on the field). Keeps only
 // string start/end names; an entry with neither is dropped. Returns undefined when empty, so a bundle
-// without corrections stays clean on disk.
+// without corrections stays clean on disk. Null-prototype accumulator for the same reason as above
+// (`entry` needs none — its keys are the fixed literals start/end, not untrusted input).
 function sanitizeTimeScopeParamNames(raw: unknown): Record<string, { start?: string; end?: string }> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const out: Record<string, { start?: string; end?: string }> = {};
+  const out: Record<string, { start?: string; end?: string }> = Object.create(null);
   for (const [artifact, pair] of Object.entries(raw as Record<string, unknown>)) {
     if (!pair || typeof pair !== "object") continue;
     const p = pair as { start?: unknown; end?: unknown };

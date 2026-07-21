@@ -206,18 +206,23 @@ describe("ArtifactBundleStore", () => {
     // arrive, as a parsed request body.
     const filters = JSON.parse('{"__proto__":"NOT OSPath =~ \'x\'","A.B":"NOT Z"}');
     const params = JSON.parse('{"__proto__":{"Evil":"yes"},"A.B":{"Keep":"1"}}');
-    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params });
+    const timeScopeParamNames = JSON.parse('{"__proto__":{"start":"Evil"},"A.B":{"start":"EarliestTime"}}');
+    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params, timeScopeParamNames });
 
     // The accumulators are null-prototype, so nothing was reassigned via the inherited setter...
     expect(Object.getPrototypeOf(saved.filters!)).toBeNull();
     expect(Object.getPrototypeOf(saved.params!)).toBeNull();
+    expect(Object.getPrototypeOf(saved.timeScopeParamNames!)).toBeNull();
     // ...and no global prototype was polluted.
     expect(({} as Record<string, unknown>).Evil).toBeUndefined();
+    expect(({} as Record<string, unknown>).start).toBeUndefined();
     expect(({} as Record<string, unknown>)["A.B"]).toBeUndefined();
 
     // The entry is kept predictably rather than silently dropped, alongside the normal ones.
     expect(Object.keys(saved.filters!)).toEqual(["__proto__", "A.B"]);
     expect(saved.params!["__proto__"]).toEqual({ Evil: "yes" });
+    expect(Object.keys(saved.timeScopeParamNames!)).toEqual(["__proto__", "A.B"]);
+    expect(saved.timeScopeParamNames!["A.B"]).toEqual({ start: "EarliestTime" });
 
     // And it survives the JSON round-trip as a plain, unpolluted object.
     const reloaded = await store.get(saved.id);
