@@ -12,10 +12,11 @@ export interface TimeScope {
 }
 
 // Raw run-form input: either a relative preset or an absolute custom range.
+// Note: `preset` takes precedence over `start`/`end` — if both are supplied, dates are ignored.
 export interface TimeScopeInput {
-  preset?: string;      // "24h" | "7d" | "30d" | "90d" | "all"
-  start?: string;
-  end?: string;
+  preset?: unknown;     // "24h" | "7d" | "30d" | "90d" | "all" | "custom"; deliberately untyped (untrusted boundary)
+  start?: unknown;      // ISO-8601 date string; deliberately untyped (untrusted boundary)
+  end?: unknown;        // ISO-8601 date string; deliberately untyped (untrusted boundary)
 }
 
 const PRESET_MS: Record<string, number> = {
@@ -37,7 +38,11 @@ export function resolveTimeScope(raw: TimeScopeInput | undefined, now: Date = ne
   }
   const rawStart = String(raw.start ?? "").trim();
   const rawEnd = String(raw.end ?? "").trim();
-  if (!rawStart && !rawEnd) return undefined;   // "all time" / nothing chosen
+  if (!rawStart && !rawEnd) {
+    // If "custom" was explicitly selected, require a start; otherwise allow "all time"
+    if (preset === "custom") throw new Error("start is required for a custom time scope");
+    return undefined;   // "all time" / nothing chosen
+  }
   if (!rawStart) throw new Error("start is required for a custom time scope");
   const startMs = Date.parse(rawStart);
   if (Number.isNaN(startMs)) throw new Error("start must be a valid date");
