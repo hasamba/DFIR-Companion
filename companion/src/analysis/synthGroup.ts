@@ -25,7 +25,7 @@
 // grouping consistent with the prevalence/rarity baseline. See the matching test in synthGroup.test.ts.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { patternKey } from "./prevalence.js";
+import { patternKey, commandShape } from "./prevalence.js";
 import { byEventTime } from "./forensicSort.js";
 
 export const DEFAULT_GROUP_GAP_SECONDS = 3600;   // 1 hour between occurrences starts a new burst
@@ -52,6 +52,47 @@ export interface CollapsedPrompt {
   events: ForensicEvent[];                             // representatives + ungrouped events, input order
   groupById: Map<string, DetectionGroup>;              // representative event id → its group
   memberIdsByRepresentative: Map<string, string[]>;    // representative event id → every id it covers
+}
+
+// Minimum length for an extracted rule header to be trusted (guards against a stray "[x] y: z").
+const DETECTION_MIN_HEAD = 10;
+
+/**
+ * Extract the RULE IDENTITY from a detection-style description, or null when the description is not in
+ * that format. Detection importers render:
+ *
+ *     "<Tool> [<Artifact>] <Detector>: <RuleName> - <per-event detail>"
+ *
+ * e.g. "Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01 User: alice".
+ * The head identifies WHICH rule fired; the tail is per-event detail (host, user, path) that differs on
+ * every hit. Fingerprinting the whole description therefore shatters one rule into one pattern per host —
+ * measured on a real Velociraptor+Sigma case, 1,089 events produced 367 patterns instead of ~116.
+ *
+ * This is deliberately a HEURISTIC with a strict fallback: a description that does not carry both an
+ * "[Artifact]" bracket and a "<Detector>: " separator returns null and keeps the existing fingerprint.
+ * The failure mode is therefore "grouped less", never "grouped wrongly" — important because this couples
+ * to an importer's rendering format, the same fragility that makes the login graph break silently when
+ * mapWindows changes its description layout.
+ */
+export function detectionRuleHead(description: string | undefined): string | null {
+  const desc = String(description ?? "");
+  if (!/\[[^\]]+\]/.test(desc)) return null;   // needs the "[Artifact]" bracket
+  if (!desc.includes(": ")) return null;        // needs the "<Detector>: <RuleName>" separator
+  const cut = desc.indexOf(" - ");
+  const head = (cut > 0 ? desc.slice(0, cut) : desc).trim();
+  return head.length >= DETECTION_MIN_HEAD ? head : null;
+}
+
+// The bucket key for one event. Mirrors prevalence.patternKey's hierarchy but inserts rule identity
+// between the content hash and the generic description shape: a file hash is still the strongest
+// identity (two distinct malware samples matched by one YARA rule must NOT merge into a single row),
+// and anything that is not a detection falls through to the shared fingerprint unchanged.
+function groupPatternKey(e: ForensicEvent): string {
+  const hash = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
+  if (hash) return `hash:${hash}`;
+  const head = detectionRuleHead(e.description);
+  if (head) return `rule:${commandShape(head)}`;
+  return patternKey(e);
 }
 
 function eventMs(e: ForensicEvent): number {
@@ -101,7 +142,7 @@ export function groupDetections(
   const buckets = new Map<string, ForensicEvent[]>();
   for (const e of events) {
     if (!isDated(e)) continue;                 // undated: no position on the time axis, never grouped
-    const pk = patternKey(e);
+    const pk = groupPatternKey(e);
     if (!pk) continue;                          // no stable pattern (empty description, no hash/process)
     const key = `${e.severity}|${pk}`;
     const list = buckets.get(key);

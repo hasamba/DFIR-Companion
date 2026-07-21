@@ -5,6 +5,7 @@ import {
   renderGroupSuffix,
   groupEnvOptions,
   groupingEnabled,
+  detectionRuleHead,
   DEFAULT_GROUP_GAP_SECONDS,
   DEFAULT_GROUP_MIN_REPEATS,
 } from "../../src/analysis/synthGroup.js";
@@ -150,6 +151,72 @@ describe("env options", () => {
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "1" })).toBe(true);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "0" })).toBe(false);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "off" })).toBe(false);
+  });
+});
+
+describe("detectionRuleHead", () => {
+  it("extracts the rule identity and drops the per-event detail", () => {
+    expect(detectionRuleHead("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01"))
+      .toBe("Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell");
+  });
+
+  it("keeps the whole header when there is no per-event detail", () => {
+    expect(detectionRuleHead("Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic"))
+      .toBe("Velociraptor [Windows.Detection.Yara] Yara: Mimikatz_Generic");
+  });
+
+  it("returns null for descriptions that are not in the detection format", () => {
+    expect(detectionRuleHead("robocopy C:\\data \\\\srv\\bak /mir")).toBeNull();      // no bracket, no colon
+    expect(detectionRuleHead("A file was written [somewhere]")).toBeNull();            // bracket but no ": "
+    expect(detectionRuleHead("")).toBeNull();
+  });
+});
+
+describe("rule-identity grouping", () => {
+  // One Sigma rule firing on many hosts, each hit carrying different per-event detail. Keying on the
+  // whole description fragmented these into one group per host; keying on the rule identity is one group.
+  function sigmaHits(rule: string, n: number, sev: Severity = "High"): ForensicEvent[] {
+    return Array.from({ length: n }, (_, i) =>
+      ev(
+        `${rule}-${i}`,
+        `2026-05-20T09:${String(i).padStart(2, "0")}:00Z`,
+        sev,
+        `Velociraptor [Windows.Detection.Sigma] Sigma: ${rule} - Computer: ws-${i} User: alice${i}`,
+        `ws-${i}`,
+      ),
+    );
+  }
+
+  it("groups the same rule across hosts despite differing per-event detail", () => {
+    const groups = groupDetections(sigmaHits("Encoded PowerShell", 8));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].count).toBe(8);
+    expect(groups[0].hosts).toHaveLength(8);
+  });
+
+  it("never merges two different rules", () => {
+    const groups = groupDetections([...sigmaHits("Encoded PowerShell", 6), ...sigmaHits("Mimikatz Access", 6)]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("leaves non-detection descriptions on the existing fingerprint", () => {
+    // Same shape under commandShape (paths normalized), so these still group exactly as before.
+    const events = Array.from({ length: 5 }, (_, i) =>
+      ev(`r${i}`, `2026-05-20T09:0${i}:00Z`, "Medium", `robocopy C:\\data\\${i} \\\\srv\\bak /mir`),
+    );
+    expect(groupDetections(events)).toHaveLength(1);
+  });
+
+  it("still keys on the file hash when one is present, so distinct samples stay distinct", () => {
+    const withHash = (id: string, t: string, sha: string): ForensicEvent => ({
+      ...ev(id, t, "High", "Velociraptor [Windows.Detection.Yara] Yara: Generic_Loader - hit"),
+      sha256: sha,
+    });
+    const events = [
+      ...Array.from({ length: 4 }, (_, i) => withHash(`a${i}`, `2026-05-20T09:0${i}:00Z`, "a".repeat(64))),
+      ...Array.from({ length: 4 }, (_, i) => withHash(`b${i}`, `2026-05-20T09:1${i}:00Z`, "b".repeat(64))),
+    ];
+    expect(groupDetections(events)).toHaveLength(2);
   });
 });
 
