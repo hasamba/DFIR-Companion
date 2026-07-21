@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  ARTIFACT_CATALOG_TTL_MS,
   parseVqlOutput,
   sanitizeVqlDurations,
   splitVqlStatements,
@@ -587,6 +588,107 @@ describe("VelociraptorClient.listClientArtifacts", () => {
     const client = new VelociraptorClient(cfg, runner);
     expect((await client.listClientArtifacts("client_event")).map((a) => a.name))
       .toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries", "Windows.Events.ServiceCreation"]);
+    expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
+  });
+});
+
+describe("VelociraptorClient.listClientArtifacts caching", () => {
+  const artifactRows = [
+    { name: "Windows.System.Pslist", description: "p", type: "CLIENT" },
+    { name: "Windows.Events.DNSQueries", description: "e", type: "CLIENT_EVENT" },
+  ];
+  // A runner that counts how many times the underlying (subprocess-spawning) query actually ran.
+  const countingRunner = (): { runner: VqlRunner; calls: () => number } => {
+    let calls = 0;
+    return { runner: async () => { calls++; return { rows: artifactRows, raw: "" }; }, calls: () => calls };
+  };
+
+  it("serves two rapid calls from ONE underlying query", async () => {
+    const { runner, calls } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    const a = await client.listClientArtifacts("client");
+    const b = await client.listClientArtifacts("client");
+    expect(calls()).toBe(1);
+    expect(a).toEqual(b);
+    expect(a.map((x) => x.name)).toEqual(["Windows.System.Pslist"]);
+  });
+
+  it("shares ONE query across concurrent callers (the interactive-preview burst)", async () => {
+    const { runner, calls } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    const [a, b, c] = await Promise.all([
+      client.listClientArtifacts("client"),
+      client.listClientArtifacts("client"),
+      client.listClientArtifacts("client"),
+    ]);
+    expect(calls()).toBe(1);
+    expect(a).toEqual(b);
+    expect(b).toEqual(c);
+  });
+
+  it("caches per type — client and client_event do not share an entry", async () => {
+    const { runner, calls } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
+    expect((await client.listClientArtifacts("client_event")).map((a) => a.name)).toEqual(["Windows.Events.DNSQueries"]);
+    expect(calls()).toBe(2);
+    await client.listClientArtifacts("client");
+    await client.listClientArtifacts("client_event");
+    expect(calls()).toBe(2);   // both types now cached
+  });
+
+  it("re-queries once the TTL expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, calls } = countingRunner();
+      const client = new VelociraptorClient(cfg, runner);
+      await client.listClientArtifacts("client");
+      await client.listClientArtifacts("client");
+      expect(calls()).toBe(1);
+      vi.advanceTimersByTime(ARTIFACT_CATALOG_TTL_MS + 1);
+      await client.listClientArtifacts("client");
+      expect(calls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bypasses the cache with { refresh: true } (the picker's Browse button / run-bundle pre-flight)", async () => {
+    const { runner, calls } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    await client.listClientArtifacts("client");
+    await client.listClientArtifacts("client", { refresh: true });
+    expect(calls()).toBe(2);
+    await client.listClientArtifacts("client");
+    expect(calls()).toBe(2);   // the bypassing call repopulated the cache
+  });
+
+  it("invalidateArtifactCache() forces the next call to re-query", async () => {
+    const { runner, calls } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    await client.listClientArtifacts("client");
+    client.invalidateArtifactCache();
+    await client.listClientArtifacts("client");
+    expect(calls()).toBe(2);
+  });
+
+  it("never serves a FAILED fetch from cache", async () => {
+    let calls = 0;
+    const runner: VqlRunner = async () => {
+      calls++;
+      if (calls === 1) throw new Error("velociraptor exited with code 1");
+      return { rows: artifactRows, raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    await expect(client.listClientArtifacts("client")).rejects.toThrow(/exited with code 1/);
+    expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
+    expect(calls).toBe(2);
+  });
+
+  it("hands each caller its own array — a mutation cannot poison the cache", async () => {
+    const { runner } = countingRunner();
+    const client = new VelociraptorClient(cfg, runner);
+    (await client.listClientArtifacts("client")).push({ name: "Injected", description: "" });
     expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
   });
 });
