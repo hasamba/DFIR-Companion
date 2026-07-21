@@ -8895,6 +8895,7 @@
     let _veloClients = [];             // last-loaded client inventory (host ↔ client id), for the monitor datalist
     let _veloEventArtifacts = [];      // last-loaded CLIENT_EVENT artifact list (monitor picker)
     let _veloMonAutoBrowsed = false;   // one-shot: auto-populate the event-artifact picker when Velociraptor is on
+    let veloTsPreviewSeq = 0;          // monotonic counter guarding the time-scope preview against out-of-order responses
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -9065,9 +9066,12 @@
             <option value="90d">last 90 days</option>
             <option value="custom">custom range…</option>
           </select>
-          <span class="velo-ts-custom" style="display:none;gap:6px;align-items:center">
+          <span class="velo-ts-custom" style="display:none;gap:4px;align-items:center">
             <input type="datetime-local" class="velo-ts-start" title="Collect from (UTC)" style="padding:4px" />
+            <span style="font-size:10px;color:var(--c-9aa4b2)">UTC</span>
+            <span style="color:var(--c-7e8aa0)">–</span>
             <input type="datetime-local" class="velo-ts-end" title="Collect until (UTC) — leave empty to keep collecting forward" style="padding:4px" />
+            <span style="font-size:10px;color:var(--c-9aa4b2)">UTC</span>
           </span>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
           <input class="velo-exc" placeholder="exclude labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
@@ -9090,7 +9094,14 @@
 
     // Read the run form's time-scope control into the request body shape the server expects.
     // Returns undefined for "All time" (the default) so an unscoped run is byte-identical to before.
-    // The datetime-local inputs are wall-clock with no zone, so they're read as UTC to match the label.
+    // The datetime-local inputs are wall-clock with no zone, so they're read as UTC to match the label
+    // (and the visible "UTC" badges beside them). NOTE: appending ":00" to make a full-second timestamp
+    // is only safe because these inputs have no `step` attribute and therefore never return seconds —
+    // if a future edit adds step="1" for sub-minute precision, this needs to stop assuming :00.
+    // veloTimeScopeBody also returns undefined when mode is "custom" but no start date has been entered
+    // yet — that is NOT "All time" and must never be treated as one; see veloTimeScopeIncomplete below,
+    // which both the preview and the launch path check separately since this return value alone can't
+    // distinguish the two cases.
     function veloTimeScopeBody(form) {
       const mode = form.querySelector(".velo-timescope").value;
       if (!mode) return undefined;
@@ -9101,17 +9112,32 @@
       return { start: start + ":00Z", ...(end ? { end: end + ":00Z" } : {}) };
     }
 
+    // True when "custom range…" is selected but no start date has been entered — a half-finished
+    // scope that must never silently fall through to an unscoped ("All time") run. Without this check,
+    // an analyst who picks "custom", forgets the date, and clicks Run gets a fully unscoped hunt with no
+    // warning; the only trace is the ABSENCE of a "⏱ scoped" line on the resulting job card, which reads
+    // exactly like "no activity occurred" rather than "you forgot to set a date".
+    function veloTimeScopeIncomplete(form) {
+      return form.querySelector(".velo-timescope").value === "custom" && !form.querySelector(".velo-ts-start").value;
+    }
+
     // Show which artifacts the chosen window will actually bound, before anything is launched. A bad
     // auto-detected mapping must be visible here rather than silently under-collecting.
     function veloTimeScopePreview(bundleId, form) {
       const out = form.querySelector(".velo-ts-preview");
+      if (veloTimeScopeIncomplete(form)) { out.textContent = "⚠ enter a start date to apply a custom time scope"; return; }
       const body = veloTimeScopeBody(form);
       if (!body) { out.textContent = ""; return; }
       out.textContent = "checking which artifacts can be scoped…";
+      // Rapid dropdown/date changes fire overlapping fetches with no inherent ordering guarantee; a
+      // monotonic sequence number lets a stale response recognize it's been superseded and no-op instead
+      // of overwriting the preview with a mapping that doesn't match the currently selected scope.
+      const mySeq = ++veloTsPreviewSeq;
       fetch(`/velociraptor/bundles/${encodeURIComponent(bundleId)}/time-scope-preview`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
-      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
         .then(({ ok, j }) => {
+          if (mySeq !== veloTsPreviewSeq) return;   // a newer request superseded this one
           if (!ok || j.error) { out.textContent = "⚠ " + (j.error || "preview failed"); return; }
           const total = j.scoped.length + j.unscoped.length;
           const detail = j.scoped.map(s => `${esc(s.artifact)} → ${esc(s.startParam || "—")}${s.endParam ? " / " + esc(s.endParam) : ""}${s.manual ? " (manually set)" : ""}`).join("<br>");
@@ -9120,13 +9146,15 @@
             <div style="margin-top:4px">${detail || "<em>none</em>"}</div>
             ${full ? `<div style="margin-top:4px;color:var(--c-9aa4b2)"><strong>Collects in full:</strong> ${full}</div>` : ""}</details>`;
         })
-        .catch(e => { out.textContent = "⚠ " + e.message; });
+        .catch(e => { if (mySeq !== veloTsPreviewSeq) return; out.textContent = "⚠ " + e.message; });
     }
 
     function veloRunBundle(bundleId, form) {
       const caseId = veloCaseId();
       const msg = form.querySelector(".velo-run-msg");
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
+      // Never let a half-finished custom time scope silently launch unscoped — see veloTimeScopeIncomplete.
+      if (veloTimeScopeIncomplete(form)) { msg.textContent = "⚠ enter a start date to apply a custom time scope"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
       const expirySeconds = Number(form.querySelector(".velo-expiry").value) || undefined;
       const os = form.querySelector(".velo-os").value;
@@ -9247,6 +9275,10 @@
         // The COLLECTION window this hunt ran with, when it was scoped. Part of the evidence record:
         // it tells a later reader that silence outside these bounds is a collection boundary, not a
         // quiet endpoint. `degraded` means we could not verify the split — don't let it read as "0".
+        // Deliberately rendered as raw ISO (with trailing Z), NOT run through .toLocaleString() like most
+        // other timestamps in this file: this is evidence metadata read by someone who may be in a
+        // different timezone, possibly months later — an unambiguous UTC marker matters more here than
+        // local-time familiarity. Do not "fix" this to local time.
         const tsLine = job.timeScope
           ? `<div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px" title="Collection was bounded — absence of results outside this window is a collection boundary, not an absence of activity">⏱ scoped ${esc(job.timeScope.start)}${job.timeScope.end ? " → " + esc(job.timeScope.end) : " → (open)"} · ${esc(job.timeScope.scopedArtifacts)}/${esc(job.timeScope.totalArtifacts)} artifact(s) bounded${job.timeScope.degraded ? ` · <span style="color:var(--c-ff9f43)">coverage unverified (server reported no parameter metadata)</span>` : ""}</div>`
           : "";

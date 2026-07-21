@@ -442,4 +442,39 @@ describe("dashboard.html", () => {
     for (const p of ["24h", "7d", "30d", "90d"]) expect(html).toContain(`value="${p}"`);
     expect(html).toContain("All time");
   });
+
+  it("anchors a custom time-scope's datetime-local inputs to UTC, not local wall-clock", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // The datetime-local value has no timezone of its own; the server expects a full ISO instant, so
+    // the client must append seconds + the Z offset rather than let Date parsing assume local time.
+    expect(html).toMatch(/function veloTimeScopeBody\(form\)[\s\S]{0,600}return \{ start: start \+ ":00Z", \.\.\.\(end \? \{ end: end \+ ":00Z" \} : \{\}\) \};/);
+    // The UTC anchoring must not be hover-tooltip-only — an always-visible badge sits beside each input.
+    expect(html).toMatch(/class="velo-ts-start"[\s\S]{0,250}>UTC</);
+    expect(html).toMatch(/class="velo-ts-end"[\s\S]{0,250}>UTC</);
+  });
+
+  it("refuses to launch (and warns) when 'custom range…' is selected with no start date, instead of silently running unscoped", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // veloTimeScopeBody alone can't distinguish "All time" from "custom but unfilled" — both return
+    // undefined — so a dedicated check must gate both the preview and the actual launch.
+    expect(html).toMatch(/function veloTimeScopeIncomplete\(form\)[\s\S]{0,200}=== "custom" && !form\.querySelector\("\.velo-ts-start"\)\.value/);
+    expect(html).toMatch(/function veloTimeScopePreview\(bundleId, form\)[\s\S]{0,200}veloTimeScopeIncomplete\(form\)\)[\s\S]{0,120}enter a start date to apply a custom time scope/);
+    expect(html).toMatch(/function veloRunBundle\(bundleId, form\)[\s\S]{0,400}veloTimeScopeIncomplete\(form\)\)[\s\S]{0,120}enter a start date to apply a custom time scope[\s\S]{0,20}return;/);
+  });
+
+  it("guards the time-scope preview against out-of-order responses from rapid scope changes", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("let veloTsPreviewSeq = 0;");
+    expect(html).toMatch(/function veloTimeScopePreview[\s\S]{0,900}const mySeq = \+\+veloTsPreviewSeq;/);
+    // Both the success and error branches must bail out if a newer request has since superseded them.
+    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{\s*\n\s*if \(mySeq !== veloTsPreviewSeq\) return;/);
+    expect(html).toMatch(/\.catch\(e => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+  });
+
+  it("renders the hunt job card's degraded time-scope coverage as explicitly unverified, not as zero", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // A 0-of-N scoped count with degraded:true must read as "we couldn't check", never as "nothing
+    // was scoped" — those are forensically different claims about the same collection.
+    expect(html).toMatch(/const tsLine = job\.timeScope[\s\S]{0,700}job\.timeScope\.degraded[\s\S]{0,120}coverage unverified \(server reported no parameter metadata\)/);
+  });
 });
