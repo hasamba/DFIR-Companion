@@ -60,4 +60,13 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     const parsed = parseJsonLoose(fenced) as { findings: { id: string }[] };
     expect(parsed.findings.map((f) => f.id)).toEqual(["f1"]);
   });
+
+  it("prefers whole-response JSON over a fence that only appears INSIDE a string value", () => {
+    // A finding description quoting a fenced command block: fence-extraction would slice the
+    // response apart mid-string and throw, even though the raw response is already valid JSON.
+    const raw = '{"findings":[{"id":"f1","description":"the operator ran ```powershell\\niex(...)``` on the host"}]}';
+    const parsed = parseJsonLoose(raw) as { findings: { id: string; description: string }[] };
+    expect(parsed.findings[0].id).toBe("f1");
+    expect(parsed.findings[0].description).toContain("powershell");
+  });
 });
