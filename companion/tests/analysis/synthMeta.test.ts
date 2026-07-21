@@ -184,3 +184,75 @@ describe("coverageLabel", () => {
     expect(label).not.toMatch(/omitted/i);
   });
 });
+
+describe("coverage with grouped detections", () => {
+  it("counts grouped events as considered and names the grouping in the label", () => {
+    const c = buildSynthesisCoverage({
+      totalEvents: 900,
+      inWindow: 900,
+      scoped: 900,
+      considered: 900,
+      groupEntries: 120,
+      groupedEvents: 780,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 42_000,
+    });
+    expect(c.considered).toBe(900);
+    expect(c.omittedBudget).toBe(0);
+    expect(c.groupEntries).toBe(120);
+    expect(c.groupedEvents).toBe(780);
+
+    const label = coverageLabel(c);
+    expect(label).toContain("considered 900 of 900 in-window events");
+    expect(label).toContain("780 shown as 120 grouped entries");
+  });
+
+  it("attributes Info exclusions to their own bucket, not to the size limit", () => {
+    // 1302 in-window events, 213 of them Info (never sent), 1089 non-Info all represented.
+    const c = buildSynthesisCoverage({
+      totalEvents: 1302,
+      inWindow: 1302,
+      scoped: 1302,
+      considered: 1089,
+      omittedInfo: 213,
+      groupEntries: 35,
+      groupedEvents: 578,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 49_000,
+    });
+    expect(c.omittedInfo).toBe(213);
+    expect(c.omittedBudget).toBe(0);            // nothing was lost to the cap
+    const label = coverageLabel(c);
+    expect(label).toContain("213 Info");
+    expect(label).not.toContain("size limit");
+  });
+
+  it("still reports a real size-limit omission alongside the Info bucket", () => {
+    const c = buildSynthesisCoverage({
+      totalEvents: 1302,
+      inWindow: 1302,
+      scoped: 1302,
+      considered: 1000,
+      omittedInfo: 213,
+      omittedHighSeverity: 4,
+      promptTokensEstimate: 49_000,
+    });
+    expect(c.omittedInfo).toBe(213);
+    expect(c.omittedBudget).toBe(89);           // 1302 - 1000 - 213
+    expect(coverageLabel(c)).toContain("89 size limit");
+  });
+
+  it("omits the grouping clause when nothing was grouped", () => {
+    const c = buildSynthesisCoverage({
+      totalEvents: 10,
+      inWindow: 10,
+      scoped: 10,
+      considered: 10,
+      groupEntries: 0,
+      groupedEvents: 0,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 900,
+    });
+    expect(coverageLabel(c)).not.toContain("grouped");
+  });
+});

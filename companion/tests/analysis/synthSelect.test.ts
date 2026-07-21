@@ -59,6 +59,35 @@ describe("selectSynthesisEvents", () => {
     expect(selectSynthesisEvents(events, 10).length).toBe(10);
   });
 
+  it("still includes the earliest events when Critical/High alone exceed the budget", () => {
+    // 50 Criticals spread across a day; the earliest is at 00:00 and must survive the overflow trim.
+    const events = Array.from({ length: 50 }, (_, i) =>
+      ev(`c${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "Critical"),
+    );
+    // A Low event BEFORE all of them — the initial-access context the old branch threw away.
+    events.push(ev("firstContact", "2026-05-19T23:00:00Z", "Low"));
+
+    const picked = selectSynthesisEvents(events, 10);
+    expect(picked.length).toBe(10);
+    expect(picked.map((e) => e.id)).toContain("firstContact");
+    const times = picked.map((e) => e.timestamp);
+    expect(times).toEqual([...times].sort());
+  });
+
+  it("drops the most-repeated anchors first when a rarity function is supplied", () => {
+    // 20 copies of a noisy repeated pattern plus 2 genuinely rare ones, all Critical, budget 6.
+    const events = [
+      ...Array.from({ length: 20 }, (_, i) => ev(`noise${i}`, `2026-05-20T10:${String(i).padStart(2, "0")}:00Z`, "Critical")),
+      ev("rare1", "2026-05-20T11:00:00Z", "Critical"),
+      ev("rare2", "2026-05-20T11:05:00Z", "Critical"),
+    ];
+    const rarityOf = (e: ForensicEvent): number => (e.id.startsWith("rare") ? 1 : 0.05);
+
+    const ids = selectSynthesisEvents(events, 6, rarityOf).map((e) => e.id);
+    expect(ids).toContain("rare1");
+    expect(ids).toContain("rare2");
+  });
+
   // The anchor-context scenario: `lead` filler occupies the 15 guaranteed EARLIEST seats so the
   // interesting events are claimed by the anchor-context fill (not by the earliest guarantee), and
   // `tail` filler pushes the timeline past the budget so the reserved fills actually run.

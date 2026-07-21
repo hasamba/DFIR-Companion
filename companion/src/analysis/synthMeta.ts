@@ -60,6 +60,9 @@ const synthesisCoverageSchema = z.object({
   omittedLegitimate: z.number().catch(0),    // in-window events filtered out as false-positive / legitimate
   omittedScope: z.number().catch(0),         // events dropped for being OUTSIDE the scope window
   omittedHighSeverity: z.number().catch(0),  // of the budget-omitted, how many are Critical/High (the safety-net backfill still covers these)
+  groupEntries: z.number().catch(0),         // prompt rows that represent a collapsed detection burst
+  groupedEvents: z.number().catch(0),        // events covered by those rows (≥ groupEntries when > 0)
+  omittedInfo: z.number().catch(0),          // Info-severity events deliberately not sent (DFIR_SYNTH_INCLUDE_INFO)
   promptTokensEstimate: z.number().catch(0), // ~size of the assembled synthesis prompt, in tokens
 });
 
@@ -78,15 +81,26 @@ export function buildSynthesisCoverage(input: {
   considered: number;
   omittedHighSeverity: number;
   promptTokensEstimate: number;
+  // Grouped-detection counts (spec 2026-07-21). Optional: a run with grouping disabled, and any caller
+  // that predates it, legitimately reports zero for both.
+  groupEntries?: number;
+  groupedEvents?: number;
+  // Info-severity events deliberately excluded from the prompt. Attributed to their own bucket so the
+  // card doesn't blame the size limit for a choice the operator made.
+  omittedInfo?: number;
 }): SynthesisCoverage {
   const nn = (n: number): number => (n > 0 ? n : 0);
+  const omittedInfo = nn(input.omittedInfo ?? 0);
   return {
     inWindow: nn(input.inWindow),
     considered: nn(input.considered),
     omittedScope: nn(input.totalEvents - input.inWindow),
     omittedLegitimate: nn(input.inWindow - input.scoped),
-    omittedBudget: nn(input.scoped - input.considered),
+    omittedBudget: nn(input.scoped - input.considered - omittedInfo),
     omittedHighSeverity: nn(input.omittedHighSeverity),
+    groupEntries: nn(input.groupEntries ?? 0),
+    groupedEvents: nn(input.groupedEvents ?? 0),
+    omittedInfo,
     promptTokensEstimate: nn(input.promptTokensEstimate),
   };
 }
@@ -98,12 +112,16 @@ export function buildSynthesisCoverage(input: {
  */
 export function coverageLabel(c: SynthesisCoverage): string {
   let s = `Analysis considered ${c.considered} of ${c.inWindow} in-window event${c.inWindow === 1 ? "" : "s"}`;
-  const omitted = c.omittedBudget + c.omittedLegitimate;
+  const omitted = c.omittedBudget + c.omittedLegitimate + c.omittedInfo;
   if (omitted > 0) {
     const parts: string[] = [];
     if (c.omittedBudget > 0) parts.push(`${c.omittedBudget} size limit`);
     if (c.omittedLegitimate > 0) parts.push(`${c.omittedLegitimate} filtered`);
+    if (c.omittedInfo > 0) parts.push(`${c.omittedInfo} Info`);
     s += ` (${omitted} omitted: ${parts.join(", ")})`;
+  }
+  if (c.groupedEvents > 0 && c.groupEntries > 0) {
+    s += ` · ${c.groupedEvents} shown as ${c.groupEntries} grouped entr${c.groupEntries === 1 ? "y" : "ies"}`;
   }
   if (c.omittedHighSeverity > 0) s += ` · ${c.omittedHighSeverity} high-severity recovered by the safety net`;
   if (c.omittedScope > 0) s += ` · ${c.omittedScope} outside scope window`;

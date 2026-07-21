@@ -12,6 +12,12 @@ const SEV_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low:
 // How many of the earliest events to always keep (initial-access context).
 const EARLIEST_KEEP = 15;
 
+// When Critical/High anchors alone overflow the budget, this fraction of the cap is held back for the
+// earliest (initial-access) events instead of being spent on yet more anchors. Without it the model
+// receives an anchors-only prompt with no beginning to the story — the normal case on a detection-heavy
+// import (Hayabusa/DetectRaptor), where hundreds of events are graded High.
+const OVERFLOW_RESERVE_FRACTION = 0.2;
+
 // The window around a Critical/High "anchor" within which same-host events are pulled in as CONTEXT —
 // the low-graded "what happened right before/after on this host" chain that carries the real story
 // (fairhaven's sqlcmd→tar→curl-PUT, halcyon's robocopy/7z) but never won a seat under even-spread.
@@ -174,16 +180,33 @@ export function selectSynthesisEventsAnnotated(
   // GUARANTEED 1: anchors — every Critical/High event (the verdict-bearing rows).
   for (const e of events) if (e.severity === "Critical" || e.severity === "High") claim(e.id, "anchor");
 
-  // Overflow: anchors alone exceed the budget → keep the severest, then earliest, chronological.
+  // Overflow: anchors alone exceed the budget. Keep the severest anchors, but RESERVE part of the cap
+  // for the earliest events so the model always sees where the activity began. Within the same
+  // severity, drop the most-repeated patterns first (they are already represented by their grouped
+  // row) and keep the rare ones — a 1-off is far more likely to be the real signal than the 500×
+  // baseline that happens to be graded High.
   if (classOf.size > max) {
     const anchorEvents = byTime.filter((e) => classOf.get(e.id) === "anchor");
-    const trimmed = [...anchorEvents]
-      .sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || byEventTime(a, b))
-      .slice(0, max)
-      .sort(byEventTime);
+    const reserve = Math.min(EARLIEST_KEEP, Math.floor(max * OVERFLOW_RESERVE_FRACTION));
+    const anchorBudget = Math.max(1, max - reserve);
+    const keptAnchors = [...anchorEvents]
+      .sort((a, b) =>
+        (SEV_RANK[a.severity] - SEV_RANK[b.severity])
+        || (rarityOf ? rarityOf(b) - rarityOf(a) : 0)
+        || byEventTime(a, b))
+      .slice(0, anchorBudget);
+
+    const kept = new Map<string, SelectionClass>(keptAnchors.map((e) => [e.id, "anchor" as const]));
+    for (const e of byTime) {                     // spend the reserve on the earliest events
+      if (kept.size >= max) break;
+      if (kept.has(e.id)) continue;
+      kept.set(e.id, "earliest");
+    }
+
+    const trimmed = byTime.filter((e) => kept.has(e.id));
     const counts = emptyCounts();
-    counts.anchor = trimmed.length;
-    return { events: trimmed, classOf: new Map(trimmed.map((e) => [e.id, "anchor" as const])), counts, omitted: events.length - trimmed.length };
+    for (const e of trimmed) counts[kept.get(e.id) as SelectionClass]++;
+    return { events: trimmed, classOf: kept, counts, omitted: events.length - trimmed.length };
   }
 
   // GUARANTEED 2: earliest events — initial-access context (guarded against the cap).

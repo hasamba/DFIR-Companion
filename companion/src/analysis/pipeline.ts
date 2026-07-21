@@ -112,6 +112,7 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
+import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -3879,7 +3880,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4077,7 +4078,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4394,7 +4395,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4438,7 +4439,7 @@ export class AnalysisPipeline {
     const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4539,7 +4540,7 @@ export class AnalysisPipeline {
   }
 
   // Shared event-selection for the two view-scoped summaries: cap to the synthesis event budget
-  // (DFIR_AI_SYNTH_MAX_EVENTS, default 300), token-fit against the prompt overhead, keep the most
+  // (DFIR_AI_SYNTH_MAX_EVENTS, default 600), token-fit against the prompt overhead, keep the most
   // signal-bearing subset (selectSynthesisEvents) and re-sort it chronologically for the report.
   private fitViewEvents(all: ForensicEvent[], overheadTokens: number): { events: ForensicEvent[]; render: (e: ForensicEvent) => string } {
     const render = (e: ForensicEvent): string =>
@@ -4548,7 +4549,7 @@ export class AnalysisPipeline {
       ` ${e.description.slice(0, 240)}` +
       (e.processName ? ` | process: ${e.processName}` : "") +
       (e.srcIp || e.dstIp ? ` | net: ${[e.srcIp, e.dstIp].filter(Boolean).join(" → ")}` : "");
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(all, max);
     const fit = fitItemsToBudget(events, render, Math.max(0, inputTokenBudget() - overheadTokens));
     if (fit < events.length) events = selectSynthesisEvents(all, fit);
@@ -4623,7 +4624,7 @@ export class AnalysisPipeline {
     const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(loaded.forensicTimeline, scope), markers);
     const validEventIds = new Set(scopedEvents.map((e) => e.id));
 
-    const max = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const max = maxPromptEvents();
     let events = selectSynthesisEvents(scopedEvents, max);
     const renderEvent = (e: ForensicEvent) =>
       `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
@@ -4730,13 +4731,30 @@ export class AnalysisPipeline {
     const inWindowEvents = filterEventsByScope(state.forensicTimeline, scope);
     const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
 
+    // Detection-burst grouping (spec 2026-07-21): the same Sigma/YARA detection firing hundreds of
+    // times used to consume hundreds of prompt seats. Collapse each burst to ONE representative row so
+    // every DISTINCT detection reaches the model. Prompt-only and derived on read — `scopedEvents` (and
+    // therefore the case, the coverage denominators and the high-severity backfill) is untouched.
+    // The explicit CollapsedPrompt annotation matters: without it the disabled branch's bare `new Map()`
+    // infers Map<unknown, unknown> and every later `grouping.groupById.get(...)` fails to typecheck.
+    // Info-severity events don't get prompt seats (DFIR_SYNTH_INCLUDE_INFO=1 restores them): on a real
+    // case 213 Info rows pushed the prompt from 546 to 759 entries, past the cap, costing 26 GRADED
+    // detections their place. They remain in the case, the timeline and the coverage denominators —
+    // this only decides who gets budget.
+    const eligibleForPrompt = promptCandidates(scopedEvents);
+    const omittedInfo = scopedEvents.length - eligibleForPrompt.length;
+    const grouping: CollapsedPrompt = groupingEnabled()
+      ? collapseForPrompt(eligibleForPrompt, groupEnvOptions())
+      : { events: [...eligibleForPrompt], groupById: new Map(), memberIdsByRepresentative: new Map() };
+    const collapsedEvents = grouping.events;
+
     // Bound the prompt for large imports (e.g. THOR: hundreds of events + auto-findings).
     // Send the MOST SEVERE events (then most recent) up to a cap, and truncate each
     // description — this keeps the request affordable (avoids OpenRouter 402 on a giant
     // request) and inside the model's context. The deterministic high-severity backfill
     // still creates findings for any Critical/High event NOT shown here (eligibleIds below
     // is the full scoped set), so capping the prompt never loses a severe detection.
-    const SYNTH_MAX_EVENTS = Number(process.env.DFIR_AI_SYNTH_MAX_EVENTS) || 300;
+    const SYNTH_MAX_EVENTS = maxPromptEvents();
     // Per-case prevalence/baseline (investigation-guidance #15): how common each activity PATTERN is
     // across the WHOLE case timeline (not just the scoped subset — the baseline is a property of the
     // corpus). Feeds a rarity bias into the selection fill (a 1-off wins a seat over 500× noise) and a
@@ -4748,7 +4766,7 @@ export class AnalysisPipeline {
     // form (investigation-guidance #4) exposes which CLASS claimed each event, so renderEvent can prefix
     // context-only rows with "~" (the model reads anchors vs supporting context) and the synth-meta card
     // can show the analyst what evidence classes the model actually saw.
-    let selection = selectSynthesisEventsAnnotated(scopedEvents, SYNTH_MAX_EVENTS, rarityOf);
+    let selection = selectSynthesisEventsAnnotated(collapsedEvents, SYNTH_MAX_EVENTS, rarityOf);
     let promptEvents = selection.events;
     // Context classes: everything that is NOT a primary verdict-bearing anchor / initial-access event —
     // these are the supporting rows the model should read as context, marked "~" in the timeline.
@@ -4943,28 +4961,43 @@ export class AnalysisPipeline {
     // count) after the prose (investigation-guidance #5) — only when set, so a bare event costs no extra
     // tokens. This is what lets the model connect cross-host activity instead of guessing from prose.
     const renderEvent = (e: ForensicEvent) => {
+      // Grouped rows carry their own count/host-spread/span suffix, which supersedes the prevalence
+      // tag — showing both would state the same repetition twice in different words.
+      const group = grouping.groupById.get(e.id);
+      const groupTag = group ? renderGroupSuffix(group) : "";
       // Prevalence baseline tag (#15): only the informative extremes (clearly common / clearly rare) are
       // tagged, so the model knows a 500× pattern is routine and a 1-off is anomalous.
-      const p = eventPrevalence(e, prevalenceIndex);
+      const p = group ? null : eventPrevalence(e, prevalenceIndex);
       const prevTag = p ? prevalenceTag(p) : "";
       // "~" prefix (investigation-guidance #4): this row is supporting CONTEXT (pulled in to explain an
       // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
       const ctx = isContext(e.id) ? "~" : "";
-      return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+      return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
       + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
-    if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(scopedEvents, fit, rarityOf); promptEvents = selection.events; }
+    if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(collapsedEvents, fit, rarityOf); promptEvents = selection.events; }
 
     const timelineText = promptEvents.map(renderEvent).join("\n");
-    const truncatedNote = scopedEvents.length > promptEvents.length
-      ? ` — showing ${promptEvents.length} of ${scopedEvents.length}; ${scopedEvents.length - promptEvents.length} event(s) omitted from this prompt but still in the case`
-      : "";
     // Coverage audit (#62): what the model actually saw this run vs what was left out and why. Computed
     // here where promptEvents + the token overhead are final. Of the budget-omitted events, the safety-net
     // backfill (below) still guarantees a finding for any Critical/High, so surface that count too.
-    const shownIds = new Set(promptEvents.map((e) => e.id));
+    // A grouped row stands for every member of its burst, so all of those events were SEEN by the model —
+    // counting only the representative would report the rest as "omitted for the size limit", the
+    // opposite of the truth.
+    const shownIds = new Set<string>();
+    let groupEntries = 0;
+    let groupedEvents = 0;
+    for (const e of promptEvents) {
+      shownIds.add(e.id);
+      const members = grouping.memberIdsByRepresentative.get(e.id);
+      if (!members) continue;
+      groupEntries += 1;
+      groupedEvents += members.length;
+      for (const id of members) shownIds.add(id);
+    }
+    const representedEvents = scopedEvents.filter((e) => shownIds.has(e.id));
     const omittedHighSeverity = scopedEvents.filter(
       (e) => !shownIds.has(e.id) && (e.severity === "Critical" || e.severity === "High"),
     ).length;
@@ -4972,10 +5005,16 @@ export class AnalysisPipeline {
       totalEvents: state.forensicTimeline.length,
       inWindow: inWindowEvents.length,
       scoped: scopedEvents.length,
-      considered: promptEvents.length,
+      considered: shownIds.size,
+      groupEntries,
+      groupedEvents,
+      omittedInfo,
       omittedHighSeverity,
       promptTokensEstimate: synthOverhead + estimateTokens(timelineText),
     });
+    const truncatedNote = scopedEvents.length > shownIds.size
+      ? ` — showing ${shownIds.size} of ${scopedEvents.length}; ${scopedEvents.length - shownIds.size} event(s) omitted from this prompt but still in the case`
+      : "";
     // Legend for the "~" context prefix (investigation-guidance #4) — only when at least one context row
     // is present, so it costs nothing on a small case.
     const contextLegend = promptEvents.some((e) => isContext(e.id))
@@ -5293,7 +5332,9 @@ export class AnalysisPipeline {
     if (!opts.skipSecondLook && this.opts.superTimelineStore) {
       try {
         const outcome = await this.runSecondLook(caseId, {
-          next, scopedEvents, promptEvents, scope, evidenceRequests: delta.evidenceRequests,
+          // The sweep treats anything not in `promptEvents` as a candidate to re-discover; events
+          // already covered by a grouped row HAVE been seen, so hand it the expanded set.
+          next, scopedEvents, promptEvents: representedEvents, scope, evidenceRequests: delta.evidenceRequests,
         });
         if (outcome) {
           if (outcome.meta.promoted > 0) {
