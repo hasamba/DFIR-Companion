@@ -8,6 +8,7 @@ import {
   DEFAULT_GROUP_GAP_SECONDS,
   DEFAULT_GROUP_MIN_REPEATS,
 } from "../../src/analysis/synthGroup.js";
+import { selectSynthesisEventsAnnotated } from "../../src/analysis/synthSelect.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, t: string, sev: Severity, desc: string, asset?: string): ForensicEvent {
@@ -149,5 +150,71 @@ describe("env options", () => {
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "1" })).toBe(true);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "0" })).toBe(false);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "off" })).toBe(false);
+  });
+});
+
+describe("grouping + selection end to end", () => {
+  // Distinct rule TITLES, not numbered ones: patternKey normalizes bare numbers to <n> (so that
+  // "robocopy C:\\data\\1" and "…\\2" fingerprint alike), which means descriptions differing ONLY by a
+  // number are one pattern by design. Real Sigma/YARA rule titles are words, so this mirrors reality.
+  function ruleTitle(i: number): string {
+    const a = "abcdefghijklmnopqrstuvwxyz";
+    return `${a[Math.floor(i / 26) % 26]}${a[i % 26]}`;
+  }
+
+  // The shape of a real Hayabusa import: a handful of distinct Sigma rules, each firing many times.
+  function hayabusaLikeCase(rules: number, hitsPerRule: number): ForensicEvent[] {
+    const events: ForensicEvent[] = [];
+    for (let rule = 0; rule < rules; rule++) {
+      for (let hit = 0; hit < hitsPerRule; hit++) {
+        events.push(
+          ev(
+            `r${rule}h${hit}`,
+            `2026-05-20T09:${String(hit).padStart(2, "0")}:00Z`,
+            "High",
+            `Sigma rule ${ruleTitle(rule)} matched`,
+            `ws-${hit % 5}`,
+          ),
+        );
+      }
+    }
+    return events;
+  }
+
+  it("treats detections that differ only by a number as ONE pattern (documented limitation)", () => {
+    // patternKey strips bare numbers, so these two titles share a fingerprint and merge. Acceptable:
+    // it is the same normalization the prevalence/rarity baseline already relies on, and real detection
+    // titles carry words. Asserted so the behaviour is a recorded decision, not an accident.
+    const events = [
+      ...Array.from({ length: 4 }, (_, i) => ev(`x${i}`, `2026-05-20T09:0${i}:00Z`, "High", "Sigma rule 1 matched")),
+      ...Array.from({ length: 4 }, (_, i) => ev(`y${i}`, `2026-05-20T09:1${i}:00Z`, "High", "Sigma rule 2 matched")),
+    ];
+    expect(groupDetections(events)).toHaveLength(1);
+  });
+
+  it("fits 2000 repeated detections across 50 distinct rules inside a 300-event cap", () => {
+    const events = hayabusaLikeCase(50, 40);
+    expect(events).toHaveLength(2000);
+
+    const { events: collapsed, memberIdsByRepresentative } = collapseForPrompt(events);
+    expect(collapsed).toHaveLength(50);
+
+    const selection = selectSynthesisEventsAnnotated(collapsed, 300);
+    expect(selection.events).toHaveLength(50);
+    expect(selection.omitted).toBe(0);
+
+    // Every one of the 2000 original events is represented by a row the model actually reads.
+    const represented = new Set<string>();
+    for (const e of selection.events) {
+      represented.add(e.id);
+      for (const id of memberIdsByRepresentative.get(e.id) ?? []) represented.add(id);
+    }
+    expect(represented.size).toBe(2000);
+  });
+
+  it("without grouping the same case loses most of its detections to the cap", () => {
+    const selection = selectSynthesisEventsAnnotated(hayabusaLikeCase(50, 40), 300);
+    expect(selection.events.length).toBeLessThanOrEqual(300);
+    expect(selection.omitted).toBeGreaterThan(1600);
   });
 });

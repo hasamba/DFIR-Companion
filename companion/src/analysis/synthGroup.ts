@@ -17,6 +17,12 @@
 //   * The gap default is 1 hour, NOT burstDetect's DEFAULT_GAP_SECONDS (300). Five minutes is right for
 //     detecting attack phases across a whole timeline, but here it would shatter a rule firing every
 //     ten minutes into six entries.
+//
+// KNOWN LIMITATION: the pattern fingerprint comes from prevalence.ts's patternKey, which normalizes
+// bare numbers to <n> so "robocopy C:\data\1" and "…\2" collapse to one shape. Two DIFFERENT detections
+// whose descriptions differ ONLY by a number therefore merge into a single group. Real Sigma/YARA rule
+// titles carry words, so this does not bite in practice, and using the same fingerprint everywhere keeps
+// grouping consistent with the prevalence/rarity baseline. See the matching test in synthGroup.test.ts.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { patternKey } from "./prevalence.js";
