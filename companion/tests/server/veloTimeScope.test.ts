@@ -33,7 +33,7 @@ const runner: VqlRunner = async (statements) => {
   return { rows: [], raw: "" };
 };
 
-async function makeApp() {
+async function makeApp(runnerOverride: VqlRunner = runner) {
   const root = await mkdtemp(join(tmpdir(), "dfir-veloscope-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -44,7 +44,7 @@ async function makeApp() {
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(root), `bundles-${Date.now()}`));
   const app = createApp(store, {
     pipeline, stateStore, importMetaStore: new ImportMetaStore(store),
-    velociraptorClient: new VelociraptorClient(veloCfg, runner),
+    velociraptorClient: new VelociraptorClient(veloCfg, runnerOverride),
     artifactBundleStore, veloHuntStore: new VeloHuntStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -91,5 +91,30 @@ describe("bundle time scope — preview", () => {
   it("404s for an unknown bundle and 400s when no scope is given", async () => {
     expect((await request(app).post("/velociraptor/bundles/nope/time-scope-preview").send({ preset: "7d" })).status).toBe(404);
     expect((await request(app).post("/velociraptor/bundles/scoped-test/time-scope-preview").send({})).status).toBe(400);
+  });
+
+  it("reports degraded:true through the route when the server has no parameter metadata for any bundle artifact", async () => {
+    // Same two artifact names as the default runner, but the server reports NO parameter metadata for
+    // either — the real-world case where a server's artifact_definitions() lookup is blind (e.g. a
+    // stripped/older catalog), so auto-detection can't run at all. That's a distinct, worse failure mode
+    // than "this one artifact has no date parameter" and the UI renders it as its own warning.
+    const noMetaRunner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("artifact_definitions()")) {
+        return { rows: [
+          { name: "Windows.EventLogs.Evtx", description: "Event logs", type: "CLIENT", parameters: [] },
+          { name: "Windows.Forensics.Shellbags", description: "Shellbags", type: "CLIENT", parameters: [] },
+        ], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const degradedApp = await makeApp(noMetaRunner);
+    const res = await request(degradedApp).post("/velociraptor/bundles/scoped-test/time-scope-preview").send({ preset: "30d" });
+    expect(res.status).toBe(200);
+    expect(res.body.degraded).toBe(true);
+    expect(res.body.scoped).toEqual([]);
+    expect(res.body.unscoped.map((u: { artifact: string }) => u.artifact).sort()).toEqual(
+      ["Windows.EventLogs.Evtx", "Windows.Forensics.Shellbags"].sort(),
+    );
   });
 });

@@ -280,11 +280,28 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   app.post("/velociraptor/bundles/:id/time-scope-preview", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
+    let bundle;
     try {
-      const bundle = await options.artifactBundleStore.get(req.params.id);
-      if (!bundle) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
-      const scope = resolveTimeScope(req.body ?? {});
-      if (!scope) return res.status(400).json({ error: "a time scope is required — pass a preset (24h/7d/30d/90d) or a custom start" });
+      bundle = await options.artifactBundleStore.get(req.params.id);
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
+    if (!bundle) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+
+    // Split structurally, not by matching error text: resolveTimeScope only ever throws on the
+    // ANALYST's input (bad date, end before start) → 400. The definitions fetch is I/O against the
+    // Velociraptor server → any failure there is the server's fault → 502. Keeping them in separate
+    // try/catch blocks means a reworded validation message (or a future server error that happens to
+    // contain a matched phrase) can never get silently misclassified.
+    let scope;
+    try {
+      scope = resolveTimeScope(req.body ?? {});
+    } catch (err) {
+      return res.status(400).json({ error: (err as Error).message });
+    }
+    if (!scope) return res.status(400).json({ error: "a time scope is required — pass a preset (24h/7d/30d/90d) or a custom start" });
+
+    try {
       const definitions = await options.velociraptorClient.listClientArtifacts("client");
       const plan = buildTimeScopePlan({
         artifacts: bundle.artifacts, definitions, scope,
@@ -292,11 +309,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       });
       return res.status(200).json({ scope, scoped: plan.scoped, unscoped: plan.unscoped, degraded: plan.degraded });
     } catch (err) {
-      // resolveTimeScope throws descriptive validation errors (bad date, end before start) — those are
-      // the analyst's input, so 400; anything else is the server failing, so 502.
-      const msg = (err as Error).message;
-      const isValidation = /must be a valid date|end must be at or after start|start is required|unknown time-scope preset/.test(msg);
-      return res.status(isValidation ? 400 : 502).json({ error: msg });
+      return res.status(502).json({ error: (err as Error).message });
     }
   });
 
