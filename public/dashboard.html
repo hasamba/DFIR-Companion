@@ -9306,7 +9306,7 @@
       if (!veloEnabled) { const m = document.getElementById("veloMonMsg"); if (m) m.textContent = "Velociraptor API not configured (set the API config path on Integrations, then restart)."; return; }
       if (btn) btn.disabled = true;
       if (sel) sel.innerHTML = `<option value="">loading…</option>`;
-      fetch("/velociraptor/event-artifacts").then(r => r.json().then(j => ({ ok: r.ok, j })))
+      fetch("/velociraptor/event-artifacts?refresh=1").then(r => r.json().then(j => ({ ok: r.ok, j })))   // see veloBrowseArtifacts: deliberate Browse bypasses the catalog cache
         .then(({ ok, j }) => {
           if (!ok || j.error) { if (sel) sel.innerHTML = `<option value="">error: ${esc(j.error || "failed")}</option>`; return; }
           _veloEventArtifacts = j.artifacts || [];
@@ -9428,7 +9428,9 @@
       const btn = document.getElementById("veloBrowseBtn");
       picker.textContent = "loading artifacts…";
       if (btn) btn.disabled = true;
-      fetch("/velociraptor/artifacts").then(r => r.json().then(j => ({ ok: r.ok, j })))
+      // refresh=1: a deliberate Browse bypasses the server-side catalog cache, so an artifact just
+      // added on the Velociraptor server shows up immediately instead of after the cache TTL.
+      fetch("/velociraptor/artifacts?refresh=1").then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (!ok || j.error) { picker.innerHTML = `<span style="color:var(--c-ff9f43)">error: ${esc(j.error || "failed")}</span>`; return; }
           veloArtifactCache = j.artifacts || [];

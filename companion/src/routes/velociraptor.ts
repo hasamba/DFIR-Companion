@@ -44,8 +44,14 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     return [];
   };
   // Builds the Velociraptor client from current env (used by POST /velociraptor/reconnect). Defaults
-  // to the env-based factory; tests inject a stub so no process is spawned.
+  // to the env-based factory; tests inject a stub so no process is spawned. NOTE: a rebuild returns a
+  // NEW client, so the artifact-catalog cache is inherently cold after a reconnect.
   const rebuildVelo = options.rebuildVelociraptorClient ?? buildVelociraptorClient;
+  // `?refresh=1` on the artifact-catalog routes = bypass the client's short-TTL catalog cache.
+  const isRefresh = (req: Request): boolean => {
+    const v = String(req.query?.refresh ?? "").toLowerCase();
+    return v === "1" || v === "true";
+  };
 
   // Resolve a hostname → client_id from the persisted inventory (refreshing once on a miss) and launch a
   // single-client collection. Throws when no client matches. Shared by the global /velociraptor/collect-host
@@ -262,11 +268,14 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // On-demand: list collectable CLIENT artifacts → build/save named bundles → run a bundle as a hunt
   // → after a delay, collect results, auto-import (deterministic Velociraptor importer) + synthesize.
 
-  // List the server's collectable CLIENT artifacts (the bundle builder's picker source).
-  app.get("/velociraptor/artifacts", async (_req: Request, res: Response) => {
+  // List the server's collectable CLIENT artifacts (the bundle builder's picker source). The catalog is
+  // cached in the client for a few tens of seconds; `?refresh=1` bypasses that — the dashboard's
+  // "Browse server artifacts" button sends it, since a deliberate browse is exactly the moment an
+  // analyst who just added an artifact on the server expects to see it.
+  app.get("/velociraptor/artifacts", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     try {
-      const artifacts = await options.velociraptorClient.listClientArtifacts();
+      const artifacts = await options.velociraptorClient.listClientArtifacts("client", { refresh: isRefresh(req) });
       return res.status(200).json({ artifacts });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
@@ -317,10 +326,17 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       // (Named `unknownArtifacts`, distinct from the JOB's collect-time `skippedArtifacts` = artifacts
       // that launched but failed to FETCH.) Best-effort: if the catalog lookup itself fails, launch the
       // bundle as-is rather than block on a diagnostics query.
+      //
+      // This pre-flight BYPASSES the client's short-TTL catalog cache (`refresh: true`) on purpose: it
+      // is the one caller whose decision is destructive. A stale catalog missing a just-added artifact
+      // would silently DROP it from the hunt (the analyst gets an incomplete collection and no error),
+      // and one that still lists a just-deleted artifact would let hunt() reject the whole run. Unlike
+      // the picker/preview paths this fires once per human-initiated bundle run, so one extra spawn is
+      // nothing next to launching a fleet-wide hunt.
       let artifactsToRun = bundle.artifacts;
       let unknownArtifacts: string[] = [];
       try {
-        const known = new Set((await options.velociraptorClient.listClientArtifacts("client")).map((a) => a.name));
+        const known = new Set((await options.velociraptorClient.listClientArtifacts("client", { refresh: true })).map((a) => a.name));
         if (known.size) {
           const valid = bundle.artifacts.filter((a) => known.has(a));
           unknownArtifacts = bundle.artifacts.filter((a) => !known.has(a));
@@ -614,10 +630,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // ── Live Velociraptor CLIENT_EVENT monitoring (#84) ───────────────────────────────────────────
 
   // List the server's CLIENT_EVENT (continuous monitoring) artifacts for the Monitor-mode picker.
-  app.get("/velociraptor/event-artifacts", async (_req: Request, res: Response) => {
+  // Same short-TTL catalog cache + `?refresh=1` bypass as /velociraptor/artifacts above.
+  app.get("/velociraptor/event-artifacts", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     try {
-      return res.status(200).json({ artifacts: await options.velociraptorClient.listClientArtifacts("client_event") });
+      return res.status(200).json({ artifacts: await options.velociraptorClient.listClientArtifacts("client_event", { refresh: isRefresh(req) }) });
     } catch (err) {
       return res.status(502).json({ error: (err as Error).message });
     }
