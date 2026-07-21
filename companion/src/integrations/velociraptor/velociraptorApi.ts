@@ -262,10 +262,36 @@ export interface HuntLaunchResult {
   guiUrl?: string;      // deep link to the hunt in the Velociraptor GUI (when DFIR_VELOCIRAPTOR_GUI_URL set)
 }
 
+// One parameter an artifact accepts, as reported by artifact_definitions(). `type` is lowercased
+// ("timestamp", "string", "bool", …) because Velociraptor's casing varies across versions — the same
+// reason listClientArtifacts normalizes the artifact `type` in TypeScript rather than in VQL.
+export interface VeloArtifactParam {
+  name: string;
+  type?: string;
+}
+
 // One collectable CLIENT artifact definition on the server (for the bundle builder's picker).
 export interface VeloArtifactInfo {
   name: string;         // e.g. "Windows.System.Pslist"
   description: string;  // one-line summary
+  parameters: VeloArtifactParam[];   // [] when the server reports none (older versions / odd shapes)
+}
+
+// Tolerant parse of a definition's `parameters` column: anything that isn't an array of named objects
+// degrades to []. Never throws — a server that reports parameters in an unexpected shape must not break
+// the artifact picker, it just means time-scope auto-detection falls back to the shipped table.
+export function parseArtifactParams(raw: unknown): VeloArtifactParam[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VeloArtifactParam[] = [];
+  for (const p of raw) {
+    if (!p || typeof p !== "object") continue;
+    const r = p as { name?: unknown; type?: unknown };
+    const name = String(r.name ?? "").trim();
+    if (!name) continue;
+    const type = String(r.type ?? "").trim().toLowerCase();
+    out.push(type ? { name, type } : { name });
+  }
+  return out;
 }
 
 // Optional scoping for a bundle hunt — mirrors Velociraptor's hunt include/exclude conditions.
@@ -776,15 +802,19 @@ export class VelociraptorClient {
   // missed them → empty picker. Fetching all + normalizing the type string in TS is version-proof.
   async listClientArtifacts(type: "client" | "client_event" = "client"): Promise<VeloArtifactInfo[]> {
     const wanted = type === "client_event" ? "client_event" : "client";
-    const rows = await this.runRaw("SELECT name, description, type FROM artifact_definitions() ORDER BY name", this.collectCap());
+    const rows = await this.runRaw("SELECT name, description, type, parameters FROM artifact_definitions() ORDER BY name", this.collectCap());
     const out: VeloArtifactInfo[] = [];
     for (const row of rows) {
-      const r = row as { name?: unknown; description?: unknown; type?: unknown };
+      const r = row as { name?: unknown; description?: unknown; type?: unknown; parameters?: unknown };
       const name = String(r.name ?? "").trim();
       if (!name) continue;
       const t = String(r.type ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
       if (t !== wanted) continue;
-      out.push({ name, description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300) });
+      out.push({
+        name,
+        description: String(r.description ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300),
+        parameters: parseArtifactParams(r.parameters),
+      });
     }
     return out;
   }

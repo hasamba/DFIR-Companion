@@ -572,7 +572,7 @@ describe("VelociraptorClient.listClientArtifacts", () => {
     const out = await new VelociraptorClient(cfg, runner).listClientArtifacts();   // cfg.maxRows = 3
     expect(program).toContain("artifact_definitions()");
     expect(out).toHaveLength(10);   // metadata, NOT capped at maxRows
-    expect(out[0]).toEqual({ name: "Windows.Test.A0", description: "d0" });
+    expect(out[0]).toEqual({ name: "Windows.Test.A0", description: "d0", parameters: [] });
   });
 
   it("filters the type in TS — version-tolerant of casing/spacing (CLIENT_EVENT / Client Event / client-event)", async () => {
@@ -588,6 +588,35 @@ describe("VelociraptorClient.listClientArtifacts", () => {
     expect((await client.listClientArtifacts("client_event")).map((a) => a.name))
       .toEqual(["Windows.Events.ProcessCreation", "Windows.Events.DNSQueries", "Windows.Events.ServiceCreation"]);
     expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
+  });
+});
+
+describe("listClientArtifacts — parameter metadata", () => {
+  it("returns each artifact's parameters with lowercased types", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{
+      name: "Windows.EventLogs.Evtx", description: "Event logs", type: "CLIENT",
+      parameters: [
+        { name: "DateAfter", type: "timestamp", description: "" },
+        { name: "DateBefore", type: "Timestamp" },
+        { name: "EvtxGlob", type: "string" },
+      ],
+    }], raw: "" });
+    const arts = await new VelociraptorClient(cfg, runner).listClientArtifacts();
+    expect(arts[0].parameters).toEqual([
+      { name: "DateAfter", type: "timestamp" },
+      { name: "DateBefore", type: "timestamp" },
+      { name: "EvtxGlob", type: "string" },
+    ]);
+  });
+
+  it("tolerates a server that reports no parameter metadata", async () => {
+    const runner: VqlRunner = async () => ({ rows: [
+      { name: "Windows.NTFS.MFT", description: "MFT", type: "CLIENT" },                  // key absent
+      { name: "Windows.Sys.Users", description: "Users", type: "CLIENT", parameters: null },
+      { name: "Windows.Sys.Programs", description: "Programs", type: "CLIENT", parameters: "junk" },
+    ], raw: "" });
+    const arts = await new VelociraptorClient(cfg, runner).listClientArtifacts();
+    expect(arts.map((a) => a.parameters)).toEqual([[], [], []]);
   });
 });
 
