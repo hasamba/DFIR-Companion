@@ -433,4 +433,13 @@ describe("dashboard.html", () => {
     // The card renders directly after "AI connectivity & config", not at the end of the panel.
     expect(html).toMatch(/function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ renderAiCostCard\(cost\) \+ importers/);
   });
+
+  it("the bundle run form offers a time scope and a mapping preview", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("velo-timescope");
+    expect(html).toContain("time-scope-preview");
+    // Every preset the server understands must be offered, and "all time" must be the default.
+    for (const p of ["24h", "7d", "30d", "90d"]) expect(html).toContain(`value="${p}"`);
+    expect(html).toContain("All time");
+  });
 });
