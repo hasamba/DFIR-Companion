@@ -342,13 +342,22 @@ describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
   });
 
   it("selectSynthesisEvents stays bounded and stratifies the timeline", () => {
-    // The one path here that gets an absolute ceiling rather than a growth ratio: its cost
-    // is NOT monotonic in the timeline length. On this synthetic data it measures ~29ms at
-    // 1250 events, ~100ms at 2500, ~5ms at 5000 and ~14ms at 10000 — reproducibly, across
-    // independently generated states. The selection budget fills at different rates
-    // depending on how the anchor/context/spread quotas land, so a ratio between any two
-    // sizes says nothing. The ceiling is ~20x the worst measurement, so contention cannot
-    // reach it, while a quadratic regression on 10k events (seconds at least) still would.
+    // The one path here that gets an absolute ceiling rather than a growth ratio, because its
+    // cost is still not monotonic in the timeline length — though only mildly, and for a
+    // structural reason rather than an algorithmic one. A timeline whose Critical/High rows
+    // outnumber the budget short-circuits into the severity-trim branch and skips the reserved
+    // fills entirely, so two sizes either side of that threshold run DIFFERENT code and a ratio
+    // between them compares nothing meaningful. On this synthetic data (~10% Critical/High, so
+    // the threshold falls between 2500 and 3000 events) the whole 1250→10000 range now costs
+    // single-digit milliseconds, varying by a factor of ~2 with no cliff anywhere in it.
+    //
+    // The much larger swing this comment used to record (~29ms at 1250, ~100ms at 2500 — a 20x
+    // inversion against 5000) was a genuine defect, not a property of the algorithm: the
+    // anchor-context fill re-scanned the whole timeline once per anchor. That is fixed, and
+    // synthSelect.test.ts now guards the complexity directly, holding the timeline constant and
+    // varying only the anchor count so no threshold sits between the two measurements.
+    // The ceiling below stays deliberately loose — contention cannot reach it, while a
+    // reintroduced quadratic on 10k events (seconds at least) still would.
     const measured = bestOf(() => selectSynthesisEvents(state.forensicTimeline, 300), 5);
     console.log(`[load] selectSynthesisEvents (${TARGET_EVENT_COUNT} events): ${measured.ms.toFixed(1)}ms`);
     expect(measured.ms, `selectSynthesisEvents took ${measured.ms.toFixed(1)}ms on ${TARGET_EVENT_COUNT} events`)
