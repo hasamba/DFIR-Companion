@@ -181,10 +181,17 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
   app.post("/bundles", async (req: Request, res: Response) => {
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
     try {
-      const { id, name, description, artifacts, defaultWaitMinutes } = req.body ?? {};
+      const { id, name, description, artifacts, defaultWaitMinutes,
+              timeoutSeconds, expirySeconds, params, filters, superTimelineOnly } = req.body ?? {};
       if (!name) return res.status(400).json({ error: "name is required" });
       if (!Array.isArray(artifacts) || artifacts.length === 0) return res.status(400).json({ error: "at least one artifact is required" });
-      const saved = await options.artifactBundleStore.save({ id, name, description, artifacts, defaultWaitMinutes });
+      // Forward EVERY field the store supports. Destructuring a subset here silently wiped a built-in's
+      // superTimelineOnly/timeout/params/filters on every dashboard edit — the store's own sanitizers are
+      // the validation layer, so passing them through is safe.
+      const saved = await options.artifactBundleStore.save({
+        id, name, description, artifacts, defaultWaitMinutes,
+        timeoutSeconds, expirySeconds, params, filters, superTimelineOnly,
+      });
       return res.status(201).json(saved);
     } catch (err) {
       if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
