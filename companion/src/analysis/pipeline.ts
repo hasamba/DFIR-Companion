@@ -4725,7 +4725,10 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean } & SynthThinkingInput = {}): Promise<InvestigationState> {
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean; observationsBlock?: string } & SynthThinkingInput = {}): Promise<InvestigationState> {
+    // Deep-pass observations: evidence gathered by the batched pass over events this prompt will NOT
+    // show row-by-row. Empty for a normal run, so nothing changes when the deep pass is not in play.
+    const observationsBlock = opts.observationsBlock ?? "";
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
@@ -4887,6 +4890,9 @@ export class AnalysisPipeline {
       // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
       // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
       pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
+      // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
+      // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
+      ob: observationsBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -5006,7 +5012,7 @@ export class AnalysisPipeline {
       return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + observationsBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(collapsedEvents, fit, rarityOf); promptEvents = selection.events; }
 
@@ -5067,6 +5073,7 @@ export class AnalysisPipeline {
       satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
+      observationsBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}).${contextLegend}\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { CaptureMetadata } from "../../src/types.js";
@@ -934,5 +935,66 @@ describe("pipeline import — IOC extractedFrom", () => {
 
     const domainIoc = state.iocs.find((i) => i.value === "evil.example.com");
     expect(domainIoc?.extractedFrom).toEqual(["so1e1"]);
+  });
+});
+
+// Captures every request so a test can assert on what actually reached the model. MockProvider
+// returns one canned string and records nothing, so it cannot serve these.
+class RecordingProvider implements AIProvider {
+  readonly name = "recording";
+  readonly model = "mock-model";
+  readonly requests: AnalyzeRequest[] = [];
+  constructor(private readonly canned: string) {}
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    this.requests.push(req);
+    return { rawText: this.canned };
+  }
+}
+
+const EMPTY_DELTA = JSON.stringify({
+  findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
+  forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+});
+
+async function seedOneEvent(): Promise<void> {
+  const seeded = emptyState("c1");
+  seeded.forensicTimeline.push({
+    id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "suspicious thing", severity: "High",
+    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+  });
+  await stateStore.save(seeded);
+}
+
+describe("synthesize — deep-pass observations block", () => {
+  it("includes a supplied observations block in the synthesis prompt", async () => {
+    await seedOneEvent();
+    const provider = new RecordingProvider(EMPTY_DELTA);
+    const pipeline = new AnalysisPipeline({
+      provider, stateStore, imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1", {
+      force: true,
+      observationsBlock: "DEEP-PASS OBSERVATIONS (test marker):\n- something happened [events: e1]\n\n",
+    });
+
+    expect(provider.requests.map((r) => r.userPrompt).join("\n"))
+      .toContain("DEEP-PASS OBSERVATIONS (test marker)");
+  });
+
+  it("re-synthesizes rather than skipping when only the observations block changed", async () => {
+    // The skip-if-unchanged hash must include the block, or a deep pass that produced fresh
+    // observations would return the previous state without ever showing them to the model.
+    await seedOneEvent();
+    const provider = new RecordingProvider(EMPTY_DELTA);
+    const pipeline = new AnalysisPipeline({
+      provider, stateStore, imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1", { observationsBlock: "" });
+    const afterFirst = provider.requests.length;
+    await pipeline.synthesize("c1", { observationsBlock: "DEEP-PASS OBSERVATIONS:\n- new [events: e1]\n\n" });
+
+    expect(provider.requests.length).toBeGreaterThan(afterFirst);
   });
 });
