@@ -9140,13 +9140,41 @@
           if (mySeq !== veloTsPreviewSeq) return;   // a newer request superseded this one
           if (!ok || j.error) { out.textContent = "⚠ " + (j.error || "preview failed"); return; }
           const total = j.scoped.length + j.unscoped.length;
-          const detail = j.scoped.map(s => `${esc(s.artifact)} → ${esc(s.startParam || "—")}${s.endParam ? " / " + esc(s.endParam) : ""}${s.manual ? " (manually set)" : ""}`).join("<br>");
+          const detail = j.scoped.map(s => `<div class="velo-ts-row" data-artifact="${escAttr(s.artifact)}" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:2px">
+            <span style="min-width:260px">${esc(s.artifact)}</span>
+            <input class="velo-ts-p-start" value="${escAttr(s.startParam || "")}" placeholder="start param" style="width:130px;padding:2px;font-size:11px" />
+            <input class="velo-ts-p-end" value="${escAttr(s.endParam || "")}" placeholder="end param" style="width:130px;padding:2px;font-size:11px" />
+            <span style="color:var(--c-7e8aa0)">${esc(s.source)}${s.manual ? " · manually set" : ""}</span>
+          </div>`).join("");
           const full = j.unscoped.map(u => esc(u.artifact)).join(", ");
           out.innerHTML = `<details><summary style="cursor:pointer">Time scope applies to <strong>${j.scoped.length} of ${total}</strong> artifact(s)${j.unscoped.length ? ` · ${j.unscoped.length} collect in full` : ""}${j.degraded ? ' · <span style="color:var(--c-ff9f43)">server reported no parameter metadata — coverage could not be verified</span>' : ""}</summary>
             <div style="margin-top:4px">${detail || "<em>none</em>"}</div>
-            ${full ? `<div style="margin-top:4px;color:var(--c-9aa4b2)"><strong>Collects in full:</strong> ${full}</div>` : ""}</details>`;
+            ${full ? `<div style="margin-top:4px;color:var(--c-9aa4b2)"><strong>Collects in full:</strong> ${full}</div>` : ""}
+            <div style="margin-top:6px"><button class="velo-ts-save" title="Save these parameter names on the bundle for future runs">Save mapping</button> <span class="velo-ts-save-msg" style="color:var(--c-9aa4b2)"></span></div>
+          </details>`;
+          const saveBtn = out.querySelector(".velo-ts-save");
+          if (saveBtn) saveBtn.onclick = () => veloSaveTimeScopeParamNames(bundleId, out);
         })
         .catch(e => { if (mySeq !== veloTsPreviewSeq) return; out.textContent = "⚠ " + e.message; });
+    }
+
+    // Persist the previewed parameter names onto the bundle so a corrected mapping sticks for future
+    // runs. Rows left exactly as auto-detected are still sent — harmless, and it means an analyst who
+    // fixed one row doesn't lose the others to a later detection change.
+    function veloSaveTimeScopeParamNames(bundleId, out) {
+      const msg = out.querySelector(".velo-ts-save-msg");
+      const timeScopeParamNames = {};
+      out.querySelectorAll(".velo-ts-row").forEach(row => {
+        const start = row.querySelector(".velo-ts-p-start").value.trim();
+        const end = row.querySelector(".velo-ts-p-end").value.trim();
+        if (start || end) timeScopeParamNames[row.dataset.artifact] = { ...(start ? { start } : {}), ...(end ? { end } : {}) };
+      });
+      msg.textContent = "saving…";
+      fetch(`/velociraptor/bundles/${encodeURIComponent(bundleId)}/time-scope-param-names`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ timeScopeParamNames })
+      }).then(r => r.json().catch(() => ({})).then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => { msg.textContent = (!ok || j.error) ? ("error: " + (j.error || "failed")) : "saved ✓"; loadVeloBundles(); })
+        .catch(e => { msg.textContent = "error: " + e.message; });
     }
 
     function veloRunBundle(bundleId, form) {

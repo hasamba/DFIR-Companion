@@ -443,6 +443,13 @@ describe("dashboard.html", () => {
     expect(html).toContain("All time");
   });
 
+  it("the time-scope preview lets a wrong mapping be corrected and saved", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("velo-ts-save");
+    expect(html).toContain("time-scope-param-names");
+    expect(html).toMatch(/velo-ts-p-start[\s\S]{0,400}velo-ts-p-end/);
+  });
+
   it("anchors a custom time-scope's datetime-local inputs to UTC, not local wall-clock", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     // The datetime-local value has no timezone of its own; the server expects a full ISO instant, so

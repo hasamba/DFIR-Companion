@@ -182,3 +182,41 @@ describe("bundle time scope — run-bundle", () => {
     expect(launched).toHaveLength(0);
   });
 });
+
+describe("bundle time scope — inline correction", () => {
+  let app: Awaited<ReturnType<typeof makeApp>>;
+  beforeEach(async () => { launched.length = 0; app = await makeApp(); });
+
+  it("saves a correction without disturbing the rest of the bundle, and the preview then uses it", async () => {
+    const before = (await request(app).get("/bundles")).body.find((b: { id: string }) => b.id === "scoped-test");
+
+    const put = await request(app).put("/velociraptor/bundles/scoped-test/time-scope-param-names")
+      .send({ timeScopeParamNames: { "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } } });
+    expect(put.status).toBe(200);
+
+    const after = (await request(app).get("/bundles")).body.find((b: { id: string }) => b.id === "scoped-test");
+    expect(after.artifacts).toEqual(before.artifacts);
+    expect(after.name).toBe(before.name);
+    expect(after.timeScopeParamNames).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+
+    const preview = await request(app).post("/velociraptor/bundles/scoped-test/time-scope-preview").send({ preset: "7d" });
+    expect(preview.body.scoped[0]).toEqual({
+      artifact: "Windows.EventLogs.Evtx", startParam: "EarliestTime", endParam: "LatestTime", source: "correction",
+    });
+  });
+
+  it("clears a correction when an empty map is sent, falling back to auto-detection", async () => {
+    await request(app).put("/velociraptor/bundles/scoped-test/time-scope-param-names")
+      .send({ timeScopeParamNames: { "Windows.EventLogs.Evtx": { start: "EarliestTime" } } });
+    await request(app).put("/velociraptor/bundles/scoped-test/time-scope-param-names").send({ timeScopeParamNames: {} });
+
+    const preview = await request(app).post("/velociraptor/bundles/scoped-test/time-scope-preview").send({ preset: "7d" });
+    expect(preview.body.scoped[0].source).toBe("detected");
+    expect(preview.body.scoped[0].startParam).toBe("DateAfter");
+  });
+
+  it("404s for an unknown bundle", async () => {
+    const res = await request(app).put("/velociraptor/bundles/nope/time-scope-param-names").send({ timeScopeParamNames: {} });
+    expect(res.status).toBe(404);
+  });
+});

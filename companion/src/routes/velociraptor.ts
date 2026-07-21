@@ -314,6 +314,26 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     }
   });
 
+  // Save the analyst's per-artifact time-scope parameter CORRECTIONS on a bundle, without re-sending the
+  // whole bundle — the preview is shown from the run form, which has no bundle editor around it, so a
+  // full POST /bundles would clobber fields it doesn't know about. Read-modify-write through the store
+  // so every other field is preserved verbatim. Sending {} clears the corrections and returns those
+  // artifacts to auto-detection.
+  app.put("/velociraptor/bundles/:id/time-scope-param-names", async (req: Request, res: Response) => {
+    if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });
+    try {
+      const bundle = await options.artifactBundleStore.get(req.params.id);
+      if (!bundle) return res.status(404).json({ error: `bundle "${req.params.id}" not found` });
+      const saved = await options.artifactBundleStore.save({
+        ...bundle,
+        timeScopeParamNames: req.body?.timeScopeParamNames ?? {},
+      });
+      return res.status(200).json(saved);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Fold the analyst's time scope (if any) into the bundle's hunt params, and derive the provenance
   // block recorded on the job. Behavior-preserving seam pulled out of run-bundle: with no time scope,
   // `huntParams` is `bundle.params` verbatim (same reference) and there's no provenance — exactly the
