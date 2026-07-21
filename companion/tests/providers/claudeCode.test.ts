@@ -12,6 +12,11 @@ function fakeRunner(result: Partial<ClaudeRunResult>, capture?: (o: ClaudeRunOpt
 
 const resultLine = (obj: Record<string, unknown>) => JSON.stringify({ type: "result", subtype: "success", is_error: false, ...obj });
 
+// One `assistant` stream event: the CLI emits a separate event per assistant message (and keeps
+// thinking blocks in their own event), so a continued answer arrives as several of these.
+const assistantLine = (content: Record<string, unknown>[], stopReason?: string) =>
+  JSON.stringify({ type: "assistant", message: { role: "assistant", content, stop_reason: stopReason ?? null } });
+
 describe("ClaudeCodeProvider", () => {
   it("builds the isolated stream-json invocation and encodes text + image blocks", async () => {
     let captured: ClaudeRunOptions | undefined;
@@ -69,6 +74,40 @@ describe("ClaudeCodeProvider", () => {
     }) });
     const out = await new ClaudeCodeProvider({ model: "claude-sonnet-5", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(out.usage?.resolvedModel).toBe("claude-sonnet-5");
+  });
+
+  // Captured live (case meridian-espionage-gt, second-opinion synthesis): a 122k-char prompt made
+  // sonnet-5 hit its 32000-token output cap mid-JSON, the CLI continued the turn in a SECOND
+  // assistant message that re-opened a markdown fence, and the terminal `result` carried ONLY that
+  // tail — so the pipeline parsed "provider, or hosting service..." and threw
+  // `Unexpected token 'p' ... is not valid JSON`.
+  it("stitches a max_tokens continuation split across assistant messages", async () => {
+    const head = '```json\n{\n  "findings": [{"title": "shared cloud';
+    const tail = '```\n provider infrastructure"}],\n  "timelineNote": ""\n}\n```';
+    const stdout = [
+      assistantLine([{ type: "thinking", thinking: "weighing the JA3 alerts" }], "max_tokens"),
+      assistantLine([{ type: "text", text: head }], "max_tokens"),
+      assistantLine([{ type: "thinking", thinking: "continuing the JSON" }], "end_turn"),
+      assistantLine([{ type: "text", text: tail }], "end_turn"),
+      resultLine({ result: tail, usage: { output_tokens: 34854 } }),
+    ].join("\n");
+    const p = new ClaudeCodeProvider({ model: "claude-sonnet-5", runner: fakeRunner({ stdout }) });
+    const out = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe(
+      '```json\n{\n  "findings": [{"title": "shared cloud provider infrastructure"}],\n  "timelineNote": ""\n}\n```',
+    );
+    expect(JSON.parse(out.rawText.replace(/^```json\n|\n```$/g, ""))).toEqual({
+      findings: [{ title: "shared cloud provider infrastructure" }],
+      timelineNote: "",
+    });
+  });
+
+  it("keeps the terminal result text when the answer arrived in one assistant message", async () => {
+    const text = '{"summary":"ok"}';
+    const stdout = [assistantLine([{ type: "text", text }], "end_turn"), resultLine({ result: text })].join("\n");
+    const p = new ClaudeCodeProvider({ model: "haiku", runner: fakeRunner({ stdout }) });
+    const out = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(out.rawText).toBe(text);
   });
 
   it("throws an actionable error when the CLI binary is missing", async () => {

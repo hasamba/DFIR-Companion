@@ -9,11 +9,30 @@ import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 
 // Performance / load test for issue #183: a synthetic 10k-event case exercising the hot
 // deterministic paths. No AI calls, no I/O, no network — pure in-memory benchmarking.
-// Thresholds are generous enough for slow CI runners but will catch a quadratic regression
-// (10k^2 would blow past them by orders of magnitude).
+//
+// These tests assert almost no absolute wall-clock budget. Under a full parallel
+// `vitest run` every worker competes for the same cores, and the same unchanged code
+// measures 2-3x slower than it does in isolation — so an absolute threshold either flakes
+// (renderMarkdownReport: ~3.5s alone, 5.5s contended, against a 5s budget) or is loosened
+// until it can no longer catch anything. Instead each hot path is timed against ITSELF at
+// two input sizes: contention inflates both measurements, so the growth RATIO stays stable
+// while still separating linear growth from a quadratic regression. See expectSubQuadratic.
+//
+// Grow ONE dimension at a time. Scaling events, IOCs and findings together makes a path
+// that is merely linear in (events x iocs) look quadratic in events — renderMarkdownReport
+// measured a bogus 7.8x-per-4x that way, and a clean 7.1x-per-8x once only the timeline
+// grew. So every measurement below holds every dimension fixed except the one it varies.
 
 const TARGET_EVENT_COUNT = 10_000;
 const TARGET_IOC_COUNT = 500;
+const FINDING_COUNT = 50;
+
+// The baseline case is an eighth of the full one along whichever single dimension is under
+// test. The bigger the gap, the wider the separation between acceptable and quadratic
+// growth: at 8x input, linear costs 8x and quadratic costs 64x — room on both sides.
+const GROWTH_FACTOR = 8;
+const BASELINE_EVENT_COUNT = TARGET_EVENT_COUNT / GROWTH_FACTOR;
+const BASELINE_IOC_COUNT = Math.round(TARGET_IOC_COUNT / GROWTH_FACTOR);
 
 const HOSTS = [
   "DC01.corp.local", "WEB01.corp.local", "SQL01.corp.local", "WKSTN-01", "WKSTN-02",
@@ -90,12 +109,12 @@ function isoAtMinutes(start: Date, minutes: number): string {
   return new Date(start.getTime() + minutes * 60_000).toISOString();
 }
 
-function buildSyntheticState(): InvestigationState {
-  const state = emptyState("load-test-10k");
+function buildSyntheticState(eventCount: number, iocCount: number): InvestigationState {
+  const state = emptyState(`load-test-${eventCount}`);
   const start = new Date("2026-06-15T00:00:00.000Z");
 
   // IOCs first so events can reference them.
-  for (let i = 0; i < TARGET_IOC_COUNT; i++) {
+  for (let i = 0; i < iocCount; i++) {
     const seed = i * 997 + 1;
     const kind = i % 7;
     let type: IOC["type"];
@@ -122,7 +141,7 @@ function buildSyntheticState(): InvestigationState {
     });
   }
 
-  for (let i = 0; i < TARGET_EVENT_COUNT; i++) {
+  for (let i = 0; i < eventCount; i++) {
     const seed = i * 7919 + 13;
     const severity = pickWeighted(SEVERITIES, SEV_WEIGHTS, seed);
     const host = pick(HOSTS, seed);
@@ -205,14 +224,15 @@ function buildSyntheticState(): InvestigationState {
     state.forensicTimeline.push(event);
   }
 
-  // Add a few findings so the report's findings section is exercised.
-  for (let i = 0; i < 50; i++) {
+  // Add a few findings so the report's findings section is exercised. Fixed, not scaled:
+  // findings are a separate dimension and must stay constant while events or IOCs grow.
+  for (let i = 0; i < FINDING_COUNT; i++) {
     state.findings.push({
       id: `f-${i}`,
       severity: pickWeighted(SEVERITIES, SEV_WEIGHTS, i * 31),
       title: `Finding ${i}: ${pick(TECHNIQUES, i * 17)} on ${pick(HOSTS, i * 23)}`,
       description: `Synthesized finding for load test.`,
-      relatedIocs: [`ioc-${i % TARGET_IOC_COUNT}`, `ioc-${(i + 1) % TARGET_IOC_COUNT}`],
+      relatedIocs: [`ioc-${i % iocCount}`, `ioc-${(i + 1) % iocCount}`],
       mitreTechniques: [pick(TECHNIQUES, i * 19)],
       sourceScreenshots: [],
       firstSeen: isoAtMinutes(start, i * 10),
@@ -231,63 +251,155 @@ function buildSyntheticState(): InvestigationState {
   );
   state.attackerPath = "Initial access via phishing → execution of malicious macro → PowerShell payload → lateral movement via SMB → data staging.";
   state.lastSummary = "A multi-stage intrusion targeting the corporate workstation fleet; several hosts show beaconing and credential access activity.";
-  state.updatedAt = isoAtMinutes(start, TARGET_EVENT_COUNT * 2);
+  state.updatedAt = isoAtMinutes(start, eventCount * 2);
 
   return state;
 }
 
-function timeMs(fn: () => void): { ms: number; result?: unknown } {
-  const t0 = performance.now();
-  const result = fn();
-  const ms = performance.now() - t0;
+interface Measurement { ms: number; result: unknown }
+
+// Best of N runs. Contention and GC can only ever ADD time, so the minimum is the closest
+// estimate of the code's own cost and — unlike a single sample — one scheduler stall can't
+// skew it.
+function bestOf(fn: () => unknown, repeats: number): Measurement {
+  let ms = Infinity;
+  let result: unknown;
+  for (let i = 0; i < repeats; i++) {
+    const t0 = performance.now();
+    result = fn();
+    const elapsed = performance.now() - t0;
+    if (elapsed < ms) ms = elapsed;
+  }
   return { ms, result };
 }
 
-describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
-  let state!: InvestigationState;
-  beforeAll(() => { state = buildSyntheticState(); }, 60_000);
+// How much slower the same code may get when its input grows GROWTH_FACTOR (8x) along one
+// dimension. Linear work costs 8x; a quadratic regression costs 64x. Measured today:
+// renderMarkdownReport 7.1x and filterEventsByScope ~8x (linear), buildSynthesisContext
+// 3.7-7.7x in IOC count (linear), correlateEvents 12.8-14.4x (~n^1.25, sort + windowed
+// scan). 32 leaves 2x of headroom over the slowest of those and sits 2x below quadratic.
+const GROWTH_LIMIT = 32;
+// Absolute slack, so a sub-millisecond baseline (where timer resolution dominates and the
+// ratio is meaningless) can't fail the assertion on noise alone. Any genuinely quadratic
+// path costs far more than this at 10k events, so it does not blunt the check.
+const FLOOR_MS = 25;
+
+interface Growth { baseline: Measurement; full: Measurement; label: string; dimension: string }
+
+// Measures one hot path at both input sizes. The full-size run happens FIRST as a discarded
+// warmup: V8 needs a few thousand iterations of the inner loops before it settles on
+// optimized code, and without this the baseline (measured first) absorbs the whole JIT cost
+// — enough to make a cheap path look like it got *faster* on 8x the input.
+function measureGrowth(
+  label: string,
+  dimension: string,
+  baselineFn: () => unknown,
+  fullFn: () => unknown,
+  repeats: number,
+): Growth {
+  fullFn();
+  const baseline = bestOf(baselineFn, repeats);
+  const full = bestOf(fullFn, repeats);
+  return { baseline, full, label, dimension };
+}
+
+// Asserts the growth ratio, and returns the full-size result so the caller can assert on it.
+function expectSubQuadratic(measured: Growth): unknown {
+  const { baseline, full, label, dimension } = measured;
+  const limit = baseline.ms * GROWTH_LIMIT + FLOOR_MS;
+  const growth = baseline.ms > 0 ? `${(full.ms / baseline.ms).toFixed(1)}x` : "n/a";
+  const detail =
+    `${label} (${dimension}): ${baseline.ms.toFixed(1)}ms → ${full.ms.toFixed(1)}ms ` +
+    `(${growth} for ${GROWTH_FACTOR}x input)`;
+  // Logged unconditionally so a slow-but-passing trend is still visible in the run output.
+  console.log(`[load] ${detail}`);
+  expect(full.ms, `${detail} — expected under ${limit.toFixed(1)}ms; growth this steep means the path went super-linear`)
+    .toBeLessThan(limit);
+  return full.result;
+}
+
+describe("load test — 10k synthetic events", { timeout: 120_000 }, () => {
+  let state!: InvestigationState;       // full case: 10k events / 500 IOCs / 50 findings
+  let fewerEvents!: InvestigationState; // same case with an eighth of the TIMELINE
+  let fewerIocs!: InvestigationState;   // same case with an eighth of the IOCS
+  beforeAll(() => {
+    state = buildSyntheticState(TARGET_EVENT_COUNT, TARGET_IOC_COUNT);
+    fewerEvents = buildSyntheticState(BASELINE_EVENT_COUNT, TARGET_IOC_COUNT);
+    // Same timeline, fewer IOCs — derived immutably rather than regenerated so the events
+    // are byte-identical and the IOC count is genuinely the only thing that changed.
+    fewerIocs = { ...state, iocs: state.iocs.slice(0, BASELINE_IOC_COUNT) };
+  }, 120_000);
 
   it("generates the expected synthetic case size", () => {
     expect(state.forensicTimeline.length).toBe(TARGET_EVENT_COUNT);
     expect(state.iocs.length).toBe(TARGET_IOC_COUNT);
-    expect(state.findings.length).toBe(50);
+    expect(state.findings.length).toBe(FINDING_COUNT);
+    // Each baseline varies exactly one dimension.
+    expect(fewerEvents.forensicTimeline.length).toBe(BASELINE_EVENT_COUNT);
+    expect(fewerEvents.iocs.length).toBe(TARGET_IOC_COUNT);
+    expect(fewerIocs.forensicTimeline.length).toBe(TARGET_EVENT_COUNT);
+    expect(fewerIocs.iocs.length).toBe(BASELINE_IOC_COUNT);
   });
 
-  it("selectSynthesisEvents stays fast and stratifies the timeline", () => {
-    const { ms, result } = timeMs(() => selectSynthesisEvents(state.forensicTimeline, 300));
-    const selected = result as ForensicEvent[];
+  it("selectSynthesisEvents stays bounded and stratifies the timeline", () => {
+    // The one path here that gets an absolute ceiling rather than a growth ratio: its cost
+    // is NOT monotonic in the timeline length. On this synthetic data it measures ~29ms at
+    // 1250 events, ~100ms at 2500, ~5ms at 5000 and ~14ms at 10000 — reproducibly, across
+    // independently generated states. The selection budget fills at different rates
+    // depending on how the anchor/context/spread quotas land, so a ratio between any two
+    // sizes says nothing. The ceiling is ~20x the worst measurement, so contention cannot
+    // reach it, while a quadratic regression on 10k events (seconds at least) still would.
+    const measured = bestOf(() => selectSynthesisEvents(state.forensicTimeline, 300), 5);
+    console.log(`[load] selectSynthesisEvents (${TARGET_EVENT_COUNT} events): ${measured.ms.toFixed(1)}ms`);
+    expect(measured.ms, `selectSynthesisEvents took ${measured.ms.toFixed(1)}ms on ${TARGET_EVENT_COUNT} events`)
+      .toBeLessThan(2000);
+
+    const selected = measured.result as ForensicEvent[];
     expect(selected.length).toBeLessThanOrEqual(300);
     expect(selected.length).toBeGreaterThan(0);
     // Chronological order.
     for (let i = 1; i < selected.length; i++) {
       expect(selected[i].timestamp >= selected[i - 1].timestamp).toBe(true);
     }
-    expect(ms).toBeLessThan(500); // linear sort on 10k; quadratic would be seconds
   });
 
-  it("buildSynthesisContext stays fast and produces asset + verdict digest", () => {
-    const scoped = state.forensicTimeline.slice(0, 300);
-    const { ms, result } = timeMs(() => buildSynthesisContext(state, scoped));
-    const ctx = result as string;
+  it("buildSynthesisContext scales sub-quadratically in IOC count and digests assets + verdicts", () => {
+    // Cost is driven by the IOC set and the scoped slice, not the timeline length — synthesis
+    // always passes a bounded slice (selectSynthesisEvents caps it at 300). So the dimension
+    // that can actually run away on a real case is the IOC count, and that's what grows here.
+    const scope = state.forensicTimeline.slice(0, 300);
+    const measured = measureGrowth(
+      "buildSynthesisContext",
+      `${BASELINE_IOC_COUNT}→${TARGET_IOC_COUNT} IOCs`,
+      () => buildSynthesisContext(fewerIocs, scope),
+      () => buildSynthesisContext(state, scope),
+      5,
+    );
+
+    const ctx = expectSubQuadratic(measured) as string;
     expect(ctx.length).toBeGreaterThan(0);
     expect(ctx).toContain("COMPROMISED ASSETS");
     expect(ctx).toContain("THREAT-INTEL VERDICTS");
-    expect(ms).toBeLessThan(500);
   });
 
-  it("correlateEvents stays fast and is idempotent", () => {
-    const { ms: ms1, result: r1 } = timeMs(() => correlateEvents(state.forensicTimeline, { windowSeconds: 2 }));
-    const correlated = r1 as ForensicEvent[];
+  it("correlateEvents scales sub-quadratically and is idempotent", () => {
+    // The hash/path union-find is the most regression-prone path here — see #125, where an
+    // O(n²) dedup in mergeDelta pegged a CPU for over an hour on a large import.
+    const measured = measureGrowth(
+      "correlateEvents",
+      `${BASELINE_EVENT_COUNT}→${TARGET_EVENT_COUNT} events`,
+      () => correlateEvents(fewerEvents.forensicTimeline, { windowSeconds: 2 }),
+      () => correlateEvents(state.forensicTimeline, { windowSeconds: 2 }),
+      3,
+    );
+
+    const correlated = expectSubQuadratic(measured) as ForensicEvent[];
     expect(correlated.length).toBeGreaterThan(0);
     expect(correlated.length).toBeLessThanOrEqual(state.forensicTimeline.length);
 
     // Idempotency: second pass on already-correlated output must be stable.
-    const { ms: ms2, result: r2 } = timeMs(() => correlateEvents(correlated, { windowSeconds: 2 }));
-    const second = r2 as ForensicEvent[];
+    const second = correlateEvents(correlated, { windowSeconds: 2 });
     expect(second.length).toBe(correlated.length);
-
-    expect(ms1).toBeLessThan(2000); // hash/path union-find on 10k
-    expect(ms2).toBeLessThan(500);  // idempotent re-run should be near-instant
 
     // Correctness: two events that share a sha256 within the window merge into one.
     const sharedHash = "a".repeat(64);
@@ -300,36 +412,56 @@ describe("load test — 10k synthetic events", { timeout: 60_000 }, () => {
     expect(correlateEvents(pair, { windowSeconds: 2 }).length).toBe(1);
   });
 
-  it("filterEventsByScope + applyFalsePositive stay fast", () => {
+  it("filterEventsByScope + applyFalsePositive scale sub-quadratically", () => {
     const scope = { start: "2026-06-15T06:00:00.000Z", end: "2026-06-15T18:00:00.000Z" };
     const markers: FalsePositiveMarker[] = [
       { id: "ioc:10.0.0.10", kind: "ioc", ref: "10.0.0.10", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
       { id: "event:evt-00000", kind: "event", ref: "evt-00000", reason: "other", note: "test", markedAt: "2026-06-15T00:00:00Z", markedBy: "anonymous" },
     ];
 
-    const { ms: msScope, result: rScope } = timeMs(() => filterEventsByScope(state.forensicTimeline, scope));
-    const filtered = rScope as ForensicEvent[];
+    const scopeMeasured = measureGrowth(
+      "filterEventsByScope",
+      `${BASELINE_EVENT_COUNT}→${TARGET_EVENT_COUNT} events`,
+      () => filterEventsByScope(fewerEvents.forensicTimeline, scope),
+      () => filterEventsByScope(state.forensicTimeline, scope),
+      5,
+    );
+    const filtered = expectSubQuadratic(scopeMeasured) as ForensicEvent[];
     // A 12-hour window over a ~250-hour timeline captures a fraction of events.
     expect(filtered.length).toBeGreaterThan(0);
     expect(filtered.length).toBeLessThan(state.forensicTimeline.length);
-    expect(msScope).toBeLessThan(200);
 
-    const { ms: msFp, result: rFp } = timeMs(() => applyFalsePositive(state, markers));
-    const fp = rFp as InvestigationState;
+    const fpMeasured = measureGrowth(
+      "applyFalsePositive",
+      `${BASELINE_EVENT_COUNT}→${TARGET_EVENT_COUNT} events`,
+      () => applyFalsePositive(fewerEvents, markers),
+      () => applyFalsePositive(state, markers),
+      5,
+    );
+    const fp = expectSubQuadratic(fpMeasured) as InvestigationState;
     // The IOC marker for "10.0.0.10" removes matching IOCs from the returned state.
     expect(fp.iocs.length).toBeLessThan(state.iocs.length);
-    expect(msFp).toBeLessThan(200);
   });
 
-  it("renderMarkdownReport stays fast", () => {
-    const { ms, result } = timeMs(() => renderMarkdownReport(state, emptyReportMeta()));
-    const report = result as string;
+  it("renderMarkdownReport scales sub-quadratically", () => {
+    const meta = emptyReportMeta();
+    // The report renders every derived view (asset graph, timeline, IOC tables), so it is
+    // the widest net for a regression in any one of them.
+    const measured = measureGrowth(
+      "renderMarkdownReport",
+      `${BASELINE_EVENT_COUNT}→${TARGET_EVENT_COUNT} events`,
+      () => renderMarkdownReport(fewerEvents, meta),
+      () => renderMarkdownReport(state, meta),
+      // Single measured run each (plus the warmup) — this is by far the most expensive path
+      // in the file, and at ~8x growth against a 32x limit there is 4x of headroom, so it
+      // does not need extra samples to absorb a scheduler stall.
+      1,
+    );
+    const report = expectSubQuadratic(measured) as string;
 
     expect(report.length).toBeGreaterThan(10_000);
     expect(report).toContain("## 4 Investigation");
     expect(report).toContain("### 3.1 Incident timeline");
     expect(report).toContain("### 4.2 Compromised assets");
-
-    expect(ms).toBeLessThan(5000); // report renders all derived views on 10k events
   });
 });

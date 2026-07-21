@@ -60,6 +60,17 @@ export function repairTruncatedJson(s: string): string {
 // truncation repair before giving up. Returns the parsed value or throws if even the
 // repair can't parse (so the caller's retry/error path still fires).
 export function parseJsonLoose(raw: string): unknown {
+  // A response that is ALREADY valid JSON wins outright: extraction is fence-based and a model
+  // that quotes a ```fenced``` command inside a description would otherwise get its own response
+  // sliced apart mid-string. Only pay this when the text actually looks like a JSON document.
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // fall through to fence/prose extraction below
+    }
+  }
   const cleaned = extractJsonText(raw);
   try {
     return JSON.parse(cleaned);

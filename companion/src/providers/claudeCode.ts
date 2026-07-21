@@ -33,6 +33,31 @@ interface ClaudeResultEvent {
   modelUsage?: Record<string, { outputTokens?: number }>;
 }
 
+// One `assistant` stream event (fields we consume). The CLI emits a separate event per assistant
+// message — and keeps thinking blocks in their own event — so a CONTINUED answer arrives as
+// several of these.
+interface ClaudeAssistantEvent {
+  type: "assistant";
+  message?: { content?: { type?: string; text?: string }[] };
+}
+
+// Concatenated text of one assistant event ("" when it carried only thinking/tool blocks).
+function eventText(e: ClaudeAssistantEvent): string {
+  return (e.message?.content ?? []).filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string).join("");
+}
+
+// Reassemble an answer the CLI split across assistant messages. When a response hits the model's
+// max output tokens, the CLI continues the turn in a NEW assistant message — and the continuation
+// re-opens a markdown fence right where the previous message was cut, mid-value. Confirmed live
+// (case meridian-espionage-gt, second-opinion synthesis): part 1 ended `..."a known CDN, cloud`
+// and part 2 began "```\n provider, or hosting service...". Dropping that re-opened fence (and the
+// newline the CLI puts after it, which would otherwise land as a raw newline inside a JSON string)
+// splices the parts back into the single JSON document the model meant to write.
+function stitchContinuation(parts: readonly string[]): string {
+  return parts.map((p, i) => (i === 0 ? p : p.replace(/^[ \t]*```(?:json)?[ \t]*\r?\n?/i, ""))).join("");
+}
+
 // modelUsage can hold more than one model per call (a cheap internal routing/classification
 // sub-call plus the primary generation) — the entry with the most OUTPUT tokens is the one that
 // actually produced the response text, so that's the "resolved model" worth surfacing/logging.
@@ -94,9 +119,11 @@ export class ClaudeCodeProvider implements AIProvider {
       throw new ProviderError(`Claude Code timed out after ${this.timeoutMs}ms`, "timeout");
     }
 
-    // Parse newline-delimited JSON events: keep the terminal `result`, and note any rejected rate limit.
+    // Parse newline-delimited JSON events: keep the terminal `result`, every assistant text block
+    // (for the continuation stitch below), and note any rejected rate limit.
     let resultEvent: ClaudeResultEvent | undefined;
     let rateLimited = false;
+    const assistantTexts: string[] = [];
     for (const line of run.stdout.split("\n")) {
       const t = line.trim();
       if (!t) continue;
@@ -104,7 +131,10 @@ export class ClaudeCodeProvider implements AIProvider {
       try { evt = JSON.parse(t); } catch { continue; }
       const e = evt as { type?: string; rate_limit_info?: { status?: string } };
       if (e.type === "result") resultEvent = evt as ClaudeResultEvent;
-      else if (e.type === "rate_limit_event" && e.rate_limit_info?.status && e.rate_limit_info.status !== "allowed") {
+      else if (e.type === "assistant") {
+        const text = eventText(evt as ClaudeAssistantEvent);
+        if (text) assistantTexts.push(text);
+      } else if (e.type === "rate_limit_event" && e.rate_limit_info?.status && e.rate_limit_info.status !== "allowed") {
         rateLimited = true;
       }
     }
@@ -121,7 +151,10 @@ export class ClaudeCodeProvider implements AIProvider {
       throw new ProviderError(`Claude Code: ${msg}`, kind);
     }
 
-    const text = resultEvent.result;
+    // `result` holds ONLY the LAST assistant message, so a max_tokens continuation would hand the
+    // caller the tail half of the JSON (which then fails to parse). Two or more assistant text
+    // messages can only mean a continued turn here — tools are disabled — so stitch them instead.
+    const text = assistantTexts.length > 1 ? stitchContinuation(assistantTexts) : resultEvent.result;
     if (!text) throw new ProviderError("Claude Code returned no content", "other");
 
     const u = resultEvent.usage;
