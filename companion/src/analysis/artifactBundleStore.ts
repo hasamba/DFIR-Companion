@@ -357,7 +357,12 @@ export class ArtifactBundleStore {
       builtIn,
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
-      timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
+      // Per-collection timeout (seconds), clamped to the same 60s..24h band the run-time override uses
+      // (POST /cases/:id/velociraptor/run-bundle) so a saved default and a run override can't disagree.
+      // 0/negative/NaN drop the field rather than persisting a value that would disable or corrupt the timeout.
+      timeoutSeconds: Number.isFinite(input.timeoutSeconds) && (input.timeoutSeconds as number) > 0
+        ? Math.min(86_400, Math.max(60, Math.floor(input.timeoutSeconds as number)))
+        : undefined,
       // Relative hunt expiry (seconds); the API layer clamps/defaults, so here we just persist a positive int.
       expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
       params: sanitizeBundleParams(input.params),

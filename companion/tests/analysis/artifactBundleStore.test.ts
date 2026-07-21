@@ -70,6 +70,24 @@ describe("ArtifactBundleStore", () => {
       expect(noExpiry.expirySeconds).toBeUndefined();
     });
 
+    it("clamps a saved timeout into the 60s..24h band the run-time override uses", async () => {
+      const inBand = await store.save({ name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: 900.7 });
+      expect(inBand.timeoutSeconds).toBe(900);
+      const tooSmall = await store.save({ name: "T2", description: "", artifacts: ["A.B"], timeoutSeconds: 5 });
+      expect(tooSmall.timeoutSeconds).toBe(60);
+      const tooBig = await store.save({ name: "T3", description: "", artifacts: ["A.B"], timeoutSeconds: 999_999 });
+      expect(tooBig.timeoutSeconds).toBe(86_400);
+    });
+
+    it("drops a zero, negative, or NaN timeout instead of persisting a corrupt value", async () => {
+      // NaN matters most: JSON.stringify writes it as null, so it would round-trip as a corrupt value.
+      for (const bad of [0, -1, Number.NaN]) {
+        const saved = await store.save({ id: `bad-${String(bad)}`, name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: bad });
+        expect(saved.timeoutSeconds).toBeUndefined();
+        expect((await store.get(`bad-${String(bad)}`))?.timeoutSeconds).toBeUndefined();
+      }
+    });
+
     it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
       const saved = await store.save({ id: "best-practice", name: "Best Practice (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
       expect(saved.builtIn).toBe(true);
