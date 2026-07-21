@@ -113,6 +113,11 @@ import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
+import {
+  previewFloors, planBatches, floorsWithinBudget, sanitizeObservations, renderObservationDigest,
+  planCondenseRounds, DEFAULT_MAX_BATCHES, MAX_CONDENSE_ROUNDS, OBSERVATION_CAP_PER_BATCH,
+  type Observation,
+} from "./deepPass.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -1395,6 +1400,16 @@ export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
 export const getObservePrompt = (): string => resolvePrompt("OBSERVE", OBSERVE_PROMPT);
+
+/** What one deep-pass run did, for the analyst and the route response. */
+export interface DeepPassResult {
+  aborted: boolean;
+  floor: Severity;        // the minimum severity that was read
+  events: number;         // graded events at or above the floor
+  rows: number;           // prompt rows after detection-burst grouping
+  batches: number;        // observation calls made
+  observations: number;   // observations that survived sanitising
+}
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
@@ -4725,6 +4740,110 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
+  /**
+   * Analyst-triggered batched deep pass. Reads EVERY graded event at or above `minSeverity` — in as
+   * many batches as needed — then folds the resulting observations into ONE final synthesis.
+   *
+   * Ordering mirrors deepPass.previewFloors exactly (drop Info → apply the floor → group → batch), so
+   * the pre-flight estimate cannot promise what this does not deliver.
+   *
+   * Nothing is persisted until the final synthesize() succeeds, so an aborted or failed run leaves the
+   * case exactly as it was.
+   */
+  async deepPass(caseId: string, opts: {
+    minSeverity: Severity;
+    provider?: AIProvider;
+    signal?: AbortSignal;
+    maxBatches?: number;
+    onProgress?: (done: number, total: number, detail: string) => void;
+  }): Promise<DeepPassResult> {
+    const state = await this.opts.stateStore.load(caseId);
+    const provider = opts.provider ?? this.opts.synthesisProvider ?? this.opts.provider;
+    if (!provider) throw new Error("no synthesis provider configured");
+
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(state.forensicTimeline, scope), markers);
+
+    const cap = maxPromptEvents();
+    const floored = applySeverityFloor([...promptCandidates(scopedEvents)], opts.minSeverity);
+    const { events: rows } = collapseForPrompt(floored, groupEnvOptions());
+    const batches = planBatches(rows, cap);
+
+    // Refuse rather than quietly starting a very expensive job — and name a floor that would fit.
+    const ceiling = opts.maxBatches ?? (Number(process.env.DFIR_DEEP_PASS_MAX_BATCHES) || DEFAULT_MAX_BATCHES);
+    if (batches.length > ceiling) {
+      const fits = floorsWithinBudget(previewFloors(scopedEvents, { cap }), ceiling);
+      throw new Error(
+        `deep pass needs ${batches.length} batches, above the ${ceiling} limit. ` +
+        (fits.length ? `Raise the floor to ${fits[fits.length - 1]} or above.` : "Raise DFIR_DEEP_PASS_MAX_BATCHES."),
+      );
+    }
+
+    const validEventIds = new Set(state.forensicTimeline.map((e) => e.id));
+    let observations: Observation[] = [];
+    let aborted = false;
+    for (let i = 0; i < batches.length; i++) {
+      if (opts.signal?.aborted) { aborted = true; break; }
+      opts.onProgress?.(i, batches.length, `reading batch ${i + 1} of ${batches.length}`);
+      const raw = await this.analyzeRestored(
+        caseId, state, provider,
+        { systemPrompt: getObservePrompt(), userPrompt: this.renderBatchRows(batches[i]), images: [] },
+        "deep-pass-observe",
+      );
+      observations.push(...sanitizeObservations(raw, validEventIds));
+      if (opts.signal?.aborted) { aborted = true; break; }
+    }
+
+    // Condense until the digest fits the room the final call has for it. Same observations-only
+    // contract, so a round can never introduce a verdict either.
+    const digestBudget = Math.max(0, Math.floor(inputTokenBudget() * 0.25));
+    for (let round = 0; !aborted && round < MAX_CONDENSE_ROUNDS; round++) {
+      const plan = planCondenseRounds(observations, digestBudget, OBSERVATION_CAP_PER_BATCH * 2);
+      if (!plan.length) break;
+      opts.onProgress?.(batches.length, batches.length, `condensing ${observations.length} observations (round ${round + 1})`);
+      const condensed: Observation[] = [];
+      for (const group of plan) {
+        if (opts.signal?.aborted) { aborted = true; break; }
+        const raw = await this.analyzeRestored(
+          caseId, state, provider,
+          { systemPrompt: getObservePrompt(), userPrompt: renderObservationDigest(group), images: [] },
+          "deep-pass-observe",
+        );
+        condensed.push(...sanitizeObservations(raw, validEventIds));
+      }
+      if (!aborted) observations = condensed;
+    }
+
+    const summary: DeepPassResult = {
+      aborted,
+      floor: opts.minSeverity,
+      events: floored.length,
+      rows: rows.length,
+      batches: batches.length,
+      observations: observations.length,
+    };
+    if (aborted) return summary;   // cancelled — nothing persisted, the case is untouched
+
+    opts.onProgress?.(batches.length, batches.length, "synthesizing");
+    await this.synthesize(caseId, {
+      force: true,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      observationsBlock: renderObservationDigest(observations),
+    });
+    return summary;
+  }
+
+  // The rows of one batch, rendered for the observation prompt. Same shape the synthesis timeline
+  // uses so the model sees a familiar format, minus the selection-class "~" prefix (a batch has no
+  // anchors — every row is equal evidence).
+  private renderBatchRows(rows: readonly ForensicEvent[]): string {
+    return rows
+      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`)
+      .join("\n");
+  }
+
   async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean; observationsBlock?: string } & SynthThinkingInput = {}): Promise<InvestigationState> {
     // Deep-pass observations: evidence gathered by the batched pass over events this prompt will NOT
     // show row-by-row. Empty for a normal run, so nothing changes when the deep pass is not in play.
