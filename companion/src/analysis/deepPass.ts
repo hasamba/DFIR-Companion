@@ -190,4 +190,31 @@ export function renderObservationDigest(observations: readonly Observation[]): s
   );
 }
 
+// Condensing rounds before the run gives up and reports what would need to change. Three is plenty:
+// each round divides the observation count by the per-batch cap, so even thousands collapse fast.
+export const MAX_CONDENSE_ROUNDS = 3;
+
+/** Whether the rendered digest fits the tokens left for it in the final synthesis prompt. */
+export function digestFitsBudget(observations: readonly Observation[], budgetTokens: number): boolean {
+  if (budgetTokens <= 0) return false;
+  return estimateTokens(renderObservationDigest(observations)) <= budgetTokens;
+}
+
+/**
+ * Group observations into condense batches when the digest is too large; empty when it already fits.
+ * Each returned batch is condensed by one AI call under the SAME observations-only contract, so a
+ * round can never introduce a verdict either.
+ */
+export function planCondenseRounds(
+  observations: readonly Observation[],
+  budgetTokens: number,
+  perBatch: number,
+): Observation[][] {
+  if (digestFitsBudget(observations, budgetTokens)) return [];
+  const size = Math.max(2, Math.floor(perBatch) || 2);
+  const out: Observation[][] = [];
+  for (let i = 0; i < observations.length; i += size) out.push(observations.slice(i, i + size));
+  return out;
+}
+
 export { SEVERITY_RANK };

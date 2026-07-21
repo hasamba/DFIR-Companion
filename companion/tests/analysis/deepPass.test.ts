@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   previewFloors, planBatches, DEFAULT_MAX_BATCHES,
   sanitizeObservations, renderObservationDigest, OBSERVATION_CAP_PER_BATCH,
+  digestFitsBudget, planCondenseRounds, MAX_CONDENSE_ROUNDS,
 } from "../../src/analysis/deepPass.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
@@ -170,5 +171,34 @@ describe("renderObservationDigest", () => {
   it("labels the block as evidence from parts of the timeline not shown directly", () => {
     const block = renderObservationDigest([{ summary: "s", eventIds: ["e1"], whyItMatters: "w" }]);
     expect(block).toMatch(/not shown|not included|elsewhere in the timeline/i);
+  });
+});
+
+describe("condensing", () => {
+  const obs = (n: number) => Array.from({ length: n }, (_, i) => ({
+    summary: `observation number ${i} with a reasonably long factual summary line`,
+    whyItMatters: "it precedes an outbound transfer",
+    eventIds: [`e${i}`],
+  }));
+
+  it("fits when the digest is under budget", () => {
+    expect(digestFitsBudget(obs(5), 100_000)).toBe(true);
+  });
+
+  it("does not fit when the digest exceeds budget", () => {
+    expect(digestFitsBudget(obs(5000), 500)).toBe(false);
+  });
+
+  it("plans condense batches only when needed", () => {
+    expect(planCondenseRounds(obs(5), 100_000, 50)).toEqual([]);
+    const rounds = planCondenseRounds(obs(500), 500, 50);
+    expect(rounds.length).toBeGreaterThan(0);
+    expect(rounds.every((b) => b.length <= 50)).toBe(true);
+    expect(rounds.flat()).toHaveLength(500);
+  });
+
+  it("caps the number of rounds so a pathological case terminates", () => {
+    expect(MAX_CONDENSE_ROUNDS).toBeGreaterThan(0);
+    expect(MAX_CONDENSE_ROUNDS).toBeLessThanOrEqual(5);
   });
 });
