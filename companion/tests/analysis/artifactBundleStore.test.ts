@@ -200,6 +200,32 @@ describe("ArtifactBundleStore", () => {
     expect(saved.params).toEqual({ "A.B": { Keep: "5" } });
   });
 
+  it("stores a '__proto__' artifact key as an own property instead of hitting the prototype setter", async () => {
+    // Built with JSON.parse, not an object literal: in a literal, `__proto__:` is proto-setter
+    // syntax rather than a key. JSON.parse gives a real own property — which is exactly how these
+    // arrive, as a parsed request body.
+    const filters = JSON.parse('{"__proto__":"NOT OSPath =~ \'x\'","A.B":"NOT Z"}');
+    const params = JSON.parse('{"__proto__":{"Evil":"yes"},"A.B":{"Keep":"1"}}');
+    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params });
+
+    // The accumulators are null-prototype, so nothing was reassigned via the inherited setter...
+    expect(Object.getPrototypeOf(saved.filters!)).toBeNull();
+    expect(Object.getPrototypeOf(saved.params!)).toBeNull();
+    // ...and no global prototype was polluted.
+    expect(({} as Record<string, unknown>).Evil).toBeUndefined();
+    expect(({} as Record<string, unknown>)["A.B"]).toBeUndefined();
+
+    // The entry is kept predictably rather than silently dropped, alongside the normal ones.
+    expect(Object.keys(saved.filters!)).toEqual(["__proto__", "A.B"]);
+    expect(saved.params!["__proto__"]).toEqual({ Evil: "yes" });
+
+    // And it survives the JSON round-trip as a plain, unpolluted object.
+    const reloaded = await store.get(saved.id);
+    expect(Object.getPrototypeOf(reloaded!.filters!)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(reloaded!.filters!, "__proto__")).toBe(true);
+    expect(reloaded!.filters!["A.B"]).toBe("NOT Z");
+  });
+
   it("ships a super-timeline triage built-in flagged superTimelineOnly (no detection artifacts)", async () => {
     const bundle = await store.get("super-timeline-triage");
     expect(bundle).not.toBeNull();

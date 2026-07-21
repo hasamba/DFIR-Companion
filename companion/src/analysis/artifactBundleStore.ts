@@ -38,9 +38,12 @@ export interface ArtifactBundle {
 }
 
 // Per-artifact VQL WHERE filters: keep string values, strip newlines/trailing ';', cap length.
+// Null-prototype accumulator: the keys are untrusted artifact names, and on a plain `{}` an
+// `out["__proto__"] = …` assignment goes through the inherited Object.prototype setter instead of
+// creating an own property — silently dropping the entry. Same reason in the two loops below.
 function sanitizeBundleFilters(raw: unknown): Record<string, string> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const [artifact, where] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof where !== "string") continue;
     const w = where.replace(/[\r\n]+/g, " ").replace(/;+\s*$/, "").trim().slice(0, 1000);
@@ -52,10 +55,10 @@ function sanitizeBundleFilters(raw: unknown): Record<string, string> | undefined
 // Keep only object-of-string-ish params; drop nested objects/null. Returns undefined when empty.
 function sanitizeBundleParams(raw: unknown): Record<string, Record<string, string>> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const out: Record<string, Record<string, string>> = {};
+  const out: Record<string, Record<string, string>> = Object.create(null);
   for (const [artifact, params] of Object.entries(raw as Record<string, unknown>)) {
     if (!params || typeof params !== "object") continue;
-    const inner: Record<string, string> = {};
+    const inner: Record<string, string> = Object.create(null);
     for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
       if (v == null || typeof v === "object") continue;
       inner[String(k)] = String(v);
