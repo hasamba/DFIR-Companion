@@ -116,7 +116,7 @@ import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled,
 import {
   previewFloors, planBatches, floorsWithinBudget, sanitizeObservations, renderObservationDigest,
   planCondenseRounds, DEFAULT_MAX_BATCHES, MAX_CONDENSE_ROUNDS, OBSERVATION_CAP_PER_BATCH,
-  type Observation,
+  type Observation, type FloorOption,
 } from "./deepPass.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
@@ -4740,6 +4740,20 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
+  /**
+   * What a deep pass would cost at each severity floor, for THIS case. Shown before any spend so the
+   * analyst picks against real numbers — no floor is a sane default across cases (a detection-heavy
+   * import wants High+; a telemetry-heavy one may hold only a handful of High events in total).
+   */
+  async deepPassPreview(caseId: string): Promise<{ cap: number; floors: FloorOption[] }> {
+    const state = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(state.forensicTimeline, scope), markers);
+    const cap = maxPromptEvents();
+    return { cap, floors: previewFloors(scopedEvents, { cap }) };
+  }
+
   /**
    * Analyst-triggered batched deep pass. Reads EVERY graded event at or above `minSeverity` — in as
    * many batches as needed — then folds the resulting observations into ONE final synthesis.

@@ -121,6 +121,59 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
+  // Deep-pass pre-flight: what a batched run would cost at each severity floor, for THIS case.
+  // Read-only and AI-free, so it is safe to call before the analyst has decided anything.
+  app.get("/cases/:id/deep-pass/preview", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
+    const caseId = req.params.id;
+    if (!(await store.getCaseMeta(caseId).catch(() => null))) return res.status(404).json({ error: "case not found" });
+    try {
+      return res.status(200).json(await options.pipeline.deepPassPreview(caseId));
+    } catch (err) {
+      return res.status(500).json({ error: String((err as Error).message) });
+    }
+  });
+
+  // Run the deep pass. Long-running but AWAITED — same convention as /synthesize above: the job gives
+  // the analyst a cancel button and broadcasts progress over the websocket while the request is in
+  // flight. Gate on the SYNTHESIS (text) provider, never the vision one.
+  app.post("/cases/:id/deep-pass", async (req: Request, res: Response) => {
+    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
+    const caseId = req.params.id;
+    if (!(await store.getCaseMeta(caseId).catch(() => null))) return res.status(404).json({ error: "case not found" });
+    const minSeverity = parseMinSeverity((req.body as { minSeverity?: unknown })?.minSeverity);
+    // No silent fallback: an unrecognised floor must not quietly become "read everything", which on a
+    // large case is exactly the very expensive run the ceiling exists to prevent.
+    if (!minSeverity || minSeverity === "Info") {
+      return res.status(400).json({ error: "minSeverity must be one of Critical, High, Medium, Low" });
+    }
+    const job = options.jobManager?.register({
+      caseId, kind: "deep-pass", label: `deep pass (${minSeverity}+)`, cancellable: true, exclusive: true,
+    });
+    try {
+      const result = await options.pipeline.deepPass(caseId, {
+        minSeverity,
+        ...(job?.signal ? { signal: job.signal } : {}),
+        onProgress: (done, total, detail) => {
+          if (job) options.jobManager?.progress(job.jobId, done, total, detail);
+        },
+      });
+      if (job) options.jobManager?.finish(job.jobId);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai", action: "deep-pass",
+        detail: `deep pass (${minSeverity}+) read ${result.events} event(s) in ${result.batches} batch(es), ${result.observations} observation(s)`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      const message = String((err as Error).message ?? "");
+      if (job) options.jobManager?.fail(job.jobId, message);
+      // The batch-ceiling refusal is user-correctable (raise the floor) — its message already names a
+      // floor that would fit — so it is a 400, not a server fault.
+      if (/batches/i.test(message)) return res.status(400).json({ error: message });
+      return res.status(500).json({ error: message });
+    }
+  });
+
   // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
