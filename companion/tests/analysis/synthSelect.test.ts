@@ -37,6 +37,23 @@ describe("selectSynthesisEvents", () => {
     expect(times).toEqual([...times].sort());
   });
 
+  it("builds no candidate list for a reserved class it has no budget to fill", () => {
+    // 20 Critical anchors exactly fill a budget of 20, so every reserved class afterwards arrives with
+    // nothing to give. Each class's candidates cost at least a full pass over the timeline, so assembling
+    // one here is pure waste — and `rarityOf` is the one builder a caller can observe, which makes it the
+    // probe: any call to it means a list was built and thrown away.
+    const events: ForensicEvent[] = [];
+    for (let i = 0; i < 20; i++) events.push(ev(`crit${i}`, `2026-05-20T${String(i).padStart(2, "0")}:00:00Z`, "Critical"));
+    for (let i = 0; i < 30; i++) events.push(ev(`low${i}`, `2026-05-21T${String(i % 24).padStart(2, "0")}:00:00Z`, "Low"));
+
+    let rarityCalls = 0;
+    const picked = selectSynthesisEvents(events, 20, (e) => { rarityCalls++; return e.id.startsWith("low") ? 1 : 0; });
+
+    expect(picked.length).toBe(20);
+    expect(picked.every((e) => e.severity === "Critical")).toBe(true);   // budget went entirely to anchors
+    expect(rarityCalls).toBe(0);
+  });
+
   it("keeps the severest when Critical/High alone exceed the budget", () => {
     const events = Array.from({ length: 50 }, (_, i) => ev(`c${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "Critical"));
     expect(selectSynthesisEvents(events, 10).length).toBe(10);

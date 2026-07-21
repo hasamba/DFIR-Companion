@@ -193,9 +193,15 @@ export function selectSynthesisEventsAnnotated(
   }
 
   const remaining = Math.max(0, max - classOf.size);
-  const fill = (candidates: ForensicEvent[], cap: number, cls: SelectionClass): void => {
+  // Each class's candidates are produced LAZILY. Every provider below is at least a full pass over the
+  // timeline (the anchor-context one buckets and windows it; the rare one sorts), and a class's turn can
+  // arrive with nothing left to give: an earlier class filled the budget, or — the common case on a
+  // detection-heavy timeline — the anchors themselves consumed it and `remaining` is 0. Building a
+  // candidate list only to discard it was pure waste, worst on exactly the cases already under pressure.
+  const fill = (candidates: () => ForensicEvent[], cap: number, cls: SelectionClass): void => {
+    if (cap <= 0 || capacityLeft() <= 0) return;
     let added = 0;
-    for (const e of candidates) {
+    for (const e of candidates()) {
       if (added >= cap || capacityLeft() <= 0) break;
       if (classOf.has(e.id)) continue;
       classOf.set(e.id, cls);
@@ -204,26 +210,34 @@ export function selectSynthesisEventsAnnotated(
   };
 
   // RESERVED FILL 1: same-host context around each anchor.
-  const anchors = events.filter((e) => classOf.get(e.id) === "anchor");
-  fill(anchorContextCandidates(byTime, anchors, new Set(classOf.keys())), Math.floor(remaining * BUDGET_ANCHOR_CONTEXT), "anchor_context");
+  fill(
+    () => anchorContextCandidates(byTime, events.filter((e) => classOf.get(e.id) === "anchor"), new Set(classOf.keys())),
+    Math.floor(remaining * BUDGET_ANCHOR_CONTEXT),
+    "anchor_context",
+  );
 
   // RESERVED FILL 2: cross-source-corroborated events (correlate.ts already merged their sources).
-  fill(byTime.filter((e) => !classOf.has(e.id) && (e.sources?.length ?? 0) >= 2), Math.floor(remaining * BUDGET_CORROBORATED), "corroborated");
+  fill(() => byTime.filter((e) => !classOf.has(e.id) && (e.sources?.length ?? 0) >= 2), Math.floor(remaining * BUDGET_CORROBORATED), "corroborated");
 
   // RESERVED FILL 3: ATT&CK-technique-tagged events regardless of severity (behavioral signal).
-  fill(byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0), Math.floor(remaining * BUDGET_TECHNIQUE), "technique");
+  fill(() => byTime.filter((e) => !classOf.has(e.id) && (e.mitreTechniques?.length ?? 0) > 0), Math.floor(remaining * BUDGET_TECHNIQUE), "technique");
 
   // RESERVED FILL 4 (prevalence #15): RARE events — a low-prevalence pattern (seen once or twice in the
   // whole case) is far more likely to be signal than the 500× nightly-robocopy baseline, yet grades Low
   // and never won a seat. Only active when a rarity function is supplied; rarest first. Additive — with
   // no rarityOf the selection is byte-identical to before.
   if (rarityOf) {
-    const rareCandidates = byTime
-      .filter((e) => !classOf.has(e.id) && rarityOf(e) >= RARE_SCORE_MIN)
-      .sort((a, b) => rarityOf(b) - rarityOf(a) || byEventTime(a, b));
+    const rare = rarityOf;
     // Guarantee at least one rare seat when any rare candidate exists (the whole point: a 1-off must not
-    // be crowded out by baseline noise), even when the fractional budget rounds to 0 at a small cap.
-    if (rareCandidates.length) fill(rareCandidates, Math.max(1, Math.floor(remaining * BUDGET_RARE)), "rare");
+    // be crowded out by baseline noise), even when the fractional budget rounds to 0 at a small cap. An
+    // empty candidate list fills nothing on its own, so the floor of 1 costs a seat only when earned.
+    fill(
+      () => byTime
+        .filter((e) => !classOf.has(e.id) && rare(e) >= RARE_SCORE_MIN)
+        .sort((a, b) => rare(b) - rare(a) || byEventTime(a, b)),
+      Math.max(1, Math.floor(remaining * BUDGET_RARE)),
+      "rare",
+    );
   }
 
   // SPREAD remainder: keep whole activity bursts (burstDetect phases) rather than shredding clusters
