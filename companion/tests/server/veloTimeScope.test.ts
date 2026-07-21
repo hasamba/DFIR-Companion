@@ -118,3 +118,44 @@ describe("bundle time scope — preview", () => {
     );
   });
 });
+
+describe("bundle time scope — run-bundle", () => {
+  let app: Awaited<ReturnType<typeof makeApp>>;
+  beforeEach(async () => { launched.length = 0; app = await makeApp(); });
+
+  it("passes the window into the hunt spec for scopeable artifacts only", async () => {
+    const run = await request(app).post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "scoped-test", waitMinutes: 30, timeScope: { start: "2026-06-01T00:00:00Z", end: "2026-06-30T00:00:00Z" } });
+    expect(run.status).toBe(202);
+
+    const vql = launched[0];
+    expect(vql).toContain("spec=dict(");
+    expect(vql).toContain("`Windows.EventLogs.Evtx`=dict(DateAfter='2026-06-01T00:00:00.000Z', DateBefore='2026-06-30T00:00:00.000Z')");
+    expect(vql).not.toContain("Windows.Forensics.Shellbags`=dict(");   // no date parameter — collects in full
+  });
+
+  it("records the window on the hunt job as provenance", async () => {
+    await request(app).post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "scoped-test", waitMinutes: 30, timeScope: { start: "2026-06-01T00:00:00Z", end: "2026-06-30T00:00:00Z" } });
+    const job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
+    expect(job.timeScope).toEqual({
+      start: "2026-06-01T00:00:00.000Z", end: "2026-06-30T00:00:00.000Z",
+      scopedArtifacts: 1, totalArtifacts: 2,
+    });
+  });
+
+  it("REGRESSION: an unscoped run launches exactly as before and records no window", async () => {
+    await request(app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "scoped-test", waitMinutes: 30 });
+    expect(launched[0]).not.toContain("spec=dict(");
+    const job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
+    expect(job.timeScope).toBeUndefined();
+  });
+
+  it("rejects an invalid window before launching anything", async () => {
+    const res = await request(app).post("/cases/c1/velociraptor/run-bundle")
+      .send({ bundleId: "scoped-test", timeScope: { start: "2026-06-30T00:00:00Z", end: "2026-06-01T00:00:00Z" } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/end must be at or after start/);
+    expect(launched).toHaveLength(0);
+  });
+});

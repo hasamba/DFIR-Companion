@@ -3,7 +3,7 @@ import { reloadEnvPrefix } from "../settings/envManager.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { parseVeloRef } from "../analysis/veloRef.js";
-import { buildVelociraptorClient, matchClient, ALL_CLIENTS, normalizeHuntExpirySeconds, type HuntTarget } from "../integrations/velociraptor/velociraptorApi.js";
+import { buildVelociraptorClient, matchClient, ALL_CLIENTS, normalizeHuntExpirySeconds, type HuntTarget, type VeloArtifactInfo } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
@@ -350,6 +350,15 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         Number(req.body?.expirySeconds) > 0 ? req.body.expirySeconds : bundle.expirySeconds,
       );
 
+      // Resolve the analyst's collection window (undefined = all time, the default). Validation errors
+      // are the analyst's input — fail with 400 BEFORE launching anything.
+      let timeScope;
+      try {
+        timeScope = resolveTimeScope(req.body?.timeScope);
+      } catch (e) {
+        return res.status(400).json({ error: (e as Error).message });
+      }
+
       // Pre-flight: Velociraptor's hunt() rejects the ENTIRE hunt if any named artifact doesn't exist
       // on the server, so one stale/misspelled name in a bundle (e.g. a starter list not yet verified
       // against THIS server) fails the whole run with an opaque "no hunt id". Intersect with the
@@ -359,8 +368,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       // bundle as-is rather than block on a diagnostics query.
       let artifactsToRun = bundle.artifacts;
       let unknownArtifacts: string[] = [];
+      let definitions: VeloArtifactInfo[] = [];
       try {
-        const known = new Set((await options.velociraptorClient.listClientArtifacts("client")).map((a) => a.name));
+        definitions = await options.velociraptorClient.listClientArtifacts("client");
+        const known = new Set(definitions.map((a) => a.name));
         if (known.size) {
           const valid = bundle.artifacts.filter((a) => known.has(a));
           unknownArtifacts = bundle.artifacts.filter((a) => !known.has(a));
@@ -374,14 +385,30 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         logLine(`[velociraptor] artifact catalog check failed (launching bundle as-is): ${(e as Error).message}`);
       }
 
+      // Fan the ONE chosen window out across the surviving artifacts' own date parameters, so each
+      // collects less AT THE SOURCE. Artifacts with no date parameter keep collecting in full.
+      const scopePlan = timeScope
+        ? buildTimeScopePlan({
+            artifacts: artifactsToRun, definitions, scope: timeScope,
+            corrections: bundle.timeScopeParamNames, bundleParams: bundle.params,
+          })
+        : undefined;
+      const huntParams = scopePlan ? scopePlan.params : bundle.params;
+      if (scopePlan) {
+        logLine(`[velociraptor] time scope ${timeScope!.start}${timeScope!.end ? ` → ${timeScope!.end}` : " → (open)"}: ${scopePlan.scoped.length}/${artifactsToRun.length} artifact(s) bounded, ${scopePlan.unscoped.length} collect in full${scopePlan.degraded ? " (server reported no parameter metadata)" : ""}`);
+      }
+
       logLine(`[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`);
-      const launch = await options.velociraptorClient.launchArtifactHunt(artifactsToRun, bundle.name, target, { timeoutSeconds, params: bundle.params, expirySeconds });
+      const launch = await options.velociraptorClient.launchArtifactHunt(artifactsToRun, bundle.name, target, { timeoutSeconds, params: huntParams, expirySeconds });
       const collectAt = new Date(Date.now() + waitMinutes * 60_000).toISOString();
       const job: VeloHuntJob = {
         bundleId: bundle.id, bundleName: bundle.name, artifacts: launch.artifacts,
         huntId: launch.huntId, guiUrl: launch.guiUrl,
         launchedAt: new Date().toISOString(), waitMinutes, collectAt,
         status: "running", target, minSeverity, timeoutSeconds, expirySeconds, filters: bundle.filters, dwellWindowId,
+        ...(timeScope && scopePlan
+          ? { timeScope: { start: timeScope.start, ...(timeScope.end ? { end: timeScope.end } : {}), scopedArtifacts: scopePlan.scoped.length, totalArtifacts: artifactsToRun.length } }
+          : {}),
       };
       // Append this hunt (concurrent hunts are kept side by side, keyed by huntId) + its own timer.
       await options.veloHuntStore.upsert(caseId, job);
@@ -397,7 +424,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       ctx.veloHuntTimers().set(launch.huntId, timer);
       ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
 
-      return res.status(202).json({ huntId: launch.huntId, guiUrl: launch.guiUrl, collectAt, waitMinutes, artifacts: launch.artifacts, unknownArtifacts });
+      return res.status(202).json({ huntId: launch.huntId, guiUrl: launch.guiUrl, collectAt, waitMinutes, artifacts: launch.artifacts, unknownArtifacts, timeScope: job.timeScope });
     } catch (err) {
       logLine(`[velociraptor] run bundle ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
