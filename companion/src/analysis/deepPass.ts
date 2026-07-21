@@ -92,4 +92,102 @@ export function floorsWithinBudget(options: readonly FloorOption[], maxBatches: 
   return options.filter((o) => o.batches > 0 && o.batches <= maxBatches).map((o) => o.floor);
 }
 
+// How many observations one batch may contribute. Bounds the final digest by construction:
+// maxBatches × this is the worst case the reduce step ever has to read.
+export const OBSERVATION_CAP_PER_BATCH = 15;
+
+const SUMMARY_MAX = 300;
+const WHY_MAX = 300;
+const HOSTS_MAX = 8;
+const EVENT_IDS_MAX = 12;
+
+/**
+ * One factual pointer at specific events. Deliberately carries NO severity, title, confidence or
+ * MITRE field: a batch sees a slice of the case and must not be able to render a verdict on it.
+ * The final synthesis is the only place conclusions are drawn.
+ */
+export interface Observation {
+  summary: string;
+  whyItMatters: string;
+  eventIds: string[];
+  hosts?: string[];
+  firstSeen?: string;
+  lastSeen?: string;
+}
+
+function str(v: unknown, max: number): string {
+  return String(v ?? "").trim().slice(0, max);
+}
+
+function strList(v: unknown, max: number): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of v) {
+    const s = String(item ?? "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Validate a batch's raw JSON into observations. Unknown fields (a smuggled `severity`, `title`, …)
+ * are dropped by construction because only the known fields are read. An observation whose event ids
+ * are all unknown to the case is discarded entirely — an observation with no real evidence behind it
+ * is exactly the fabrication this design exists to prevent.
+ */
+export function sanitizeObservations(raw: unknown, validEventIds: ReadonlySet<string>): Observation[] {
+  const list = (raw as { observations?: unknown })?.observations;
+  if (!Array.isArray(list)) return [];
+  const out: Observation[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const eventIds = strList(o.eventIds, EVENT_IDS_MAX).filter((id) => validEventIds.has(id));
+    if (!eventIds.length) continue;
+    const summary = str(o.summary, SUMMARY_MAX);
+    if (!summary) continue;
+    const hosts = strList(o.hosts, HOSTS_MAX);
+    const firstSeen = str(o.firstSeen, 40);
+    const lastSeen = str(o.lastSeen, 40);
+    out.push({
+      summary,
+      whyItMatters: str(o.whyItMatters, WHY_MAX),
+      eventIds,
+      ...(hosts.length ? { hosts } : {}),
+      ...(firstSeen ? { firstSeen } : {}),
+      ...(lastSeen ? { lastSeen } : {}),
+    });
+    if (out.length >= OBSERVATION_CAP_PER_BATCH) break;
+  }
+  return out;
+}
+
+/**
+ * The prompt block the FINAL synthesis receives. Labelled explicitly as evidence from parts of the
+ * timeline the model is not being shown row-by-row, so it weighs them as reported evidence rather
+ * than assuming it saw them itself.
+ */
+export function renderObservationDigest(observations: readonly Observation[]): string {
+  if (!observations.length) return "";
+  const lines = observations.map((o) => {
+    const where = o.hosts?.length ? ` on ${o.hosts.join(", ")}` : "";
+    const when = o.firstSeen
+      ? ` (${o.firstSeen}${o.lastSeen && o.lastSeen !== o.firstSeen ? ` → ${o.lastSeen}` : ""})`
+      : "";
+    const why = o.whyItMatters ? ` — ${o.whyItMatters}` : "";
+    return `- ${o.summary}${where}${when}${why} [events: ${o.eventIds.join(", ")}]`;
+  });
+  return (
+    "DEEP-PASS OBSERVATIONS (a batched read of the REST of the timeline — these events are NOT shown " +
+    "to you row-by-row below, so treat each line as reported evidence you may cite by its event ids; " +
+    "they carry no severity verdict of their own):\n" +
+    lines.join("\n") +
+    "\n\n"
+  );
+}
+
 export { SEVERITY_RANK };

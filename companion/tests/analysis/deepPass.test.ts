@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { previewFloors, planBatches, DEFAULT_MAX_BATCHES } from "../../src/analysis/deepPass.js";
+import {
+  previewFloors, planBatches, DEFAULT_MAX_BATCHES,
+  sanitizeObservations, renderObservationDigest, OBSERVATION_CAP_PER_BATCH,
+} from "../../src/analysis/deepPass.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, t: string, sev: Severity, desc = id, asset?: string): ForensicEvent {
@@ -99,5 +102,73 @@ describe("planBatches", () => {
 
   it("exposes a batch ceiling default", () => {
     expect(DEFAULT_MAX_BATCHES).toBeGreaterThan(0);
+  });
+});
+
+describe("sanitizeObservations", () => {
+  const valid = new Set(["e1", "e2", "e3"]);
+
+  it("keeps a well-formed observation and its known event ids", () => {
+    const out = sanitizeObservations(
+      { observations: [{ summary: "archive staged", hosts: ["ws-01"], firstSeen: "2026-05-20T09:00:00Z", lastSeen: "2026-05-20T09:30:00Z", eventIds: ["e1", "e2"], whyItMatters: "precedes an upload" }] },
+      valid,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].eventIds).toEqual(["e1", "e2"]);
+  });
+
+  it("drops event ids the case does not contain, so findings can never cite a ghost", () => {
+    const out = sanitizeObservations(
+      { observations: [{ summary: "x", eventIds: ["e1", "nope", "e9"], whyItMatters: "y" }] },
+      valid,
+    );
+    expect(out[0].eventIds).toEqual(["e1"]);
+  });
+
+  it("drops an observation left with no real evidence", () => {
+    expect(sanitizeObservations({ observations: [{ summary: "x", eventIds: ["ghost"], whyItMatters: "y" }] }, valid)).toEqual([]);
+  });
+
+  it("ignores a severity or finding field a batch tried to smuggle in", () => {
+    const out = sanitizeObservations(
+      { observations: [{ summary: "x", eventIds: ["e1"], whyItMatters: "y", severity: "Critical", title: "Ransomware" }] },
+      valid,
+    );
+    expect(out).toHaveLength(1);
+    expect(JSON.stringify(out[0])).not.toContain("Critical");
+    expect(JSON.stringify(out[0])).not.toContain("Ransomware");
+  });
+
+  it("caps how many observations one batch can contribute", () => {
+    const many = Array.from({ length: OBSERVATION_CAP_PER_BATCH + 10 }, (_, i) => ({ summary: `s${i}`, eventIds: ["e1"], whyItMatters: "w" }));
+    expect(sanitizeObservations({ observations: many }, valid)).toHaveLength(OBSERVATION_CAP_PER_BATCH);
+  });
+
+  it("survives junk without throwing", () => {
+    expect(sanitizeObservations(null, valid)).toEqual([]);
+    expect(sanitizeObservations({}, valid)).toEqual([]);
+    expect(sanitizeObservations({ observations: "nope" }, valid)).toEqual([]);
+    expect(sanitizeObservations({ observations: [null, 5, "x"] }, valid)).toEqual([]);
+  });
+});
+
+describe("renderObservationDigest", () => {
+  it("renders each observation with its hosts, window and event ids", () => {
+    const block = renderObservationDigest([
+      { summary: "archive staged", hosts: ["ws-01"], firstSeen: "2026-05-20T09:00:00Z", lastSeen: "2026-05-20T09:30:00Z", eventIds: ["e1"], whyItMatters: "precedes an upload" },
+    ]);
+    expect(block).toContain("archive staged");
+    expect(block).toContain("ws-01");
+    expect(block).toContain("e1");
+    expect(block).toContain("precedes an upload");
+  });
+
+  it("returns an empty string for no observations, so it costs no tokens", () => {
+    expect(renderObservationDigest([])).toBe("");
+  });
+
+  it("labels the block as evidence from parts of the timeline not shown directly", () => {
+    const block = renderObservationDigest([{ summary: "s", eventIds: ["e1"], whyItMatters: "w" }]);
+    expect(block).toMatch(/not shown|not included|elsewhere in the timeline/i);
   });
 });
