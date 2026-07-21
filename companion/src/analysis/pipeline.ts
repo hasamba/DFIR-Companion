@@ -112,7 +112,7 @@ import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
 import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
-import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, type CollapsedPrompt } from "./synthGroup.js";
+import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -4737,9 +4737,15 @@ export class AnalysisPipeline {
     // therefore the case, the coverage denominators and the high-severity backfill) is untouched.
     // The explicit CollapsedPrompt annotation matters: without it the disabled branch's bare `new Map()`
     // infers Map<unknown, unknown> and every later `grouping.groupById.get(...)` fails to typecheck.
+    // Info-severity events don't get prompt seats (DFIR_SYNTH_INCLUDE_INFO=1 restores them): on a real
+    // case 213 Info rows pushed the prompt from 546 to 759 entries, past the cap, costing 26 GRADED
+    // detections their place. They remain in the case, the timeline and the coverage denominators —
+    // this only decides who gets budget.
+    const eligibleForPrompt = promptCandidates(scopedEvents);
+    const omittedInfo = scopedEvents.length - eligibleForPrompt.length;
     const grouping: CollapsedPrompt = groupingEnabled()
-      ? collapseForPrompt(scopedEvents, groupEnvOptions())
-      : { events: [...scopedEvents], groupById: new Map(), memberIdsByRepresentative: new Map() };
+      ? collapseForPrompt(eligibleForPrompt, groupEnvOptions())
+      : { events: [...eligibleForPrompt], groupById: new Map(), memberIdsByRepresentative: new Map() };
     const collapsedEvents = grouping.events;
 
     // Bound the prompt for large imports (e.g. THOR: hundreds of events + auto-findings).
@@ -5002,6 +5008,7 @@ export class AnalysisPipeline {
       considered: shownIds.size,
       groupEntries,
       groupedEvents,
+      omittedInfo,
       omittedHighSeverity,
       promptTokensEstimate: synthOverhead + estimateTokens(timelineText),
     });

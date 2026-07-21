@@ -207,6 +207,41 @@ describe("coverage with grouped detections", () => {
     expect(label).toContain("780 shown as 120 grouped entries");
   });
 
+  it("attributes Info exclusions to their own bucket, not to the size limit", () => {
+    // 1302 in-window events, 213 of them Info (never sent), 1089 non-Info all represented.
+    const c = buildSynthesisCoverage({
+      totalEvents: 1302,
+      inWindow: 1302,
+      scoped: 1302,
+      considered: 1089,
+      omittedInfo: 213,
+      groupEntries: 35,
+      groupedEvents: 578,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 49_000,
+    });
+    expect(c.omittedInfo).toBe(213);
+    expect(c.omittedBudget).toBe(0);            // nothing was lost to the cap
+    const label = coverageLabel(c);
+    expect(label).toContain("213 Info");
+    expect(label).not.toContain("size limit");
+  });
+
+  it("still reports a real size-limit omission alongside the Info bucket", () => {
+    const c = buildSynthesisCoverage({
+      totalEvents: 1302,
+      inWindow: 1302,
+      scoped: 1302,
+      considered: 1000,
+      omittedInfo: 213,
+      omittedHighSeverity: 4,
+      promptTokensEstimate: 49_000,
+    });
+    expect(c.omittedInfo).toBe(213);
+    expect(c.omittedBudget).toBe(89);           // 1302 - 1000 - 213
+    expect(coverageLabel(c)).toContain("89 size limit");
+  });
+
   it("omits the grouping clause when nothing was grouped", () => {
     const c = buildSynthesisCoverage({
       totalEvents: 10,

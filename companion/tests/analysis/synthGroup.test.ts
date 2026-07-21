@@ -6,8 +6,12 @@ import {
   groupEnvOptions,
   groupingEnabled,
   detectionRuleHead,
+  promptIncludesInfo,
+  promptCandidates,
+  maxPromptEvents,
   DEFAULT_GROUP_GAP_SECONDS,
   DEFAULT_GROUP_MIN_REPEATS,
+  DEFAULT_MAX_PROMPT_EVENTS,
 } from "../../src/analysis/synthGroup.js";
 import { selectSynthesisEventsAnnotated } from "../../src/analysis/synthSelect.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
@@ -151,6 +155,43 @@ describe("env options", () => {
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "1" })).toBe(true);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "0" })).toBe(false);
     expect(groupingEnabled({ DFIR_SYNTH_GROUP: "off" })).toBe(false);
+  });
+
+  it("excludes Info events from the prompt unless explicitly re-enabled", () => {
+    expect(promptIncludesInfo({})).toBe(false);
+    expect(promptIncludesInfo({ DFIR_SYNTH_INCLUDE_INFO: "0" })).toBe(false);
+    expect(promptIncludesInfo({ DFIR_SYNTH_INCLUDE_INFO: "1" })).toBe(true);
+    expect(promptIncludesInfo({ DFIR_SYNTH_INCLUDE_INFO: "true" })).toBe(true);
+    expect(promptIncludesInfo({ DFIR_SYNTH_INCLUDE_INFO: "on" })).toBe(true);
+  });
+
+  it("reads the event cap, defaulting to 600", () => {
+    expect(maxPromptEvents({})).toBe(DEFAULT_MAX_PROMPT_EVENTS);
+    expect(maxPromptEvents({ DFIR_AI_SYNTH_MAX_EVENTS: "900" })).toBe(900);
+    expect(maxPromptEvents({ DFIR_AI_SYNTH_MAX_EVENTS: "nope" })).toBe(DEFAULT_MAX_PROMPT_EVENTS);
+  });
+});
+
+describe("promptCandidates", () => {
+  const mixed: ForensicEvent[] = [
+    ev("i1", "2026-05-20T09:00:00Z", "Info", "routine file touched"),
+    ev("h1", "2026-05-20T09:01:00Z", "High", "Velociraptor [A.B] Sigma: Bad Thing - detail"),
+    ev("i2", "2026-05-20T09:02:00Z", "Info", "another routine thing"),
+    ev("m1", "2026-05-20T09:03:00Z", "Medium", "something mildly odd"),
+  ];
+
+  it("drops Info events by default so the budget goes to graded detections", () => {
+    expect(promptCandidates(mixed, {}).map((e) => e.id)).toEqual(["h1", "m1"]);
+  });
+
+  it("keeps everything when Info is explicitly re-enabled", () => {
+    expect(promptCandidates(mixed, { DFIR_SYNTH_INCLUDE_INFO: "1" })).toHaveLength(4);
+  });
+
+  it("does not mutate or reorder the surviving events", () => {
+    const out = promptCandidates(mixed, {});
+    expect(out[0]).toBe(mixed[1]);
+    expect(mixed).toHaveLength(4);
   });
 });
 

@@ -41,6 +41,31 @@ export function maxPromptEvents(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_PROMPT_EVENTS;
 }
 
+/**
+ * Whether Info-severity events are sent to the model. OFF by default: the forensic timeline of a real
+ * import carries a tail of Info telemetry that would occupy prompt seats the graded detections need —
+ * measured on a real case, 213 Info events pushed the prompt from 546 rows to 759, past the cap, which
+ * cost 26 NON-Info detections their place. Anything genuinely important is graded out of Info by the
+ * deterministic content tagger before synthesis runs, and every event stays in the case and the
+ * timeline either way; this only decides who gets prompt budget. Set DFIR_SYNTH_INCLUDE_INFO=1 to
+ * restore the previous behaviour.
+ */
+export function promptIncludesInfo(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true|on|yes)$/i.test((env.DFIR_SYNTH_INCLUDE_INFO ?? "").trim());
+}
+
+/**
+ * The events eligible for the synthesis prompt, in the caller's order. Pure: returns the SAME event
+ * objects (never copies or reorders), so downstream identity checks and id sets keep working.
+ */
+export function promptCandidates(
+  events: readonly ForensicEvent[],
+  env: NodeJS.ProcessEnv = process.env,
+): ForensicEvent[] {
+  if (promptIncludesInfo(env)) return [...events];
+  return events.filter((e) => e.severity !== "Info");
+}
+
 export const DEFAULT_GROUP_GAP_SECONDS = 3600;   // 1 hour between occurrences starts a new burst
 export const DEFAULT_GROUP_MIN_REPEATS = 4;      // below this, collapsing costs detail and saves nothing
 export const DEFAULT_MAX_HOSTS_NAMED = 4;        // how many host names the rendered line spells out
