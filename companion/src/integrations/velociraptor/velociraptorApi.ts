@@ -267,7 +267,7 @@ export interface HuntLaunchResult {
 // reason listClientArtifacts normalizes the artifact `type` in TypeScript rather than in VQL.
 export interface VeloArtifactParam {
   name: string;
-  type?: string;
+  type?: string;  // omitted (never "") when the server reports no type for this parameter
 }
 
 // One collectable CLIENT artifact definition on the server (for the bundle builder's picker).

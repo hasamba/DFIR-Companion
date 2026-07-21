@@ -14,6 +14,7 @@ import {
   normalizeClientRow,
   normalizeHuntExpirySeconds,
   DEFAULT_HUNT_EXPIRY_SECONDS,
+  parseArtifactParams,
   type VeloClientRecord,
   type VelociraptorApiConfig,
   type VqlRunner,
@@ -617,6 +618,24 @@ describe("listClientArtifacts — parameter metadata", () => {
     ], raw: "" });
     const arts = await new VelociraptorClient(cfg, runner).listClientArtifacts();
     expect(arts.map((a) => a.parameters)).toEqual([[], [], []]);
+  });
+});
+
+describe("parseArtifactParams", () => {
+  it("keeps only the valid entries, in order, from a mixed-validity array", () => {
+    const out = parseArtifactParams([
+      { name: "DateAfter", type: "Timestamp" },  // valid, type lowercased
+      { name: "EvtxGlob" },                      // valid, no type -> key omitted
+      { type: "string" },                        // missing name -> dropped
+      null,                                       // null element -> dropped
+      "DateBefore",                               // bare string element -> dropped
+      [{ name: "Nested" }],                       // nested array element -> dropped
+    ]);
+    expect(out).toEqual([
+      { name: "DateAfter", type: "timestamp" },
+      { name: "EvtxGlob" },
+    ]);
+    expect(out[1]).not.toHaveProperty("type");
   });
 });
 
