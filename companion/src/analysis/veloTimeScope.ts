@@ -104,6 +104,11 @@ const TEMPORAL_HINTS = ["date", "time", "stamp"];
 
 const hasAny = (haystack: string, needles: string[]): boolean => needles.some((n) => haystack.includes(n));
 
+// `parseArtifactParams` in velociraptorApi.ts already lowercases and normalizes `type`, so an exact
+// match is correct today and — unlike a substring check — won't misfire on a hypothetical future type
+// name like "timestamp_range".
+const isTimestampTyped = (param: { type?: string }): boolean => param.type === "timestamp";
+
 // Classify one parameter as a lower/upper time bound, or neither.
 //
 // A name must carry BOTH a direction hint AND a temporal hint ("DateAfter", "StartDate", "dateBefore").
@@ -112,8 +117,7 @@ const hasAny = (haystack: string, needles: string[]): boolean => needles.some((n
 // A parameter the server DECLARES as a timestamp only needs a direction hint.
 function classifyParam(param: { name: string; type?: string }): "start" | "end" | null {
   const lower = param.name.toLowerCase();
-  const isTimestampTyped = (param.type ?? "").includes("timestamp");
-  const temporal = isTimestampTyped || hasAny(lower, TEMPORAL_HINTS);
+  const temporal = isTimestampTyped(param) || hasAny(lower, TEMPORAL_HINTS);
   if (!temporal) return null;
   if (hasAny(lower, LOWER_HINTS)) return "start";
   if (hasAny(lower, UPPER_HINTS)) return "end";
@@ -121,10 +125,11 @@ function classifyParam(param: { name: string; type?: string }): "start" | "end" 
 }
 
 // Auto-detect an artifact's bound parameters. Timestamp-typed parameters win over name-only matches;
-// within each group the first match in declaration order wins.
+// within each group the first match in declaration order wins — guaranteed by Array.prototype.sort
+// being a stable sort since ES2019, so the relative order of equally-ranked params is preserved.
 function detectPair(params: { name: string; type?: string }[]): TimeScopeParamPair {
   const pair: TimeScopeParamPair = {};
-  const typedFirst = [...params].sort((a, b) => Number((b.type ?? "").includes("timestamp")) - Number((a.type ?? "").includes("timestamp")));
+  const typedFirst = [...params].sort((a, b) => Number(isTimestampTyped(b)) - Number(isTimestampTyped(a)));
   for (const p of typedFirst) {
     const kind = classifyParam(p);
     if (kind === "start" && !pair.start) pair.start = p.name;
@@ -168,15 +173,27 @@ export function buildTimeScopePlan(input: TimeScopePlanInput): TimeScopePlan {
 
     const existing = params[artifact] ?? {};
     let manual = false;
+    // `applied` tracks whether a value was actually written. A truthy `pair` is not enough to call an
+    // artifact scoped: if its only bound is an upper one (e.g. just `DateBefore`) and the resolved
+    // scope is a relative preset (start only, deliberately no end — see TimeScope), `set(pair.end, ...)`
+    // no-ops on the missing value and NOTHING gets filtered. Gating on `applied || manual` instead of
+    // on `pair` keeps that artifact out of `scoped`, so a later "scoped N of M" preview never claims
+    // filtering coverage that was never applied.
+    let applied = false;
     const set = (paramName: string | undefined, value: string | undefined): void => {
       if (!paramName || !value) return;
       if (Object.prototype.hasOwnProperty.call(existing, paramName)) { manual = true; return; }   // analyst's value wins
       existing[paramName] = value;
+      applied = true;
     };
     set(pair.start, scope.start);
     set(pair.end, scope.end);
     if (Object.keys(existing).length) params[artifact] = existing;
-    scoped.push({ artifact, startParam: pair.start, endParam: pair.end, source, ...(manual ? { manual: true } : {}) });
+    if (applied || manual) {
+      scoped.push({ artifact, startParam: pair.start, endParam: pair.end, source, ...(manual ? { manual: true } : {}) });
+    } else {
+      unscoped.push({ artifact, source: "none" });
+    }
   }
 
   return { scoped, unscoped, params, degraded: !sawAnyMetadata };

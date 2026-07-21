@@ -69,6 +69,7 @@ const defs = [
   { name: "Windows.EventLogs.Evtx", description: "", parameters: [{ name: "DateAfter", type: "timestamp" }, { name: "DateBefore", type: "timestamp" }] },
   { name: "Windows.Forensics.Prefetch", description: "", parameters: [{ name: "dateAfter" }, { name: "dateBefore" }, { name: "executableRegex" }] },
   { name: "Custom.StartOnly", description: "", parameters: [{ name: "StartDate", type: "timestamp" }] },
+  { name: "Custom.EndOnly", description: "", parameters: [{ name: "DateBefore", type: "timestamp" }] },
   { name: "Windows.Forensics.Shellbags", description: "", parameters: [{ name: "UserRegex" }] },
   { name: "Custom.PathParams", description: "", parameters: [{ name: "PathFrom" }, { name: "CopyTo" }] },
   { name: "Custom.NoMeta", description: "", parameters: [] },
@@ -93,6 +94,20 @@ describe("buildTimeScopePlan — detection", () => {
   it("omits the upper bound entirely when the scope has no end (a relative preset)", () => {
     const plan = buildTimeScopePlan({ artifacts: ["Windows.EventLogs.Evtx"], definitions: defs, scope: { start: SCOPE.start } });
     expect(plan.params).toEqual({ "Windows.EventLogs.Evtx": { DateAfter: SCOPE.start } });
+  });
+
+  it("does not claim an end-only artifact is scoped when the window has no end (nothing would actually be filtered)", () => {
+    const plan = buildTimeScopePlan({ artifacts: ["Custom.EndOnly"], definitions: defs, scope: { start: SCOPE.start } });
+    expect(plan.params).toEqual({});
+    expect(plan.unscoped.map((u) => u.artifact)).toEqual(["Custom.EndOnly"]);
+    expect(plan.scoped).toEqual([]);
+  });
+
+  it("scopes the same end-only artifact normally when the window has both bounds", () => {
+    const plan = buildTimeScopePlan({ artifacts: ["Custom.EndOnly"], definitions: defs, scope: SCOPE });
+    expect(plan.params).toEqual({ "Custom.EndOnly": { DateBefore: SCOPE.end } });
+    expect(plan.scoped.map((s) => s.artifact)).toEqual(["Custom.EndOnly"]);
+    expect(plan.unscoped).toEqual([]);
   });
 
   it("reports artifacts with no date parameter as unscoped rather than skipping them silently", () => {
