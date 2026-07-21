@@ -60,6 +60,8 @@ const synthesisCoverageSchema = z.object({
   omittedLegitimate: z.number().catch(0),    // in-window events filtered out as false-positive / legitimate
   omittedScope: z.number().catch(0),         // events dropped for being OUTSIDE the scope window
   omittedHighSeverity: z.number().catch(0),  // of the budget-omitted, how many are Critical/High (the safety-net backfill still covers these)
+  groupEntries: z.number().catch(0),         // prompt rows that represent a collapsed detection burst
+  groupedEvents: z.number().catch(0),        // events covered by those rows (≥ groupEntries when > 0)
   promptTokensEstimate: z.number().catch(0), // ~size of the assembled synthesis prompt, in tokens
 });
 
@@ -78,6 +80,10 @@ export function buildSynthesisCoverage(input: {
   considered: number;
   omittedHighSeverity: number;
   promptTokensEstimate: number;
+  // Grouped-detection counts (spec 2026-07-21). Optional: a run with grouping disabled, and any caller
+  // that predates it, legitimately reports zero for both.
+  groupEntries?: number;
+  groupedEvents?: number;
 }): SynthesisCoverage {
   const nn = (n: number): number => (n > 0 ? n : 0);
   return {
@@ -87,6 +93,8 @@ export function buildSynthesisCoverage(input: {
     omittedLegitimate: nn(input.inWindow - input.scoped),
     omittedBudget: nn(input.scoped - input.considered),
     omittedHighSeverity: nn(input.omittedHighSeverity),
+    groupEntries: nn(input.groupEntries ?? 0),
+    groupedEvents: nn(input.groupedEvents ?? 0),
     promptTokensEstimate: nn(input.promptTokensEstimate),
   };
 }
@@ -104,6 +112,9 @@ export function coverageLabel(c: SynthesisCoverage): string {
     if (c.omittedBudget > 0) parts.push(`${c.omittedBudget} size limit`);
     if (c.omittedLegitimate > 0) parts.push(`${c.omittedLegitimate} filtered`);
     s += ` (${omitted} omitted: ${parts.join(", ")})`;
+  }
+  if (c.groupedEvents > 0 && c.groupEntries > 0) {
+    s += ` · ${c.groupedEvents} shown as ${c.groupEntries} grouped entr${c.groupEntries === 1 ? "y" : "ies"}`;
   }
   if (c.omittedHighSeverity > 0) s += ` · ${c.omittedHighSeverity} high-severity recovered by the safety net`;
   if (c.omittedScope > 0) s += ` · ${c.omittedScope} outside scope window`;
