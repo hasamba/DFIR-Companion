@@ -25,6 +25,11 @@ export interface ArtifactBundle {
   // rows are dropped at the source (e.g. {"DetectRaptor.Generic.Detection.YaraFile": "NOT OSPath =~ 'pagefile'"}).
   // Analyst-authored VQL boolean expression (no "WHERE" keyword).
   filters?: Record<string, string>;
+  // Analyst corrections for the run-time TIME SCOPE: which parameter NAME of each artifact takes the
+  // lower and upper bound, when auto-detection from the server got it wrong (e.g.
+  // {"Windows.EventLogs.Evtx": {"start": "EarliestTime", "end": "LatestTime"}}). Unlike `params` above,
+  // this holds only NAMES, never values — the window itself is chosen per run, never stored here.
+  timeScopeParamNames?: Record<string, { start?: string; end?: string }>;
   customized?: boolean;         // a built-in that has a saved override on disk (so the UI can offer "reset to default"); derived, not persisted
   // When true, this bundle's collected results go to the SUPER-TIMELINE ONLY (never the forensic
   // timeline) — for raw host-triage artifacts (MFT/USN/Prefetch) that would otherwise flood the
@@ -59,6 +64,24 @@ function sanitizeBundleParams(raw: unknown): Record<string, Record<string, strin
       inner[String(k)] = String(v);
     }
     if (Object.keys(inner).length) out[artifact] = inner;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// Per-artifact time-scope parameter NAMES (not values — see the doc comment on the field). Keeps only
+// string start/end names; an entry with neither is dropped. Returns undefined when empty, so a bundle
+// without corrections stays clean on disk. Null-prototype accumulator for the same reason as above
+// (`entry` needs none — its keys are the fixed literals start/end, not untrusted input).
+function sanitizeTimeScopeParamNames(raw: unknown): Record<string, { start?: string; end?: string }> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, { start?: string; end?: string }> = Object.create(null);
+  for (const [artifact, pair] of Object.entries(raw as Record<string, unknown>)) {
+    if (!pair || typeof pair !== "object") continue;
+    const p = pair as { start?: unknown; end?: unknown };
+    const entry: { start?: string; end?: string } = {};
+    if (typeof p.start === "string" && p.start.trim()) entry.start = p.start.trim().slice(0, 100);
+    if (typeof p.end === "string" && p.end.trim()) entry.end = p.end.trim().slice(0, 100);
+    if (entry.start || entry.end) out[artifact] = entry;
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -338,11 +361,17 @@ export class ArtifactBundleStore {
       builtIn,
       artifacts: Array.isArray(input.artifacts) ? input.artifacts.map(String).map((a) => a.trim()).filter(Boolean) : [],
       defaultWaitMinutes: typeof input.defaultWaitMinutes === "number" ? input.defaultWaitMinutes : undefined,
-      timeoutSeconds: typeof input.timeoutSeconds === "number" ? input.timeoutSeconds : undefined,
+      // Per-collection timeout (seconds), clamped to the same 60s..24h band the run-time override uses
+      // (POST /cases/:id/velociraptor/run-bundle) so a saved default and a run override can't disagree.
+      // 0/negative/NaN drop the field rather than persisting a value that would disable or corrupt the timeout.
+      timeoutSeconds: Number.isFinite(input.timeoutSeconds) && (input.timeoutSeconds as number) > 0
+        ? Math.min(86_400, Math.max(60, Math.floor(input.timeoutSeconds as number)))
+        : undefined,
       // Relative hunt expiry (seconds); the API layer clamps/defaults, so here we just persist a positive int.
       expirySeconds: typeof input.expirySeconds === "number" && input.expirySeconds > 0 ? Math.floor(input.expirySeconds) : undefined,
       params: sanitizeBundleParams(input.params),
       filters: sanitizeBundleFilters(input.filters),
+      timeScopeParamNames: sanitizeTimeScopeParamNames(input.timeScopeParamNames),
       // Carry the super-timeline routing flag through an edit/override; only `true` persists (a missing
       // field stays undefined, not `false` noise) — mirrors the other optionals above.
       superTimelineOnly: input.superTimelineOnly === true ? true : undefined,

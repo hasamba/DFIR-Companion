@@ -8895,6 +8895,7 @@
     let _veloClients = [];             // last-loaded client inventory (host ↔ client id), for the monitor datalist
     let _veloEventArtifacts = [];      // last-loaded CLIENT_EVENT artifact list (monitor picker)
     let _veloMonAutoBrowsed = false;   // one-shot: auto-populate the event-artifact picker when Velociraptor is on
+    let veloTsPreviewSeq = 0;          // monotonic counter guarding the time-scope preview against out-of-order responses
 
     function veloCaseId() { const el = document.getElementById("caseId"); return el ? el.value.trim() : ""; }
 
@@ -9057,20 +9058,172 @@
           <select class="velo-expiry" title="How long the hunt keeps scheduling on clients that check in later (Velociraptor's own default is a week)">${expiryOpts}</select>
           <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
           <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
+          <select class="velo-timescope" title="Collect only data from this window. Applied AT THE SOURCE via each artifact's own date parameters — not filtered after collection.">
+            <option value="">All time</option>
+            <option value="24h">last 24 hours</option>
+            <option value="7d">last 7 days</option>
+            <option value="30d">last 30 days</option>
+            <option value="90d">last 90 days</option>
+            <option value="custom">custom range…</option>
+          </select>
+          <span class="velo-ts-custom" style="display:none;gap:4px;align-items:center">
+            <input type="datetime-local" class="velo-ts-start" title="Collect from (UTC)" style="padding:4px" />
+            <span style="font-size:10px;color:var(--c-9aa4b2)">UTC</span>
+            <span style="color:var(--c-7e8aa0)">–</span>
+            <input type="datetime-local" class="velo-ts-end" title="Collect until (UTC) — leave empty to keep collecting forward" style="padding:4px" />
+            <span style="font-size:10px;color:var(--c-9aa4b2)">UTC</span>
+          </span>
           <input class="velo-inc" placeholder="include labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
           <input class="velo-exc" placeholder="exclude labels (comma-sep)" style="flex:1;min-width:140px;padding:4px" />
           <button class="velo-run-go">Run hunt</button>
           <span class="velo-run-msg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
-        <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (<em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>`;
+        <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (<em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>
+        <div class="velo-ts-preview" style="font-size:11px;color:var(--c-7e8aa0);margin-top:4px"></div>`;
       form.style.display = "block";
       form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
+      const ts = form.querySelector(".velo-timescope");
+      const custom = form.querySelector(".velo-ts-custom");
+      ts.onchange = () => {
+        custom.style.display = ts.value === "custom" ? "inline-flex" : "none";
+        veloTimeScopePreview(id, form);
+      };
+      form.querySelector(".velo-ts-start").onchange = () => veloTimeScopePreview(id, form);
+      form.querySelector(".velo-ts-end").onchange = () => veloTimeScopePreview(id, form);
+    }
+
+    // Read the run form's time-scope control into the request body shape the server expects.
+    // Returns undefined for "All time" (the default) so an unscoped run is byte-identical to before.
+    // The datetime-local inputs are wall-clock with no zone, so they're read as UTC to match the label
+    // (and the visible "UTC" badges beside them). NOTE: appending ":00" to make a full-second timestamp
+    // is only safe because these inputs have no `step` attribute and therefore never return seconds —
+    // if a future edit adds step="1" for sub-minute precision, this needs to stop assuming :00.
+    // veloTimeScopeBody also returns undefined when mode is "custom" but no start date has been entered
+    // yet — that is NOT "All time" and must never be treated as one; see veloTimeScopeIncomplete below,
+    // which both the preview and the launch path check separately since this return value alone can't
+    // distinguish the two cases.
+    function veloTimeScopeBody(form) {
+      const mode = form.querySelector(".velo-timescope").value;
+      if (!mode) return undefined;
+      if (mode !== "custom") return { preset: mode };
+      const start = form.querySelector(".velo-ts-start").value;
+      const end = form.querySelector(".velo-ts-end").value;
+      if (!start) return undefined;
+      return { start: start + ":00Z", ...(end ? { end: end + ":00Z" } : {}) };
+    }
+
+    // True when "custom range…" is selected but no start date has been entered — a half-finished
+    // scope that must never silently fall through to an unscoped ("All time") run. Without this check,
+    // an analyst who picks "custom", forgets the date, and clicks Run gets a fully unscoped hunt with no
+    // warning; the only trace is the ABSENCE of a "⏱ scoped" line on the resulting job card, which reads
+    // exactly like "no activity occurred" rather than "you forgot to set a date".
+    function veloTimeScopeIncomplete(form) {
+      return form.querySelector(".velo-timescope").value === "custom" && !form.querySelector(".velo-ts-start").value;
+    }
+
+    // Show which artifacts the chosen window will actually bound, before anything is launched. A bad
+    // auto-detected mapping must be visible here rather than silently under-collecting.
+    function veloTimeScopePreview(bundleId, form) {
+      const out = form.querySelector(".velo-ts-preview");
+      if (veloTimeScopeIncomplete(form)) { out.textContent = "⚠ enter a start date to apply a custom time scope"; return; }
+      const body = veloTimeScopeBody(form);
+      if (!body) { out.textContent = ""; return; }
+      out.textContent = "checking which artifacts can be scoped…";
+      // Rapid dropdown/date changes fire overlapping fetches with no inherent ordering guarantee; a
+      // monotonic sequence number lets a stale response recognize it's been superseded and no-op instead
+      // of overwriting the preview with a mapping that doesn't match the currently selected scope.
+      const mySeq = ++veloTsPreviewSeq;
+      fetch(`/velociraptor/bundles/${encodeURIComponent(bundleId)}/time-scope-preview`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })).catch(() => ({ ok: r.ok, j: {} })))
+        .then(({ ok, j }) => {
+          if (mySeq !== veloTsPreviewSeq) return;   // a newer request superseded this one
+          if (!ok || j.error) { out.textContent = "⚠ " + (j.error || "preview failed"); return; }
+          const total = j.scoped.length + j.unscoped.length;
+          // Each row's ".velo-ts-row-dirty" starts hidden and is only revealed by the `oninput` listener
+          // wired below — it distinguishes "this is what's actually saved" from "this is what you just
+          // typed", since the source label itself is computed once from this response and never updates
+          // as the analyst edits the inputs.
+          const detail = j.scoped.map(s => `<div class="velo-ts-row" data-artifact="${escAttr(s.artifact)}" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:2px">
+            <span style="min-width:260px">${esc(s.artifact)}</span>
+            <input class="velo-ts-p-start" value="${escAttr(s.startParam || "")}" placeholder="start param" style="width:130px;padding:2px;font-size:11px" />
+            <input class="velo-ts-p-end" value="${escAttr(s.endParam || "")}" placeholder="end param" style="width:130px;padding:2px;font-size:11px" />
+            <span style="color:var(--c-7e8aa0)">${esc(s.source)}${s.manual ? " · manually set" : ""}</span>
+            <span class="velo-ts-row-dirty" style="display:none;color:var(--c-ffd07a)"> · unsaved</span>
+          </div>`).join("");
+          const full = j.unscoped.map(u => esc(u.artifact)).join(", ");
+          out.innerHTML = `<details><summary style="cursor:pointer">Time scope applies to <strong>${j.scoped.length} of ${total}</strong> artifact(s)${j.unscoped.length ? ` · ${j.unscoped.length} collect in full` : ""}${j.degraded ? ' · <span style="color:var(--c-ff9f43)">server reported no parameter metadata — coverage could not be verified</span>' : ""}</summary>
+            <div style="margin-top:4px">${detail || "<em>none</em>"}</div>
+            ${full ? `<div style="margin-top:4px;color:var(--c-9aa4b2)"><strong>Collects in full:</strong> ${full}</div>` : ""}
+            <div style="margin-top:6px"><button class="velo-ts-save" title="Save these parameter names on the bundle for future runs">Save mapping</button> <span class="velo-ts-save-msg" style="color:var(--c-9aa4b2)"></span></div>
+          </details>`;
+          const saveBtn = out.querySelector(".velo-ts-save");
+          if (saveBtn) saveBtn.onclick = () => veloSaveTimeScopeParamNames(bundleId, out);
+          out.querySelectorAll(".velo-ts-row").forEach(row => {
+            const dirty = row.querySelector(".velo-ts-row-dirty");
+            row.querySelectorAll(".velo-ts-p-start, .velo-ts-p-end").forEach(inp => {
+              inp.oninput = () => { if (dirty) dirty.style.display = "inline"; };
+            });
+          });
+        })
+        .catch(e => { if (mySeq !== veloTsPreviewSeq) return; out.textContent = "⚠ " + e.message; });
+    }
+
+    // Persist the previewed parameter names onto the bundle so a corrected mapping sticks for future
+    // runs. The server route is a full REPLACE of timeScopeParamNames (see its doc comment) — it has no
+    // way to know which artifacts you meant to leave alone versus never heard of. So this function MUST
+    // start from the bundle's currently-stored corrections (already on hand in _veloBundles — GET
+    // /bundles returns timeScopeParamNames unfiltered) and only overlay the artifacts that have a
+    // rendered row in THIS preview. Building the body from rows alone is the bug this replaced: an
+    // artifact whose saved correction supplies only `end` renders as "collects in full" under a relative
+    // preset (which never carries an upper bound), so it has no row here — and a naive rows-only save
+    // would silently delete that correction while "fixing" an unrelated row.
+    function veloSaveTimeScopeParamNames(bundleId, out) {
+      const msg = out.querySelector(".velo-ts-save-msg");
+      const saveBtn = out.querySelector(".velo-ts-save");
+      const stored = ((_veloBundles || []).find(b => b.id === bundleId) || {}).timeScopeParamNames || {};
+      const timeScopeParamNames = { ...stored };
+      out.querySelectorAll(".velo-ts-row").forEach(row => {
+        const artifact = row.dataset.artifact;
+        const start = row.querySelector(".velo-ts-p-start").value.trim();
+        const end = row.querySelector(".velo-ts-p-end").value.trim();
+        // A row with both fields blank is the analyst explicitly clearing that artifact's correction —
+        // remove it rather than leaving the stale stored value in place.
+        if (start || end) timeScopeParamNames[artifact] = { ...(start ? { start } : {}), ...(end ? { end } : {}) };
+        else delete timeScopeParamNames[artifact];
+      });
+      if (saveBtn) saveBtn.disabled = true;
+      msg.textContent = "saving…";
+      fetch(`/velociraptor/bundles/${encodeURIComponent(bundleId)}/time-scope-param-names`, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ timeScopeParamNames })
+      }).then(r => r.json().catch(() => ({})).then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (!ok || j.error) { msg.textContent = "error: " + (j.error || "failed"); return; }
+          msg.textContent = "saved ✓";
+          // Patch the saved bundle into the cached list IN PLACE rather than calling loadVeloBundles():
+          // that fully re-renders the bundle list, which would collapse this open run form (and the
+          // preview/rows/message the analyst needs to read right now) out from under them. Keeping
+          // _veloBundles current still means the next preview and the built-in "· edited" badge see the
+          // fresh timeScopeParamNames.
+          if (_veloBundles) {
+            const idx = _veloBundles.findIndex(b => b.id === bundleId);
+            if (idx !== -1) _veloBundles[idx] = j;
+          }
+          out.querySelectorAll(".velo-ts-row-dirty").forEach(d => { d.style.display = "none"; });
+        })
+        // On failure, deliberately do NOT touch _veloBundles or re-render anything — the analyst needs
+        // to see the error message in place, and must not be left believing a correction is in force
+        // when the save didn't happen.
+        .catch(e => { msg.textContent = "error: " + e.message; })
+        .finally(() => { if (saveBtn) saveBtn.disabled = false; });
     }
 
     function veloRunBundle(bundleId, form) {
       const caseId = veloCaseId();
       const msg = form.querySelector(".velo-run-msg");
       if (!caseId) { msg.textContent = "connect to a case first"; return; }
+      // Never let a half-finished custom time scope silently launch unscoped — see veloTimeScopeIncomplete.
+      if (veloTimeScopeIncomplete(form)) { msg.textContent = "⚠ enter a start date to apply a custom time scope"; return; }
       const waitMinutes = Number(form.querySelector(".velo-wait").value) || 10;
       const expirySeconds = Number(form.querySelector(".velo-expiry").value) || undefined;
       const os = form.querySelector(".velo-os").value;
@@ -9080,7 +9233,7 @@
       const go = form.querySelector(".velo-run-go");
       go.disabled = true; msg.textContent = "launching hunt…";
       // No timeoutSeconds here on purpose — the server uses the bundle's saved timeout (read fresh from disk).
-      const body = { bundleId, waitMinutes, expirySeconds, os, minSeverity, includeLabels, excludeLabels };
+      const body = { bundleId, waitMinutes, expirySeconds, os, minSeverity, includeLabels, excludeLabels, timeScope: veloTimeScopeBody(form) };
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/run-bundle`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
@@ -9188,6 +9341,16 @@
             coverage += `<div style="font-size:12px;color:#ff9f43;margin-top:2px">${failed.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>")}</div>`;
           }
         }
+        // The COLLECTION window this hunt ran with, when it was scoped. Part of the evidence record:
+        // it tells a later reader that silence outside these bounds is a collection boundary, not a
+        // quiet endpoint. `degraded` means we could not verify the split — don't let it read as "0".
+        // Deliberately rendered as raw ISO (with trailing Z), NOT run through .toLocaleString() like most
+        // other timestamps in this file: this is evidence metadata read by someone who may be in a
+        // different timezone, possibly months later — an unambiguous UTC marker matters more here than
+        // local-time familiarity. Do not "fix" this to local time.
+        const tsLine = job.timeScope
+          ? `<div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px" title="Collection was bounded — absence of results outside this window is a collection boundary, not an absence of activity">⏱ scoped ${esc(job.timeScope.start)}${job.timeScope.end ? " → " + esc(job.timeScope.end) : " → (open)"} · ${esc(job.timeScope.scopedArtifacts)}/${esc(job.timeScope.totalArtifacts)} artifact(s) bounded${job.timeScope.degraded ? ` · <span style="color:var(--c-ff9f43)">coverage unverified (server reported no parameter metadata)</span>` : ""}</div>`
+          : "";
         return `<div class="synth-meta" style="margin:0 0 8px;padding:8px 10px;border:1px solid var(--c-2a3146);border-radius:6px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
             <div>🎯 <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
@@ -9195,6 +9358,7 @@
           </div>
           <div style="font-size:12px;color:var(--c-9aa4b2);margin-top:4px">${cd}${esc(detail)}</div>
           ${coverage}
+          ${tsLine}
         </div>`;
       }).join("");
       el.querySelectorAll(".velo-collect-btn").forEach(btn => btn.onclick = () => veloCollectNow(btn.dataset.hid, btn));

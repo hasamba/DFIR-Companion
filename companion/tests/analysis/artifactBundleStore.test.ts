@@ -70,6 +70,24 @@ describe("ArtifactBundleStore", () => {
       expect(noExpiry.expirySeconds).toBeUndefined();
     });
 
+    it("clamps a saved timeout into the 60s..24h band the run-time override uses", async () => {
+      const inBand = await store.save({ name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: 900.7 });
+      expect(inBand.timeoutSeconds).toBe(900);
+      const tooSmall = await store.save({ name: "T2", description: "", artifacts: ["A.B"], timeoutSeconds: 5 });
+      expect(tooSmall.timeoutSeconds).toBe(60);
+      const tooBig = await store.save({ name: "T3", description: "", artifacts: ["A.B"], timeoutSeconds: 999_999 });
+      expect(tooBig.timeoutSeconds).toBe(86_400);
+    });
+
+    it("drops a zero, negative, or NaN timeout instead of persisting a corrupt value", async () => {
+      // NaN matters most: JSON.stringify writes it as null, so it would round-trip as a corrupt value.
+      for (const bad of [0, -1, Number.NaN]) {
+        const saved = await store.save({ id: `bad-${String(bad)}`, name: "T", description: "", artifacts: ["A.B"], timeoutSeconds: bad });
+        expect(saved.timeoutSeconds).toBeUndefined();
+        expect((await store.get(`bad-${String(bad)}`))?.timeoutSeconds).toBeUndefined();
+      }
+    });
+
     it("saving with a built-in id stores an editable override (builtIn stays, customized flagged)", async () => {
       const saved = await store.save({ id: "best-practice", name: "Best Practice (mine)", description: "edited", artifacts: ["Windows.System.Pslist"] });
       expect(saved.builtIn).toBe(true);
@@ -81,6 +99,54 @@ describe("ArtifactBundleStore", () => {
       const inList = (await store.list()).find((b) => b.id === "best-practice");
       expect(inList?.name).toBe("Best Practice (mine)");
       expect(inList?.customized).toBe(true);
+    });
+
+    it("persists timeScopeParamNames and drops malformed entries", async () => {
+      const saved = await store.save({
+        name: "Scoped", artifacts: ["Windows.EventLogs.Evtx"],
+        timeScopeParamNames: {
+          "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
+          "Bad.Types": { start: 42, end: null },              // non-string → dropped
+          "Bad.Shape": "nope",                                 // not an object → dropped
+          "Empty.Pair": {},                                    // nothing usable → dropped
+        } as never,
+      });
+      expect(saved.timeScopeParamNames).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+
+      const reloaded = await store.get(saved.id);
+      expect(reloaded?.timeScopeParamNames).toEqual({ "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" } });
+    });
+
+    it("leaves timeScopeParamNames undefined when none are given", async () => {
+      const saved = await store.save({ name: "Plain", artifacts: ["Windows.NTFS.MFT"] });
+      expect(saved.timeScopeParamNames).toBeUndefined();
+    });
+
+    it("keeps a timeScopeParamNames entry with only start or only end", async () => {
+      const saved = await store.save({
+        name: "Partial", artifacts: ["A.B", "C.D"],
+        timeScopeParamNames: {
+          "A.B": { start: "EarliestTime" },
+          "C.D": { end: "LatestTime" },
+        },
+      });
+      expect(saved.timeScopeParamNames).toEqual({
+        "A.B": { start: "EarliestTime" },
+        "C.D": { end: "LatestTime" },
+      });
+    });
+
+    it("drops whitespace-only timeScopeParamNames values and truncates to 100 chars", async () => {
+      const long = "X".repeat(150);
+      const saved = await store.save({
+        name: "Edge", artifacts: ["A.B"],
+        timeScopeParamNames: {
+          "A.B": { start: "   ", end: long },
+        },
+      });
+      expect(saved.timeScopeParamNames?.["A.B"].start).toBeUndefined();
+      expect(saved.timeScopeParamNames?.["A.B"].end).toBe("X".repeat(100));
+      expect(saved.timeScopeParamNames?.["A.B"].end?.length).toBe(100);
     });
   });
 
@@ -140,18 +206,23 @@ describe("ArtifactBundleStore", () => {
     // arrive, as a parsed request body.
     const filters = JSON.parse('{"__proto__":"NOT OSPath =~ \'x\'","A.B":"NOT Z"}');
     const params = JSON.parse('{"__proto__":{"Evil":"yes"},"A.B":{"Keep":"1"}}');
-    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params });
+    const timeScopeParamNames = JSON.parse('{"__proto__":{"start":"Evil"},"A.B":{"start":"EarliestTime"}}');
+    const saved = await store.save({ name: "PP", description: "", artifacts: ["A.B"], filters, params, timeScopeParamNames });
 
     // The accumulators are null-prototype, so nothing was reassigned via the inherited setter...
     expect(Object.getPrototypeOf(saved.filters!)).toBeNull();
     expect(Object.getPrototypeOf(saved.params!)).toBeNull();
+    expect(Object.getPrototypeOf(saved.timeScopeParamNames!)).toBeNull();
     // ...and no global prototype was polluted.
     expect(({} as Record<string, unknown>).Evil).toBeUndefined();
+    expect(({} as Record<string, unknown>).start).toBeUndefined();
     expect(({} as Record<string, unknown>)["A.B"]).toBeUndefined();
 
     // The entry is kept predictably rather than silently dropped, alongside the normal ones.
     expect(Object.keys(saved.filters!)).toEqual(["__proto__", "A.B"]);
     expect(saved.params!["__proto__"]).toEqual({ Evil: "yes" });
+    expect(Object.keys(saved.timeScopeParamNames!)).toEqual(["__proto__", "A.B"]);
+    expect(saved.timeScopeParamNames!["A.B"]).toEqual({ start: "EarliestTime" });
 
     // And it survives the JSON round-trip as a plain, unpolluted object.
     const reloaded = await store.get(saved.id);

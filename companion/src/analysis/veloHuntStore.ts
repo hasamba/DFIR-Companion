@@ -34,6 +34,20 @@ export interface VeloHuntJob {
   timeoutSeconds?: number;    // optional per-collection timeout used for this hunt (Velociraptor default 600s)
   expirySeconds?: number;     // relative hunt expiry used at launch (seconds); default one hour
   filters?: Record<string, string>;   // per-artifact VQL WHERE filters snapshotted from the bundle (applied at collect)
+  // The COLLECTION window this hunt was launched with, when the analyst scoped it. Forensically load-
+  // bearing: it tells a later reader that silence outside these bounds is a collection boundary, not an
+  // absence of activity. `end` is absent for a relative preset (the hunt keeps collecting forward).
+  timeScope?: {
+    start: string;            // ISO
+    end?: string;             // ISO
+    scopedArtifacts: number;  // how many artifacts actually received the window
+    totalArtifacts: number;   // how many were launched
+    // true = the server reported no parameter metadata for this bundle's artifacts (the catalog fetch
+    // failed or came back empty), so the bounded/unbounded split above could NOT be verified — it may
+    // understate what actually got scoped. Distinguishes "this bundle genuinely has no date-parameterized
+    // artifacts" (degraded: false, benign) from "we don't actually know" (degraded: true, a real gap).
+    degraded: boolean;
+  };
   error?: string;
   // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before
   // its own scheduled expiry — a strong signal an analyst stopped or deleted it in Velociraptor rather

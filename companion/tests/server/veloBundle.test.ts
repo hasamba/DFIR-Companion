@@ -102,6 +102,32 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(ft.customized).toBe(false);
   });
 
+  it("POST /bundles round-trips every bundle field — editing a built-in must not wipe superTimelineOnly, timeout, params or filters", async () => {
+    // Regression: the route used to destructure only {id,name,description,artifacts,defaultWaitMinutes},
+    // so editing "Super-Timeline Triage" through the dashboard silently cleared superTimelineOnly and its
+    // raw MFT/USN flood would start landing in the FORENSIC timeline.
+    const save = await request(app).post("/bundles").send({
+      id: "super-timeline-triage",
+      name: "Super-Timeline Triage",
+      artifacts: ["Windows.NTFS.MFT"],
+      superTimelineOnly: true,
+      timeoutSeconds: 6000,
+      expirySeconds: 86400,
+      params: { "Windows.NTFS.MFT": { DateAfter: "2026-01-01T00:00:00Z" } },
+      filters: { "Windows.NTFS.MFT": "NOT OSPath =~ 'pagefile'" },
+    });
+    expect(save.status).toBe(201);
+
+    const got = (await request(app).get("/bundles")).body.find((b: { id: string }) => b.id === "super-timeline-triage");
+    expect(got.superTimelineOnly).toBe(true);
+    expect(got.timeoutSeconds).toBe(6000);
+    expect(got.expirySeconds).toBe(86400);
+    expect(got.params).toEqual({ "Windows.NTFS.MFT": { DateAfter: "2026-01-01T00:00:00Z" } });
+    expect(got.filters).toEqual({ "Windows.NTFS.MFT": "NOT OSPath =~ 'pagefile'" });
+
+    expect((await request(app).delete("/bundles/super-timeline-triage")).status).toBe(204);   // reset to default
+  });
+
   it("POST /bundles rejects a bundle with no artifacts", async () => {
     const res = await request(app).post("/bundles").send({ name: "Empty", artifacts: [] });
     expect(res.status).toBe(400);

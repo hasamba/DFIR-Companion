@@ -23,6 +23,16 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 
 Settings → Velociraptor → Bundles. Built-in bundles include **Fast Triage** (quick artifact set) and **Full Triage** (comprehensive). You can create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results.
 
+#### Time scope
+
+The bundle run form has a **Time scope** control: **All time** (the default), last 24 hours / 7 days / 30 days / 90 days, or a custom UTC start/end range. The window is applied during collection, not after: it's mapped onto each artifact's own date parameters (names vary by artifact — `DateAfter`/`DateBefore`, `StartDate`, …), so fewer rows leave the endpoint and the hunt finishes faster, rather than importing everything and filtering it out afterward.
+
+Relative presets (24h/7d/30d/90d) set a lower bound only, with no upper bound. This is deliberate — a hunt keeps scheduling on clients that check in after launch, and pinning an upper bound at launch time would silently drop activity that happens in between.
+
+Not every artifact exposes a date parameter (Shellbags, SAM, and other state-based artifacts have none); those still collect in full, and the run form's preview says how many and lists them. If the detected mapping for a scoped artifact is wrong, correct it inline in that preview and **Save mapping** — the correction persists on the bundle for future runs. If the server reports no parameter metadata at all, the preview and the resulting hunt job instead say coverage **could not be verified**, which is distinct from "nothing to scope."
+
+The resolved window is recorded on the hunt job and shown on its card. Read it as part of the evidence record: the absence of results outside that window is a **collection boundary**, not an absence of activity.
+
 ---
 
 ## DFIR-IRIS
