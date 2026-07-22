@@ -753,6 +753,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     importerPrecedence: () => importerPrecedence,
     setImporterPrecedence: (precedence) => { importerPrecedence = precedence; },
     rebuildTimesketchClient: () => (options.rebuildTimesketchClient ?? buildTimesketchClient)(),
+    rebuildForPrefix,
     getControl,
     setControl,
     backfill,
@@ -2158,13 +2159,82 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // enriches the current IOCs and — via autoEnrichIfEnabled below — any IOCs added later.
   const enrichControl = new EnrichControlStore(store);
 
-  // Provider classification (from the configured set) + the per-case enabled subset.
-  const allProviders = options.enrichmentProviders ?? [];
-  const configuredNames = allProviders.map((p) => p.name);
-  const localNames = allProviders.filter((p) => p.scope === "local").map((p) => p.name);
+  // Provider classification (from the configured set) + the per-case enabled subset. MUTABLE (#178):
+  // rebuildForPrefix swaps in a freshly-built set when the analyst saves an enrichment key, so a
+  // newly-configured source is usable without a restart. Always REPLACED with a new array, never
+  // mutated in place; every reader goes through this binding (or ctx.enrichmentProviders()), and the
+  // name projections are derived per call so they can't go stale against it.
+  let allProviders = options.enrichmentProviders ?? [];
   async function enabledProvidersFor(caseId: string): Promise<EnrichmentProvider[]> {
+    const configuredNames = allProviders.map((p) => p.name);
+    const localNames = allProviders.filter((p) => p.scope === "local").map((p) => p.name);
     const enabled = new Set(resolveEnabledProviders(await enrichControl.load(caseId), configuredNames, localNames));
     return allProviders.filter((p) => enabled.has(p.name));
+  }
+
+  // ── Live config rebuild (#178) ──────────────────────────────────────────────────────────────
+  // POST /settings/reload applies a just-saved DFIR_<PREFIX>_* group into process.env. On its own
+  // that changes nothing observable, because every integration client is built ONCE at startup from
+  // env and then captured in `options` — so a corrected MISP URL (or a first-time enrichment key)
+  // sat in process.env while the live client kept its boot-time config, and the operator's only
+  // remedy was the restart the route exists to avoid. This rebuilds whatever the prefix feeds, from
+  // the now-current env, and returns the component names so the route can report what took effect.
+  //
+  // Rebuilds are constructor calls only — no network, no reachability probe — so the reload stays
+  // fast and can't fail on an unreachable server; the per-integration /xxx/reconnect routes remain
+  // the way to VERIFY connectivity. Deliberately not rebuilt: DFIR_AI_/DFIR_VISION_ (buildProvider()
+  // already reads env per call; the running analysis pipeline still needs a restart, unchanged),
+  // DFIR_TOOL_ (the runner is stateless — the next liveToolConfigs() sees the reloaded env),
+  // DFIR_NSRL_ (a live SQLite handle with its own connect/disconnect routes) and DFIR_PUSH_TOKEN
+  // (a store, not env-derived config).
+  const ENRICHMENT_PREFIXES = new Set([
+    "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
+    "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
+  ]);
+  // DFIR_SHODAN_ feeds both sets — the one key backs the IOC provider and the attack-surface check.
+  const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_SHODAN_"]);
+  function rebuildForPrefix(prefix: string): string[] {
+    const rebuilt: string[] = [];
+    if (ENRICHMENT_PREFIXES.has(prefix)) {
+      allProviders = buildEnrichmentProviders();
+      options.enrichmentProviders = allProviders;
+      rebuilt.push("enrichment");
+    }
+    if (EXPOSURE_PREFIXES.has(prefix)) {
+      options.customerExposureProviders = buildCustomerExposureProviders();
+      rebuilt.push("exposure");
+    }
+    if (prefix === "DFIR_MISP_") {
+      options.mispPushClient = buildMispPushClient();
+      options.mispPushOptions = mispPushOptions();
+      rebuilt.push("misp");
+    }
+    if (prefix === "DFIR_IRIS_") {
+      irisClient = (options.rebuildIrisClient ?? buildIrisClient)();
+      options.irisOptions = irisPushOptions();
+      rebuilt.push("iris");
+    }
+    if (prefix === "DFIR_TIMESKETCH_") {
+      options.timesketchClient = (options.rebuildTimesketchClient ?? buildTimesketchClient)();
+      options.timesketchOptions = timesketchPushOptions();
+      rebuilt.push("timesketch");
+    }
+    if (prefix === "DFIR_VELOCIRAPTOR_") {
+      options.velociraptorClient = (options.rebuildVelociraptorClient ?? buildVelociraptorClient)();
+      rebuilt.push("velociraptor");
+    }
+    if (prefix === "DFIR_NOTION_") {
+      options.notionClient = buildNotionClient();
+      options.notionOptions = notionPushOptions();
+      rebuilt.push("notion");
+    }
+    if (prefix === "DFIR_CLICKUP_") {
+      options.clickupClient = buildClickUpClient();
+      options.clickupOptions = clickupOptions();
+      rebuilt.push("clickup");
+    }
+    if (rebuilt.length > 0) logLine(`[settings] ${prefix} reloaded — rebuilt ${rebuilt.join(", ")}`);
+    return rebuilt;
   }
 
   // Shared reachability gate (one per server, so the cache survives across enrich runs: if a
@@ -2279,11 +2349,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // nothing and emits no "[enrich] health … DOWN" noise. When it does run it re-probes only the
   // providers currently known-down — cheap — and, when one recovers, resumes the cases that had to
   // skip it. `.unref()` so it never holds the process open; tests don't set the option, so no timer starts.
-  if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0 && allProviders.some((p) => p.probe)) {
+  // The "any provider can be probed?" test is made INSIDE the tick, not at boot (#178): a provider set
+  // rebuilt from newly-saved settings must be pollable too, and a boot-time gate would have frozen a
+  // server that started with nothing configured.
+  if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0) {
     let polling = false;   // guard against overlap if a probe round runs long
     const timer = setInterval(() => {
       if (polling) return;
       if (enrichPending.size === 0) return;   // no case waiting on a down provider — nothing to resume, so don't probe (or log)
+      if (!allProviders.some((p) => p.probe)) return;   // nothing probe-capable configured (yet)
       const down = allProviders.filter((p) => enrichHealth.peek(p.name)?.ok === false);
       if (down.length === 0) return;   // nothing to recover
       polling = true;

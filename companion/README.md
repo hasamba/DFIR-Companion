@@ -46,10 +46,13 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 >   message (these are stored in a global config file, not `.env`; email & Telegram stay in Settings →
 >   Notifications).
 >
-> Most steps save to `.env` and apply live via `POST /settings/reload`; a left rail shows ✓ configured
-> / ○ not-set per step (from `GET /setup/status`). Everything is optional and the wizard is fully
-> dismissible (capture + imports work with none of it). AI analysis needs a server restart after saving;
-> the integrations apply immediately via their reconnect.
+> Most steps save to `.env` and apply live via `POST /settings/reload`, which both loads the saved
+> group into the environment and REBUILDS the clients it feeds (MISP push, the enrichment and
+> customer-exposure provider sets, IRIS, Timesketch, Velociraptor, Notion, ClickUp) — the response's
+> `rebuilt` list names what took effect. A left rail shows ✓ configured / ○ not-set per step (from
+> `GET /setup/status`). Everything is optional and the wizard is fully dismissible (capture + imports
+> work with none of it). AI analysis needs a server restart after saving; the integrations apply
+> immediately, and their **Reconnect** buttons additionally verify reachability.
 
 | Variable | Meaning |
 | --- | --- |

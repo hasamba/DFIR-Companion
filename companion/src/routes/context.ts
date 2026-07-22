@@ -244,6 +244,14 @@ export interface RouteContext {
   // `options.rebuildTimesketchClient ?? buildTimesketchClient` so buildTimesketchClient's use stays in
   // server.ts (no route module imports a value from ../server.js). Call INSIDE the handler.
   rebuildTimesketchClient(): TimesketchClient | undefined;
+  // Rebuild every live component fed by one DFIR_<PREFIX>_* group from the CURRENT env, returning the
+  // component names rebuilt (#178). Graduated for routes/caseLifecycle.ts's POST /settings/reload:
+  // applying the group into process.env is not enough on its own, because the integration clients and
+  // provider sets are built once at startup — without this, "change config without a restart" changed
+  // nothing. Lives in createApp because it reassigns createApp's own bindings (irisClient, the
+  // enrichment provider set) alongside `options`, and keeps every build* function's use inside
+  // server.ts. Constructor calls only (no network) — call INSIDE the handler.
+  rebuildForPrefix(prefix: string): string[];
   dropWatchEnabled(): boolean;
   enrichmentProviders(): EnrichmentProvider[];
   enrichHealth(): ProviderHealthCache;
