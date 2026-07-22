@@ -26,6 +26,7 @@
     "coverage": "tsx scripts/coverage.ts",
     "reanalyze": "tsx scripts/reanalyze.ts",
     "synthesize": "tsx scripts/synthesize.ts",
+    "deep-pass": "tsx scripts/deep-pass.ts",
     "clean-timeline": "tsx scripts/clean-timeline.ts",
     "dedupe-iocs": "tsx scripts/dedupe-iocs.ts",
     "ocr-index": "tsx scripts/ocr-index.ts",

@@ -11,7 +11,7 @@
 // (AbortControllers, WS broadcast, monotonic ids/clock) lives in jobManager.ts. Nothing is
 // persisted: an in-flight job is meaningless after a restart, so the table is in-memory only.
 
-export type JobKind = "import" | "synthesis" | "enrichment";
+export type JobKind = "import" | "synthesis" | "enrichment" | "deep-pass";
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export interface Job {

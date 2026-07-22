@@ -113,6 +113,11 @@ import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
+import {
+  previewFloors, planBatches, floorsWithinBudget, sanitizeObservations, renderObservationDigest,
+  planCondenseRounds, DEFAULT_MAX_BATCHES, MAX_CONDENSE_ROUNDS, OBSERVATION_CAP_PER_BATCH,
+  type Observation, type FloorOption,
+} from "./deepPass.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -527,7 +532,9 @@ export const SYNTHESIS_PROMPT = [
   "  technique in the timeline (often 8-20 findings for a busy case), each a CONCLUSION (not a raw log",
   "  line) with its own severity and the MITRE techniques it maps to. Also set relatedEventIds to",
   "  the ids of the forensic-timeline events (e.g. e3, e7 — shown in brackets) that this finding is",
-  "  based on, so events link back to the right finding.",
+  "  based on, so events link back to the right finding. Ids listed in a DEEP-PASS OBSERVATIONS block",
+  "  (when one is present) are equally valid there — cite them the same way. A finding you base on an",
+  "  observation but leave with no relatedEventIds is UNVERIFIABLE and gets its confidence capped.",
   "  IMPORTANT — every [Critical] and [High] severity event in the timeline below MUST be covered by a",
   "  finding (its event id appears in some finding's relatedEventIds). A high-severity artifact row —",
   "  e.g. an antivirus/EDR 'Severe'/'Critical' detection — is almost always a finding; do NOT leave one",
@@ -701,6 +708,35 @@ export const SYNTHESIS_PROMPT = [
   ),
 ].join("\n");
 
+// Deep-pass batch prompt (spec 2026-07-21-batched-deep-pass-design.md). Its ONLY job is to surface
+// evidence from one slice of the timeline. It must not conclude: a batch that sees a prompt's worth of
+// one afternoon and is asked for "the attack story" will invent one (halcyon and fairhaven both did),
+// and thirteen such stories cannot be reconciled. deepPass.sanitizeObservations drops any severity or
+// title field anyway — this prompt states the same contract so the model does not spend output tokens
+// discovering it.
+export const OBSERVE_PROMPT = [
+  "You are a DFIR analyst reviewing ONE SLICE of a larger forensic timeline.",
+  "",
+  "You are NOT seeing the whole case. Other slices are being reviewed separately, and a final pass",
+  "will combine everything and draw the conclusions. Your only job is to report what is in THIS slice.",
+  "",
+  'Return STRICT JSON: {"observations": [...]}. Each observation has:',
+  "  summary       — one factual sentence about what happened (no speculation about intent)",
+  "  whyItMatters  — why an investigator should look at it",
+  "  eventIds      — the ids of the events this rests on, copied EXACTLY from the rows below",
+  "  hosts         — the hosts involved (optional)",
+  "  firstSeen     — ISO timestamp of the earliest event (optional)",
+  "  lastSeen      — ISO timestamp of the latest event (optional)",
+  "",
+  "Rules:",
+  "- Do NOT assign a severity, do NOT create a finding, and do NOT write a narrative or conclusion.",
+  "- Do NOT report routine or benign activity just to fill the list. Returning an empty array is a",
+  "  perfectly good answer for an uneventful slice, and is much better than inventing significance.",
+  "- Every observation MUST carry at least one eventId copied from the rows; an observation you cannot",
+  "  tie to a specific row will be discarded.",
+  "- Report at most 15 observations. Prefer the few that matter over many that do not.",
+].join("\n");
+
 // --- User-overridable prompts -------------------------------------------------------
 // Each of the four prompts above is the built-in DEFAULT. A user can override any of them
 // from the environment (`companion/.env`), in priority order:
@@ -710,7 +746,7 @@ export const SYNTHESIS_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "OBSERVE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -788,6 +824,7 @@ export const getTaggerRulePrompt = (): string => resolvePrompt("TAGGERRULE", TAG
 export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
   SYNTH: SYNTHESIS_PROMPT,
   TAGGERRULE: TAGGER_RULE_PROMPT,
+  OBSERVE: OBSERVE_PROMPT,
 };
 
 // Answer a free-form analyst question about ONE case using only its evidence digest.
@@ -1364,6 +1401,18 @@ export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROM
 export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
 export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
+export const getObservePrompt = (): string => resolvePrompt("OBSERVE", OBSERVE_PROMPT);
+
+/** What one deep-pass run did, for the analyst and the route response. */
+export interface DeepPassResult {
+  aborted: boolean;
+  floor: Severity;        // the minimum severity that was read
+  events: number;         // graded events at or above the floor
+  rows: number;           // prompt rows after detection-burst grouping
+  batches: number;        // observation calls made
+  batchesFailed: number;  // batches whose response never parsed — that slice went unread
+  observations: number;   // observations that survived sanitising
+}
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
@@ -4694,7 +4743,156 @@ export class AnalysisPipeline {
   // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
   // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
   // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean } & SynthThinkingInput = {}): Promise<InvestigationState> {
+  /**
+   * What a deep pass would cost at each severity floor, for THIS case. Shown before any spend so the
+   * analyst picks against real numbers — no floor is a sane default across cases (a detection-heavy
+   * import wants High+; a telemetry-heavy one may hold only a handful of High events in total).
+   */
+  async deepPassPreview(caseId: string): Promise<{ cap: number; floors: FloorOption[] }> {
+    const state = await this.opts.stateStore.load(caseId);
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(state.forensicTimeline, scope), markers);
+    const cap = maxPromptEvents();
+    return { cap, floors: previewFloors(scopedEvents, { cap }) };
+  }
+
+  /**
+   * Analyst-triggered batched deep pass. Reads EVERY graded event at or above `minSeverity` — in as
+   * many batches as needed — then folds the resulting observations into ONE final synthesis.
+   *
+   * Ordering mirrors deepPass.previewFloors exactly (drop Info → apply the floor → group → batch), so
+   * the pre-flight estimate cannot promise what this does not deliver.
+   *
+   * Nothing is persisted until the final synthesize() succeeds, so an aborted or failed run leaves the
+   * case exactly as it was.
+   */
+  async deepPass(caseId: string, opts: {
+    minSeverity: Severity;
+    provider?: AIProvider;
+    signal?: AbortSignal;
+    maxBatches?: number;
+    onProgress?: (done: number, total: number, detail: string) => void;
+  }): Promise<DeepPassResult> {
+    const state = await this.opts.stateStore.load(caseId);
+    const provider = opts.provider ?? this.opts.synthesisProvider ?? this.opts.provider;
+    if (!provider) throw new Error("no synthesis provider configured");
+
+    const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
+    const scope = this.opts.scopeStore ? await this.opts.scopeStore.load(caseId) : NO_SCOPE;
+    const scopedEvents = filterFalsePositiveEvents(filterEventsByScope(state.forensicTimeline, scope), markers);
+
+    const cap = maxPromptEvents();
+    const floored = applySeverityFloor([...promptCandidates(scopedEvents)], opts.minSeverity);
+    const { events: rows } = collapseForPrompt(floored, groupEnvOptions());
+    const batches = planBatches(rows, cap);
+
+    // Refuse rather than quietly starting a very expensive job — and name a floor that would fit.
+    const ceiling = opts.maxBatches ?? (Number(process.env.DFIR_DEEP_PASS_MAX_BATCHES) || DEFAULT_MAX_BATCHES);
+    if (batches.length > ceiling) {
+      const fits = floorsWithinBudget(previewFloors(scopedEvents, { cap }), ceiling);
+      throw new Error(
+        `deep pass needs ${batches.length} batches, above the ${ceiling} limit. ` +
+        (fits.length ? `Raise the floor to ${fits[fits.length - 1]} or above.` : "Raise DFIR_DEEP_PASS_MAX_BATCHES."),
+      );
+    }
+
+    const validEventIds = new Set(state.forensicTimeline.map((e) => e.id));
+    const retries = this.opts.retries ?? 3;
+    const backoffMs = this.opts.backoffMs ?? 500;
+    let observations: Observation[] = [];
+    let aborted = false;
+    let batchesFailed = 0;
+
+    // One batch's response is not worth the whole run. A live run died on batch 1 of 5 with "Bad
+    // control character in string literal in JSON" — 20 minutes and four unspent batches lost to one
+    // malformed reply. Observations are ADDITIVE, so a batch that will not parse costs exactly its own
+    // coverage: retry it on the standard schedule, then record it and carry on. The count is reported
+    // so partial coverage is visible rather than silently passed off as a complete read.
+    for (let i = 0; i < batches.length; i++) {
+      if (opts.signal?.aborted) { aborted = true; break; }
+      opts.onProgress?.(i, batches.length, `reading batch ${i + 1} of ${batches.length}`);
+      try {
+        const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
+          caseId, state, provider,
+          { systemPrompt: getObservePrompt(), userPrompt: this.renderBatchRows(batches[i]), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
+          "deep-pass-observe",
+        ), retries, backoffMs);
+        observations.push(...sanitizeObservations(raw, validEventIds));
+      } catch (err) {
+        if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
+        batchesFailed++;
+        this.log.warn(
+          `deep pass: batch ${i + 1}/${batches.length} produced no usable observations — ${(err as Error).message}`,
+          { caseId },
+        );
+      }
+      if (opts.signal?.aborted) { aborted = true; break; }
+    }
+
+    // Condense until the digest fits the room the final call has for it. Same observations-only
+    // contract, so a round can never introduce a verdict either.
+    const digestBudget = Math.max(0, Math.floor(inputTokenBudget() * 0.25));
+    for (let round = 0; !aborted && round < MAX_CONDENSE_ROUNDS; round++) {
+      const plan = planCondenseRounds(observations, digestBudget, OBSERVATION_CAP_PER_BATCH * 2);
+      if (!plan.length) break;
+      opts.onProgress?.(batches.length, batches.length, `condensing ${observations.length} observations (round ${round + 1})`);
+      const condensed: Observation[] = [];
+      for (const group of plan) {
+        if (opts.signal?.aborted) { aborted = true; break; }
+        try {
+          const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
+            caseId, state, provider,
+            { systemPrompt: getObservePrompt(), userPrompt: renderObservationDigest(group), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
+            "deep-pass-observe",
+          ), retries, backoffMs);
+          condensed.push(...sanitizeObservations(raw, validEventIds));
+        } catch (err) {
+          if (opts.signal?.aborted) { aborted = true; break; }
+          // A group that will not condense keeps its ORIGINAL observations rather than vanishing —
+          // dropping evidence to a formatting failure would be the worst possible trade here.
+          condensed.push(...group);
+          batchesFailed++;
+          this.log.warn(`deep pass: a condense group failed, keeping it uncondensed — ${(err as Error).message}`, { caseId });
+        }
+      }
+      if (!aborted) observations = condensed;
+    }
+
+    const summary: DeepPassResult = {
+      aborted,
+      floor: opts.minSeverity,
+      events: floored.length,
+      rows: rows.length,
+      batches: batches.length,
+      batchesFailed,
+      observations: observations.length,
+    };
+    if (aborted) return summary;   // cancelled — nothing persisted, the case is untouched
+
+    opts.onProgress?.(batches.length, batches.length, "synthesizing");
+    await this.synthesize(caseId, {
+      force: true,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      observationsBlock: renderObservationDigest(observations),
+    });
+    return summary;
+  }
+
+  // The rows of one batch, rendered for the observation prompt. Same shape the synthesis timeline
+  // uses so the model sees a familiar format, minus the selection-class "~" prefix (a batch has no
+  // anchors — every row is equal evidence).
+  private renderBatchRows(rows: readonly ForensicEvent[]): string {
+    return rows
+      .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`)
+      .join("\n");
+  }
+
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean; observationsBlock?: string } & SynthThinkingInput = {}): Promise<InvestigationState> {
+    // Deep-pass observations: evidence gathered by the batched pass over events this prompt will NOT
+    // show row-by-row. Empty for a normal run, so nothing changes when the deep pass is not in play.
+    const observationsBlock = opts.observationsBlock ?? "";
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
@@ -4856,6 +5054,9 @@ export class AnalysisPipeline {
       // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
       // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
       pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
+      // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
+      // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
+      ob: observationsBlock,
     })).digest("hex");
     if (!opts.force && !opts.dryRun && this.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -4975,7 +5176,7 @@ export class AnalysisPipeline {
       return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + observationsBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(collapsedEvents, fit, rarityOf); promptEvents = selection.events; }
 
@@ -5036,6 +5237,7 @@ export class AnalysisPipeline {
       satisfiedBlock +
       pinnedBlock +
       reanswerBlock +
+      observationsBlock +
       `FORENSIC TIMELINE (${scopedEvents.length} dated events${truncatedNote}).${contextLegend}\n${timelineText}\n\n` +
       `EXISTING FINDINGS (update by id, do not duplicate):\n${existingFindings}\n\n` +
       `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${openThreads}\n\n` +

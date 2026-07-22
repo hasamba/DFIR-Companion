@@ -49,6 +49,15 @@ export const PROMPT_CAPABILITIES: readonly PromptCapability[] = [
     // them is stale and would silently break NL rule suggestion.
     markers: ["ruleId", "decline", "severity"],
   },
+  {
+    name: "OBSERVE",
+    file: "observe.txt",
+    envVar: "DFIR_AI_OBSERVE_PROMPT_FILE",
+    // observations / eventIds / whyItMatters are the JSON keys sanitizeObservations reads; an ejected
+    // file that drops them yields zero usable observations and the deep pass silently degrades to a
+    // plain re-synthesis that read nothing extra.
+    markers: ["observations", "eventIds", "whyItMatters"],
+  },
 ];
 
 // The required markers absent from `text` (case-sensitive substring match). Empty = no drift.
