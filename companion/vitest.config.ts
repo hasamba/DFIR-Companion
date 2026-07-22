@@ -1,7 +1,21 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
+
+// ONE temp root per run, so the ~147 test files that call mkdtemp() stop stranding directories in
+// the OS temp dir (issue #173 — 388,954 had piled up). Node reads TEMP/TMP/TMPDIR on every
+// os.tmpdir() call, so pointing them here redirects every existing mkdtemp(join(tmpdir(), ...))
+// into this root with no test change, and covers tests not written yet. tests/setup/tempRoot.ts
+// deletes it when the run ends. Kept short ("dfir-vt-") because it prefixes every temp path in the
+// suite and Windows still has a 260-char limit in play.
+const runTempRoot = mkdtempSync(join(tmpdir(), "dfir-vt-"));
+// Handed to the globalSetup teardown, which runs in this same (main) process.
+process.env.DFIR_TEST_TMP_ROOT = runTempRoot;
 
 export default defineConfig({
   test: {
+    globalSetup: ["tests/setup/tempRoot.ts"],
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
@@ -19,6 +33,13 @@ export default defineConfig({
     // Real OCR (TesseractOcrRunner) hits the network for language data and isn't mocked by
     // every test that triggers a capture — off by default so the suite never depends on
     // network access; tests/server/ocrSearchRoute.test.ts opts back in per test.
-    env: { DFIR_OCR_SEARCH: "off" },
+    env: {
+      DFIR_OCR_SEARCH: "off",
+      // Redirect the worker pool's temp dir into the per-run root above. All three names are set
+      // because Node checks TEMP then TMP on Windows and TMPDIR elsewhere.
+      TEMP: runTempRoot,
+      TMP: runTempRoot,
+      TMPDIR: runTempRoot,
+    },
   },
 });
