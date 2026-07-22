@@ -37,7 +37,9 @@ const SHA_BEACON   = "3b4a5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e
 const SHA_MIMIKATZ = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
 const SHA_PAYLOAD  = "f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180";
 const SHA_RANSOM   = "deadbeef1234567890abcdef1234567890abcdef1234567890abcdef12345678";
-const SHA_DROPPER  = "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100";
+// 64 hex chars, like the rest — a 66-char value is not a SHA-256 and any consumer that validates
+// digest length (MISP) rejects the whole indicator (#177).
+const SHA_DROPPER  = "cafe0001002003004005006007008009000a000b000c000d000e000f00100011";
 const MD5_BEACON   = "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d";
 const MD5_MIMIKATZ = "4d3c2b1a0f9e8d7c6b5a4938271605f4";
 

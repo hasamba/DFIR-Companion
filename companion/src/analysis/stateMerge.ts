@@ -8,6 +8,7 @@ import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
+import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
@@ -66,7 +67,16 @@ export function mergeDelta(
   const iocs: IOC[] = state.iocs.map((i) => ({ ...i }));
   const iocIdRemap = new Map<string, string>();
   let nextSeq = nextIocSeq(iocs);
-  for (const incoming of delta.iocs) {
+  for (const rawIncoming of delta.iocs) {
+    // Split any human annotation out of the value BEFORE anything keys on it (#177): the AI
+    // extraction path routinely emits "10.10.20.15 (DC01)", which is not an IP — strict consumers
+    // (MISP) reject it outright, exact-match correlation misses, and the dedup below would treat it
+    // as a different indicator from a bare "10.10.20.15" already in the case. Returns null only for
+    // values that cannot be an indicator at all (empty, multi-line, absurdly long — e.g. a whole
+    // PowerShell help page mis-typed as an "ip"); those are dropped rather than persisted as noise.
+    const repaired = repairIocValue(rawIncoming);
+    if (!repaired) continue;
+    const incoming = { ...rawIncoming, value: repaired.value };
     // Permanently excluded (per-case IOC Exclude List — e.g. ".lan"-style client hostname noise):
     // never create it, so it can never be enriched either (enrichIocs only ever sees state.iocs).
     // The id is deliberately never added to iocIdRemap; a finding's relatedIocs reference falls
@@ -95,9 +105,13 @@ export function mergeDelta(
       if (dup.value.toLowerCase() !== incomingLower && !(dup.aliasValues ?? []).some((a) => a.toLowerCase() === incomingLower)) {
         dup.aliasValues = [...(dup.aliasValues ?? []), incoming.value];
       }
+      // The annotation the value carried is context the existing row may not have yet — keep the
+      // first one seen rather than churning it on every re-import.
+      if (repaired.note && !dup.note) dup.note = repaired.note;
     } else {
       iocs.push({
         id: canonical, type: incoming.type, value: incoming.value, firstSeen: ctx.timestamp,
+        ...(repaired.note ? { note: repaired.note } : {}),
         ...(incoming.extractedFrom?.length ? { extractedFrom: [...incoming.extractedFrom] } : {}),
       });
     }

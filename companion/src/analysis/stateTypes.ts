@@ -38,6 +38,11 @@ export interface IOC {
   // "evil.com" merged into "www.evil.com". Kept so value-keyed lookups (assetGraph's byValue,
   // event sha256/md5/path matching) still resolve the old value onto this canonical IOC.
   aliasValues?: string[];
+  // Human annotation that used to be concatenated into `value` (#177) — the host label in
+  // "10.10.20.15 (DC01)", a descriptive suffix, an observed port. Split out at ingest by
+  // iocValue.ts so `value` stays the bare indicator (strict consumers like MISP reject anything
+  // else) while the context survives: exports carry it in their comment/annotation field.
+  note?: string;
 }
 
 // Deterministic corroboration rollup for a finding (investigation-guidance #6), computed post-synthesis

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, IOC, Severity } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
+import { repairIocValue } from "./iocValue.js";
 
 const SEVERITIES = ["Critical", "High", "Medium", "Low", "Info"] as const;
 const IOC_TYPES = ["ip", "domain", "hash", "file", "process", "url", "other"] as const;
@@ -29,9 +30,22 @@ export const manualEventSchema = z.object({
   path: z.string().trim().optional(),
 });
 
+// `note` carries context that must NOT be concatenated into `value` (#177) — a host label, an
+// observed port, why the analyst added it. If the analyst types the annotated form anyway
+// ("10.10.20.15 (DC01)"), repairIocValue splits it; only a value that cannot be an indicator at
+// all (multi-line paste, absurdly long) is rejected, as a 400 rather than silently stored.
 export const manualIocSchema = z.object({
   type: z.enum(IOC_TYPES),
   value: z.string().trim().min(1, "value is required"),
+  note: z.string().trim().optional(),
+}).superRefine((input, ctx) => {
+  if (!repairIocValue(input)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["value"],
+      message: "value is not a usable indicator (it is multi-line or far longer than any real indicator of this type)",
+    });
+  }
 });
 
 export interface BuildDeps {
@@ -67,10 +81,15 @@ export function buildManualIoc(input: unknown, deps: BuildDeps = {}): IOC {
   const p = manualIocSchema.parse(input);
   const now = deps.now ?? (() => new Date().toISOString());
   const id = deps.id ?? randomUUID;
+  // Non-null: the schema's superRefine already rejected anything repairIocValue can't use.
+  const repaired = repairIocValue(p)!;
+  // An explicit note from the analyst wins over one derived from the value they typed.
+  const note = p.note || repaired.note;
   return {
     id: `manual-${id()}`,
     type: p.type,
-    value: p.value,
+    value: repaired.value,
     firstSeen: now(),
+    ...(note ? { note } : {}),
   };
 }

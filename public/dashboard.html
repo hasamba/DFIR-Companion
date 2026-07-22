@@ -996,6 +996,9 @@
     .ioc-main-cell { min-width: 0; line-height: 1.5; }
     .ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     .ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+    /* Context that must NOT live inside the indicator itself (#177) — the host a private IP belongs
+       to, an observed port, why the analyst added it. Shown beside the value, never part of it. */
+    .ioc-note-chip { font-size: 10.5px; color: var(--c-9aa4b2); font-style: italic; }
     .ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
     .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--c-2a2f3a); border-radius: 5px; }
     .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
@@ -4194,6 +4197,7 @@
         <form class="manual-form" onsubmit="return false">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
           <input id="miValue" placeholder="indicator value" style="flex:1; min-width:240px" />
+          <input id="miNote" placeholder="note (optional) — host, port, why" title="Context to record alongside the indicator. Keep it OUT of the value: a value like &quot;10.10.20.15 (DC01)&quot; is not a valid IP and strict consumers (MISP) reject it." style="flex:1; min-width:180px" />
           <button id="addIocBtn">Add IOC</button>
           <span id="addIocMsg" class="manual-msg"></span>
         </form>
@@ -14171,11 +14175,14 @@
           : fpBtn("ioc", i.value);
         const enrichHtml = enrichBadges(i);
         const tagsHtml = tagPills("ioc", i.id);
+        // Annotation split out of the value at ingest (#177) — e.g. the host label that used to be
+        // concatenated as "10.10.20.15 (DC01)". Kept visible, just never inside the indicator.
+        const noteHtml = i.note ? ` <span class="ioc-note-chip" title="Context recorded with this indicator">${esc(i.note)}</span>` : "";
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
           + `<span class="ioc-main-cell">`
-          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${noteHtml}${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction} `
           +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" data-ioctype="${escAttr(i.type)}" title="Merge into another IOC (duplicate indicator)" type="button" style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--c-6b7585);font-size:10px">⇄</button>`
@@ -17264,9 +17271,11 @@
       if (!caseId) return;
       const value = document.getElementById("miValue").value.trim();
       if (!value) { document.getElementById("addIocMsg").textContent = "value required"; return; }
-      const body = { type: document.getElementById("miType").value, value };
+      const note = document.getElementById("miNote").value.trim();
+      const body = { type: document.getElementById("miType").value, value, ...(note ? { note } : {}) };
       postManual(`/cases/${encodeURIComponent(caseId)}/iocs`, body, "addIocMsg", () => {
         document.getElementById("miValue").value = "";
+        document.getElementById("miNote").value = "";
       });
     };
     document.getElementById("runCustomerExposure").onclick = runCustomerExposureCheck;

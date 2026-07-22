@@ -136,6 +136,75 @@ describe("pushCaseToMisp", () => {
     expect(res.warnings.some((w) => w.includes("mystery-value"))).toBe(true);
   });
 
+  // #177 — MISP validates every attribute value and rejects a malformed one with a 403 that reads
+  // like a permissions failure. The push must send the bare indicator, keep the annotation as the
+  // attribute comment, and refuse locally (with the real reason) anything still unusable.
+  describe("IOC value hygiene (#177)", () => {
+    it("sends the bare indicator and carries the host label in the attribute comment", async () => {
+      const m = new MockMispClient();
+      const state = { ...emptyState("c-ip"), iocs: [ioc({ value: "10.10.20.15 (DC01)", type: "ip" })] };
+      const res = await pushCaseToMisp(m, { caseId: "c-ip", state });
+
+      expect(res.attributes).toMatchObject({ added: 1, skipped: 0 });
+      expect(m.addedAttributes[0].body).toMatchObject({
+        type: "ip-dst", value: "10.10.20.15", comment: "DC01",
+      });
+    });
+
+    it("prefers an explicit IOC note over one derived from the value", async () => {
+      const m = new MockMispClient();
+      const state = {
+        ...emptyState("c-note"),
+        iocs: [ioc({ value: "10.10.20.30", type: "ip", note: "FS01 — file server" })],
+      };
+      await pushCaseToMisp(m, { caseId: "c-note", state });
+      expect(m.addedAttributes[0].body.comment).toBe("FS01 — file server");
+    });
+
+    it("maps hash type from the repaired value, not the annotated one", async () => {
+      const m = new MockMispClient();
+      const sha = "a".repeat(64);
+      const state = { ...emptyState("c-h"), iocs: [ioc({ value: `${sha} (dropper)`, type: "hash" })] };
+      await pushCaseToMisp(m, { caseId: "c-h", state });
+      expect(m.addedAttributes[0].body).toMatchObject({ type: "sha256", value: sha, comment: "dropper" });
+    });
+
+    it("dedupes the annotated form against the bare value already on the event", async () => {
+      const m = new MockMispClient();
+      m.existingAttrs = [{ type: "ip-dst", value: "10.10.20.15" }];
+      const state = { ...emptyState("c-dup"), iocs: [ioc({ value: "10.10.20.15 (DC01)", type: "ip" })] };
+      const res = await pushCaseToMisp(m, { caseId: "c-dup", state });
+      expect(res.attributes).toMatchObject({ added: 0, existing: 1 });
+      expect(m.addedAttributes).toHaveLength(0);
+    });
+
+    it("skips a value that is still invalid for its type, naming the reason locally", async () => {
+      const m = new MockMispClient();
+      const state = {
+        ...emptyState("c-bad"),
+        // 66 hex chars — not a recognised digest length; MISP would reject it.
+        iocs: [ioc({ value: "cafe0001002003004005006007008009000a000b000c000d000e000f0010001100", type: "hash" })],
+      };
+      const res = await pushCaseToMisp(m, { caseId: "c-bad", state });
+      expect(res.attributes).toMatchObject({ added: 0, skipped: 1 });
+      expect(m.addedAttributes).toHaveLength(0);
+      expect(res.warnings.some((w) => w.includes("not a valid hash value"))).toBe(true);
+    });
+
+    it("truncates a mis-typed text blob in the warning instead of quoting it whole", async () => {
+      const m = new MockMispClient();
+      const blob = `.PARAMETER Identity\n${"A display name for the GPO. ".repeat(40)}`;
+      const state = { ...emptyState("c-blob"), iocs: [ioc({ value: blob, type: "ip" })] };
+      const res = await pushCaseToMisp(m, { caseId: "c-blob", state });
+
+      expect(res.attributes).toMatchObject({ added: 0, skipped: 1 });
+      const warning = res.warnings.find((w) => w.includes("not a valid ip value"));
+      expect(warning).toBeDefined();
+      expect(warning!.length).toBeLessThan(200);
+      expect(warning).not.toContain("\n");
+    });
+  });
+
   it("derives threat level from worst finding severity", async () => {
     const m = new MockMispClient();
     const highState = { ...emptyState("c3"), iocs: [], findings: [finding({ id: "f1", title: "t", severity: "High" })] };
