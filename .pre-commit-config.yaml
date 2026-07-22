@@ -7,3 +7,14 @@ repos:
           - '--config'
           - '.betterleaks-config.toml'
           - '--verbose'
+
+  # TruffleHog verifies detected credentials against their actual API (e.g. an AWS key is
+  # tested with a real GetCallerIdentity call), so it only fails the commit on live, active
+  # secrets rather than secret-shaped strings — a different signal than betterleaks' regex/PII
+  # rules above. `language: golang` means pre-commit builds the trufflehog binary via `go
+  # install` on first run (needs Go on PATH), then caches it.
+  - repo: https://github.com/trufflesecurity/trufflehog
+    rev: v3.95.9
+    hooks:
+      - id: trufflehog
+        name: TruffleHog
