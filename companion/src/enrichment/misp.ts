@@ -1,4 +1,5 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import { MISP_PING_PATH, mispPingStatusMessage, mispTransportMessage } from "../integrations/misp/mispConnectivity.js";
 
 export interface MispOptions {
   baseUrl: string;   // your MISP instance, e.g. https://misp.example.org
@@ -43,14 +44,24 @@ export class MispProvider implements EnrichmentProvider {
   // Cheap reachability + auth check: GET /servers/getVersion (a tiny authenticated endpoint),
   // so we never blast a down instance with one restSearch per IOC. A dead server (connection
   // refused / TLS error) rejects the fetch; a bad key → 401/403. Throws on any of these.
+  //
+  // This message becomes the `detail` on the /system health card and the reason the provider is
+  // skipped, so it has to be diagnosable on its own: name the URL, and the setting at fault when
+  // the evidence supports one (#179 — shared with the push-side ping, same endpoint).
   async probe(): Promise<void> {
-    const res = await this.fetchFn(`${this.base}/servers/getVersion`, {
-      method: "GET",
-      headers: { Authorization: this.opts.apiKey, Accept: "application/json" },
-      signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
-    });
+    const url = `${this.base}${MISP_PING_PATH}`;
+    let res: Response;
+    try {
+      res = await this.fetchFn(url, {
+        method: "GET",
+        headers: { Authorization: this.opts.apiKey, Accept: "application/json" },
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
+      });
+    } catch (err) {
+      throw new Error(mispTransportMessage(err, url));
+    }
     if (res.status === 401 || res.status === 403) throw new Error("MISP auth failed (check DFIR_MISP_KEY)");
-    if (!res.ok) throw new Error(`MISP HTTP ${res.status}`);
+    if (!res.ok) throw new Error(mispPingStatusMessage(res.status, url));
   }
 
   async lookup(_kind: IocKind, value: string): Promise<EnrichmentResult | null> {

@@ -110,3 +110,124 @@ describe("MispPushClient HTTP handling", () => {
       .rejects.toThrow(/needs write access/);
   });
 });
+
+// A fetch that fails at the transport layer the way undici really does: the message is ALWAYS
+// the useless "fetch failed" and the actionable reason lives on `cause`.
+function failingFetch(cause: unknown): typeof fetch {
+  return (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause });
+  }) as unknown as typeof fetch;
+}
+
+const netError = (code: string, message = code) => Object.assign(new Error(message), { code });
+
+// The ping is the FIRST call a push makes, so a misconfigured DFIR_MISP_URL is the most likely
+// error an operator ever meets — and it used to report only "MISP HTTP 400 on /servers/getVersion",
+// naming neither the URL nor the setting at fault.
+describe("MispPushClient ping diagnostics (issue #179)", () => {
+  const PING_URL = "https://misp.test/servers/getVersion";
+
+  it("names the URL and the likely wrong scheme when the ping answers 400", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 400, json: {} }));
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toContain(PING_URL);
+    expect(msg).toMatch(/scheme/i);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("treats a 404 on the ping as a wrong base URL as well", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 404, json: {} }));
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toContain(PING_URL);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("does NOT blame the base URL for a 500 — the instance answered, so the URL reached MISP", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 500, json: {} }));
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toContain(PING_URL);          // still says WHERE it failed
+    expect(msg).not.toMatch(/DFIR_MISP_URL/); // but does not send the operator editing the URL
+  });
+
+  it("still blames the API key, not the URL, when the ping answers 401", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 401, json: {} }));
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/DFIR_MISP_KEY/);
+    expect(msg).not.toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("reports a refused connection as host/port, not as an opaque 'fetch failed'", async () => {
+    const msg = await client(failingFetch(netError("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:4430")))
+      .ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/refused/i);
+    expect(msg).toContain(PING_URL);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("points at DFIR_MISP_CA / DFIR_MISP_INSECURE on a certificate failure", async () => {
+    const msg = await client(failingFetch(netError("SELF_SIGNED_CERT_IN_CHAIN")))
+      .ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/certificate/i);
+    expect(msg).toMatch(/DFIR_MISP_CA/);
+    expect(msg).toMatch(/DFIR_MISP_INSECURE/);
+  });
+
+  it("calls out the opposite scheme mistake — https:// against a plain-HTTP port", async () => {
+    const msg = await client(failingFetch(netError("EPROTO", "wrong version number")))
+      .ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+    expect(msg).toMatch(/http/i);
+  });
+
+  it("reports an unresolvable hostname as DNS, not as a down instance", async () => {
+    const msg = await client(failingFetch(netError("ENOTFOUND", "getaddrinfo ENOTFOUND misp.internal")))
+      .ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/resolve/i);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("digs the reason out of a nested cause chain", async () => {
+    const msg = await client(failingFetch({ cause: netError("ECONNREFUSED") }))
+      .ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/refused/i);
+  });
+
+  it("reports a timeout as a timeout (AbortSignal.timeout rejects with no error code)", async () => {
+    // AbortSignal.timeout rejects with a DOMException whose name is TimeoutError and which has
+    // NO `code` — so a code-only lookup would fall through to "fetch failed".
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const fetchFn = (async () => { throw timeout; }) as unknown as typeof fetch;
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toMatch(/timed out|timeout/i);
+    expect(msg).toContain(PING_URL);
+  });
+
+  it("leaves non-ping failures alone — a 404 writing an attribute is not a base-URL problem", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 404, json: {} }));
+    const msg = await client(fetchFn)
+      .addAttribute("42", { type: "ip-dst", value: "1.2.3.4", category: "Network activity", to_ids: false })
+      .catch((e: Error) => e.message);
+    expect(msg).toMatch(/MISP HTTP 404/);
+    expect(msg).not.toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("surfaces the underlying cause code on ANY path, so 'fetch failed' is never the whole story", async () => {
+    const msg = await client(failingFetch(netError("ECONNRESET")))
+      .addAttribute("42", { type: "ip-dst", value: "1.2.3.4", category: "Network activity", to_ids: false })
+      .catch((e: Error) => e.message);
+    expect(msg).toMatch(/ECONNRESET/);
+  });
+
+  it("diagnoses a 200 that isn't MISP JSON — the URL points at some other web app", async () => {
+    // A reverse proxy or an unrelated app on that port answers 200 with an HTML page; parsing it
+    // used to escape as a raw "Unexpected token '<'" with no hint that the URL was the problem.
+    const fetchFn = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`); },
+    })) as unknown as typeof fetch;
+    const msg = await client(fetchFn).ping().catch((e: Error) => e.message);
+    expect(msg).toContain(PING_URL);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+});

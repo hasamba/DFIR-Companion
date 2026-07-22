@@ -285,6 +285,26 @@ describe("MispProvider", () => {
     const dead = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => { throw new Error("fetch failed"); }) });
     await expect(dead.probe()).rejects.toThrow(/fetch failed/i);
   });
+
+  // The probe message becomes the `detail` on the /system health card, so a wrong DFIR_MISP_URL
+  // has to be diagnosable from it — same defect the push-side ping had (issue #179).
+  it("probe() names the URL and DFIR_MISP_URL when the instance answers 400", async () => {
+    const misp = new MispProvider({ baseUrl: "http://misp.example.org", apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 400 })) });
+    const msg = await misp.probe().catch((e: Error) => e.message);
+    expect(msg).toContain("http://misp.example.org/servers/getVersion");
+    expect(msg).toMatch(/scheme/i);
+    expect(msg).toMatch(/DFIR_MISP_URL/);
+  });
+
+  it("probe() reports a refused connection with the URL instead of a bare 'fetch failed'", async () => {
+    const refused = vi.fn(async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
+    });
+    const misp = new MispProvider({ baseUrl: "https://misp.example.org", apiKey: "k", fetchFn: refused });
+    const msg = await misp.probe().catch((e: Error) => e.message);
+    expect(msg).toMatch(/refused/i);
+    expect(msg).toContain("https://misp.example.org/servers/getVersion");
+  });
 });
 
 describe("RockyRaccoonProvider (process intel)", () => {
