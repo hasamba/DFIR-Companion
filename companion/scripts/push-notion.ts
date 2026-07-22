@@ -61,7 +61,11 @@ async function main(): Promise<void> {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   // Build a ReportWriter so the exported content matches the report (same scope/legitimate filters).
-  const reportWriter = new ReportWriter(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), new ReportMetaStore(store));
+  const reportWriter = new ReportWriter(store, stateStore, {
+    scope: new ScopeStore(store),
+    falsePositives: new FalsePositiveStore(store),
+    reportMeta: new ReportMetaStore(store),
+  });
   const state = await reportWriter.filteredState(caseId);
   const meta = await new ReportMetaStore(store).load(caseId);
   const exportStore = new NotionExportStore(store);

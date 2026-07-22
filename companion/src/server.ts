@@ -3081,7 +3081,22 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const clickupExportStore = new ClickUpExportStore(store);
   const irisExportStore = new IrisExportStore(store);
   const lateralPathDismissStore = new LateralPathDismissStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore, new CustomerExposureStore(store), notebookStore, assetOverridesStore, playbookStore, reportTemplateStore, reportTemplateControlStore, kevStore, hypothesisStore, synthMetaStore, lateralPathDismissStore, reportVersionStore);
+  const reportWriter = new ReportWriterImpl(store, stateStore, {
+    scope: new ScopeStore(store),
+    falsePositives: new FalsePositiveStore(store),
+    reportMeta: reportMetaStore,
+    customerExposure: new CustomerExposureStore(store),
+    notebook: notebookStore,
+    assetOverrides: assetOverridesStore,
+    playbook: playbookStore,
+    reportTemplates: reportTemplateStore,
+    reportTemplateControl: reportTemplateControlStore,
+    kevStore,
+    hypothesisStore,
+    synthMeta: synthMetaStore,
+    lateralPathDismissals: lateralPathDismissStore,
+    reportVersions: reportVersionStore,
+  });
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);

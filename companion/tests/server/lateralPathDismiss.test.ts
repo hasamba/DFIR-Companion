@@ -35,7 +35,7 @@ async function seedCaseWithOneChain(caseId: string): Promise<void> {
 
 function appWith(dismissStore: LateralPathDismissStore) {
   return createApp(store, {
-    reportWriter: new ReportWriter(store, stateStore, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, dismissStore),
+    reportWriter: new ReportWriter(store, stateStore, { lateralPathDismissals: dismissStore }),
     lateralPathDismissStore: dismissStore,
   });
 }

@@ -78,25 +78,63 @@ export interface ReportPaths {
   stateJson: string;
 }
 
+// The optional stores ReportWriter draws on for report sections. Named fields instead of a long
+// positional tail (#176): two branches each appending a new store to the constructor's end used to
+// collide on the same slot, silently leaving one store `undefined` with no type error — see #176 for
+// the incident that motivated this.
+export interface ReportWriterOptions {
+  scope?: ScopeStore;
+  falsePositives?: FalsePositiveStore;
+  reportMeta?: ReportMetaStore;
+  customerExposure?: CustomerExposureStore;
+  notebook?: NotebookStore;
+  assetOverrides?: AssetOverridesStore;
+  playbook?: PlaybookStore;
+  reportTemplates?: ReportTemplateStore;
+  reportTemplateControl?: ReportTemplateControlStore;
+  kevStore?: KevStore;
+  hypothesisStore?: HypothesisStore;
+  synthMeta?: SynthMetaStore;   // #11 deferred: second-look collection leads in the report
+  lateralPathDismissals?: LateralPathDismissStore;   // analyst-rejected lateral chains
+  reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
+}
+
 export class ReportWriter {
+  private readonly scope?: ScopeStore;
+  private readonly falsePositives?: FalsePositiveStore;
+  private readonly reportMeta?: ReportMetaStore;
+  private readonly customerExposure?: CustomerExposureStore;
+  private readonly notebook?: NotebookStore;
+  private readonly assetOverrides?: AssetOverridesStore;
+  private readonly playbook?: PlaybookStore;
+  private readonly reportTemplates?: ReportTemplateStore;
+  private readonly reportTemplateControl?: ReportTemplateControlStore;
+  private readonly kevStore?: KevStore;
+  private readonly hypothesisStore?: HypothesisStore;
+  private readonly synthMeta?: SynthMetaStore;
+  private readonly lateralPathDismissals?: LateralPathDismissStore;
+  private readonly reportVersions?: ReportVersionStore;
+
   constructor(
     private readonly cases: CaseStore,
     private readonly state: StateStore,
-    private readonly scope?: ScopeStore,
-    private readonly falsePositives?: FalsePositiveStore,
-    private readonly reportMeta?: ReportMetaStore,
-    private readonly customerExposure?: CustomerExposureStore,
-    private readonly notebook?: NotebookStore,
-    private readonly assetOverrides?: AssetOverridesStore,
-    private readonly playbook?: PlaybookStore,
-    private readonly reportTemplates?: ReportTemplateStore,
-    private readonly reportTemplateControl?: ReportTemplateControlStore,
-    private readonly kevStore?: KevStore,
-    private readonly hypothesisStore?: HypothesisStore,
-    private readonly synthMeta?: SynthMetaStore,   // #11 deferred: second-look collection leads in the report
-    private readonly lateralPathDismissals?: LateralPathDismissStore,   // analyst-rejected lateral chains
-    private readonly reportVersions?: ReportVersionStore,   // #77 report versioning (diff & rollback)
-  ) {}
+    opts: ReportWriterOptions = {},
+  ) {
+    this.scope = opts.scope;
+    this.falsePositives = opts.falsePositives;
+    this.reportMeta = opts.reportMeta;
+    this.customerExposure = opts.customerExposure;
+    this.notebook = opts.notebook;
+    this.assetOverrides = opts.assetOverrides;
+    this.playbook = opts.playbook;
+    this.reportTemplates = opts.reportTemplates;
+    this.reportTemplateControl = opts.reportTemplateControl;
+    this.kevStore = opts.kevStore;
+    this.hypothesisStore = opts.hypothesisStore;
+    this.synthMeta = opts.synthMeta;
+    this.lateralPathDismissals = opts.lateralPathDismissals;
+    this.reportVersions = opts.reportVersions;
+  }
 
   // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
   // that matched NOTHING — each an actionable "collect this next" gap. Lives in synth-meta, not state, so
