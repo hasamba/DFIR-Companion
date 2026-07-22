@@ -702,6 +702,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // matching. See docs/superpowers/specs/2026-07-09-case-password-protection-design.md.
   app.use("/cases/:id", createCaseLockGate(store, instanceSecret));
 
+  // Bail out of read-only case routes whose client already gave up (#174). The dashboard's connect
+  // flow fans out ~40 GET requests per case; switching (or dismissing a slow-loading) case aborts the
+  // abandoned case's fetches client-side, but Node is single-threaded — a request already queued
+  // behind another one's synchronous JSON/graph work still gets dequeued and run to completion unless
+  // something checks first. This is that check: skip the (often expensive) handler entirely once the
+  // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
+  // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
+  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === "GET" && req.destroyed) return;
+    next();
+  });
+
   // Whether this request already carries a valid unlock for `id` (used by /lock-status), and
   // whether that unlock — if present — was signed with "remember on this computer". The
   // dashboard needs the latter to know whether it's safe to explicitly forget the unlock when
