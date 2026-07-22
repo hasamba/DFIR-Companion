@@ -1,0 +1,28 @@
+name: TruffleHog Secret Scan
+
+# Verified-credential secret scan, alongside the pattern/PII scan in betterleaks-scan.yml.
+# TruffleHog tests each detected credential against its real API (e.g. an AWS key gets a live
+# GetCallerIdentity call), so it only fails on active, exploitable secrets rather than
+# secret-shaped strings — a different signal than betterleaks' regex rules.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  trufflehog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@v3.95.9
+        with:
+          version: 3.95.9
+          extra_args: --results=verified,unknown
