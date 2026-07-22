@@ -228,7 +228,10 @@ function shortValue(value: string): string {
 export type AiStatus = "analyzing" | "idle" | "error";
 // What the AI is actually doing, so the dashboard can say "processing screenshots"
 // vs "synthesizing" vs idle rather than a generic "analyzing".
-export type AiPhase = "extracting" | "synthesizing";
+// "deep-pass" is its own phase rather than another "synthesizing": its detail already reads as a
+// whole sentence ("deep pass (Medium+) — reading batch 2 of 5"), and the client must be able to tell
+// the two apart to render it without the "synthesizing findings…" prefix.
+export type AiPhase = "extracting" | "synthesizing" | "deep-pass";
 
 export interface AiStatusEvent {
   status: AiStatus;

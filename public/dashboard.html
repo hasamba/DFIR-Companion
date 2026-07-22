@@ -11010,7 +11010,12 @@
         // "deterministic import — not AI" whenever the analyst has paused live analysis (found live: the
         // second-opinion badge showed that exact false label with the toggle off — see aiSynthesis.ts).
         const isIngest = !!m || (evt.detail && /^importing\b/i.test(evt.detail)) || !aiEnabled;
-        if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
+        // Deep pass (#204) carries its own phase because its detail already reads as a full sentence
+        // ("deep pass (Medium+) — reading batch 2 of 5") and it is the longest AI run in the product:
+        // it must never fall through to the isIngest branch, which would label it a deterministic
+        // import whenever live analysis is paused — a deep pass runs regardless of that toggle.
+        if (evt.phase === "deep-pass") setAi("analyzing", evt.detail || "deep pass running…");
+        else if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
         else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
           const el = document.getElementById("aiStatus");
           el.className = "ai-analyzing";

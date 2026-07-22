@@ -64,13 +64,16 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
+  // Every AI-status broadcast the route makes, in order — the dashboard's "AI:" pill reads these.
+  const aiStatus: { status: string; phase?: string; detail?: string }[] = [];
   const app = createApp(store, {
     pipeline, stateStore, aiConfigured: opts.aiConfigured !== false,
     activityLogStore: new ActivityLogStore(store),
+    onAiStatus: (_caseId, evt) => { aiStatus.push(evt); },
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
-  return { app, stateStore };
+  return { app, stateStore, aiStatus };
 }
 
 describe("deep-pass routes", () => {
@@ -120,6 +123,47 @@ describe("deep-pass routes", () => {
     expect(res.body.floor).toBe("High");
     expect(res.body.batches).toBeGreaterThan(0);
     expect(res.body.aborted).toBe(false);
+  });
+
+  // The "AI:" pill is the only always-visible sign that the model is working. A deep pass is the
+  // LONGEST AI run in the product — many minutes, sometimes tens of them — and it used to leave the
+  // pill reading "ready (waiting for activity)" the whole time, which says the opposite of the truth.
+  it("drives the AI-status pill while it runs, then puts it back to idle", async () => {
+    const { app, aiStatus } = await makeApp();
+
+    await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+
+    expect(aiStatus.length).toBeGreaterThan(1);
+    const first = aiStatus[0];
+    expect(first.status).toBe("analyzing");
+    expect(String(first.detail)).toMatch(/deep pass \(High\+\)/);
+    // phase must mark this as genuine AI work: the client relabels un-phased "analyzing" events as a
+    // deterministic import whenever the per-case live-analysis toggle is off (see applyAiStatus).
+    expect(first.phase).toBe("deep-pass");
+    // The run ends idle — a pill stuck on "analyzing" is as misleading as one stuck on "ready".
+    expect(aiStatus[aiStatus.length - 1].status).toBe("idle");
+  });
+
+  it("names the batch it is on, so a long run visibly progresses", async () => {
+    const { app, aiStatus } = await makeApp();
+
+    await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "Low" });
+
+    const batchLines = aiStatus.filter(e => /batch \d+ of \d+/i.test(String(e.detail)));
+    expect(batchLines.length).toBeGreaterThan(0);
+    expect(batchLines.every(e => e.status === "analyzing" && e.phase === "deep-pass")).toBe(true);
+  });
+
+  it("leaves the pill idle — not stuck analyzing — when a run is refused", async () => {
+    const { app, aiStatus } = await makeApp();
+    process.env.DFIR_DEEP_PASS_MAX_BATCHES = "1";
+
+    const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "Low" });
+
+    expect(res.status).toBe(400);
+    // Refusals are user-correctable, so the pill must not be left claiming an AI failure either.
+    const last = aiStatus[aiStatus.length - 1];
+    expect(last.status).toBe("idle");
   });
 
   it("refusing an over-ceiling run is a 400 that names the problem, not a 500", async () => {
