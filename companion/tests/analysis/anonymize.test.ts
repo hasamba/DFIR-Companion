@@ -171,7 +171,7 @@ describe("anonymizer — secret redaction (one-way)", () => {
   });
   it("redacts a URL userinfo password", () => {
     const a = createAnonymizer(policy({}, true), NONE);
-    const out = a.apply("conn https://svc:s3cr3tPW@10.0.0.5/api");
+    const out = a.apply("conn https://svc:s3cr3tPW@10.0.0.5/api"); // trufflehog:ignore
     expect(out).not.toContain("s3cr3tPW");
     expect(out).toContain(SECRET_PLACEHOLDER);
   });
