@@ -255,7 +255,7 @@ describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
     for (const cmd of [
       "cat /opt/veridia-app/.env",
       "less /srv/app/.env",
-      "cat /home/marcus.chen/.ssh/id_rsa",
+      "cat /home/devuser/.ssh/id_rsa",
       "cat ~/.my.cnf",
       "cat ~/.aws/credentials",
       "cat /home/deploy/.pgpass",
