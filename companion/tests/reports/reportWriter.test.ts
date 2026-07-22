@@ -57,7 +57,7 @@ describe("ReportWriter", () => {
       { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const paths = await writer.writeAll("c1");
 
     const forensic = await readFile(paths.forensicTimelineCsv, "utf8");
@@ -83,7 +83,7 @@ describe("ReportWriter", () => {
       { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "other", note: "client's maintenance", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const csv = await writer.incidentTimelineCsv("c1");
 
     expect(csv).toContain("timestamp,endTimestamp,count,severity,description");
@@ -110,7 +110,7 @@ describe("ReportWriter", () => {
         markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const buf = await writer.docx("c1");
 
     expect(Buffer.isBuffer(buf)).toBe(true);
@@ -142,7 +142,7 @@ describe("ReportWriter", () => {
         markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const s = await writer.mobileSummary("c1");
 
     expect(s.caseId).toBe("c1");
@@ -173,7 +173,7 @@ describe("ReportWriter", () => {
         markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance window" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const layer = await writer.attackLayer("c1");
 
     const ids = layer.techniques.map((t) => t.techniqueID);
@@ -204,7 +204,7 @@ describe("ReportWriter", () => {
         note: "known-good resolver", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous" },
     ]);
 
-    const writer = new ReportWriter(caseStore, stateStore, undefined, falsePositives);
+    const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
     const geo = await writer.geoMap("c1");
 
     expect(geo.markers).toHaveLength(1);

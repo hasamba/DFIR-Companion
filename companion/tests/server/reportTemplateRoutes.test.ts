@@ -20,10 +20,13 @@ async function harness() {
   const reportMetaStore = new ReportMetaStore(store);
   const reportTemplateStore = new ReportTemplateStore(join(root, "report-templates"));
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
-  const reportWriter = new ReportWriter(
-    store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore,
-    undefined, undefined, undefined, undefined, reportTemplateStore, reportTemplateControlStore,
-  );
+  const reportWriter = new ReportWriter(store, stateStore, {
+    scope: new ScopeStore(store),
+    falsePositives: new FalsePositiveStore(store),
+    reportMeta: reportMetaStore,
+    reportTemplates: reportTemplateStore,
+    reportTemplateControl: reportTemplateControlStore,
+  });
   const app = createApp(store, { stateStore, reportWriter, reportMetaStore, reportTemplateStore, reportTemplateControlStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store };

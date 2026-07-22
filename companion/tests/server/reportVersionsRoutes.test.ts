@@ -18,16 +18,12 @@ async function harness() {
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
   const reportVersionStore = new ReportVersionStore(store);
-  // NOTE the argument count: reportVersions is the LAST constructor parameter, and master's
-  // lateralPathDismissals sits immediately before it. These are positional, so an off-by-one here
-  // silently lands the store in the wrong slot and leaves `reportVersions` undefined — the version
-  // list then stays empty and every test in this file fails with "expected [] to have a length of 1".
-  const reportWriter = new ReportWriter(
-    store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), reportMetaStore,
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-    undefined,            // lateralPathDismissals — not exercised here
-    reportVersionStore,
-  );
+  const reportWriter = new ReportWriter(store, stateStore, {
+    scope: new ScopeStore(store),
+    falsePositives: new FalsePositiveStore(store),
+    reportMeta: reportMetaStore,
+    reportVersions: reportVersionStore,
+  });
   const app = createApp(store, { stateStore, reportWriter, reportMetaStore, reportVersionStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store };

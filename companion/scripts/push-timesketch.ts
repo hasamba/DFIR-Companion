@@ -37,7 +37,11 @@ async function main(): Promise<void> {
   const store = new CaseStore(casesRoot);
   const stateStore = new StateStore(store);
   // Build a ReportWriter so the pushed timeline matches the report (same scope/legitimate filters).
-  const reportWriter = new ReportWriter(store, stateStore, new ScopeStore(store), new FalsePositiveStore(store), new ReportMetaStore(store));
+  const reportWriter = new ReportWriter(store, stateStore, {
+    scope: new ScopeStore(store),
+    falsePositives: new FalsePositiveStore(store),
+    reportMeta: new ReportMetaStore(store),
+  });
   const state = await reportWriter.filteredState(caseId);
 
   console.log(`Pushing "${caseId}" to ${process.env.DFIR_TIMESKETCH_URL} …`);

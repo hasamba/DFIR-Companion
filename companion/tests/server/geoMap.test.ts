@@ -139,7 +139,7 @@ describe("GET /cases/:id/geo-map (#133)", () => {
     ]);
     const app2 = createApp(cases2, {
       stateStore: stateStore2,
-      reportWriter: new ReportWriter(cases2, stateStore2, undefined, legitStore2),
+      reportWriter: new ReportWriter(cases2, stateStore2, { falsePositives: legitStore2 }),
     });
 
     const res = await request(app2).get("/cases/c1/geo-map");

@@ -1654,7 +1654,7 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const reportMetaStore = new ReportMetaStore(store);
-    const reportWriter = new ReportWriter(store, stateStore, undefined, undefined, reportMetaStore);
+    const reportWriter = new ReportWriter(store, stateStore, { reportMeta: reportMetaStore });
     const app = createApp(store, { stateStore, reportWriter });
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
@@ -1693,7 +1693,7 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     const reportMetaStore = new ReportMetaStore(store);
-    const reportWriter = new ReportWriter(store, stateStore, undefined, undefined, reportMetaStore);
+    const reportWriter = new ReportWriter(store, stateStore, { reportMeta: reportMetaStore });
     const app = createApp(store, { stateStore, reportWriter, reportMetaStore });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 

@@ -78,7 +78,7 @@ async function freshFullPipelineApp() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
-  const reportWriter = new ReportWriter(store, stateStore, undefined, undefined, reportMetaStore);
+  const reportWriter = new ReportWriter(store, stateStore, { reportMeta: reportMetaStore });
 
   const mockEnrichProvider = {
     name: "MockTI",
