@@ -5391,8 +5391,10 @@ export class AnalysisPipeline {
     // supporting in-scope events (forward relatedEventIds AND reverse forensicTimeline links, so the
     // deterministic backfill findings ground correctly), roll up { tools, hosts, intel, graph-linked },
     // flag an uncited finding as `ungrounded`, and CAP an ungrounded/single-source finding's confidence.
-    // Deterministic + idempotent; only ever lowers confidence. Runs last, so it grades the FINAL finding
-    // set (incl. backfills + accepted second-opinion deltas).
+    // Also catches the subtler case where cited ids resolve but the finding's own claimed IP never
+    // appears in their text (`contentMismatch`) — floors High/Critical to Medium (veridia-deep-pass
+    // 2026-07-22). Deterministic + idempotent; only ever lowers confidence/severity. Runs last, so it
+    // grades the FINAL finding set (incl. backfills + accepted second-opinion deltas).
     {
       const evidenceGraph = buildEvidenceGraph(next);
       const graphLinkedEventIds = new Set(evidenceGraph.edges.flatMap((e) => e.eventIds));

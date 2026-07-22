@@ -571,6 +571,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
       // prominent "⚠️ no cited evidence" for an ungrounded finding, so a hypothesis never reads as fact.
       if (f.ungrounded) {
         lines.push(`> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`);
+      } else if (f.contentMismatch) {
+        lines.push(`> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`);
       } else if (f.corroboration) {
         lines.push(`- Corroboration: ${corroborationLabel(f)}`);
       }
