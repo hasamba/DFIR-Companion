@@ -49,6 +49,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-narrative",
   "sec-findings",
   "sec-next-steps",
+  "sec-deep-pass",
   "sec-timeline",
   "sec-kill-chain",
   "sec-phases",
@@ -91,6 +92,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-exec",
       "sec-narrative",
       "sec-findings",
+      "sec-deep-pass",
       "sec-timeline",
       "sec-super-timeline",
       "sec-iocs",
@@ -207,6 +209,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     name: "Deep-Dive",
     description: "Hypothesis testing — timeline + evidence chain large, full detail, comments/tags/threads enabled.",
     sections: [
+      "sec-deep-pass",
       "sec-timeline",
       "sec-evidence",
       "sec-assets",

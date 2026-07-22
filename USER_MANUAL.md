@@ -391,7 +391,7 @@ own. Two of them (**2nd opinion**, **deep pass**) you spend money on deliberatel
 | **Second look** | automatic, inside synthesis | at most one extra call | raw evidence pulled up; collection leads |
 | **Deep reasoning** | 🧠 checkbox, before a run | the same call, plus thinking tokens | the same outputs, reasoned harder |
 | **Second opinion** | **2nd opinion** button | up to three calls | a rival model's disagreements, to accept or reject |
-| **Deep pass** | on demand (API / CLI) | many calls — the expensive one | conclusions drawn from *every* graded event |
+| **Deep pass** | on demand (dashboard / API / CLI) | many calls — the expensive one | conclusions drawn from *every* graded event |
 
 #### 1. Screenshot OCR
 
@@ -519,6 +519,17 @@ stories. Exactly one final synthesis call draws every conclusion. The run is can
 batches, and nothing is written until that final call succeeds — an aborted run leaves the case
 untouched.
 
+**Where it is.** The **Deep pass** toolbar button, or the *Deep Pass* section between Findings and the
+Forensic Timeline. Opening it measures the case and shows one row per floor — events, prompt rows,
+batches and estimated input tokens — and you pick the floor there. Nothing is spent until you press
+*Run deep pass*. While it runs, the batch it is on is shown next to a *Cancel* button, and the
+Re-synthesize and 2nd-opinion buttons are locked (a deep pass ends in a synthesis of its own, so
+starting another would overwrite it). When it finishes, the result names the floor, events, rows,
+batches, observations — and, if any batches failed, says so in red: that run read **less** of the case
+than the numbers suggest, and re-running is the fix. The result stays on the panel across a reload.
+
+The same thing from the command line, or over HTTP:
+
 ```bash
 # In the companion/ folder:
 npm run deep-pass -- <caseId>                   # preview only — no AI calls, no spend
@@ -526,7 +537,7 @@ npm run deep-pass -- <caseId> --floor Medium    # run it
 ```
 
 There is also an API: `GET /cases/:id/deep-pass/preview` and `POST /cases/:id/deep-pass`
-(`{"minSeverity":"Medium"}`).
+(`{"minSeverity":"Medium"}`). A closed or archived case is refused — reopen or restore it first.
 
 **Settings.** `DFIR_DEEP_PASS_MAX_BATCHES` (default 30 — a run needing more is refused *before* spending
 anything, and the error names a floor that would fit), `DFIR_AI_SYNTH_MAX_EVENTS` (rows per batch),

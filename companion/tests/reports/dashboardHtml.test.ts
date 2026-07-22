@@ -495,3 +495,103 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/const tsLine = job\.timeScope[\s\S]{0,700}job\.timeScope\.degraded[\s\S]{0,120}coverage unverified \(server reported no parameter metadata\)/);
   });
 });
+
+// ── Deep pass (#204) ─────────────────────────────────────────────────────────
+// The batched deep pass was API-only. Its floor is case-dependent (prompt rows scale with HOSTS,
+// so no default is correct), the run costs many minutes and hundreds of thousands of tokens, and a
+// run with failed batches read LESS of the case than its event count suggests. All three are why
+// this needs a surface with a pre-flight table, a cancel affordance, and honest result reporting.
+//
+// NOTE: assert on a BOOLEAN, never `expect(html).toContain(...)` — a failure there prints the whole
+// 1.4 MB file into the diff and crashes the vitest reporter before any result is shown.
+describe("dashboard.html — deep pass", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const has = (html: string, needle: string) => html.includes(needle);
+  const matches = (html: string, re: RegExp) => re.test(html);
+
+  it("puts the run behind a pre-flight table of what each floor would cost", async () => {
+    const html = await load();
+    expect(has(html, '<section id="sec-deep-pass"'), "section exists").toBe(true);
+    expect(has(html, "/deep-pass/preview"), "calls the preview endpoint").toBe(true);
+    // One row per floor showing the four numbers the analyst decides on.
+    expect(matches(html, /function renderDeepPassFloors[\s\S]{0,600}f\.events/), "row shows events").toBe(true);
+    expect(matches(html, /function renderDeepPassFloors[\s\S]{0,800}f\.rows/), "row shows prompt rows").toBe(true);
+    expect(matches(html, /function renderDeepPassFloors[\s\S]{0,800}f\.batches/), "row shows batches").toBe(true);
+    expect(matches(html, /function renderDeepPassFloors[\s\S]{0,900}estimatedInputTokens/), "row shows estimated input").toBe(true);
+  });
+
+  it("loads the preview lazily rather than on every state push", async () => {
+    const html = await load();
+    // AI-free but NOT CPU-free — it groups the whole graded timeline four times, so it is fetched
+    // when the analyst opens the section (or asks for a refresh), never on each WS state broadcast.
+    expect(matches(html, /#sec-deep-pass h2"\)[\s\S]{0,400}loadDeepPassPreview/), "loads on expand").toBe(true);
+    expect(has(html, 'id="deepPassRefresh"'), "has a refresh control").toBe(true);
+  });
+
+  it("never runs without an explicit floor", async () => {
+    const html = await load();
+    // The server refuses an unrecognised floor rather than reading everything; the UI must not
+    // paper over that with a default of its own.
+    expect(matches(html, /function runDeepPass\(\)[\s\S]{0,1000}minSeverity/), "posts the floor").toBe(true);
+    expect(matches(html, /function runDeepPass\(\)[\s\S]{0,600}if \(!cid \|\| !floor\)[\s\S]{0,200}return;/), "no floor → no request").toBe(true);
+  });
+
+  it("shows failed batches as partial coverage instead of a clean run", async () => {
+    const html = await load();
+    expect(matches(html, /function renderDeepPassResult[\s\S]{0,2000}batchesFailed/), "reports batchesFailed").toBe(true);
+    expect(matches(html, /function renderDeepPassResult[\s\S]{0,2000}partial coverage/i), "names it partial coverage").toBe(true);
+    // A cancelled run wrote nothing — it must not read as a completed pass either.
+    expect(matches(html, /function renderDeepPassResult[\s\S]{0,2000}r\.aborted/), "distinguishes a cancelled run").toBe(true);
+  });
+
+  it("keeps the last result across a reload, so batchesFailed can't vanish with the response body", async () => {
+    const html = await load();
+    expect(has(html, "dfir.deepPassResult"), "per-case storage key").toBe(true);
+    expect(matches(html, /localStorage\.setItem\(deepPassResultKey\(/), "persists the result").toBe(true);
+  });
+
+  it("renders a refusal as guidance, not as a failure", async () => {
+    const html = await load();
+    // 400 = over the batch ceiling; its message already names a floor that would fit. 423 = the
+    // case is closed/archived. Both are analyst-correctable, so neither is an error banner.
+    expect(matches(html, /function runDeepPass[\s\S]{0,2000}r\.status === 400 \|\| r\.status === 423/), "handles both refusals").toBe(true);
+    expect(matches(html, /function runDeepPass[\s\S]{0,2000}deepPassGuidance/), "routes them to guidance").toBe(true);
+  });
+
+  it("disables the run on the SYNTHESIS gate, not the vision one", async () => {
+    const html = await load();
+    // /health.aiEnabled is hasAiProvider() — the vision gate. The deep-pass route enforces
+    // hasSynthesisProvider(), so gating the button on aiEnabled would offer a guaranteed 501.
+    expect(has(html, "h.synthesisEnabled"), "reads the synthesis flag from /health").toBe(true);
+    expect(has(html, "deepPassSynthesisEnabled"), "gates the run on it").toBe(true);
+  });
+
+  it("won't let a deep pass and a re-synthesis overwrite each other", async () => {
+    const html = await load();
+    // The job registry's `exclusive` flag only cancels jobs of the SAME kind, and the deep pass's
+    // own final synthesize() is not registered as a "synthesis" job — so nothing on the server
+    // stops a Re-synthesize started mid-run from racing the deep pass's write.
+    expect(matches(html, /function applyHeavyAiJobLock[\s\S]{0,200}deepPassBusy\(\)/), "knows a deep pass is running").toBe(true);
+    expect(matches(html, /function applyHeavyAiJobLock[\s\S]{0,400}"synthesize"/), "locks the synthesize button").toBe(true);
+    expect(matches(html, /function deepPassJob\(\)[\s\S]{0,200}"deep-pass"/), "finds the deep-pass job in the registry").toBe(true);
+  });
+
+  it("cancels through the job registry rather than inventing its own control", async () => {
+    const html = await load();
+    expect(matches(html, /function cancelDeepPass[\s\S]{0,500}cancelJob\(/), "reuses cancelJob").toBe(true);
+    expect(has(html, 'id="deepPassCancel"'), "has a cancel button").toBe(true);
+  });
+
+  it("carries a toolbar button with a ::before icon so it survives the icons-only collapse", async () => {
+    const html = await load();
+    expect(has(html, 'id="deepPassBtn"'), "toolbar button").toBe(true);
+    expect(has(html, "#deepPassBtn::before"), "icon rule").toBe(true);
+    // The icon must be in the shared sizing rule too, or ::before has no box to paint into.
+    expect(matches(html, /#deepPassBtn::before[,\s][\s\S]{0,500}background: no-repeat center \/ contain;/), "sized by the shared rule").toBe(true);
+  });
+
+  it("registers the section for visibility settings", async () => {
+    const html = await load();
+    expect(matches(html, /SECTION_DEFS = \[[\s\S]{0,3000}id: "sec-deep-pass"/), "listed in SECTION_DEFS").toBe(true);
+  });
+});
