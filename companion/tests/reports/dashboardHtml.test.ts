@@ -594,6 +594,15 @@ describe("dashboard.html — deep pass", () => {
     const html = await load();
     expect(matches(html, /SECTION_DEFS = \[[\s\S]{0,3000}id: "sec-deep-pass"/), "listed in SECTION_DEFS").toBe(true);
   });
+
+  it("says so on the AI pill while it runs, instead of leaving it on 'ready'", async () => {
+    const html = await load();
+    // The route emits phase "deep-pass"; the pill must render that detail verbatim — and the branch
+    // has to sit BEFORE the isIngest fallback, which would otherwise label the longest AI run in the
+    // product "deterministic import — not AI" whenever live analysis is paused.
+    expect(matches(html, /evt\.phase === "deep-pass"[\s\S]{0,120}setAi\("analyzing"/), "renders the deep-pass phase").toBe(true);
+    expect(matches(html, /if \(evt\.phase === "deep-pass"\)[\s\S]{0,400}else if \(evt\.phase === "synthesizing"\)/), "checked before the ingest fallback").toBe(true);
+  });
 });
 
 describe("dashboard.html — help icon", () => {

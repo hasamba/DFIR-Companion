@@ -158,15 +158,33 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const job = options.jobManager?.register({
       caseId, kind: "deep-pass", label: `deep pass (${minSeverity}+)`, cancellable: true, exclusive: true,
     });
+    // The "AI:" pill is the only always-visible sign the model is working, and this is the longest AI
+    // run in the product — leaving it on "ready (waiting for activity)" for twenty minutes states the
+    // opposite of the truth. `phase: "deep-pass"` marks it as genuine AI work: the client relabels an
+    // un-phased "analyzing" event as a deterministic import whenever live analysis is paused, which a
+    // deep pass (manual, on-demand) can run right through.
+    const aiStatus = (status: "analyzing" | "idle" | "error", detail?: string): void => {
+      options.onAiStatus?.(caseId, {
+        status,
+        ...(status === "analyzing" ? { phase: "deep-pass" as const } : {}),
+        at: new Date().toISOString(),
+        ...(detail ? { detail } : {}),
+      });
+    };
+    aiStatus("analyzing", `deep pass (${minSeverity}+) — starting`);
     try {
       const result = await options.pipeline.deepPass(caseId, {
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
         onProgress: (done, total, detail) => {
           if (job) options.jobManager?.progress(job.jobId, done, total, detail);
+          // The pipeline's own wording ("reading batch 2 of 5", "condensing …", "synthesizing") is
+          // already the right thing to show; it just needs the run's identity in front of it.
+          aiStatus("analyzing", `deep pass (${minSeverity}+) — ${detail}`);
         },
       });
       if (job) options.jobManager?.finish(job.jobId);
+      aiStatus("idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "deep-pass",
         // batchesFailed rides along: a run that lost batches read LESS of the case than the event
@@ -181,8 +199,13 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const message = String((err as Error).message ?? "");
       if (job) options.jobManager?.fail(job.jobId, message);
       // The batch-ceiling refusal is user-correctable (raise the floor) — its message already names a
-      // floor that would fit — so it is a 400, not a server fault.
-      if (/batches/i.test(message)) return res.status(400).json({ error: message });
+      // floor that would fit — so it is a 400, not a server fault. Nothing ran and nothing broke, so
+      // the pill goes back to idle rather than reporting an AI error the analyst would go hunting for.
+      if (/batches/i.test(message)) {
+        aiStatus("idle", "deep pass not started — raise the severity floor");
+        return res.status(400).json({ error: message });
+      }
+      aiStatus("error", message);
       return res.status(500).json({ error: message });
     }
   });
