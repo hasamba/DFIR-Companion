@@ -29,6 +29,7 @@
     "deep-pass": "tsx scripts/deep-pass.ts",
     "clean-timeline": "tsx scripts/clean-timeline.ts",
     "dedupe-iocs": "tsx scripts/dedupe-iocs.ts",
+    "repair-ioc-values": "tsx scripts/repair-ioc-values.ts",
     "ocr-index": "tsx scripts/ocr-index.ts",
     "prompts:eject": "tsx scripts/eject-prompts.ts",
     "yeti": "tsx scripts/yeti-lookup.ts",

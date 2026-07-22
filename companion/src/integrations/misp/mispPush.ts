@@ -10,6 +10,7 @@ import type { ForensicEvent, InvestigationState, IOC } from "../../analysis/stat
 import type { MispPushClientLike, MispEventCreate, MispAttrBody } from "./mispPushClient.js";
 import { byEventTime } from "../../analysis/forensicSort.js";
 import { severityRank } from "../../analysis/dashboardViews.js";
+import { repairIocValue, isWellFormedIocValue } from "../../analysis/iocValue.js";
 
 export interface MispPushInput {
   caseId: string;              // Companion case id — used for idempotency tag and event title
@@ -48,6 +49,14 @@ export interface MispPushResult {
 }
 
 const COMPANION_TAG_PREFIX = "dfir-companion:case-";
+
+// Warnings are shown verbatim in the dashboard and the push log. A malformed value can be a
+// multi-KB text blob (an AI-extracted "ip" that is really a page of PowerShell help), so quoting it
+// whole would bury the rest of the warning list.
+function short(value: string, max = 80): string {
+  const oneLine = value.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+}
 
 // Derive the worst severity across all findings → MISP threat_level_id.
 // MISP: 1=High, 2=Medium, 3=Low, 4=Undefined.
@@ -172,19 +181,36 @@ export async function pushCaseToMisp(
 
   // 4. Push IOCs as MISP attributes.
   for (const ioc of input.state.iocs) {
-    const mapped = mapIocType(ioc);
-    if (!mapped) {
+    // Value hygiene (#177) runs FIRST — the mapped MISP type depends on the value (hash length),
+    // so it has to see the bare indicator. MISP validates every attribute value and rejects a
+    // malformed one with a 403 that is historically indistinguishable from an API-key problem.
+    // Repair what is repairable (a case written before ingest-time normalization still holds
+    // "10.10.20.15 (DC01)"), and skip the rest HERE, naming the real reason, rather than
+    // collecting remote rejections.
+    const repaired = repairIocValue(ioc);
+    const value = repaired?.value ?? "";
+    if (!value || !isWellFormedIocValue(ioc.type, value)) {
       attributes.skipped += 1;
-      warnings.push(`ioc skipped (no MISP type for "${ioc.type}"): ${ioc.value}`);
+      warnings.push(`ioc skipped (not a valid ${ioc.type} value — MISP would reject it): ${short(ioc.value)}`);
       continue;
     }
-    const key = ioc.value.trim().toLowerCase();
+    const mapped = mapIocType({ ...ioc, value });
+    if (!mapped) {
+      attributes.skipped += 1;
+      warnings.push(`ioc skipped (no MISP type for "${ioc.type}"): ${short(value)}`);
+      continue;
+    }
+    const key = value.toLowerCase();
     if (existingValues.has(key)) { attributes.existing += 1; continue; }
+    // The annotation that was split out of the value rides along as the attribute comment, so the
+    // host label survives the export instead of being lost with the malformed value.
+    const comment = ioc.note ?? repaired?.note;
     const body: MispAttrBody = {
       type: mapped.type,
-      value: ioc.value,
+      value,
       category: mapped.category,
       to_ids: ioc.type === "ip" || ioc.type === "domain" || ioc.type === "hash" || ioc.type === "url",
+      ...(comment ? { comment } : {}),
     };
     try {
       await client.addAttribute(eventId, body);
@@ -192,7 +218,7 @@ export async function pushCaseToMisp(
       attributes.added += 1;
     } catch (err) {
       attributes.skipped += 1;
-      warnings.push(`ioc "${ioc.value}": ${(err as Error).message}`);
+      warnings.push(`ioc "${short(value)}": ${(err as Error).message}`);
     }
   }
 
