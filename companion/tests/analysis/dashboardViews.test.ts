@@ -59,6 +59,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-exec",
       "sec-narrative",
       "sec-findings",
+      "sec-deep-pass",
       "sec-timeline",
       "sec-super-timeline",
       "sec-iocs",

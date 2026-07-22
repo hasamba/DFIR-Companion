@@ -1116,6 +1116,25 @@
     .report-links a { color: var(--c-6aa9ff); text-decoration: none; }
     .report-links a:hover { text-decoration: underline; }
     #aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+    /* Deep pass (#204) — pre-flight cost table, run control, and the result card. */
+    .dp-table { border-collapse: collapse; font-size: 12px; margin: 6px 0 10px; }
+    .dp-table th { text-align: right; padding: 4px 10px; color: var(--c-9aa4b2); font-weight: normal; border-bottom: 1px solid var(--c-2b3242); }
+    .dp-table th:first-child, .dp-table td:first-child { text-align: left; }
+    .dp-table td { padding: 4px 10px; border-bottom: 1px solid var(--c-1c2230); text-align: right; white-space: nowrap; }
+    .dp-table tr.dp-picked td { background: #6aa9ff14; }
+    .dp-table label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .dp-run-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+    .dp-progress { font-size: 12px; color: var(--c-9aa4b2); }
+    .dp-note { font-size: 12px; color: var(--c-9aa4b2); margin: 4px 0; }
+    /* Guidance = analyst-correctable refusal (over the batch ceiling, closed case, no provider).
+       Deliberately NOT the error red: nothing broke, the run just needs a different input. */
+    .dp-guidance { font-size: 12px; border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+      background: #ff9f4318; border: 1px solid #ff9f4355; color: var(--c-ffd9a8, #ffd9a8); }
+    .dp-result { font-size: 12px; border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+      background: var(--c-0d1117); border: 1px solid var(--c-232a33); }
+    .dp-result b { color: var(--c-d6deea); }
+    .dp-partial { background: #ff5a5a18; border-color: #ff5a5a66; }
+    .dp-partial .dp-partial-hd { color: #ff8f8f; font-weight: bold; }
     /* Background jobs widget (#225) — badge + popover in the toolbar. */
     #jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #6aa9ff22; border: 1px solid #6aa9ff55; }
     .jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto;
@@ -1272,7 +1291,7 @@
        collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
        hover tooltips (data-tip) keep every icon discoverable. */
     #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-    #aiToggle::before, #synthesize::before, #secondOpinion::before, #importBtn::before, #importCaseBtn::before,
+    #aiToggle::before, #synthesize::before, #secondOpinion::before, #deepPassBtn::before, #importBtn::before, #importCaseBtn::before,
     #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
     #toggleAll::before, #toggleSearchBar::before {
       content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -1287,6 +1306,9 @@
     #presentBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><path d='M10 8l4 2.5-4 2.5z' fill='%23cbd3df'/><path d='M12 17v4M8 21h8'/></svg>"); }
     /* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
     #secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
+    /* Deep pass (#204) — stacked layers under a magnifier: reading EVERY layer of the timeline, not
+       the one prompt's worth normal synthesis sees. */
+    #deepPassBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2 3 7l9 5 9-5z'/><path d='M3 12l9 5 9-5'/><path d='M3 17l9 5 9-5'/></svg>"); }
     #importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
     /* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
     #importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
@@ -1609,6 +1631,7 @@
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
+    <button id="deepPassBtn" data-tip="Deep pass: read EVERY graded event at or above a severity floor you choose, in as many batches as it takes, then fold the result into one final synthesis. Normal synthesis shows the model one prompt's worth of events — on a multi-host case that leaves most of the timeline unread. Opens the pre-flight table showing what each floor would cost before anything is spent. Slow and expensive; cancellable.">Deep pass</button>
     <label id="deepReasoningLabel" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--c-9aa4b2);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" style="margin:0;cursor:pointer" />🧠
     </label>
@@ -3840,6 +3863,19 @@
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
+    <!-- Deep pass (#204). Sits between the conclusions it rewrites and the timeline it reads. -->
+    <section id="sec-deep-pass" style="grid-column: 1 / -1" class="collapsed">
+      <h2>Deep Pass<button id="deepPassRefresh" type="button" title="Re-measure the case — recounts events, prompt rows, batches and estimated tokens at each floor. No AI calls, no spend." style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">↻ Refresh</button><span class="ev-sub" id="deepPassBadge"></span></h2>
+      <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">Normal synthesis shows the model <em>one prompt's worth</em> of events, and prompt rows scale with the number of hosts — so on a multi-host case most graded detections are never read. A deep pass reads <strong>every</strong> graded event at or above the floor you choose, in as many batches as it takes, and folds the result into one final synthesis that replaces the current conclusions. Pick the floor against the real numbers below: there is no default that is right for every case. The pre-flight costs nothing; the run is slow and expensive, and can be cancelled.</p>
+      <div id="deepPassGuidance" class="dp-guidance" style="display:none"></div>
+      <div id="deepPassFloors" class="dp-note">Open this section to measure the case.</div>
+      <div class="dp-run-row">
+        <button id="deepPassRun" type="button" disabled title="Run the deep pass at the selected floor">▶ Run deep pass</button>
+        <button id="deepPassCancel" type="button" style="display:none" title="Cancel the running deep pass — nothing is written to the case">■ Cancel</button>
+        <span id="deepPassProgress" class="dp-progress"></span>
+      </div>
+      <div id="deepPassResult"></div>
+    </section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
@@ -11044,6 +11080,7 @@
           }).join("")
         : `<div class="jobs-empty">No jobs yet.</div>`);
       menu.querySelectorAll(".job-cancel").forEach(b => b.addEventListener("click", () => cancelJob(b.dataset.job, b)));
+      applyHeavyAiJobLock();   // deep pass ↔ synthesis mutual lock + the deep-pass progress line (#204)
     }
     function cancelJob(id, btn) {
       if (btn) { btn.disabled = true; btn.textContent = "Cancelling…"; }
@@ -11062,6 +11099,263 @@
       const menu = document.getElementById("jobsMenu");
       if (!menu || menu.style.display === "none") return;
       if (!menu.contains(e.target) && e.target.id !== "jobsBadge") menu.style.display = "none";
+    });
+
+    // ── Deep pass (#204) ────────────────────────────────────────────────────────
+    // The batched deep pass reads EVERY graded event at or above a floor, in as many batches as it
+    // takes, then folds the observations into one final synthesis that REPLACES the conclusions.
+    //
+    // Three things shape this surface:
+    //  1. Prompt rows scale with HOSTS and the right floor is case-dependent, so there is no correct
+    //     default — the analyst picks from the pre-flight table (AI-free) instead of guessing.
+    //  2. A 13-batch run is roughly 650k input tokens and many minutes, so progress and cancel are
+    //     load-bearing, not decoration. Both ride the existing job registry (#225) rather than a
+    //     private mechanism — the run already registers a cancellable job server-side.
+    //  3. batchesFailed MUST be visible. A run that lost batches read less of the case than its
+    //     event count implies, and presenting that as complete coverage is the worst outcome here.
+    let deepPassSynthesisEnabled = false;   // /health.synthesisEnabled — the TEXT gate, not aiEnabled
+    let deepPassPreviewLoaded = false;      // the preview is fetched lazily; this is the "already have it" flag
+    let deepPassPreviewSeq = 0;             // guards against an out-of-order preview from a rapid case switch
+    let deepPassPosting = false;            // the POST is in flight (the job may not exist yet)
+
+    function deepPassResultKey(cid) { return `dfir.deepPassResult:${cid}`; }
+    function deepPassCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
+    function deepPassGuidance(msg) {
+      const el = document.getElementById("deepPassGuidance");
+      if (!el) return;
+      el.innerHTML = msg ? esc(msg) : "";
+      el.style.display = msg ? "" : "none";
+    }
+
+    // Called on connect: the previous case's measurements and result must not bleed into this one.
+    function resetDeepPass() {
+      deepPassPreviewLoaded = false;
+      deepPassPreviewSeq++;
+      deepPassGuidance("");
+      document.getElementById("deepPassFloors").innerHTML = "Open this section to measure the case.";
+      document.getElementById("deepPassProgress").textContent = "";
+      const run = document.getElementById("deepPassRun");
+      if (run) run.disabled = true;
+      renderDeepPassResult(loadStoredDeepPassResult(deepPassCaseId()));
+      // Re-measure straight away when the analyst left the section open on the previous case.
+      const sec = document.getElementById("sec-deep-pass");
+      if (sec && !sec.classList.contains("collapsed")) loadDeepPassPreview();
+    }
+
+    function loadStoredDeepPassResult(cid) {
+      if (!cid) return null;
+      try { return JSON.parse(localStorage.getItem(deepPassResultKey(cid)) || "null"); } catch { return null; }
+    }
+
+    // AI-free and free of spend, but NOT free of CPU — it groups the whole graded timeline once per
+    // floor — so it is fetched on demand (section expand / Refresh), never on every state broadcast.
+    function loadDeepPassPreview() {
+      const cid = deepPassCaseId();
+      if (!cid) return;
+      const mySeq = ++deepPassPreviewSeq;
+      const host = document.getElementById("deepPassFloors");
+      host.innerHTML = "measuring…";
+      fetch(`/cases/${encodeURIComponent(cid)}/deep-pass/preview`)
+        .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j })))
+        .then(({ ok, status, j }) => {
+          if (mySeq !== deepPassPreviewSeq) return;   // a newer case/refresh already superseded this
+          if (!ok) {
+            host.innerHTML = "";
+            deepPassGuidance(status === 501
+              ? "The analysis pipeline isn't configured on this server, so a deep pass can't be measured or run."
+              : `Couldn't measure this case: ${j && j.error ? j.error : "unknown error"}`);
+            return;
+          }
+          deepPassPreviewLoaded = true;
+          renderDeepPassFloors(j.cap, Array.isArray(j.floors) ? j.floors : []);
+        })
+        .catch(e => { if (mySeq === deepPassPreviewSeq) { host.innerHTML = ""; deepPassGuidance("Couldn't measure this case: " + e.message); } });
+    }
+
+    // One row per floor. Batches is the number the analyst is really choosing on — it is what the
+    // run costs in calls, wall-clock and the server-side ceiling that may refuse it.
+    function renderDeepPassFloors(cap, floors) {
+      const host = document.getElementById("deepPassFloors");
+      if (!host) return;
+      if (!floors.length) { host.innerHTML = "No graded events in scope — nothing for a deep pass to read."; return; }
+      const rows = floors.map(f => {
+        const empty = !f.events;
+        return `<tr data-dp-row="${esc(f.floor)}">`
+          + `<td><label><input type="radio" name="dpFloor" value="${esc(f.floor)}"${empty ? " disabled" : ""}>`
+          + `<span class="sev-${esc(f.floor)}">${esc(f.floor)}+</span></label></td>`
+          + `<td>${Number(f.events).toLocaleString()}</td>`
+          + `<td>${Number(f.rows).toLocaleString()}</td>`
+          + `<td>${Number(f.batches).toLocaleString()}</td>`
+          + `<td>~${Number(f.estimatedInputTokens).toLocaleString()}</td></tr>`;
+      }).join("");
+      host.innerHTML = `<table class="dp-table"><thead><tr>`
+        + `<th title="Read this severity and everything above it">Floor</th>`
+        + `<th title="Graded events at or above this floor (Info is never read)">Events</th>`
+        + `<th title="Prompt rows after detection-burst grouping — what the model actually sees">Rows</th>`
+        + `<th title="AI calls the run would make, at ${Number(cap).toLocaleString()} rows per batch">Batches</th>`
+        + `<th title="Estimated input tokens across all batches — the run's rough cost">Est. input</th>`
+        + `</tr></thead><tbody>${rows}</tbody></table>`
+        + `<div class="dp-note">Info events are never read: they are excluded from AI prompts entirely.</div>`;
+      host.querySelectorAll('input[name="dpFloor"]').forEach(el => el.addEventListener("change", () => {
+        host.querySelectorAll("tr[data-dp-row]").forEach(tr => tr.classList.toggle("dp-picked", tr.dataset.dpRow === el.value));
+        applyDeepPassGate();
+      }));
+      applyDeepPassGate();
+    }
+
+    function selectedDeepPassFloor() {
+      const el = document.querySelector('input[name="dpFloor"]:checked');
+      return el ? el.value : "";
+    }
+
+    // The Run button is only live when a floor is picked AND a synthesis provider exists AND no
+    // heavy AI job is already running for this case (see applyHeavyAiJobLock).
+    function applyDeepPassGate() {
+      const run = document.getElementById("deepPassRun");
+      if (!run) return;
+      const floor = selectedDeepPassFloor();
+      if (!deepPassSynthesisEnabled) {
+        run.disabled = true;
+        run.title = "No synthesis provider configured — set an AI provider in Settings before running a deep pass.";
+        return;
+      }
+      if (deepPassBusy()) { run.disabled = true; run.title = "A heavy AI job is already running for this case."; return; }
+      run.disabled = !floor;
+      run.title = floor ? `Run the deep pass at ${floor}+` : "Pick a severity floor above first.";
+    }
+
+    // True while THIS case has a running deep pass — either the POST is still in flight (before the
+    // job shows up) or the registry lists one.
+    function deepPassJob() {
+      return _jobsCache.find(j => j.kind === "deep-pass" && j.status === "running") || null;
+    }
+    function deepPassBusy() { return deepPassPosting || !!deepPassJob(); }
+
+    function runDeepPass() {
+      const cid = deepPassCaseId();
+      const floor = selectedDeepPassFloor();
+      // No floor → no request. The server refuses an unrecognised floor rather than reading
+      // everything, and the UI must not paper over that with a default of its own.
+      if (!cid || !floor) { deepPassGuidance("Pick a severity floor from the table first — no floor is right for every case."); return; }
+      deepPassGuidance("");
+      deepPassPosting = true;
+      applyHeavyAiJobLock();
+      document.getElementById("deepPassProgress").textContent = `starting deep pass (${floor}+)…`;
+      document.getElementById("deepPassResult").innerHTML = "";
+      fetch(`/cases/${encodeURIComponent(cid)}/deep-pass`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ minSeverity: floor }),
+      })
+        .then(r => r.json().then(j => ({ r, j })))
+        .then(({ r, j }) => {
+          if (r.ok) {
+            storeDeepPassResult(cid, j);
+            renderDeepPassResult(j);
+            // The final synthesis rewrote the conclusions — pull them in case the WS push was missed.
+            fetch(`/cases/${encodeURIComponent(cid)}/state`).then(x => x.json()).then(render).catch(() => {});
+            loadSynthMeta(cid);
+            return;
+          }
+          // 400 = over the batch ceiling (its message already names a floor that would fit);
+          // 423 = the case is closed or archived. Both are analyst-correctable, so they are
+          // guidance, not a failure — the run never started and nothing is wrong with the case.
+          if (r.status === 400 || r.status === 423) { deepPassGuidance(j.error || "That run was refused."); return; }
+          if (r.status === 501) { deepPassGuidance("No synthesis provider is configured — a deep pass needs one."); return; }
+          document.getElementById("deepPassResult").innerHTML =
+            `<div class="dp-result dp-partial"><span class="dp-partial-hd">Deep pass failed</span> — ${esc(j && j.error ? j.error : "unknown error")}. Nothing was written to the case.</div>`;
+        })
+        .catch(e => deepPassGuidance("Deep pass request failed: " + e.message))
+        .finally(() => {
+          deepPassPosting = false;
+          document.getElementById("deepPassProgress").textContent = "";
+          loadJobs();          // settle the badge + re-enable the controls
+          applyHeavyAiJobLock();
+        });
+    }
+
+    function storeDeepPassResult(cid, r) {
+      // The summary lives only in the HTTP response body; persisting it per case is what keeps
+      // batchesFailed readable after a reload instead of dying with the request.
+      try { localStorage.setItem(deepPassResultKey(cid), JSON.stringify({ ...r, at: new Date().toISOString() })); } catch {}
+    }
+
+    function cancelDeepPass() {
+      const job = deepPassJob();
+      if (!job) return;
+      document.getElementById("deepPassProgress").textContent = "cancelling…";
+      cancelJob(job.id, document.getElementById("deepPassCancel"));
+    }
+
+    function renderDeepPassResult(r) {
+      const host = document.getElementById("deepPassResult");
+      if (!host) return;
+      if (!r || typeof r !== "object") { host.innerHTML = ""; return; }
+      const when = r.at ? ` <span style="color:var(--c-7e8aa0)">(${esc(r.at)})</span>` : "";
+      // A cancelled run persisted NOTHING — the case is exactly as it was. Saying "read N events"
+      // without that would imply conclusions changed.
+      if (r.aborted) {
+        host.innerHTML = `<div class="dp-result">Last deep pass (${esc(r.floor)}+) was <b>cancelled</b> after ${Number(r.batches || 0).toLocaleString()} planned batch(es) — nothing was written to the case.${when}</div>`;
+        return;
+      }
+      const partial = Number(r.batchesFailed) > 0;
+      const head = partial
+        ? `<span class="dp-partial-hd">⚠ Partial coverage — ${Number(r.batchesFailed).toLocaleString()} of ${Number(r.batches).toLocaleString()} batch(es) failed</span><br>`
+          + `This run read LESS of the case than the numbers below suggest; the failed batches contributed no observations. Re-run to cover them.<br>`
+        : "";
+      host.innerHTML = `<div class="dp-result${partial ? " dp-partial" : ""}">${head}`
+        + `Floor <b>${esc(r.floor)}+</b> · read <b>${Number(r.events || 0).toLocaleString()}</b> event(s) `
+        + `as <b>${Number(r.rows || 0).toLocaleString()}</b> prompt row(s) in <b>${Number(r.batches || 0).toLocaleString()}</b> batch(es) · `
+        + `<b>${Number(r.observations || 0).toLocaleString()}</b> observation(s) folded into the synthesis.${when}</div>`;
+    }
+
+    // The job registry's `exclusive` flag only supersedes jobs of the SAME kind, and the deep pass's
+    // own closing synthesize() is not registered as a "synthesis" job — so a Re-synthesize started
+    // mid-run would race the deep pass's write and one of the two results would be silently lost.
+    // Nothing server-side prevents that, so the buttons lock each other out here.
+    function applyHeavyAiJobLock() {
+      const dp = deepPassBusy();
+      const synth = _jobsCache.some(j => j.kind === "synthesis" && j.status === "running");
+      const synthBtn = document.getElementById("synthesize");
+      const soBtn = document.getElementById("secondOpinion");
+      for (const btn of [synthBtn, soBtn]) {
+        if (!btn) continue;
+        btn.disabled = dp;
+        if (dp) btn.title = "A deep pass is running — it ends in a synthesis of its own, so this would overwrite it.";
+        else btn.removeAttribute("title");
+      }
+      const cancel = document.getElementById("deepPassCancel");
+      if (cancel) cancel.style.display = deepPassJob() ? "" : "none";
+      const prog = document.getElementById("deepPassProgress");
+      const job = deepPassJob();
+      if (prog && job) {
+        const p = job.progress ? ` (${job.progress.done}/${job.progress.total})` : "";
+        prog.textContent = (job.detail || "running") + p;
+      }
+      if (synth && !dp) {
+        const run = document.getElementById("deepPassRun");
+        if (run) { run.disabled = true; run.title = "A synthesis is running — wait for it to finish."; return; }
+      }
+      applyDeepPassGate();
+    }
+
+    document.getElementById("deepPassRun").addEventListener("click", runDeepPass);
+    document.getElementById("deepPassCancel").addEventListener("click", cancelDeepPass);
+    document.getElementById("deepPassRefresh").addEventListener("click", (e) => { e.stopPropagation(); loadDeepPassPreview(); });
+    // Measure on expand (the h2 click toggles `collapsed` in its own handler — read it after).
+    document.querySelector("#sec-deep-pass h2").addEventListener("click", () => {
+      setTimeout(() => {
+        const sec = document.getElementById("sec-deep-pass");
+        if (sec && !sec.classList.contains("collapsed") && !deepPassPreviewLoaded) loadDeepPassPreview();
+      }, 0);
+    });
+    // Toolbar entry point: reveal the section (it may be hidden by the active view), open it, and
+    // scroll to it — the analyst's route in when the panel isn't already on screen.
+    document.getElementById("deepPassBtn").addEventListener("click", () => {
+      const sec = document.getElementById("sec-deep-pass");
+      if (!sec) return;
+      sec.style.display = "";
+      sec.classList.remove("collapsed");
+      if (!deepPassPreviewLoaded) loadDeepPassPreview();
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
     // Poll the capture count (new screenshots arrive via the extension, not the WS) every 5s while
@@ -15546,6 +15840,7 @@
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
       resetGapHypotheses();     // clear AI gap hypotheses (#96); analyst regenerates per case on demand
       resetMemNextSteps();      // clear AI memory next-steps (#101); analyst regenerates per case on demand
+      resetDeepPass();          // #204 — measurements and the last deep-pass result are per case
 
       // Show whether AI analysis is configured at all.
       fetch("/health").then(r => r.json()).then(h => {
@@ -15559,6 +15854,10 @@
         const soBtn = document.getElementById("secondOpinion");
         if (soBtn) soBtn.style.display = secondOpinionEnabled ? "" : "none";
         fpAiConfigured = !!h.aiEnabled;   // gates the mark-FP modal's "Ask AI for similar" button (#227)
+        // Deep pass runs on the SYNTHESIS provider — aiEnabled is the vision gate and would offer a
+        // Run button that can only 501 in a vision-only config (#204).
+        deepPassSynthesisEnabled = !!h.synthesisEnabled;
+        applyDeepPassGate();
       }).catch(() => setAi("unknown", "unknown"));
       loadUpdateCheck();
 
@@ -17861,6 +18160,7 @@
       // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
       // anytime from Settings → section visibility.
       { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
+      { id: "sec-deep-pass",    label: "Deep Pass" },
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
