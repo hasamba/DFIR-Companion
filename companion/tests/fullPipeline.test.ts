@@ -63,7 +63,13 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  // Best-effort: on Windows the sync client/indexer can still hold a handle inside the tree here,
+  // and rm() then throws ENOTEMPTY from the afterEach — failing a test that actually passed. That
+  // teardown race is the oldest symptom in issue #173. Nothing is leaked by tolerating it: these
+  // roots live under the per-run temp root that tests/setup/tempRoot.ts removes when the run ends.
+  await Promise.all(
+    tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})),
+  );
 });
 
 async function freshFullPipelineApp() {
