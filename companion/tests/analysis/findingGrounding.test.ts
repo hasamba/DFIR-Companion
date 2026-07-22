@@ -5,6 +5,8 @@ import {
   UNGROUNDED_CONFIDENCE_CAP,
   SINGLE_SOURCE_CONFIDENCE_CAP,
   HUNT_ARTIFACT_CONFIDENCE_CAP,
+  CONTENT_MISMATCH_CONFIDENCE_CAP,
+  CONTENT_MISMATCH_SEVERITY_FLOOR,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC, Severity } from "../../src/analysis/stateTypes.js";
 
@@ -96,6 +98,58 @@ describe("groundAndScoreFindings", () => {
     const twice = groundAndScoreFindings({ findings: once, scopedEvents: [ev({ id: "e1", sources: ["OneTool"], asset: "H1" })], iocs: [], graphLinkedEventIds: new Set() });
     expect(twice[0].confidence).toBe(30);
     expect(twice[0].corroboration).toEqual(once[0].corroboration);
+  });
+});
+
+describe("groundAndScoreFindings — content-mismatch (veridia-deep-pass false positive, 2026-07-22)", () => {
+  it("floors severity and caps confidence when a High finding claims an IP absent from its cited events", () => {
+    // Reproduces f13: claims RDP from 45.33.32.156 but cites three internal-IP logons that never mention it.
+    const out = groundAndScoreFindings({
+      findings: [f({
+        id: "f13", severity: "High", confidence: 90,
+        title: "External RDP logon from public IP address 45.33.32.156",
+        description: "A logon consistent with RDP was observed against ws-dev-01 originating from 45.33.32.156.",
+        relatedEventIds: ["40e39", "40e34", "40e2"],
+      })],
+      scopedEvents: [
+        ev({ id: "40e39", asset: "WS-FIN-01", sources: ["Windows Event Log"], description: "Successful logon LogonType=3 IpAddress=10.10.10.51" }),
+        ev({ id: "40e34", asset: "WS-FIN-01", sources: ["Windows Event Log"], description: "Successful logon LogonType=3 IpAddress=10.10.10.50" }),
+        ev({ id: "40e2", asset: "WS-FIN-01", sources: ["Windows Event Log"], description: "Failed logon LogonType=2" }),
+      ],
+      iocs: [], graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].contentMismatch).toBe(true);
+    expect(out[0].severity).toBe(CONTENT_MISMATCH_SEVERITY_FLOOR);
+    expect(out[0].confidence).toBe(CONTENT_MISMATCH_CONFIDENCE_CAP);
+    expect(out[0].confidenceReason).toMatch(/45\.33\.32\.156/);
+  });
+
+  it("does not flag a High finding whose claimed IP DOES appear in its cited events", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({
+        id: "f1", severity: "High", confidence: 90,
+        title: "External RDP logon from public IP address 45.33.32.156",
+        description: "RDP from 45.33.32.156.", relatedEventIds: ["e1"],
+      })],
+      scopedEvents: [ev({ id: "e1", asset: "WS-FIN-01", sources: ["Windows Event Log"], description: "LogonType=10 IpAddress=45.33.32.156" })],
+      iocs: [], graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].contentMismatch).toBeUndefined();
+    expect(out[0].severity).toBe("High");
+  });
+
+  it("does not apply the content-mismatch check to Medium/Low findings", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({
+        id: "f1", severity: "Medium", confidence: 90,
+        title: "Possible external logon from 45.33.32.156", description: "",
+        relatedEventIds: ["e1"],
+      })],
+      scopedEvents: [ev({ id: "e1", asset: "WS-FIN-01", sources: ["Windows Event Log"], description: "no IP here" })],
+      iocs: [], graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].contentMismatch).toBeUndefined();
+    expect(out[0].severity).toBe("Medium");
   });
 });
 

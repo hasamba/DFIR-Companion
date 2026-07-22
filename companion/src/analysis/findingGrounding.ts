@@ -35,10 +35,34 @@ const DETECTION_RANK = SEVERITY_RANK.Low;
 // ever LOWERS confidence, so trust never boosts a high-trust finding, it only reins in a low-trust one.
 export const LOW_TRUST_THRESHOLD = 0.7;
 export const LOW_TRUST_CONFIDENCE_CAP = 55;
+// A High/Critical finding that names a specific IP in its own title/description, but whose cited
+// in-scope events never mention that IP, is citing evidence that does not back its own claim — a
+// subtler ungroundedness than an empty relatedEventIds list (both the id-existence check above and the
+// AI's own citation can look fine while the claim's content is simply wrong). Deep-pass on veridia-breach
+// (2026-07-22) produced exactly this: "External RDP logon from public IP 45.33.32.156" cited three benign
+// internal-IP logons (real event ids, wrong content) instead of the one event that actually matched.
+// IP-only by design — concrete, regex-extractable, and the exact entity type that produced that false
+// positive — not a general fact-checker.
+export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
+export const CONTENT_MISMATCH_SEVERITY_FLOOR: Severity = "Medium";
 
 function appendReason(existing: string | undefined, note: string): string {
   const base = (existing ?? "").trim();
   return base ? `${base} | ${note}` : note;
+}
+
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+function extractIpv4(text: string): string[] {
+  return [...new Set(text.match(IPV4_RE) ?? [])];
+}
+
+// IPs the finding's own text claims but that never appear anywhere in its cited supporting events —
+// empty when every claimed IP is actually backed, or when the finding names no IP at all.
+function claimedIpsNotInEvidence(f: Finding, supporting: readonly ForensicEvent[]): string[] {
+  const claimed = extractIpv4(`${f.title} ${f.description}`);
+  if (!claimed.length) return [];
+  const evidenceIps = new Set(extractIpv4(supporting.map((e) => `${e.description} ${e.message ?? ""}`).join(" ")));
+  return claimed.filter((ip) => !evidenceIps.has(ip));
 }
 
 export interface GroundingInput {
@@ -120,6 +144,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     let confidence = f.confidence;
     let confidenceReason = f.confidenceReason;
     let ungrounded = false;
+    let contentMismatch = false;
 
     // KEV is an independent corroboration signal (an external catalog confirms active exploitation),
     // so it exempts a finding from the single-source cap alongside 2+ tools / intel / graph linkage.
@@ -159,16 +184,34 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
-    // Clean the old flag first so a since-corrected finding loses `ungrounded` (idempotent recompute).
-    const { ungrounded: _prev, ...rest } = f;
+    // Content-mismatch check: only worth running on High/Critical (the severities this exists to gate)
+    // and only once the finding actually has cited evidence (an ungrounded finding is already capped above).
+    let severity = f.severity;
+    if (supporting.length > 0 && (f.severity === "Critical" || f.severity === "High")) {
+      const mismatched = claimedIpsNotInEvidence(f, supporting);
+      if (mismatched.length) {
+        contentMismatch = true;
+        severity = CONTENT_MISMATCH_SEVERITY_FLOOR;
+        if ((confidence ?? 100) > CONTENT_MISMATCH_CONFIDENCE_CAP) confidence = CONTENT_MISMATCH_CONFIDENCE_CAP;
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: claims ${mismatched.join(", ")} but the cited events never mention it — verify the citation before treating as confirmed`,
+        );
+      }
+    }
+
+    // Clean the old flags first so a since-corrected finding loses them (idempotent recompute).
+    const { ungrounded: _prev, contentMismatch: _prevCm, ...rest } = f;
     return {
       ...rest,
+      severity,
       relatedEventIds,
       corroboration,
       // Stable cross-run identity (issue #69) — recomputed every synthesis so second-opinion deltas
       // key on it instead of the raw title. Deterministic from the (idempotent-safe) title + techniques.
       semanticKey: deriveSemanticKey(f),
       ...(ungrounded ? { ungrounded: true } : {}),
+      ...(contentMismatch ? { contentMismatch: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };

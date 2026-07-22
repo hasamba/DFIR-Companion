@@ -140,6 +140,21 @@ describe("anonymizer — hosts", () => {
     expect(out).not.toContain("dc01");
     expect(a.restore(out)).toBe("logon on dc01");
   });
+
+  // Investigated as part of the veridia-deep-pass false positive (2026-07-22): the model's own synthesis
+  // guessed "anonymization-token collision" as the cause of two hostnames being conflated in an IOC list.
+  // Traced to assign() in anonymize.ts, which keys the token map by the lowercased REAL value (not by an
+  // index alone) — so two distinct real hosts can never be minted the same token within one Anonymizer
+  // instance, and every apply() call gets a fresh instance whose response is restored before persisting
+  // (pipeline.ts analyzeRestored). No collision was found; this locks in the invariant.
+  it("never assigns the same token to two different real hosts", () => {
+    const known: KnownEntities = { hosts: ["ws-mktg-01.veridia.io", "ws-dev-01.veridia.io"], accounts: [], internalDomains: [] };
+    const a = createAnonymizer(policy({ HOST: true }), known);
+    const out = a.apply("seen on ws-mktg-01.veridia.io and separately on ws-dev-01.veridia.io");
+    const tokens = out.match(/ANON_HOST_\d+/g) ?? [];
+    expect(new Set(tokens).size).toBe(2); // two distinct real hosts → two distinct tokens
+    expect(a.restore(out)).toBe("seen on ws-mktg-01.veridia.io and separately on ws-dev-01.veridia.io");
+  });
 });
 
 describe("anonymizer — internal domains", () => {

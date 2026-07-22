@@ -65,6 +65,12 @@ export interface Finding {
   // in-scope event supports it (a hypothesis, not a fact) → confidence hard-capped + badged.
   // `corroboration` is the rollup above. Both recomputed every synthesis; persisted for display.
   ungrounded?: boolean;
+  // A subtler ungroundedness than `ungrounded`: the finding cites REAL in-scope events (so the id-existence
+  // check above passes), but names a specific IP address in its own title/description that never appears in
+  // the text of any of those cited events — i.e. the claim's content doesn't match its own evidence. Set
+  // post-synthesis by groundAndScoreFindings; High/Critical severity is floored to Medium and confidence
+  // capped when this fires (investigation-guidance follow-up, veridia-deep-pass 2026-07-22).
+  contentMismatch?: boolean;
   corroboration?: FindingCorroboration;
   // Rabbit-hole detection (investigation-guidance #13). `relevance` places the finding relative to the
   // corroborated main attack path: 'connected' (on it) → a lead; 'disconnected' (evidence sits in a
