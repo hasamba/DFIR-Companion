@@ -5,6 +5,7 @@
 // so the orchestrator can be unit-tested with no network.
 
 import type { FetchFn } from "../../enrichment/provider.js";
+import { MISP_PING_PATH, mispCauseCode, mispPingBodyMessage, mispPingStatusMessage, mispTransportMessage } from "./mispConnectivity.js";
 
 export interface MispPushClientOptions {
   baseUrl: string;     // MISP instance, e.g. https://misp.example.org
@@ -44,7 +45,10 @@ export interface MispPushClientLike {
 }
 
 class MispApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // `transportCause` keeps the ORIGINAL fetch rejection: undici's message is always the useless
+  // "fetch failed" and the actionable reason (ECONNREFUSED, a cert error, DNS) lives on its
+  // `cause` chain, which ping() needs to turn into a diagnosis.
+  constructor(message: string, readonly status: number, readonly transportCause?: unknown) {
     super(message);
     this.name = "MispApiError";
   }
@@ -121,7 +125,11 @@ export class MispPushClient implements MispPushClientLike {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
-      throw new MispApiError(`MISP request failed: ${(err as Error).message}`, 0);
+      // Append the cause code on EVERY path — bare "MISP request failed: fetch failed" told the
+      // operator nothing about which of down/DNS/TLS it was. ping() turns it into a full
+      // diagnosis; elsewhere the code alone is enough to act on.
+      const code = mispCauseCode(err);
+      throw new MispApiError(`MISP request failed: ${(err as Error).message}${code ? ` (${code})` : ""}`, 0, err);
     }
     if (res.status === 401) throw new MispApiError("MISP auth failed — check DFIR_MISP_KEY", res.status);
     if (res.status === 403) {
@@ -151,8 +159,26 @@ export class MispPushClient implements MispPushClientLike {
     return data;
   }
 
+  // Connectivity + auth check, and the first call every push makes — so this is where a wrong
+  // DFIR_MISP_URL surfaces. Re-report the generic transport/HTTP failure as a diagnosis that
+  // names the URL and the setting at fault (#179). Auth failures (401/403) already say exactly
+  // what to fix, so they pass through untouched.
   async ping(): Promise<void> {
-    await this.req<unknown>("GET", "/servers/getVersion");
+    try {
+      await this.req<unknown>("GET", MISP_PING_PATH);
+    } catch (err) {
+      if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
+      const url = `${this.base}${MISP_PING_PATH}`;
+      // Not a MispApiError at all == the body failed to parse: a 2xx that wasn't MISP JSON.
+      if (!(err instanceof MispApiError)) throw new MispApiError(mispPingBodyMessage(url, err), 0, err);
+      throw new MispApiError(
+        err.status === 0
+          ? mispTransportMessage(err.transportCause, url)   // never reached the instance
+          : mispPingStatusMessage(err.status, url),         // answered, but not like a MISP would
+        err.status,
+        err.transportCause,
+      );
+    }
   }
 
   // Search events by tag to find a prior push's event. Returns the event id or null.

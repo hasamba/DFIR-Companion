@@ -9379,7 +9379,13 @@
       if (btn) { btn.disabled = true; btn.textContent = "collecting…"; }
       fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId }) })
         .then(r => r.json().then(j => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => { if (!ok) console.warn("collect failed", j); loadVeloHuntJobs(caseId); })
+        // `queued` = a collect was already running for this hunt, so this click was folded into a
+        // follow-up pass that starts when it finishes (#195). It WILL run — just not this instant.
+        .then(({ ok, j }) => {
+          if (!ok) console.warn("collect failed", j);
+          else if (j && j.queued && btn) { btn.textContent = "queued…"; btn.title = "a collect is already running for this hunt — this one runs right after it"; }
+          loadVeloHuntJobs(caseId);
+        })
         .catch(e => console.warn("collect error", e));
     }
 
@@ -12932,7 +12938,12 @@
         btn.disabled = true; btn.textContent = "collecting…";
         fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/collect`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ huntId }) })
           .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-          .then(({ ok, j }) => { if (!ok) { btn.disabled = false; btn.textContent = label; btn.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; btn.classList.add("hp-collect-err"); } })
+          // `queued` = a collect was already running for this hunt, so this click was folded into a
+          // follow-up pass that starts when it finishes (#195). It WILL run — just not this instant.
+          .then(({ ok, j }) => {
+            if (!ok) { btn.disabled = false; btn.textContent = label; btn.title = (j && j.error) || "collect failed — the hunt may have aged out of Velociraptor's job list"; btn.classList.add("hp-collect-err"); }
+            else if (j && j.queued) { btn.textContent = "queued…"; btn.title = "a collect is already running for this hunt — this one runs right after it"; }
+          })
           .catch((e) => { btn.disabled = false; btn.textContent = label; btn.title = "collect failed: " + e.message; btn.classList.add("hp-collect-err"); });
       };
       el.querySelectorAll(".hp-collect").forEach((b) => b.onclick = () => collectHunt(b.dataset.hid, b));

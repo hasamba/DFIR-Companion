@@ -803,7 +803,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     stopVeloMonitorTimer,
     scheduleVeloHuntStatusPoll,
     pollVeloHuntStatus,
-    importVeloHuntResults,
+    startVeloHuntCollect,
     ingestVeloArtifactMap,
     ingestVeloUploads,
     createVeloMonitor,
@@ -1078,10 +1078,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
   // pending timer never blocks exit.
   const veloHuntTimers = new Map<string, NodeJS.Timeout>();
-  const collectingNow = new Set<string>();   // in-memory guard closing the TOCTOU race between the fixed-delay
-                                              // timer and the status poller both deciding to collect the same
-                                              // hunt around the same moment (VeloHuntStore has no lock/CAS) —
-                                              // checked+set synchronously before any await.
+  // In-flight collects, keyed `caseId huntId`. Closes the TOCTOU race between the fixed-delay timer,
+  // the status poller and a manual "Collect now" all deciding to collect the same hunt at the same
+  // moment (VeloHuntStore has no lock/CAS) — claimed synchronously before any await.
+  //
+  // `rerun` is how a concurrent request is COALESCED rather than dropped (#195). A collect re-reads the
+  // hunt's complete current result set, so N requests that arrive mid-collect collapse into exactly one
+  // follow-up pass — but that pass must happen, otherwise the stragglers that arrived during the first
+  // collect are silently lost and the analyst's second "Collect now" is a no-op behind a 202.
+  const collectingNow = new Map<string, { rerun: boolean }>();
+  const collectKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
 
   // User-authored declarative importers (external plugin layer). Loaded async at startup; empty
   // until the load resolves (parity with the velociraptor inventory / iris reconnect self-heals).
@@ -1687,21 +1693,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
   // matter, the uploaded JSON does; it's detected + dispatched to the right importer. Honors the run's
   // minSeverity floor, records ONE combined import-meta diff, then synthesizes. Never throws (timer).
-  async function importVeloHuntResults(caseId: string, huntId: string): Promise<void> {
+  //
+  // ONE pass. Concurrency is owned by startVeloHuntCollect — call that, not this.
+  async function collectVeloHuntOnce(caseId: string, huntId: string): Promise<void> {
     const client = options.velociraptorClient;
     const huntStore = options.veloHuntStore;
     const pipeline = options.pipeline;
     if (!client || !huntStore || !pipeline) return;
-    if (collectingNow.has(huntId)) return;   // already collecting this hunt in this process — avoid a double-run
-    collectingNow.add(huntId);
-    try {
     const pending = veloHuntTimers.get(huntId);
     if (pending) { clearTimeout(pending); veloHuntTimers.delete(huntId); }
     stopVeloHuntStatusPoll(caseId, huntId);   // an import is starting — it now owns this job's status
 
     let job = await huntStore.get(caseId, huntId);
     if (!job) return;
-    if (job.status === "collecting") return;   // a collection of this hunt is already in flight
+    // NOTE: a persisted status of "collecting" is deliberately NOT treated as "in flight". It only
+    // means SOME process once started a collect — if that process died mid-collect the status stays
+    // "collecting" on disk forever (resumeVeloHuntStatusPolls re-arms only "running"/"unreachable"),
+    // and honoring it would brick every later "Collect now" for that hunt, permanently and silently.
+    // The authority on what is actually running now is `collectingNow`, which is in-memory by design.
     try {
       // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
       // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
@@ -1909,9 +1918,41 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       options.onVeloHunt?.(caseId);
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
     }
-    } finally {
-      collectingNow.delete(huntId);
-    }
+  }
+
+  // Start a collect for one hunt, in the background, and say synchronously what it decided:
+  //   "started" — this call owns a fresh collect pass.
+  //   "queued"  — a collect was already in flight; ONE more pass will run when it finishes.
+  // Either way the request is honored, which is what the 202 on the collect route promises.
+  //
+  // #195: this used to be a bare `if (already collecting) return`, so a second collect arriving while
+  // the first was still finishing was DISCARDED — behind a `202 {accepted:true}`. The window is the
+  // tail of a collect (persisting the job, broadcasting), which is milliseconds on an idle box and
+  // seconds under disk load, so it read as flake: a hunt's resultRows would freeze at the previous
+  // collect's value forever. Requests are now coalesced into a follow-up pass instead of dropped.
+  function startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued" {
+    const key = collectKey(caseId, huntId);
+    const inFlight = collectingNow.get(key);
+    if (inFlight) { inFlight.rerun = true; return "queued"; }
+
+    const entry = { rerun: false };
+    collectingNow.set(key, entry);
+    void (async () => {
+      try {
+        // Re-check `rerun` AFTER each pass: requests that landed during the pass are served by one
+        // more pass (they'd all read the same complete result set, so they collapse into one).
+        // A pass that throws (only the hunt-store read outside its own try can) is logged and does
+        // NOT cancel a queued rerun — the point of the queue is that a request always gets a pass.
+        do {
+          entry.rerun = false;
+          try { await collectVeloHuntOnce(caseId, huntId); }
+          catch (err) { logLine(`[velociraptor] collect pass failed for hunt ${huntId}: ${(err as Error).message}`); }
+        } while (entry.rerun);
+      } finally {
+        collectingNow.delete(key);
+      }
+    })();
+    return "started";
   }
 
   // Ingest ONE Velociraptor artifact-map JSON into a case — the shared core used by the external
@@ -2086,7 +2127,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       if (veloStatusTimers.has(statusKey(caseId, huntId))) scheduleVeloHuntStatusPoll(caseId, huntId);
     } else if (outcome.action === "collect") {
       veloStatusTimers.delete(statusKey(caseId, huntId));
-      void importVeloHuntResults(caseId, huntId);   // clears the fixed-delay timer + status poll itself (see below)
+      startVeloHuntCollect(caseId, huntId);   // clears the fixed-delay timer + status poll itself (see below)
     } else {
       veloStatusTimers.delete(statusKey(caseId, huntId));
     }

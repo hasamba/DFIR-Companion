@@ -423,8 +423,10 @@ describe("superTimelineOnly bundle routing", () => {
     // returns 202 before it finishes — polling the super-timeline for a total is a race under parallel
     // load. Instead drive each collect to COMPLETION deterministically off the hunt job's own status:
     // the import sets status `collecting` → `imported` (and stamps a fresh `importedAt`) when the
-    // super-timeline append has fully landed. `collectUntilImported` waits for that terminal state,
-    // re-POSTing the collect if the in-flight guard (collectingNow) swallowed a fire before status moved.
+    // super-timeline append has fully landed. `collectUntilImported` waits for that terminal state.
+    // (It also re-POSTs the collect, which was load-bearing before #195 — a collect landing on a hunt
+    // that was still finishing used to be dropped outright. It is now coalesced, so the re-POST is
+    // belt-and-braces against a slow import cycle rather than a workaround for a lost request.)
     async function jobStatus(): Promise<{ status?: string; importedAt?: string }> {
       const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
       const job = (jobs.body as Array<{ status?: string; importedAt?: string }>)[0] ?? {};

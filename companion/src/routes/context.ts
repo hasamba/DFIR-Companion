@@ -172,7 +172,9 @@ export interface RouteContext {
   //                                 (the reconnect route reuses the SAME functions createApp fires at boot).
   //   scheduleVeloMonitor / pollVeloMonitor / stopVeloMonitorTimer — arm / run-once / cancel a monitor.
   //   scheduleVeloHuntStatusPoll / pollVeloHuntStatus — arm / run-once a hunt-status poll.
-  //   importVeloHuntResults       — collect a hunt + import through the normal chain (also fired on a timer).
+  //   startVeloHuntCollect        — collect a hunt + import through the normal chain (also fired on a timer).
+  //                                 Fire-and-forget: returns synchronously with what it decided, never
+  //                                 drops the request (a concurrent one is coalesced — see #195).
   //   ingestVeloArtifactMap / ingestVeloUploads — the /import-external hunt/flow-map + uploads ingest cores.
   //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes).
   //   recordHuntDeploy            — record a deployed hunt in the #157 hunting-feedback-loop ledger.
@@ -184,7 +186,7 @@ export interface RouteContext {
   stopVeloMonitorTimer(caseId: string, id: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
-  importVeloHuntResults(caseId: string, huntId: string): Promise<void>;
+  startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
   ingestVeloArtifactMap(
     caseId: string,
     mapJson: string,

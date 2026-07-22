@@ -145,6 +145,79 @@ describe("hunting feedback loop — routes (#157)", () => {
   });
 });
 
+// #195: a "Collect now" that lands while a collect for the SAME hunt is still running must be
+// COALESCED into a follow-up pass, never dropped — the route answers 202 {accepted:true}, so the
+// request has to actually take effect. These two are deterministic (no load dependency): each one
+// constructs the exact window the old in-flight guard silently swallowed.
+describe("re-collect coalescing (#195)", () => {
+  it("coalesces a collect that arrives mid-collect instead of dropping it", async () => {
+    // The first collect is HELD inside hunt_results() until the second collect has been accepted —
+    // which is precisely the window (the tail of a collect: persisting the job, broadcasting) that
+    // used to lose the second request behind a 202 and freeze resultRows at the first value forever.
+    let rows: unknown[] = [{ Fqdn: "host-a", Message: "m1" }];
+    let releaseFirst: () => void = () => {};
+    const firstHeld = new Promise<void>((r) => { releaseFirst = r; });
+    let markStarted: () => void = () => {};
+    const firstCollectStarted = new Promise<void>((r) => { markStarted = r; });
+    let resultCalls = 0;
+
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("hunt(") && p.includes("artifacts=")) return { rows: [{ Hunt: { HuntId: "H.RUN1", state: "RUNNING" } }], raw: "" };
+      if (p.includes("hunt_results(")) {
+        resultCalls += 1;
+        // Snapshot at CALL time: a held pass must return what the hunt had when it asked, not what
+        // arrived while it was parked. Otherwise the first pass would pick up the straggler on its
+        // own and the assertion below would pass without any second pass ever running.
+        const snapshot = rows;
+        if (resultCalls === 1) { markStarted(); await firstHeld; }
+        return { rows: snapshot, raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+
+    const { app } = await makeApp({ runner });
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql: "SELECT * FROM pslist()", title: "recurring hunt", source: "fleet" });
+
+    const first = await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" });
+    expect(first.status).toBe(202);
+    expect(first.body.queued).toBe(false);
+    await firstCollectStarted;   // the first collect is now parked inside hunt_results()
+
+    // A straggler checks in and the analyst clicks Collect again — mid-collect, by construction.
+    rows = [{ Fqdn: "host-a", Message: "m1" }, { Fqdn: "host-b", Message: "m2" }];
+    const second = await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.RUN1" });
+    expect(second.status).toBe(202);
+    expect(second.body.queued).toBe(true);   // coalesced into a follow-up pass, NOT discarded
+
+    releaseFirst();
+    await pollFor("hunt H.RUN1 to report the straggler row picked up by the coalesced re-collect", async () => {
+      const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+      const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === "H.RUN1");
+      return h && h.resultRows === 2 ? true : undefined;
+    });
+  }, POLL_TIMEOUT_MS * 2);
+
+  it("recovers a hunt left persisted as 'collecting' by a crashed collect", async () => {
+    // A process that dies mid-collect leaves status="collecting" on disk, and only "running"/
+    // "unreachable" jobs get their status poll resumed — so honoring that stale status as "in
+    // flight" bricked every later Collect now for that hunt, permanently and silently.
+    const { app, store } = await makeApp();
+    await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql: "SELECT * FROM pslist()", title: "ps hunt", source: "fleet" });
+
+    const jobs = new VeloHuntStore(store);
+    const job = await jobs.get("c1", "H.DEPLOY1");
+    expect(job).toBeTruthy();
+    await jobs.upsert("c1", { ...job!, status: "collecting" });
+
+    expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.DEPLOY1" })).status).toBe(202);
+    await pollFor("the stale 'collecting' hunt to collect anyway", async () => {
+      const h = (await request(app).get("/cases/c1/hunt-outcomes")).body.hunts?.[0];
+      return h && h.status === "collected" ? true : undefined;
+    });
+  }, POLL_TIMEOUT_MS * 2);
+});
+
 // #80: run-to-run hunt diffing — re-deploying the SAME VQL fingerprint (a recurring/scheduled hunt)
 // must show what's new/gone vs its OWN previous run, not just the cumulative case delta.
 describe("run-to-run hunt diffing (#80)", () => {
