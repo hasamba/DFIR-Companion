@@ -194,6 +194,32 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // ───────────── Named offensive C2 / exploitation tooling (dual-use → weak) ─────────────
   { re: /\bcobalt\s*strike\b|\bbrute\s*ratel\b|\bbruteratel\b|\bposh\s*c2\b|\bkoadic\b|\badaptixc2\b|\bmeterpreter\b|\bmetasploit\b|\bsliver\b|\bpeerblight\b|\bzinfoq\b|\bcowtunnel\b/i, weight: "weak", ids: ["T1071"] },
   { re: /\bcertipy\b|\bnopac\b|\bpachine\b|\bzerologon\b|\bzer0dump\b|\bsharpprintnightmare\b|\bpetitpotam\b|\bcoercer\b|\bnoPac\b/i, weight: "weak", ids: ["T1068"] },
+
+  // ───────────── Linux / Unix tradecraft ─────────────
+  // These rules existed only in bashHistoryImport's own CMD_RULES, so the SAME attacker command
+  // graded Medium when it arrived via shell history and Info when the EDR (ECAR) reported it —
+  // and Info is demoted to the analyst-only super-timeline, which AI synthesis never reads. On the
+  // veridia-breach benchmark that hid the entire DB-01 half of the intrusion (read .env →
+  // mysqldump → gzip staging → curl exfil → truncate bash_history). Grading belongs here, in the
+  // shared table every importer consults, not in one importer.
+
+  // Collection: bulk database dump. Legitimate backups use these too, hence weak (Medium) — a lead
+  // to triage, not a verdict, same call bashHistoryImport already made.
+  { re: /\b(?:mysqldump|pg_dump|pg_dumpall|mongodump)\b/i, weight: "weak", ids: ["T1005"] },
+
+  // Indicator removal: destroying shell history. There is no benign reason to zero your own history
+  // mid-session, so this is strong — matching the Windows wevtutil/Clear-EventLog rules above.
+  { re: /\bhistory\s+-c\b|\bunset\s+HISTFILE\b|HISTFILE=\/dev\/null|\bHISTSIZE=0\b/i, weight: "strong", ids: ["T1070.003"] },
+  { re: /(?:\btruncate\b[^\n]*|\brm\b[^\n]*|\bshred\b[^\n]*|>\s*|\bln\s+-s\s+\/dev\/null\s+)[^\n]*(?:\.bash_history|\.zsh_history|\.sh_history)\b/i, weight: "strong", ids: ["T1070.003"] },
+
+  // Unsecured credentials: reading a credential-bearing file. Developers read .env files routinely,
+  // so weak (Medium) — the point is that it becomes VISIBLE to synthesis, not that it is a verdict.
+  { re: /\b(?:cat|less|more|head|tail|strings|nl|xxd|od)\b[^\n]*(?:\/\.env\b|[\w.-]+\.env\b|\/\.ssh\/id_(?:rsa|dsa|ecdsa|ed25519)\b|\.my\.cnf\b|\.pgpass\b|\.aws\/credentials\b|credentials\.json\b)/i, weight: "weak", ids: ["T1552.001"] },
+
+  // Archive collected data: compressing a database dump or a /tmp staging path. Scoped to .sql or
+  // /tmp so ordinary log rotation (`gzip /var/log/...`) and backup jobs (`tar czf /backups/...`)
+  // do not fire — see the "ordinary Linux administration" test.
+  { re: /\b(?:gzip|bzip2|xz|zip|tar|7za?)\b[^\n]*(?:\.sql\b|\/tmp\/)/i, weight: "weak", ids: ["T1560.001"] },
 ];
 
 // The weight + ATT&CK techniques a process command line indicates, or null. Strong wins over weak;

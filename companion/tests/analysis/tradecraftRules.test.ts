@@ -213,3 +213,85 @@ describe("reconTechniques — new discovery patterns from the corpus", () => {
     expect(reconTechniques("powershell.exe", "Invoke-ShareFinder -CheckShareAccess")).toContain("T1135");
   });
 });
+
+// ─────────────────────── Linux / Unix tradecraft ───────────────────────
+// Gap found on the EvidenceForge veridia-breach benchmark: the whole DB-01 half of the intrusion
+// (read .env → mysqldump → gzip staging → curl exfil → truncate bash_history) graded Info via the
+// ECAR path and was demoted to the analyst-only super-timeline, i.e. invisible to AI synthesis.
+// bashHistoryImport's own CMD_RULES already graded these Medium, so the SAME command scored
+// differently depending on which importer saw it. These rules close that divergence.
+describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
+  it("flags bulk database dumps as collection (T1005)", () => {
+    for (const cmd of [
+      "mysqldump -u veridia_app -pveridia-db-p455 veridia_prod customers payment_methods > /tmp/export-4291.sql",
+      "mysqldump",
+      "pg_dump -Fc appdb > /tmp/app.dump",
+      "pg_dumpall -U postgres",
+      "mongodump --db prod --out /tmp/m",
+    ]) {
+      const r = sig(cmd);
+      expect(r, cmd).not.toBeNull();
+      expect(r?.mitre, cmd).toContain("T1005");
+    }
+  });
+
+  it("flags shell-history destruction as indicator removal (T1070.003)", () => {
+    for (const cmd of [
+      "truncate -s 0 ~/.bash_history",
+      "rm -f ~/.bash_history",
+      "cat /dev/null > ~/.bash_history",
+      "> /home/deploy/.bash_history",
+      "history -c",
+      "unset HISTFILE",
+      "ln -s /dev/null ~/.bash_history",
+    ]) {
+      const r = sig(cmd);
+      expect(r?.weight, cmd).toBe("strong");
+      expect(r?.mitre, cmd).toContain("T1070.003");
+    }
+  });
+
+  it("flags reads of credential-bearing files as unsecured credentials (T1552.001)", () => {
+    for (const cmd of [
+      "cat /opt/veridia-app/.env",
+      "less /srv/app/.env",
+      "cat /home/marcus.chen/.ssh/id_rsa",
+      "cat ~/.my.cnf",
+      "cat ~/.aws/credentials",
+      "cat /home/deploy/.pgpass",
+    ]) {
+      const r = sig(cmd);
+      expect(r, cmd).not.toBeNull();
+      expect(r?.mitre, cmd).toContain("T1552.001");
+    }
+  });
+
+  it("flags archiving of a database dump or /tmp staging path (T1560.001)", () => {
+    for (const cmd of [
+      "gzip -9 /tmp/export-4291.sql",
+      "tar czf /tmp/out.tar.gz /tmp/export-4291.sql",
+      "zip -r /tmp/data.zip /tmp/dump",
+      "xz /tmp/export.sql",
+    ]) {
+      const r = sig(cmd);
+      expect(r, cmd).not.toBeNull();
+      expect(r?.mitre, cmd).toContain("T1560.001");
+    }
+  });
+
+  it("does not fire on ordinary Linux administration", () => {
+    for (const cmd of [
+      "ls -la /var/backups/",
+      "uname -a",
+      "id",
+      "hostname -f",
+      "systemctl status nginx",
+      "gzip /var/log/nginx/access.log.1",          // log rotation, not staging
+      "tar czf /backups/etc-$(date +%F).tar.gz /etc",
+      "cat /etc/hostname",
+      "vim /opt/app/config.yaml",
+    ]) {
+      expect(sig(cmd), cmd).toBeNull();
+    }
+  });
+});
