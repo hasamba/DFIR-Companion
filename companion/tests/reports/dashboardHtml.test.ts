@@ -595,3 +595,23 @@ describe("dashboard.html — deep pass", () => {
     expect(matches(html, /SECTION_DEFS = \[[\s\S]{0,3000}id: "sec-deep-pass"/), "listed in SECTION_DEFS").toBe(true);
   });
 });
+
+describe("dashboard.html — help icon", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("links to the online user manual from the toolbar", async () => {
+    const html = await load();
+    expect(html).toMatch(/id="helpBtn"[^>]*href="https:\/\/hasamba\.github\.io\/DFIR-Companion\/manual\/"/);
+    // Opens in a new tab without handing the manual a live window.opener reference.
+    expect(html).toMatch(/id="helpBtn"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
+    // Icon-only control, so it needs an accessible name.
+    expect(html).toMatch(/id="helpBtn"[^>]*aria-label="User manual"/);
+  });
+
+  it("sits immediately left of the settings gear and is styled to match it", async () => {
+    const html = await load();
+    expect(html).toMatch(/id="helpBtn"[\s\S]{0,1200}?<button id="settingsBtn"/);
+    expect(html).toContain("#helpBtn { background: none;");
+    expect(html).toContain("#helpBtn:hover");
+  });
+});
