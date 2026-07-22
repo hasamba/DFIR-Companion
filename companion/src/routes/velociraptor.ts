@@ -482,7 +482,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         category: "hunt", action: "run-bundle", detail: `ran bundle "${bundle.name}" (${artifactsToRun.length} artifact(s))`,
       });
 
-      const timer = setTimeout(() => { void ctx.importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
+      const timer = setTimeout(() => { ctx.startVeloHuntCollect(caseId, launch.huntId); }, waitMinutes * 60_000);
       timer.unref?.();
       ctx.veloHuntTimers().set(launch.huntId, timer);
       ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
@@ -586,6 +586,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Collect a specific hunt NOW (don't wait for its timer). Body `{ huntId }`; defaults to the most
   // recent hunt when omitted. Runs in the background; poll hunt-jobs. 404 when there's nothing to collect.
+  //
+  // `queued: true` means a collect for this hunt was already running, so this one was coalesced into a
+  // follow-up pass that starts when it finishes — still honored, just not immediately (#195). The 202
+  // means the request WILL take effect either way; it never silently evaporates.
   app.post("/cases/:id/velociraptor/collect", async (req: Request, res: Response) => {
     if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
     if (!options.veloHuntStore) return res.status(501).json({ error: "hunt store not configured" });
@@ -594,8 +598,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const jobs = await options.veloHuntStore.list(caseId);
     const job = wantedHuntId ? jobs.find((j) => j.huntId === wantedHuntId) : jobs[0];
     if (!job) return res.status(404).json({ error: wantedHuntId ? `no Velociraptor hunt ${wantedHuntId} for this case` : "no Velociraptor hunt to collect for this case" });
-    res.status(202).json({ accepted: true, huntId: job.huntId });
-    void ctx.importVeloHuntResults(caseId, job.huntId);
+    const disposition = ctx.startVeloHuntCollect(caseId, job.huntId);
+    return res.status(202).json({ accepted: true, huntId: job.huntId, queued: disposition === "queued" });
   });
 
   // Manually run one status-poll tick for a hunt NOW instead of waiting for the next scheduled tick
@@ -670,7 +674,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(), status: "running", expirySeconds,
         };
         await options.veloHuntStore.upsert(caseId, job);
-        const timer = setTimeout(() => { void ctx.importVeloHuntResults(caseId, launch.huntId); }, waitMinutes * 60_000);
+        const timer = setTimeout(() => { ctx.startVeloHuntCollect(caseId, launch.huntId); }, waitMinutes * 60_000);
         timer.unref?.();
         ctx.veloHuntTimers().set(launch.huntId, timer);
         ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
