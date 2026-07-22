@@ -15058,6 +15058,9 @@
     });
 
     function render(rawState) {
+      // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
+      // a slow response for an abandoned case load can silently overwrite the case now on screen.
+      if (rawState && rawState.caseId && activeCaseId && rawState.caseId !== activeCaseId) return;
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
       const state = projectScope(rawState);
@@ -15358,6 +15361,12 @@
       }
     });
 
+    // The in-flight case-load "generation" (#174): each proceedConnect() gets its own AbortController
+    // covering the two loads the overlay blocks on (state + lifecycle), and activeCaseId names whose
+    // case is currently authoritative — used by render()'s stale-response guard above.
+    let connectAbortController = null;
+    let activeCaseId = null;
+
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) return;
@@ -15397,7 +15406,7 @@
       _caseLoadingTimeoutId = setTimeout(() => {
         if (textEl) textEl.textContent = "Still loading — click to dismiss";
         overlay.style.cursor = "pointer";
-        overlay.onclick = hideCaseLoadingOverlay;
+        overlay.onclick = dismissCaseLoading;
       }, 15000);
     }
     function hideCaseLoadingOverlay() {
@@ -15408,15 +15417,31 @@
       overlay.style.cursor = "";
       clearTimeout(_caseLoadingTimeoutId);
     }
+    // The "Still loading — click to dismiss" click handler (#174): actually abandons the in-flight
+    // state/lifecycle load instead of merely hiding the overlay, so those requests stop being able to
+    // block or clobber a case the analyst connects to next. Selecting a new case has the same effect
+    // (proceedConnect aborts the previous generation itself) — this covers giving up without picking
+    // a replacement case yet.
+    function dismissCaseLoading() {
+      if (connectAbortController) connectAbortController.abort();
+      hideCaseLoadingOverlay();
+    }
 
     function proceedConnect(caseId) {
+      // Abandon the previous case's in-flight state/lifecycle load (#174): aborts its fetches (frees
+      // the browser's connection slots and lets the server bail out early if it hasn't started the
+      // heavy work yet) and makes render()'s stale-response guard reject anything it still returns.
+      if (connectAbortController) connectAbortController.abort();
+      connectAbortController = new AbortController();
+      const loadSignal = connectAbortController.signal;
+      activeCaseId = caseId;
       showCaseLoadingOverlay();
       hideCaseMismatch(); mismatchDismissed = "";   // fresh start for the newly-connected case
       if (ws) { try { ws.close(); } catch {} ws = null; }
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
-      const stateLoadPromise = fetch(`/cases/${caseId}/state`).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
+      const stateLoadPromise = fetch(`/cases/${caseId}/state`, { signal: loadSignal }).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
@@ -15495,7 +15520,7 @@
       loadJobs(caseId);   // #225 background-jobs badge/popover
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
-      const lifecycleLoadPromise = loadCaseLifecycle(caseId);
+      const lifecycleLoadPromise = loadCaseLifecycle(caseId, loadSignal);
       Promise.allSettled([stateLoadPromise, lifecycleLoadPromise]).then(hideCaseLoadingOverlay);
       loadVeloTriage(caseId);
       loadHuntProfile(caseId);  // #157 hunting feedback loop — what's been hunted, what hit/missed
@@ -20183,8 +20208,8 @@
     // ── Case lifecycle (#119) ───────────────────────────────────────────────
     // Load the case's status (open/closed) and update the toolbar button + label. Returns its
     // promise so proceedConnect() can gate the loading overlay on it (see showCaseLoadingOverlay).
-    function loadCaseLifecycle(caseId) {
-      return fetch("/cases").then(r => r.ok ? r.json() : [])
+    function loadCaseLifecycle(caseId, signal) {
+      return fetch("/cases", signal ? { signal } : undefined).then(r => r.ok ? r.json() : [])
         .then(cases => {
           const meta = cases.find(c => c.caseId === caseId);
           const isClosed = meta && meta.status === "closed";
