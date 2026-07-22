@@ -18176,11 +18176,17 @@
     }
     loadDashboardViews();
 
+    // What the .env fields held when the modal was last populated. Save submits EVERY field, so this
+    // is how we tell which groups the analyst actually TOUCHED and therefore which to apply live —
+    // without it, one save would rebuild every integration client on the server (#178).
+    let loadedEnvValues = {};
+
     async function fetchEnvSettings() {
       try {
         const r = await fetch("/settings/env");
         if (!r.ok) return;
         const { env } = await r.json();
+        loadedEnvValues = {};
         for (const [key, val] of Object.entries(env)) {
           const el = document.getElementById("env-" + key);
           if (!el) continue;
@@ -18188,13 +18194,48 @@
             el.value = val || "";
             el.dispatchEvent(new Event("dfir:envloaded"));
           } else if (el.type === "password") {
+            // Secrets come back masked and the input starts empty, so ANY value typed here is a change.
             el.value = "";
             el.placeholder = val === "••••••••" ? "(already set)" : "(not set)";
           } else {
             el.value = val || "";
           }
+          loadedEnvValues[key] = el.value;
         }
       } catch {}
+    }
+
+    // Integration groups POST /settings/reload accepts (the server's own allowlist). A saved key
+    // belongs to the group whose prefix it starts with; the LONGEST match wins so a nested family
+    // (DFIR_AI_SYNTH_* under DFIR_AI_) reloads the group the server actually knows.
+    const RELOADABLE_ENV_PREFIXES = [
+      "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_",
+      "DFIR_CLICKUP_", "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_",
+      "DFIR_SHODAN_", "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
+      "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
+    ];
+
+    // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178). Returns the
+    // distinct component names the server reports as REBUILT — empty when the save touched only groups
+    // with nothing to rebuild (AI, tools) or when a reload call fails, in which case the caller keeps
+    // the honest "restart to apply" message rather than claiming a change took effect.
+    async function applySavedEnvGroups(savedKeys) {
+      const prefixes = [...new Set(savedKeys.map(key => RELOADABLE_ENV_PREFIXES
+        .filter(p => key.startsWith(p))
+        .sort((a, b) => b.length - a.length)[0]).filter(Boolean))];
+      const rebuilt = [];
+      for (const prefix of prefixes) {
+        try {
+          const r = await fetch("/settings/reload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prefix })
+          });
+          const body = await r.json().catch(() => ({}));
+          (body.rebuilt || []).forEach(name => { if (!rebuilt.includes(name)) rebuilt.push(name); });
+        } catch {}
+      }
+      return rebuilt;
     }
 
     async function saveSettings() {
@@ -18233,8 +18274,28 @@
             body: JSON.stringify({ updates })
           });
           if (r.ok) {
-            msg.textContent = "✓ Saved — restart the server to apply server-side changes";
-            msg.style.color = "#ffd93b";
+            // Saving only WRITES .env, so this used to be a flat "restart to apply" — which is how a
+            // corrected MISP URL could sit on disk while the running server kept pushing to the old
+            // one (#178). Now every integration group the save touched is applied live: /settings/reload
+            // loads it into the environment AND rebuilds the clients it feeds, reporting them back.
+            const changed = Object.keys(updates).filter(k => updates[k] !== (loadedEnvValues[k] ?? ""));
+            const rebuilt = await applySavedEnvGroups(changed);
+            // The saved values are the new baseline, so saving twice without reopening the modal
+            // doesn't rebuild the same clients again.
+            changed.forEach(k => { loadedEnvValues[k] = updates[k]; });
+            if (rebuilt.length > 0) {
+              msg.textContent = "✓ Saved and applied live: " + rebuilt.join(", ") +
+                " — AI model changes still need a server restart";
+              msg.style.color = "#5fd470";
+            } else if (changed.length > 0) {
+              // Changed something with no live client behind it (AI models, tool paths) — the honest
+              // answer is still "restart", so don't claim more than the server actually did.
+              msg.textContent = "✓ Saved — restart the server to apply server-side changes";
+              msg.style.color = "#ffd93b";
+            } else {
+              msg.textContent = "✓ Saved";
+              msg.style.color = "#5fd470";
+            }
           } else {
             const j = await r.json().catch(() => ({}));
             msg.textContent = "Error: " + (j.error || r.status);

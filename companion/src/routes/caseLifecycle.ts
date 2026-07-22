@@ -917,6 +917,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // just-saved DFIR_<PREFIX>_* group from .env into process.env without a restart, so a "Save & test"
   // step sees the new config. ALLOWLISTED — the prefix must be a known integration group, so a request
   // can't reload arbitrary env (and the route never reads/returns secret VALUES, only the applied keys).
+  //
+  // Applying the env is only half the job (#178): the integration clients and provider sets are built
+  // ONCE at startup, so until ctx.rebuildForPrefix swapped them the route updated process.env and
+  // nothing else — a corrected MISP URL stayed stale in the live push client, and the wizard reported
+  // "✓ Saved & configured" (that check reads process.env) while the running server ignored the change.
+  // `rebuilt` names the components actually swapped; it is empty for a prefix with nothing to rebuild
+  // (DFIR_TOOL_ and friends — see rebuildForPrefix in server.ts for why each is excluded).
   const RELOADABLE_PREFIXES = new Set([
     "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
     "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
@@ -931,7 +938,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(400).json({ error: `prefix not in the reloadable allowlist: ${prefix}` });
       }
       const applied = await reloadEnvPrefix(prefix);
-      return res.json({ ok: true, applied });
+      const rebuilt = ctx.rebuildForPrefix(prefix);
+      return res.json({ ok: true, applied, rebuilt });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

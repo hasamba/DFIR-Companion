@@ -20,6 +20,8 @@ import { buildCustomerExposureTargets, CustomerExposureStore, summarizeExposure 
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import type { Tag } from "../analysis/tags.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import type { EnrichmentProvider } from "../enrichment/provider.js";
+import type { CustomerExposureProvider } from "../analysis/customerExposure.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -42,10 +44,12 @@ import type { RouteContext } from "./context.js";
  * Plus already-graduated members reused here: enrichHealth() (shared provider reachability cache),
  * applyWhitelistToCase / applyNsrlToCase (the false-positive sweeps), resynthesizeInBackground.
  *
- * Domain-local state is (re)built in-module from ctx.options/ctx.store: the enrich provider catalogue
- * (allProviders/configuredNames/localNames/ALL_KNOWN_PROVIDERS), the stateless per-case stores
- * (enrichControl, customerStore, customerExposureStore, falsePositives), and the exposure provider
- * list — none of it is shared with createApp beyond what's noted above.
+ * Domain-local state is (re)built in-module from ctx.options/ctx.store: the static provider catalogue
+ * (ALL_KNOWN_PROVIDERS) and the stateless per-case stores (enrichControl, customerStore,
+ * customerExposureStore, falsePositives) — none of it shared with createApp beyond what's noted above.
+ * The CONFIGURED provider sets (allProviders/configuredNames/localNames and customerExposureProviders)
+ * are accessors, not captured copies: POST /settings/reload rebuilds both sets when a key is saved
+ * (#178), so each must resolve against createApp's live binding at call time.
  *
  * NOTE: interleaved non-threat-intel routes were intentionally left in createApp (adversary-hints,
  * false-positive*, events, importers*, deobfuscate, scope, api/jobs, synthesize) as were the
@@ -61,11 +65,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
     options.stateLock ? options.stateLock.runExclusive(caseId, fn) : fn();
 
-  // Provider classification (from the configured set) — a stable projection of options, identical to
-  // the copy createApp keeps for the enrich engine.
-  const allProviders = options.enrichmentProviders ?? [];
-  const configuredNames = allProviders.map((p) => p.name);
-  const localNames = allProviders.filter((p) => p.scope === "local").map((p) => p.name);
+  // Provider classification, derived from the configured set PER CALL rather than captured once at
+  // registration (#178): POST /settings/reload rebuilds that set when an enrichment key is saved, and
+  // a captured copy would have kept serving the boot-time providers for the life of the process.
+  // ctx.enrichmentProviders() reads createApp's live binding — the same one the enrich engine uses.
+  const allProviders = (): EnrichmentProvider[] => ctx.enrichmentProviders();
+  const configuredNames = (): string[] => allProviders().map((p) => p.name);
+  const localNames = (): string[] => allProviders().filter((p) => p.scope === "local").map((p) => p.name);
 
   // Stateless per-case stores (each just wraps ctx.store); a fresh instance reads/writes the same
   // files as createApp's, matching the customerExposureStore/reportWriter store-instance precedent.
@@ -76,7 +82,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // domains are sent to providers. Remote domains collected as IOCs are never queried here.
   const customerStore = new CustomerStore(store);
   const customerExposureStore = new CustomerExposureStore(store);
-  const customerExposureProviders = options.customerExposureProviders ?? [];
+  // Live for the same reason as allProviders above — /settings/reload rebuilds this set too.
+  const customerExposureProviders = (): CustomerExposureProvider[] => options.customerExposureProviders ?? [];
 
   // Full catalogue of every known enrichment provider — shown in the picker regardless of whether
   // the key is configured, so analysts can see what's available and what env var to add.
@@ -177,8 +184,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       const state = await options.stateStore.load(req.params.id);
       const targets = await customerStore.load(req.params.id);
       return res.status(200).json({
-        anyConfigured: customerExposureProviders.length > 0,
-        providers: customerExposureProviders.map((p) => p.name),
+        anyConfigured: customerExposureProviders().length > 0,
+        providers: customerExposureProviders().map((p) => p.name),
         targets,
         effectiveTargets: buildCustomerExposureTargets(state, targets),
         exposure: await customerExposureStore.load(req.params.id),
@@ -200,7 +207,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
 
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
-    if (customerExposureProviders.length === 0) {
+    if (customerExposureProviders().length === 0) {
       return res.status(501).json({ error: "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)" });
     }
     const caseId = req.params.id;
@@ -212,7 +219,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       // configured. A name not matching a configured provider is simply ignored.
       const requested = parseList(req.body?.providers).map((s) => s.trim()).filter(Boolean);
       const selection = requested.length ? requested : (targets.providers?.length ? targets.providers : null);
-      const active = selection ? customerExposureProviders.filter((p) => selection.includes(p.name)) : customerExposureProviders;
+      const exposureProviders = customerExposureProviders();
+      const active = selection ? exposureProviders.filter((p) => selection.includes(p.name)) : exposureProviders;
       if (active.length === 0) return res.status(400).json({ error: "no matching exposure providers selected" });
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: "checking customer exposure" });
       const summary = await summarizeExposure(state, targets, active, {
@@ -693,10 +701,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // AbuseIPDB) — that's why it is off until the analyst opts in.
   app.get("/cases/:id/enrich-control", async (req: Request, res: Response) => {
     try {
-      const configuredSet = new Set(configuredNames);
-      const enabled = new Set(resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames, localNames));
+      const configuredSet = new Set(configuredNames());
+      const enabled = new Set(resolveEnabledProviders(await enrichControl.load(req.params.id), configuredNames(), localNames()));
       return res.status(200).json({
-        anyConfigured: allProviders.length > 0,
+        anyConfigured: allProviders().length > 0,
         // All known providers with scope, configured flag (key present) and enabled flag (on for this case).
         // Configured providers are listed first within each scope group.
         providers: [
@@ -721,7 +729,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.get("/enrich-health", async (_req: Request, res: Response) => {
     try {
       const enrichHealth = ctx.enrichHealth();
-      const health = await Promise.all(allProviders.map(async (p) => {
+      const health = await Promise.all(allProviders().map(async (p) => {
         const h = p.probe ? await enrichHealth.check(p) : { ok: true, checkedAt: 0 };
         return { name: p.name, scope: p.scope, probed: Boolean(p.probe), ok: h.ok, detail: h.detail };
       }));
@@ -735,12 +743,12 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // (preferred) or legacy `{ enabled: boolean }`. Saving re-runs enrichment; per-provider
   // caching means only the newly-enabled providers query the existing IOCs.
   app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
-    if (allProviders.length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
+    if (allProviders().length === 0) return res.status(501).json({ error: "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     let providers: string[];
-    if (Array.isArray(req.body?.providers)) providers = req.body.providers.map(String).filter((n: string) => configuredNames.includes(n));
-    else if (typeof req.body?.enabled === "boolean") providers = req.body.enabled ? [...configuredNames] : [];
+    if (Array.isArray(req.body?.providers)) providers = req.body.providers.map(String).filter((n: string) => configuredNames().includes(n));
+    else if (typeof req.body?.enabled === "boolean") providers = req.body.enabled ? configuredNames() : [];
     else return res.status(400).json({ error: "providers (array of provider names) or enabled (boolean) is required" });
     try {
       await enrichControl.save(caseId, { providers });
