@@ -10,6 +10,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { HuntOutcomeStore } from "../../src/analysis/huntOutcomeStore.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import { HuntRunSnapshotStore } from "../../src/analysis/huntRunSnapshotStore.js";
 import { recordDeploy, vqlFingerprint } from "../../src/analysis/huntOutcomes.js";
 import { MockProvider } from "../../src/providers/provider.js";
@@ -78,19 +79,20 @@ describe("hunting feedback loop — routes (#157)", () => {
     await request(app).post("/cases/c1/velociraptor/deploy-hunt").send({ vql: "SELECT * FROM pslist()", title: "ps hunt", source: "fleet" });
     expect((await request(app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.DEPLOY1" })).status).toBe(202);
 
-    let hunt: { status: string; foundEvidence?: boolean } | undefined;
-    for (let i = 0; i < 100; i++) {
-      hunt = (await request(app).get("/cases/c1/hunt-outcomes")).body.hunts[0];
-      if (hunt && hunt.status === "collected") break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(hunt?.status).toBe("collected");
-    expect(hunt?.foundEvidence).toBe(true);
+    const hunt = await pollFor<{ status: string; foundEvidence?: boolean }>(
+      "the deployed hunt to reach status=collected",
+      async () => {
+        const h = (await request(app).get("/cases/c1/hunt-outcomes")).body.hunts[0];
+        return h && h.status === "collected" ? h : undefined;
+      },
+    );
+    expect(hunt.status).toBe("collected");
+    expect(hunt.foundEvidence).toBe(true);
     const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
     expect(profile).toMatchObject({ hit: 1, pending: 0 });
     expect(profile.hunts[0].resultRows).toBe(1);          // the row the hunt returned is surfaced
     expect(profile.hunts[0].resultSummary).toContain("result");
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("hunt-rows returns a tracked hunt's result rows on demand, 404s for an unknown hunt", async () => {
     const { app } = await makeApp();
@@ -147,13 +149,11 @@ describe("hunting feedback loop — routes (#157)", () => {
 // must show what's new/gone vs its OWN previous run, not just the cumulative case delta.
 describe("run-to-run hunt diffing (#80)", () => {
   async function waitForCollected(app: Express, huntId: string) {
-    for (let i = 0; i < 100; i++) {
+    return pollFor<Array<Record<string, unknown>>>(`hunt ${huntId} to be collected`, async () => {
       const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
       const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
-      if (h && h.status === "collected") return profile.hunts as Array<Record<string, unknown>>;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    throw new Error(`hunt ${huntId} never collected`);
+      return h && h.status === "collected" ? (profile.hunts as Array<Record<string, unknown>>) : undefined;
+    });
   }
 
   it("diffs a re-run against its own previous run's rows/hosts, not the whole case", async () => {
@@ -190,7 +190,8 @@ describe("run-to-run hunt diffing (#80)", () => {
     expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
       isFirstRun: false, addedRows: 1, removedRows: 0, addedHosts: ["host-b"],
     });
-  }, 30_000);   // two sequential collect polls (100 x 20ms each) can exceed vitest's 5s default under a loaded parallel run
+    // TWO sequential waitForCollected polls, so the test timeout must clear 2x the poll budget.
+  }, POLL_TIMEOUT_MS * 3);
 
   it("advances the baseline on same-huntId re-collects so a later re-run doesn't re-report stragglers", async () => {
     // Fleet hunt results trickle in: an analyst clicks "Collect" several times on the SAME huntId as
@@ -227,13 +228,18 @@ describe("run-to-run hunt diffing (#80)", () => {
     // Poll until the outcome's resultRows reflects a collect that returned `rows` rows — the only visible
     // signal that a same-huntId re-collect (which never changes status away from "collected") completed.
     async function waitForResultRows(huntId: string, rows: number) {
-      for (let i = 0; i < 100; i++) {
-        const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
-        const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
-        if (h && h.resultRows === rows) return;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      throw new Error(`hunt ${huntId} never reported ${rows} result rows`);
+      const seen: unknown[] = [];
+      await pollFor(
+        () =>
+          `hunt ${huntId} to report ${rows} result rows ` +
+          `(observed resultRows: ${JSON.stringify([...new Set(seen.map(String))])})`,
+        async () => {
+          const profile = (await request(app).get("/cases/c1/hunt-outcomes")).body;
+          const h = (profile.hunts ?? []).find((x: { huntId?: string }) => x.huntId === huntId);
+          seen.push(h?.resultRows);
+          return h && h.resultRows === rows ? true : undefined;
+        },
+      );
     }
 
     // First deploy + first (partial) collect — one host so far.
@@ -261,5 +267,8 @@ describe("run-to-run hunt diffing (#80)", () => {
     expect(hunts.find((h) => h.huntId === "H.RUN2")?.runDiff).toMatchObject({
       isFirstRun: false, addedRows: 0, removedRows: 0, addedHosts: [], removedHosts: [],
     });
-  }, 30_000);   // four sequential collect polls (100 x 20ms each) exceed vitest's 5s default under a loaded parallel run
+    // FOUR sequential polls (3x waitForResultRows + 1x waitForCollected). At the old 30s this test
+    // could not survive its own worst case — 4 x 10s of polling — which is how it came to fail ~50%
+    // of runs under load. The timeout now clears the full poll budget with headroom (issue #173).
+  }, POLL_TIMEOUT_MS * 5);
 });
