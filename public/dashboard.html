@@ -1442,6 +1442,12 @@
     .swimlane-detail { margin-top: 10px; padding: 10px 12px; background: var(--c-0f1115); border: 1px solid var(--c-2a2f3a);
       border-radius: 6px; font-size: 12px; }
     .swimlane-detail-header { font-weight: 600; margin-bottom: 6px; }
+    /* Help icon — opens the online user manual in a new tab. Sits immediately left of the gear and
+       matches it pixel-for-pixel so the two read as one control cluster. */
+    #helpBtn { background: none; border: none; color: var(--c-9aa4b2); cursor: pointer; padding: 4px;
+      display: flex; align-items: center; border-radius: 7px; line-height: 0; text-decoration: none;
+      transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+    #helpBtn:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
     /* Settings icon — sibling of .toolbar-main, align-self:flex-start keeps it pinned to the
        top-right of the first line even when the action buttons wrap below it. */
     #settingsBtn { background: none; border: none; color: var(--c-9aa4b2); cursor: pointer; padding: 4px;
@@ -1677,6 +1683,7 @@
     <div id="jobsMenu" class="jobs-menu" style="display:none"></div>
     </div>
     <button id="themeToggle" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme" aria-pressed="false"><svg class="ti-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="ti-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+    <a id="helpBtn" href="https://hasamba.github.io/DFIR-Companion/manual/" target="_blank" rel="noopener noreferrer" title="Open the online user manual (new tab)" aria-label="User manual"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg></a>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
     <div class="scope-group">
       <span style="color:var(--c-cbd3df);">Scope:</span>
