@@ -4,10 +4,17 @@ name: TruffleHog Secret Scan
 # TruffleHog tests each detected credential against its real API (e.g. an AWS key gets a live
 # GetCallerIdentity call), so it only fails on active, exploitable secrets rather than
 # secret-shaped strings — a different signal than betterleaks' regex rules.
+#
+# push is scoped to master (not '**'): the Action computes its scan range from
+# github.event.before, which is all-zeros on a brand-new branch's first push, and it falls back
+# to scanning the ENTIRE git history rather than just the new commits. Every feature branch here
+# starts life as a new branch, so a '**' trigger would full-history-rescan (and re-surface any
+# already-fixed/allowlisted finding) on every branch's first push. pull_request already covers
+# feature branches correctly, bounding the scan to base...head.
 
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
     types: [opened, synchronize, reopened]
 
