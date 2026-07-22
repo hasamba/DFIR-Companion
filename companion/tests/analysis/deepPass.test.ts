@@ -202,3 +202,22 @@ describe("condensing", () => {
     expect(MAX_CONDENSE_ROUNDS).toBeLessThanOrEqual(5);
   });
 });
+
+describe("observation digest is citable as evidence", () => {
+  // The halcyon benchmark exposed this: the deep pass produced the RIGHT Critical finding but cited
+  // ZERO events (1 of 14 findings had links, vs 7 of 7 for normal synthesis), so findingGrounding
+  // capped it at the ungrounded confidence ceiling and an analyst could not verify it from the UI.
+  // Cause: the synthesis prompt scoped relatedEventIds to "the forensic-timeline events", and the
+  // observations are a SEPARATE block — so the model correctly declined to cite them.
+  it("tells the model the observation event ids belong in relatedEventIds", () => {
+    const block = renderObservationDigest([
+      { summary: "archive staged", eventIds: ["e1", "e2"], whyItMatters: "precedes an upload" },
+    ]);
+    expect(block).toMatch(/relatedEventIds/i);
+  });
+
+  it("still renders the ids themselves so they can be copied verbatim", () => {
+    const block = renderObservationDigest([{ summary: "s", eventIds: ["e42"], whyItMatters: "w" }]);
+    expect(block).toContain("e42");
+  });
+});

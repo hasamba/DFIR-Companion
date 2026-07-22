@@ -117,3 +117,11 @@ describe("OBSERVE prompt capability (deep pass)", () => {
     expect(text).toMatch(/do NOT create a finding/i);
   });
 });
+
+describe("synthesis prompt admits deep-pass observation ids", () => {
+  // Regression guard for the halcyon benchmark result: findings derived from deep-pass observations
+  // came back ungrounded because the relatedEventIds instruction named only the forensic timeline.
+  it("does not scope relatedEventIds to the timeline alone", () => {
+    expect(BUILTIN_PROMPT_BY_NAME.SYNTH).toMatch(/deep-pass observations|DEEP-PASS OBSERVATIONS/);
+  });
+});

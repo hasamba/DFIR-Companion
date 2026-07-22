@@ -183,8 +183,12 @@ export function renderObservationDigest(observations: readonly Observation[]): s
   });
   return (
     "DEEP-PASS OBSERVATIONS (a batched read of the REST of the timeline — these events are NOT shown " +
-    "to you row-by-row below, so treat each line as reported evidence you may cite by its event ids; " +
-    "they carry no severity verdict of their own):\n" +
+    "to you row-by-row below, so treat each line as reported evidence; they carry no severity verdict " +
+    "of their own).\n" +
+    "The ids in each [events: …] list are REAL case event ids: when a finding rests on an observation, " +
+    "copy those ids into that finding's relatedEventIds exactly as written. A finding built on an " +
+    "observation but left with no relatedEventIds cannot be verified by the analyst and will have its " +
+    "confidence capped, so do not omit them.\n" +
     lines.join("\n") +
     "\n\n"
   );
