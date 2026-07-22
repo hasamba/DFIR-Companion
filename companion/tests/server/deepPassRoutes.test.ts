@@ -5,6 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
@@ -12,8 +13,11 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
   readonly model = "mock-model";
+  // When true, every batch (observation) call fails — the partial-coverage path under test.
+  constructor(private readonly failBatches = false) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     if (/ONE SLICE/i.test(req.systemPrompt)) {
+      if (this.failBatches) throw new Error("Bad control character in string literal in JSON");
       return { rawText: JSON.stringify({ observations: [{ summary: "s", eventIds: ["c0"], whyItMatters: "w" }] }) };
     }
     return {
@@ -47,11 +51,11 @@ function events(): ForensicEvent[] {
   ];
 }
 
-async function makeApp(opts: { aiConfigured?: boolean } = {}) {
+async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-deeppass-routes-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
-  const provider = new ScriptedProvider();
+  const provider = new ScriptedProvider(opts.failBatches === true);
   // hasSynthesisProvider() is `synthesisProvider ?? provider`, so an "AI not configured" pipeline must
   // omit BOTH — leaving the vision provider in place would still satisfy the gate.
   const pipeline = buildRuntimePipeline({
@@ -60,7 +64,10 @@ async function makeApp(opts: { aiConfigured?: boolean } = {}) {
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, aiConfigured: opts.aiConfigured !== false });
+  const app = createApp(store, {
+    pipeline, stateStore, aiConfigured: opts.aiConfigured !== false,
+    activityLogStore: new ActivityLogStore(store),
+  });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
   return { app, stateStore };
@@ -131,5 +138,74 @@ describe("deep-pass routes", () => {
     const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
 
     expect(res.status).toBe(501);
+  });
+
+  // A deep pass ends in a forced synthesize() that REWRITES the case conclusions. /synthesize itself
+  // refuses that on a closed or archived case (423); without the same guard here the dashboard's Run
+  // button would be a way to spend many minutes and hundreds of thousands of tokens rewriting a case
+  // the analyst has already signed off.
+  it("423s on a closed case rather than re-writing its conclusions", async () => {
+    const { app } = await makeApp();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+
+    const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+
+    expect(res.status).toBe(423);
+    expect(String(res.body.error)).toMatch(/closed/i);
+  });
+
+  it("423s on an archived case", async () => {
+    const { app } = await makeApp();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    await request(app).post("/cases/c1/archive").send({ removeFromList: true });
+
+    const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+
+    expect(res.status).toBe(423);
+  });
+
+  // A run whose batches failed read LESS than it appears to. The HTTP body is transient — the
+  // activity log is the durable record an analyst re-reads days later, so partial coverage has to
+  // survive there too, or an incomplete read is silently filed as a complete one.
+  it("records failed batches in the activity log, not just in the response body", async () => {
+    const { app } = await makeApp({ failBatches: true });
+
+    const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+    expect(res.status).toBe(200);
+    expect(res.body.batchesFailed).toBeGreaterThan(0);
+
+    const log = await request(app).get("/cases/c1/activity-log");
+    const entry = log.body.find((e: { action: string }) => e.action === "deep-pass");
+    expect(entry).toBeTruthy();
+    expect(String(entry.detail)).toMatch(/fail/i);
+  });
+
+  // The dashboard must be able to DISABLE the Run button up front instead of letting the analyst
+  // click into a 501. /health.aiEnabled is the VISION gate (hasAiProvider) and answers the wrong
+  // question here — deep pass runs on the synthesis provider.
+  it("/health reports whether a SYNTHESIS provider is configured", async () => {
+    const { app } = await makeApp();
+
+    const res = await request(app).get("/health");
+
+    expect(res.body.synthesisEnabled).toBe(true);
+  });
+
+  it("/health reports synthesisEnabled false with no provider", async () => {
+    const { app } = await makeApp({ aiConfigured: false });
+
+    const res = await request(app).get("/health");
+
+    expect(res.body.synthesisEnabled).toBe(false);
+  });
+
+  it("says nothing about failures when every batch succeeded", async () => {
+    const { app } = await makeApp();
+
+    await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+
+    const log = await request(app).get("/cases/c1/activity-log");
+    const entry = log.body.find((e: { action: string }) => e.action === "deep-pass");
+    expect(String(entry.detail)).not.toMatch(/fail/i);
   });
 });

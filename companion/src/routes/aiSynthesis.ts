@@ -140,7 +140,15 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/deep-pass", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
-    if (!(await store.getCaseMeta(caseId).catch(() => null))) return res.status(404).json({ error: "case not found" });
+    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+    if (!caseMeta) return res.status(404).json({ error: "case not found" });
+    // A deep pass ENDS in a forced synthesize() that rewrites the conclusions, so it inherits
+    // /synthesize's lifecycle guard: a closed or archived case is not rewritten, least of all by a
+    // run that costs many minutes and hundreds of thousands of tokens before it gets there.
+    if (caseMeta.status === "closed" || caseMeta.status === "archived") {
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a deep pass` });
+    }
     const minSeverity = parseMinSeverity((req.body as { minSeverity?: unknown })?.minSeverity);
     // No silent fallback: an unrecognised floor must not quietly become "read everything", which on a
     // large case is exactly the very expensive run the ceiling exists to prevent.
@@ -161,7 +169,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       if (job) options.jobManager?.finish(job.jobId);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "deep-pass",
-        detail: `deep pass (${minSeverity}+) read ${result.events} event(s) in ${result.batches} batch(es), ${result.observations} observation(s)`,
+        // batchesFailed rides along: a run that lost batches read LESS of the case than the event
+        // count suggests, and the activity log is the durable record — omitting it here files a
+        // partial read as a complete one the moment the response body is gone.
+        detail: `deep pass (${minSeverity}+) read ${result.events} event(s) in ${result.batches} batch(es), ${result.observations} observation(s)`
+          + (result.batchesFailed ? ` — ${result.batchesFailed} batch(es) FAILED (partial coverage)` : "")
+          + (result.aborted ? " — CANCELLED, nothing was written" : ""),
       });
       return res.status(200).json(result);
     } catch (err) {
