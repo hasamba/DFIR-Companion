@@ -1410,6 +1410,7 @@ export interface DeepPassResult {
   events: number;         // graded events at or above the floor
   rows: number;           // prompt rows after detection-burst grouping
   batches: number;        // observation calls made
+  batchesFailed: number;  // batches whose response never parsed — that slice went unread
   observations: number;   // observations that survived sanitising
 }
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
@@ -4797,17 +4798,35 @@ export class AnalysisPipeline {
     }
 
     const validEventIds = new Set(state.forensicTimeline.map((e) => e.id));
+    const retries = this.opts.retries ?? 3;
+    const backoffMs = this.opts.backoffMs ?? 500;
     let observations: Observation[] = [];
     let aborted = false;
+    let batchesFailed = 0;
+
+    // One batch's response is not worth the whole run. A live run died on batch 1 of 5 with "Bad
+    // control character in string literal in JSON" — 20 minutes and four unspent batches lost to one
+    // malformed reply. Observations are ADDITIVE, so a batch that will not parse costs exactly its own
+    // coverage: retry it on the standard schedule, then record it and carry on. The count is reported
+    // so partial coverage is visible rather than silently passed off as a complete read.
     for (let i = 0; i < batches.length; i++) {
       if (opts.signal?.aborted) { aborted = true; break; }
       opts.onProgress?.(i, batches.length, `reading batch ${i + 1} of ${batches.length}`);
-      const raw = await this.analyzeRestored(
-        caseId, state, provider,
-        { systemPrompt: getObservePrompt(), userPrompt: this.renderBatchRows(batches[i]), images: [] },
-        "deep-pass-observe",
-      );
-      observations.push(...sanitizeObservations(raw, validEventIds));
+      try {
+        const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
+          caseId, state, provider,
+          { systemPrompt: getObservePrompt(), userPrompt: this.renderBatchRows(batches[i]), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
+          "deep-pass-observe",
+        ), retries, backoffMs);
+        observations.push(...sanitizeObservations(raw, validEventIds));
+      } catch (err) {
+        if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
+        batchesFailed++;
+        this.log.warn(
+          `deep pass: batch ${i + 1}/${batches.length} produced no usable observations — ${(err as Error).message}`,
+          { caseId },
+        );
+      }
       if (opts.signal?.aborted) { aborted = true; break; }
     }
 
@@ -4821,12 +4840,21 @@ export class AnalysisPipeline {
       const condensed: Observation[] = [];
       for (const group of plan) {
         if (opts.signal?.aborted) { aborted = true; break; }
-        const raw = await this.analyzeRestored(
-          caseId, state, provider,
-          { systemPrompt: getObservePrompt(), userPrompt: renderObservationDigest(group), images: [] },
-          "deep-pass-observe",
-        );
-        condensed.push(...sanitizeObservations(raw, validEventIds));
+        try {
+          const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
+            caseId, state, provider,
+            { systemPrompt: getObservePrompt(), userPrompt: renderObservationDigest(group), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
+            "deep-pass-observe",
+          ), retries, backoffMs);
+          condensed.push(...sanitizeObservations(raw, validEventIds));
+        } catch (err) {
+          if (opts.signal?.aborted) { aborted = true; break; }
+          // A group that will not condense keeps its ORIGINAL observations rather than vanishing —
+          // dropping evidence to a formatting failure would be the worst possible trade here.
+          condensed.push(...group);
+          batchesFailed++;
+          this.log.warn(`deep pass: a condense group failed, keeping it uncondensed — ${(err as Error).message}`, { caseId });
+        }
       }
       if (!aborted) observations = condensed;
     }
@@ -4837,6 +4865,7 @@ export class AnalysisPipeline {
       events: floored.length,
       rows: rows.length,
       batches: batches.length,
+      batchesFailed,
       observations: observations.length,
     };
     if (aborted) return summary;   // cancelled — nothing persisted, the case is untouched

@@ -66,11 +66,14 @@ async function seed(events: ForensicEvent[]): Promise<InvestigationState> {
   return state;
 }
 
-function makePipeline(provider: AIProvider): AnalysisPipeline {
+// retries/backoffMs default to 3 × 500ms exponential in production; a test that deliberately fails a
+// batch would then spend seconds sleeping, so failure paths pass a trivial schedule instead.
+function makePipeline(provider: AIProvider, opts: { retries?: number; backoffMs?: number } = {}): AnalysisPipeline {
   return new AnalysisPipeline({
     provider,
     stateStore,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    ...opts,
   });
 }
 
@@ -157,5 +160,58 @@ describe("deepPass", () => {
     expect(result.rows).toBe(250);      // distinct descriptions → nothing groups
     expect(result.batches).toBe(3);
     expect(result.observations).toBeGreaterThan(0);
+  });
+});
+
+describe("deepPass resilience", () => {
+  // A live halcyon run died on batch 1 of 5 with "Bad control character in string literal in JSON":
+  // one malformed model response destroyed a 20-minute, 5-call run. Observations are ADDITIVE, so a
+  // bad batch must cost that batch's coverage and nothing more.
+  class FlakyProvider implements AIProvider {
+    readonly name = "flaky";
+    readonly model = "mock-model";
+    observeCalls = 0;
+    synthCalls = 0;
+    // Fails the FIRST batch on every attempt it gets, then behaves. `failAttempts` must equal that
+    // batch's attempt budget (retries + 1) — size it larger and the later batches get eaten too,
+    // which is what made this fixture wrongly report zero observations.
+    constructor(private readonly failAttempts: number) {}
+    async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+      if (/ONE SLICE/i.test(req.systemPrompt)) {
+        this.observeCalls++;
+        if (this.observeCalls <= this.failAttempts) {
+          return { rawText: '{"observations": [{"summary": "bad\ncontrol", ' };
+        }
+        return { rawText: OBSERVATIONS };
+      }
+      this.synthCalls++;
+      return { rawText: SYNTH_DELTA };
+    }
+  }
+
+  it("skips a batch whose response never parses and still completes the run", async () => {
+    await seed(seedEvents(250));                       // 3 batches at cap 100
+    const provider = new FlakyProvider(2);             // first batch is unrecoverable
+
+    const result = await makePipeline(provider, { retries: 1, backoffMs: 1 }).deepPass("c1", { minSeverity: "High" });
+
+    expect(result.aborted).toBe(false);
+    expect(result.batchesFailed).toBeGreaterThan(0);
+    expect(provider.synthCalls).toBe(1);               // the final synthesis still ran
+  });
+
+  it("still collects observations from the batches that did parse", async () => {
+    await seed(seedEvents(250));
+    const result = await makePipeline(new FlakyProvider(2), { retries: 1, backoffMs: 1 }).deepPass("c1", { minSeverity: "High" });
+
+    expect(result.observations).toBeGreaterThan(0);    // batches 2 and 3 contributed
+  });
+
+  it("reports zero failures on a clean run", async () => {
+    await seed(seedEvents(250));
+    const result = await makePipeline(new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA))
+      .deepPass("c1", { minSeverity: "High" });
+
+    expect(result.batchesFailed).toBe(0);
   });
 });
