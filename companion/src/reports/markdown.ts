@@ -573,6 +573,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
         lines.push(`> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`);
       } else if (f.contentMismatch) {
         lines.push(`> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`);
+      } else if (f.lateralUnconfirmed) {
+        lines.push(`> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`);
       } else if (f.corroboration) {
         lines.push(`- Corroboration: ${corroborationLabel(f)}`);
       }

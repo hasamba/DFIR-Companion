@@ -76,6 +76,15 @@ export interface Finding {
   // post-synthesis by groundAndScoreFindings; High/Critical severity is floored to Medium and confidence
   // capped when this fires (investigation-guidance follow-up, veridia-deep-pass 2026-07-22).
   contentMismatch?: boolean;
+  // A High/Critical LATERAL-MOVEMENT finding whose named destination host has NO independently-confirmed
+  // malicious activity of its own (no High/Critical event on that host in scope) and whose cited evidence
+  // is only benign authentication telemetry (no High/Critical supporting event, not graph-linked) — the
+  // claim rests on an ordinary logon by a compromised-but-also-legitimate account, not on the attack.
+  // Set post-synthesis by groundAndScoreFindings; High/Critical is floored to Medium and confidence capped
+  // when it fires (meridian-tax-ransomware benchmark 2026-07-23: kevin.obrien's own WS-17 session and an
+  // uninvolved user's WS-09 logon were both fabricated into "RDP lateral movement"; the deep pass then
+  // HARDENED the WS-17 one from confidence 45 → 82 by citing the real-but-benign logon).
+  lateralUnconfirmed?: boolean;
   corroboration?: FindingCorroboration;
   // Rabbit-hole detection (investigation-guidance #13). `relevance` places the finding relative to the
   // corroborated main attack path: 'connected' (on it) → a lead; 'disconnected' (evidence sits in a
