@@ -45,6 +45,7 @@ import {
 } from "./siemImport.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
+import { secretSpillSignal } from "./secretSpillRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -135,8 +136,14 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       const parentName = baseName(parent);
       const grade = isSuspiciousCmd(image, cmd);
       const tc = tradecraftSignal(image, cmd);
+      // A credential passed on the command line is visible to every user on the host (ps/proc) and
+      // is now in EDR telemetry forever — Medium regardless of what the process is. Without this an
+      // ECAR-reported spill (e.g. a Linux service started with a postgres:// URI carrying its
+      // password) graded Info and never reached the forensic timeline synthesis reads, while the
+      // SAME spill reported by Windows Sysmon graded Medium. See secretSpillRules.ts.
+      const spill = secretSpillSignal(cmd);
       const strong = grade === "strong" || tc?.weight === "strong";
-      const flagged = Boolean(grade) || Boolean(tc);
+      const flagged = Boolean(grade) || Boolean(tc) || Boolean(spill);
       const severity: Severity = strong ? "High" : flagged ? "Medium" : "Info";
       const desc = `Process created: ${cmd || image || "(unknown)"}` +
         (parentName ? ` (parent ${parentName})` : "") + at;
@@ -148,7 +155,7 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
       // Discovery / credential-access recon tagging (whoami, net group /domain, find -name *.env,
       // cat .env, …) plus deterministic tradecraft techniques (Defender-disable, tunneling, exfil…)
       // so the enumeration/tradecraft phase is identified even when each command stays Info.
-      const mitre = [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? []), ...reconTechniques(image, cmd)])];
+      const mitre = [...new Set([...(flagged ? ["T1059"] : []), ...(tc?.mitre ?? []), ...(spill?.mitre ?? []), ...reconTechniques(image, cmd)])];
       return {
         ...base, severity,
         mitre,

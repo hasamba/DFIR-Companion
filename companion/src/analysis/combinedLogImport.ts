@@ -48,9 +48,10 @@
 // here (that cap is shared code, not specific to this format).
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, mergeRowIocs, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
+import { aggregateEvents, addIoc, mergeRowIocs, oneLine, worst, type MappedEvent, type SiemIoc, type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
+import { secretSpillSignal } from "./secretSpillRules.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -157,14 +158,24 @@ export function mapCombinedLogLine(line: string, sink: Map<string, SiemIoc>): Ma
   const uaTag = ua ? ` (ua ${ua})` : "";
   const description = oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(0, 600);
 
+  // A secret carried in the request URI or the Referer is a spill the moment this line is written.
+  // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
+  // web logs are otherwise Info-by-default and land in the analyst-only super-timeline.
+  const spill = secretSpillSignal(`${uri} ${referer}`);
+
   return {
     timestamp,
     description,
-    severity,
-    mitre,
+    severity: spill ? worst(severity, "Medium") : severity,
+    mitre: spill ? [...new Set([...mitre, ...spill.mitre])] : mitre,
     // Aggregate by method+host+path (query string dropped) so pagination/param variants collapse
-    // together while a genuinely different path/host stays distinct.
-    aggKey: `weblog|${method}|${host}|${uri.split("?")[0]}|${status}`.toLowerCase().slice(0, 400),
+    // together while a genuinely different path/host stays distinct. A spill-bearing line gets its
+    // OWN key: aggregation is first-description-wins, so without this a secret-carrying request
+    // merges into a busier ref-less sibling on the same path and its secret vanishes from the
+    // description — leaving a Medium with no visible reason. Measured on the spillage-full-matrix
+    // benchmark: the JWT in a Referer on `GET /` produced no distinguishable event at all.
+    aggKey: `weblog|${method}|${host}|${uri.split("?")[0]}|${status}${spill ? `|spill:${spill.families.join(",")}` : ""}`
+      .toLowerCase().slice(0, 400),
     sources: [COMBINED_LOG_SOURCE],
   };
 }

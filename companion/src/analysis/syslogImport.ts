@@ -31,6 +31,7 @@ import { aggregateEvents, addIoc, cleanIp, oneLine, worst, type MappedEvent, typ
   maxEventsDefault,
 } from "./siemImport.js";
 import { parseSshAuth, markSshBruteForce, type SshAuthEvent } from "./sshBruteForce.js";
+import { secretSpillSignal } from "./secretSpillRules.js";
 
 export interface SyslogImportOptions {
   aggregate?: boolean;
@@ -178,7 +179,12 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
   }
 
   const sev = p.pri != null ? p.pri % 8 : null;
-  const severity: Severity = (sev != null && sev <= 2) || AUTH_FAIL.test(p.message) ? "Low" : "Info";
+  const base: Severity = (sev != null && sev <= 2) || AUTH_FAIL.test(p.message) ? "Low" : "Info";
+  // An application that logs a token / password / connection string in the clear has spilled it to
+  // every downstream log consumer. Medium so it reaches the forensic timeline synthesis reads —
+  // syslog is otherwise Info-by-default, which demotes it to the analyst-only super-timeline.
+  const spill = secretSpillSignal(p.message);
+  const severity: Severity = spill ? worst(base, "Medium") : base;
 
   const appTag = p.app ? `${p.app}: ` : "";
   const description = oneLine(`syslog ${appTag}${p.message}`).slice(0, 600);
@@ -190,8 +196,11 @@ function mapParsedSyslog(p: ParsedSyslog, sink: Map<string, SiemIoc>): MappedEve
     timestamp: p.timestamp,
     description,
     severity,
-    mitre: [],
-    aggKey: `syslog|${p.host}|${p.app}|${template}`.toLowerCase().slice(0, 400),
+    mitre: spill?.mitre ?? [],
+    // A spill-bearing line gets its own key: the template masks digit runs, so two different
+    // tokens from the same daemon would otherwise collapse into one first-description-wins row.
+    aggKey: `syslog|${p.host}|${p.app}|${template}${spill ? `|spill:${spill.families.join(",")}` : ""}`
+      .toLowerCase().slice(0, 400),
     sources: [SYSLOG_SOURCE],
     ...(p.host ? { asset: p.host } : {}),
   };

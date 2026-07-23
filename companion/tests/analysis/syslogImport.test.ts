@@ -49,12 +49,23 @@ describe("parseSyslogLine", () => {
 });
 
 describe("mapSyslogLine", () => {
-  it("keeps a benign app message at Info, carries the host as asset, preserves the spilled secret in the description", () => {
+  // An app that logs a token in the clear has spilled it. This used to stay Info — which demotes it
+  // to the analyst-only super-timeline, so AI synthesis never saw it (spillage-full-matrix: 9 of 11
+  // planted secrets were invisible for exactly this reason). Now Medium, and the secret is still
+  // carried verbatim in the description so the finding has visible evidence.
+  it("bumps a syslog line carrying a spilled secret to Medium and keeps the secret in the description", () => {
     const m = mapSyslogLine(SLACK, 2024, new Map())!;
-    expect(m.severity).toBe("Info");
+    expect(m.severity).toBe("Medium");
+    expect(m.mitre).toContain("T1552.001");
     expect(m.asset).toBe("APP-MTX-01");
     expect(m.sources).toEqual(["Syslog"]);
     expect(m.description).toContain(SLACK_TOKEN);
+  });
+  it("keeps ordinary daemon chatter at Info", () => {
+    const m = mapSyslogLine(NOISE, 2024, new Map())!;
+    expect(m.severity).toBe("Info");
+    expect(m.asset).toBe("APP-MTX-01");
+    expect(m.sources).toEqual(["Syslog"]);
   });
   it("keeps an auth SUCCESS at Info and does NOT emit a private-range IP as an IOC", () => {
     const sink = new Map<string, SiemIoc>();
