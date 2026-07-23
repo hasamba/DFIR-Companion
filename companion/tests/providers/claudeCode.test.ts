@@ -102,6 +102,52 @@ describe("ClaudeCodeProvider", () => {
     });
   });
 
+  // Captured live (case veridia-deep-pass, deep-pass final synthesis, 2026-07-22): the same
+  // max_tokens cut, but the model did NOT continue mid-value — its second message ABANDONED the
+  // truncated attempt and rewrote the whole answer from the top, fence and all (part 1: 32,774
+  // chars ending mid-string at `...the SSH pivot from AN`; part 2: 39,698 chars, a complete
+  // 16-finding document). Splicing those glues a truncated document onto a whole one, and the
+  // half-open string literal swallows the next line — which is exactly the
+  // `Bad control character in string literal in JSON at position 32767` the run died on, twice,
+  // at ~9 minutes and ~50k output tokens per wasted attempt.
+  it("takes the rewritten answer when the model restarts instead of continuing", async () => {
+    const abandoned = '```json\n{\n  "findings": [{"title": "the SSH pivot from AN';
+    const rewritten = '```json\n{\n  "findings": [{"title": "SSH pivot from ANVIL-02"}],\n  "timelineNote": "rewritten"\n}\n```';
+    const stdout = [
+      assistantLine([{ type: "text", text: abandoned }], "max_tokens"),
+      assistantLine([{ type: "text", text: rewritten }], "end_turn"),
+      resultLine({ result: rewritten, usage: { output_tokens: 53645 } }),
+    ].join("\n");
+    const p = new ClaudeCodeProvider({ model: "claude-sonnet-5", runner: fakeRunner({ stdout }) });
+    const out = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+
+    // The abandoned attempt must be dropped entirely, not spliced in front of the real answer.
+    expect(out.rawText.includes("from AN\n")).toBe(false);
+    expect(JSON.parse(out.rawText.replace(/^```json\n|\n```$/g, ""))).toEqual({
+      findings: [{ title: "SSH pivot from ANVIL-02" }],
+      timelineNote: "rewritten",
+    });
+  });
+
+  // The restart branch must not fire when the tail is a genuine continuation that happens to start
+  // at an array-element boundary — dropping the head there would throw away most of the answer.
+  it("still splices a continuation whose tail begins with a fresh object", async () => {
+    const head = '```json\n{\n  "findings": [{"title": "a"},';
+    const tail = '```\n{"title": "b"}],\n  "timelineNote": ""\n}\n```';
+    const stdout = [
+      assistantLine([{ type: "text", text: head }], "max_tokens"),
+      assistantLine([{ type: "text", text: tail }], "end_turn"),
+      resultLine({ result: tail, usage: { output_tokens: 900 } }),
+    ].join("\n");
+    const p = new ClaudeCodeProvider({ model: "claude-sonnet-5", runner: fakeRunner({ stdout }) });
+    const out = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+
+    expect(JSON.parse(out.rawText.replace(/^```json\n|\n```$/g, ""))).toEqual({
+      findings: [{ title: "a" }, { title: "b" }],
+      timelineNote: "",
+    });
+  });
+
   it("keeps the terminal result text when the answer arrived in one assistant message", async () => {
     const text = '{"summary":"ok"}';
     const stdout = [assistantLine([{ type: "text", text }], "end_turn"), resultLine({ result: text })].join("\n");

@@ -3,6 +3,7 @@ import {
   type ProviderErrorKind, ProviderError,
 } from "./provider.js";
 import { type ClaudeRunner, defaultClaudeRunner } from "./claudeRunner.js";
+import { extractJsonText } from "../analysis/extractJson.js";
 
 export interface ClaudeCodeOptions {
   model: string;         // maps to --model (alias like "haiku" or a full id); "" → omit the flag
@@ -54,8 +55,35 @@ function eventText(e: ClaudeAssistantEvent): string {
 // and part 2 began "```\n provider, or hosting service...". Dropping that re-opened fence (and the
 // newline the CLI puts after it, which would otherwise land as a raw newline inside a JSON string)
 // splices the parts back into the single JSON document the model meant to write.
+//
+// A second message is NOT always a continuation, though. The model may instead abandon the
+// truncated attempt and rewrite the whole answer from the top — captured live on case
+// veridia-deep-pass (deep-pass final synthesis): part 1 was cut mid-string at `...the SSH pivot
+// from AN`, and part 2 was a complete, fenced, 16-finding document. Splicing those glues a
+// truncated document onto a whole one, and part 1's half-open string literal then swallows the
+// next line, so JSON.parse dies with `Bad control character in string literal` — at ~9 minutes and
+// ~50k output tokens per wasted attempt.
+//
+// The two cases are told apart by RESULT, not by a guess about the text: splice first, and keep
+// that splice whenever it parses. Only when it does not, and the final part parses cleanly ON ITS
+// OWN, is the earlier text an abandoned draft to be dropped. If neither parses, the splice is
+// returned unchanged so the existing truncation repair still gets its chance at it.
+function parsesCleanly(text: string): boolean {
+  try {
+    const value: unknown = JSON.parse(extractJsonText(text));
+    return !!value && typeof value === "object";
+  } catch {
+    return false;
+  }
+}
+
 function stitchContinuation(parts: readonly string[]): string {
-  return parts.map((p, i) => (i === 0 ? p : p.replace(/^[ \t]*```(?:json)?[ \t]*\r?\n?/i, ""))).join("");
+  const spliced = parts
+    .map((p, i) => (i === 0 ? p : p.replace(/^[ \t]*```(?:json)?[ \t]*\r?\n?/i, "")))
+    .join("");
+  if (parts.length < 2 || parsesCleanly(spliced)) return spliced;
+  const last = parts[parts.length - 1];
+  return parsesCleanly(last) ? last : spliced;
 }
 
 // modelUsage can hold more than one model per call (a cheap internal routing/classification
