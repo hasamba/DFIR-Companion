@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Analyst-pinned findings (#220). The analyst pins the most important findings so they stay
 // visible in a dedicated strip while scrolling the timeline or graph. Kept as an ORDERED list
@@ -42,6 +43,12 @@ export class PinLimitError extends Error {
 export class PinnedFindingsStore {
   private readonly max: number;
 
+  // Serializes this case's load->modify->save section (#216). Guards pinned-findings.json only —
+  // a PRIVATE lock, like HypothesisStore's. It is what makes the cap and the duplicate check
+  // truthful: without it, concurrent pins each saw the pre-pin list, so the cap could be exceeded
+  // and the same finding pinned twice.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore, max?: number) {
     this.max = max && max > 0 ? Math.floor(max) : DEFAULT_MAX_PINNED_FINDINGS;
   }
@@ -74,48 +81,54 @@ export class PinnedFindingsStore {
   async pin(caseId: string, input: NewPin): Promise<PinnedFinding[]> {
     const findingId = String(input.findingId ?? "").trim();
     if (!findingId) throw new Error("findingId is required");
-    const pins = await this.load(caseId);
-    if (pins.some((p) => p.findingId === findingId)) return pins; // already pinned — no duplicate
-    if (pins.length >= this.max) throw new PinLimitError(this.max);
-    const pin: PinnedFinding = {
-      findingId,
-      pinnedBy: (input.pinnedBy || "").trim() || "anonymous",
-      pinnedAt: new Date().toISOString(),
-    };
-    const next = [...pins, pin];
-    await this.save(caseId, next);
-    return next;
+    return this.lock.runExclusive(caseId, async () => {
+      const pins = await this.load(caseId);
+      if (pins.some((p) => p.findingId === findingId)) return pins; // already pinned — no duplicate
+      if (pins.length >= this.max) throw new PinLimitError(this.max);
+      const pin: PinnedFinding = {
+        findingId,
+        pinnedBy: (input.pinnedBy || "").trim() || "anonymous",
+        pinnedAt: new Date().toISOString(),
+      };
+      const next = [...pins, pin];
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Unpin a finding by id. Returns the resulting list; a no-op (returns the list unchanged, no
   // write) when the finding was not pinned.
   async unpin(caseId: string, findingId: string): Promise<PinnedFinding[]> {
     const id = String(findingId ?? "").trim();
-    const pins = await this.load(caseId);
-    const next = pins.filter((p) => p.findingId !== id);
-    if (next.length === pins.length) return pins;
-    await this.save(caseId, next);
-    return next;
+    return this.lock.runExclusive(caseId, async () => {
+      const pins = await this.load(caseId);
+      const next = pins.filter((p) => p.findingId !== id);
+      if (next.length === pins.length) return pins;
+      await this.save(caseId, next);
+      return next;
+    });
   }
 
   // Reorder the pins to match the given findingId order (drag-to-reorder). Ids not currently
   // pinned are ignored; any pinned finding missing from `orderedIds` is appended in its existing
   // relative order so nothing is silently lost. Immutable + idempotent.
   async reorder(caseId: string, orderedIds: string[]): Promise<PinnedFinding[]> {
-    const pins = await this.load(caseId);
-    const byId = new Map(pins.map((p) => [p.findingId, p]));
-    const seen = new Set<string>();
-    const next: PinnedFinding[] = [];
-    for (const raw of orderedIds || []) {
-      const id = String(raw ?? "").trim();
-      const p = byId.get(id);
-      if (p && !seen.has(id)) {
-        next.push(p);
-        seen.add(id);
+    return this.lock.runExclusive(caseId, async () => {
+      const pins = await this.load(caseId);
+      const byId = new Map(pins.map((p) => [p.findingId, p]));
+      const seen = new Set<string>();
+      const next: PinnedFinding[] = [];
+      for (const raw of orderedIds || []) {
+        const id = String(raw ?? "").trim();
+        const p = byId.get(id);
+        if (p && !seen.has(id)) {
+          next.push(p);
+          seen.add(id);
+        }
       }
-    }
-    for (const p of pins) if (!seen.has(p.findingId)) next.push(p);
-    await this.save(caseId, next);
-    return next;
+      for (const p of pins) if (!seen.has(p.findingId)) next.push(p);
+      await this.save(caseId, next);
+      return next;
+    });
   }
 }

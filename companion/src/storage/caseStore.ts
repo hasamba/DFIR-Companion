@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
+import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 
 const ARCHIVED_DIRNAME = "_archived";
@@ -20,9 +21,35 @@ export function isValidCaseId(caseId: string): boolean {
 }
 
 export class CaseStore {
+  // Serializes evidence-sequence allocation per case+kind (#214). Reading "audit-log length + 1"
+  // is a read-modify-write: two ingestions racing for the same case both read the same length and
+  // both got the same number, and when their filenames also matched, one evidence file silently
+  // overwrote the other. The lock makes allocation atomic; the high-water mark below makes it
+  // correct even before the audit line lands.
+  private readonly seqLock = new StateLock();
+
+  // Highest sequence number handed out per `<kind>:<caseId>` in this process. The audit line is
+  // appended AFTER the evidence is written, so between reserving a number and recording it the log
+  // still has its old length — without this, a second caller arriving in that window would read the
+  // same length and reuse the number. Numbers are therefore never reused, only ever skipped (a
+  // failed ingestion burns its number, which is the safe direction for provenance).
+  private readonly seqHighWater = new Map<string, number>();
+
   constructor(private readonly root: string) {}
 
   get casesRoot(): string { return this.root; }
+
+  /** Reserve the next never-yet-used sequence number for this case+kind. */
+  private reserveSequence(kind: "capture" | "import", caseId: string, countOnDisk: () => Promise<number>): Promise<number> {
+    const key = `${kind}:${caseId}`;
+    return this.seqLock.runExclusive(key, async () => {
+      // Disk is authoritative across restarts (the map starts empty); the map is authoritative
+      // for numbers already handed out but not yet appended. The later of the two is correct.
+      const next = Math.max((await countOnDisk()) + 1, (this.seqHighWater.get(key) ?? 0) + 1);
+      this.seqHighWater.set(key, next);
+      return next;
+    });
+  }
 
   // A case normally lives at <root>/<caseId>. Once archived (see archiveCaseFolder), it moves to
   // <root>/_archived/<caseId> instead — every other path helper derives from this one, so nothing
@@ -174,9 +201,12 @@ export class CaseStore {
     return metas;
   }
 
+  // `wx` = create-exclusive: fail if the file exists rather than overwrite it (#214). Sequence
+  // numbers are unique now, so a collision should be impossible — which is exactly why hitting one
+  // must raise instead of destroying evidence that is already on disk.
   async saveScreenshot(caseId: string, filename: string, bytes: Buffer): Promise<string> {
     const path = join(this.screenshotsDir(caseId), filename);
-    await writeFile(path, bytes);
+    await writeFile(path, bytes, { flag: "wx" });
     return path;
   }
 
@@ -186,12 +216,15 @@ export class CaseStore {
   }
 
   async nextSequenceNumber(caseId: string): Promise<number> {
+    return this.reserveSequence("capture", caseId, () => this.countLogLines(this.capturesLogPath(caseId)));
+  }
+
+  /** Number of records in an append-only .jsonl audit log; 0 when it does not exist yet. */
+  private async countLogLines(path: string): Promise<number> {
     try {
-      const log = await readFile(this.capturesLogPath(caseId), "utf8");
-      const lines = log.split("\n").filter((l) => l.trim().length > 0);
-      return lines.length + 1;
+      return (await readFile(path, "utf8")).split("\n").filter((l) => l.trim().length > 0).length;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
       throw err;
     }
   }
@@ -201,7 +234,8 @@ export class CaseStore {
   async saveImport(caseId: string, filename: string, text: string): Promise<string> {
     await mkdir(this.importsDir(caseId), { recursive: true });
     const path = join(this.importsDir(caseId), filename);
-    await writeFile(path, text, "utf8");
+    // Create-exclusive, for the same reason as saveScreenshot above (#214).
+    await writeFile(path, text, { encoding: "utf8", flag: "wx" });
     return path;
   }
 
@@ -220,13 +254,7 @@ export class CaseStore {
   }
 
   async nextImportSeq(caseId: string): Promise<number> {
-    try {
-      const log = await readFile(this.importsLogPath(caseId), "utf8");
-      return log.split("\n").filter((l) => l.trim().length > 0).length + 1;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 1;
-      throw err;
-    }
+    return this.reserveSequence("import", caseId, () => this.countLogLines(this.importsLogPath(caseId)));
   }
 
   // Load the case's OCR search index (#176), or {} when it doesn't exist yet / is unreadable.

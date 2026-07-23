@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Investigator comments attached to any case entity (a forensic event, finding, IOC, key
 // question, asset…), so investigators can collaborate. Kept in a per-case side file
@@ -56,6 +57,12 @@ export interface NewComment {
 }
 
 export class CommentsStore {
+  // Serializes this case's load->modify->save section (#216). Two comments posted at the same
+  // moment both read the same snapshot and the second save discarded the first. A PRIVATE lock,
+  // like HypothesisStore's: it guards comments.json only, so it can never contend with (or
+  // deadlock against) the pipeline's investigation-state lock.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -88,16 +95,20 @@ export class CommentsStore {
       mentions: parseMentions(text),
       createdAt: new Date().toISOString(),
     };
-    await this.save(caseId, [...(await this.load(caseId)), comment]);
-    return comment;
+    return this.lock.runExclusive(caseId, async () => {
+      await this.save(caseId, [...(await this.load(caseId)), comment]);
+      return comment;
+    });
   }
 
   // Remove one comment by id; returns true if it existed.
   async remove(caseId: string, commentId: string): Promise<boolean> {
-    const comments = await this.load(caseId);
-    const next = comments.filter((c) => c.id !== commentId);
-    if (next.length === comments.length) return false;
-    await this.save(caseId, next);
-    return true;
+    return this.lock.runExclusive(caseId, async () => {
+      const comments = await this.load(caseId);
+      const next = comments.filter((c) => c.id !== commentId);
+      if (next.length === comments.length) return false;
+      await this.save(caseId, next);
+      return true;
+    });
   }
 }
