@@ -35,6 +35,9 @@ export class CaseStore {
   // failed ingestion burns its number, which is the safe direction for provenance).
   private readonly seqHighWater = new Map<string, number>();
 
+  // Serializes the OCR index read-modify-write per case (see putOcrEntry).
+  private readonly ocrLock = new StateLock();
+
   constructor(private readonly root: string) {}
 
   get casesRoot(): string { return this.root; }
@@ -271,11 +274,17 @@ export class CaseStore {
 
   // Merge one OCR entry into the index by screenshotFile (immutable update) and write it
   // atomically — the metadata/ dir may live in a Dropbox/OneDrive-synced cases/ root, so the
-  // rename can hit a transient lock (see atomicWrite.ts).
+  // rename can hit a transient lock (see atomicWrite.ts). Serialize the read-modify-write cycle
+  // per case: the OCR queue deliberately runs two workers concurrently, and atomic rename alone
+  // cannot prevent both workers reading the same old index and one clobbering the other's entry.
+  // In-process only, like every other lock here — `npm run ocr-index` is a second writer from a
+  // separate process, so run it against an idle case.
   async putOcrEntry(caseId: string, entry: OcrIndexEntry): Promise<void> {
-    await mkdir(this.metadataDir(caseId), { recursive: true });
-    const index = await this.loadOcrIndex(caseId);
-    const updated: OcrIndex = { ...index, [entry.screenshotFile]: entry };
-    await atomicWrite(this.ocrIndexPath(caseId), JSON.stringify(updated, null, 2));
+    return this.ocrLock.runExclusive(caseId, async () => {
+      await mkdir(this.metadataDir(caseId), { recursive: true });
+      const index = await this.loadOcrIndex(caseId);
+      const updated: OcrIndex = { ...index, [entry.screenshotFile]: entry };
+      await atomicWrite(this.ocrIndexPath(caseId), JSON.stringify(updated, null, 2));
+    });
   }
 }

@@ -132,6 +132,20 @@ describe("CaseStore OCR index (#176)", () => {
     expect(Object.keys(idx)).toHaveLength(1);
     expect(idx["000001_t.webp"].text).toBe("new text");
   });
+
+  it("preserves every entry when OCR workers write the same case concurrently", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "o4", name: "n", investigator: "i", aiProvider: null });
+
+    await Promise.all(
+      Array.from({ length: 7 }, (_, i) =>
+        store.putOcrEntry("o4", entry(`${String(i + 1).padStart(6, "0")}_t.webp`, `text ${i}`)),
+      ),
+    );
+
+    const idx = await store.loadOcrIndex("o4");
+    expect(Object.keys(idx)).toHaveLength(7);
+  });
 });
 
 describe("CaseStore.caseDir archive fallback (case archive lifecycle)", () => {

@@ -94,15 +94,19 @@ export class ActivityLogStore {
   }
 }
 
-// Fire-and-forget append used at every instrumented route. Never throws — this is a side
-// channel and must never break the primary action it records. No-ops when the store isn't
-// configured (createApp-only unit tests that don't wire one).
+// Best-effort append used at every instrumented route. Never rejects — this is a side channel
+// and must never break the primary action it records. Callers may ignore the returned promise
+// for fire-and-forget logging, or await it when the response promises immediate read-after-write
+// consistency (for example, tag mutations followed by an activity-log refresh). No-ops when the
+// store isn't configured (createApp-only unit tests that don't wire one).
 export function logActivity(
   store: ActivityLogStore | undefined,
   onActivity: ((caseId: string) => void) | undefined,
   caseId: string,
   input: NewActivityEntry,
-): void {
-  if (!store) return;
-  void store.add(caseId, input).then(() => onActivity?.(caseId)).catch(() => {});
+): Promise<void> {
+  if (!store) return Promise.resolve();
+  return store.add(caseId, input)
+    .then(() => { onActivity?.(caseId); })
+    .catch(() => {});
 }
