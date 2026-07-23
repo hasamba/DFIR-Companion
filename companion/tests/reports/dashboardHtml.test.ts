@@ -605,6 +605,38 @@ describe("dashboard.html — deep pass", () => {
   });
 });
 
+// Regression: every dashboard section must be switchable from Settings → section visibility.
+// Found by /qa on 2026-07-23: sec-mem-nextsteps rendered on the dashboard but had no entry in
+// SECTION_DEFS, so it was the one section an analyst could not hide. This guards the whole class
+// rather than that single id — a newly-added <section id="sec-*"> now fails here until it is
+// registered. Report: .gstack/qa-reports/qa-report-localhost-4773-2026-07-23.md
+describe("dashboard.html — section visibility coverage", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("registers every rendered section in SECTION_DEFS", async () => {
+    const html = await load();
+    const rendered = [...html.matchAll(/<section id="(sec-[a-z0-9-]+)"/g)].map((m) => m[1]);
+    expect(rendered.length).toBeGreaterThan(30); // sanity: the scrape actually found the sections
+
+    const defsBlock = html.match(/const SECTION_DEFS = \[([\s\S]*?)\n {4}\];/);
+    expect(defsBlock, "SECTION_DEFS block").toBeTruthy();
+    const registered = new Set([...defsBlock![1].matchAll(/id: "(sec-[a-z0-9-]+)"/g)].map((m) => m[1]));
+
+    const missing = [...new Set(rendered)].filter((id) => !registered.has(id));
+    expect(missing, `sections with no visibility toggle: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("keeps a data-gated section hidden until its evidence exists, independent of the toggle", async () => {
+    const html = await load();
+    // The gate is declared closed in markup so the section can't flash before render() runs.
+    expect(html).toMatch(/<section id="sec-mem-nextsteps" data-gate-open=""/);
+    // Visibility is the AND of the user's choice and the data gate — not either one alone.
+    expect(html).toMatch(/isSectionVisible\(id, vis\) && isSectionDataOpen\(el\)/);
+    // The memory-evidence check drives the gate and defers the actual display to applySectionsVis().
+    expect(html).toMatch(/sec\.dataset\.gateOpen = hasMem \? "1" : "";[\s\S]{0,80}applySectionsVis\(\)/);
+  });
+});
+
 describe("dashboard.html — help icon", () => {
   const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
 

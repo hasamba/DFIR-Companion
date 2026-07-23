@@ -3904,7 +3904,7 @@
       <div id="forensicTimeline">—</div></section>
     <section id="sec-kill-chain" style="grid-column: 1 / -1"><h2>Kill Chain<span class="ev-sub">events bucketed by their ATT&amp;CK tactic (derived, no AI); a categorization, not a confirmed kill-chain stage — e.g. valid-account use can span entry and lateral movement</span></h2><div id="killChain">—</div></section>
     <!-- Memory Next-Step agent (#101): shown only when Volatility/Rekall memory output is imported. -->
-    <section id="sec-mem-nextsteps" style="grid-column: 1 / -1; display:none"><h2>Memory Next Steps<span class="ev-sub">iterative memory-forensics agent — reads the imported Volatility/Rekall evidence, spots process-tree/injection/network anomalies, and suggests the exact next Volatility command</span><button id="memNextStepsBtn" type="button" title="Ask the AI to read this case's imported memory evidence (process tree, malfind, connections, command lines), identify anomalies, and propose the exact next Volatility 3 command to run" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest next steps</button><span id="memNextStepsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="memNextSteps"></div></section>
+    <section id="sec-mem-nextsteps" data-gate-open="" style="grid-column: 1 / -1; display:none"><h2>Memory Next Steps<span class="ev-sub">iterative memory-forensics agent — reads the imported Volatility/Rekall evidence, spots process-tree/injection/network anomalies, and suggests the exact next Volatility command</span><button id="memNextStepsBtn" type="button" title="Ask the AI to read this case's imported memory evidence (process tree, malfind, connections, command lines), identify anomalies, and propose the exact next Volatility 3 command to run" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest next steps</button><span id="memNextStepsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="memNextSteps"></div></section>
     <style>
       #sec-mem-nextsteps .mns-empty{color:var(--c-9aa4b2);font-size:12px;margin-top:10px}
       #sec-mem-nextsteps .mns-caveat{color:var(--c-ffb454);font-size:12px;margin:10px 0 8px}
@@ -12455,9 +12455,11 @@
       const sec = document.getElementById("sec-mem-nextsteps");
       if (!sec) return;
       const hasMem = (ft || []).some(e => (e.sources || []).some(s => s === "Volatility" || s === "Rekall"));
-      // Respect the user's Settings visibility choice — only un-hide when memory data exists.
-      sec.dataset.hasMem = hasMem ? "1" : "";
-      sec.style.display = hasMem ? "" : "none";
+      // Open/close this section's data gate, then let applySectionsVis() own the actual display so
+      // the user's Settings choice is respected too — it hides the section when EITHER the analyst
+      // switched it off or the case has no memory evidence.
+      sec.dataset.gateOpen = hasMem ? "1" : "";
+      applySectionsVis();
     }
 
     function resetMemNextSteps() {
@@ -18161,6 +18163,9 @@
     const SECTIONS_VIS_KEY = "dfir.sectionsVis";
     const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
     const SECTION_DEFS = [
+      // Data-gated (see data-gate-open in its markup): stays hidden until the timeline actually
+      // has Volatility/Rekall events, but the analyst can still switch it off here like any other.
+      { id: "sec-mem-nextsteps", label: "Memory Next Steps" },
       { id: "sec-ask",          label: "Ask the LLM" },
       { id: "sec-nlquery",      label: "Query Translator" },
       { id: "sec-exec",         label: "Executive Summary" },
@@ -18250,12 +18255,21 @@
       });
     }
 
+    // A few sections only make sense once the case actually holds the evidence they read (e.g.
+    // Memory Next Steps needs Volatility/Rekall events). Those carry a data-gate-open attribute
+    // that their own render path sets to "1"; an absent attribute means the section has no gate.
+    // Both conditions must hold to show it: the user hasn't hidden it AND its data exists.
+    function isSectionDataOpen(el) {
+      const gate = el.dataset.gateOpen;
+      return gate === undefined || gate === "1";
+    }
+
     function applySectionsVis() {
       applySecOrder();
       const vis = loadSectionsVis();
       SECTION_DEFS.forEach(({ id }) => {
         const el = document.getElementById(id);
-        if (el) el.style.display = isSectionVisible(id, vis) ? "" : "none";
+        if (el) el.style.display = isSectionVisible(id, vis) && isSectionDataOpen(el) ? "" : "none";
       });
     }
 
@@ -18429,8 +18443,20 @@
       if (!view || !Array.isArray(view.sections) || !view.sections.length) return;
       const want = view.sections.filter(id => SECTION_DEFS.some(d => d.id === id));
       const wantSet = new Set(want);
+      const prev = loadSectionsVis();
       const vis = {};
-      SECTION_DEFS.forEach(({ id }) => { vis[id] = wantSet.has(id); });
+      SECTION_DEFS.forEach(({ id }) => {
+        // A data-gated section (e.g. Memory Next Steps) is never part of a view's curated list —
+        // its own evidence gate decides whether it can appear at all — so "absent from the view"
+        // must NOT be read as "hide it", which would pin it off even once its evidence lands.
+        // Carry the analyst's existing choice through untouched instead.
+        const el = document.getElementById(id);
+        if (el && el.dataset.gateOpen !== undefined) {
+          if (prev[id] !== undefined) vis[id] = prev[id];
+          return;
+        }
+        vis[id] = wantSet.has(id);
+      });
       // Order: the view's visible sections first (in its order), then the rest (hidden) in their
       // canonical order so re-enabling one later lands it somewhere sensible.
       const order = [...want, ...SECTION_DEFS.map(d => d.id).filter(id => !wantSet.has(id))];
