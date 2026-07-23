@@ -12,7 +12,7 @@
 // It only ever LOWERS confidence (never invents grounding, never raises a score) and is pure + idempotent.
 
 import type { Finding, ForensicEvent, IOC, FindingCorroboration, Severity, NextStep } from "./stateTypes.js";
-import { classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
+import { classifyVerdict, iocHasBehavioralEvent, shortHost } from "./iocAnchors.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
@@ -46,6 +46,23 @@ export const LOW_TRUST_CONFIDENCE_CAP = 55;
 export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
 export const CONTENT_MISMATCH_SEVERITY_FLOOR: Severity = "Medium";
 
+// Actor-provenance gate for lateral-movement findings (meridian-tax-ransomware benchmark 2026-07-23).
+// A High/Critical finding that claims the attacker moved/pivoted TO a host counts as confirmed only if
+// that destination is itself tied to the attack. The failure this gates: the AI saw a harvested-but-also-
+// legitimate admin account (kevin.obrien) logged onto WS-17 in its own routine session — and an entirely
+// uninvolved user (nathan.brooks) logged onto WS-09 — and wired both benign logons into "RDP lateral
+// movement". A benign LogonType=3 event grades Low, which is >= DETECTION_RANK, so it slips past the
+// hunt-artifact/single-source caps and even earned confidence 82 in the deep pass. The gate: a lateral
+// claim naming a destination host that has NO High/Critical event of its own in scope, and whose own cited
+// evidence carries no High/Critical event and no graph edge, is resting on ordinary login noise — floor it.
+export const LATERAL_UNCONFIRMED_CONFIDENCE_CAP = 40;
+export const LATERAL_UNCONFIRMED_SEVERITY_FLOOR: Severity = "Medium";
+// Lateral-movement / pivot language in a finding's own title or description. Deliberately targets the
+// destination-reaching claim ("moved laterally to", "pivoted to", "RDP to <host>"), not mere mentions of
+// a remote host, so a finding that only *references* another host isn't swept in.
+const LATERAL_MOVEMENT_RE =
+  /\b(lateral\s+movement|moved\s+laterally|pivot(?:ed|ing|s)?|remote(?:d)?\s+(?:in)?to|rdp(?:'?d)?\s+(?:in)?to|logged?\s+(?:in|on)to|smb\s+(?:admin\s+)?share|remote\s+(?:desktop|services)\b)/i;
+
 function appendReason(existing: string | undefined, note: string): string {
   const base = (existing ?? "").trim();
   return base ? `${base} | ${note}` : note;
@@ -63,6 +80,44 @@ function claimedIpsNotInEvidence(f: Finding, supporting: readonly ForensicEvent[
   if (!claimed.length) return [];
   const evidenceIps = new Set(extractIpv4(supporting.map((e) => `${e.description} ${e.message ?? ""}`).join(" ")));
   return claimed.filter((ip) => !evidenceIps.has(ip));
+}
+
+// The set of case host short-names that carry at least one High/Critical event in scope — the hosts the
+// evidence itself confirms as attack-involved (LSASS dump, ransomware, exfil, log-clear, …). A lateral
+// claim whose destination is NOT in this set has to earn its grading from its own cited evidence.
+function confirmedCompromisedHosts(scopedEvents: readonly ForensicEvent[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of scopedEvents) {
+    if ((e.severity === "Critical" || e.severity === "High") && e.asset) out.add(shortHost(e.asset));
+  }
+  return out;
+}
+
+// Host short-names a lateral-movement finding names as a DESTINATION but that no High/Critical event in
+// the case pins to the attack. Empty ⇒ not a lateral claim, or every named host is independently confirmed.
+// The check is host-token based (short-host), so "…to WS-17.meridiancpa.com" and "WS-17" both resolve.
+function unconfirmedLateralDestinations(
+  f: Finding,
+  supporting: readonly ForensicEvent[],
+  compromisedHosts: ReadonlySet<string>,
+): string[] {
+  if (!LATERAL_MOVEMENT_RE.test(`${f.title} ${f.description}`)) return [];
+  // If the finding's OWN cited evidence carries a High/Critical event or a benign-defeating anchor, defer:
+  // something concrete ties the movement to the attack, so let the normal caps handle it.
+  const hasHighSupport = supporting.some((e) => e.severity === "Critical" || e.severity === "High");
+  if (hasHighSupport) return [];
+  // Extract only hosts that are the DESTINATION of the movement — the grammatical object of a
+  // reach-verb (to / onto / into / toward / reached / targeted <HOST>). This is deliberately narrower
+  // than "any host token the finding names": a discovery finding that mentions "…not DC-01… staging for
+  // lateral movement" trips the LATERAL_MOVEMENT_RE gate above but names no movement *destination*, so it
+  // must not be floored. A pivot's SOURCE host follows "from", never a reach-verb, so it's excluded too.
+  const dests = new Set<string>();
+  for (const m of `${f.title} ${f.description}`.matchAll(
+    /\b(?:to|onto|into|towards?|reach(?:ed|ing)?|target(?:ed|ing)?)\s+(?:the\s+)?(?:host\s+)?([A-Za-z][A-Za-z0-9]*-\d{1,3})\b/gi,
+  )) {
+    dests.add(shortHost(m[1]));
+  }
+  return [...dests].filter((h) => !compromisedHosts.has(h));
 }
 
 export interface GroundingInput {
@@ -110,6 +165,8 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
   const scopedById = new Map(scopedEvents.map((e) => [e.id, e] as const));
   const iocById = new Map(iocs.map((i) => [i.id, i] as const));
   const intelIocs = intelFlaggedIocIds(iocs);
+  // Hosts the evidence independently confirms as attack-involved — the actor-provenance gate's allow-list.
+  const compromisedHosts = confirmedCompromisedHosts(scopedEvents);
 
   return findings.map((f) => {
     // Supporting in-scope events: forward links (finding.relatedEventIds present in scope) UNION reverse
@@ -145,6 +202,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
     let confidenceReason = f.confidenceReason;
     let ungrounded = false;
     let contentMismatch = false;
+    let lateralUnconfirmed = false;
 
     // KEV is an independent corroboration signal (an external catalog confirms active exploitation),
     // so it exempts a finding from the single-source cap alongside 2+ tools / intel / graph linkage.
@@ -200,8 +258,25 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Actor-provenance gate: a High/Critical lateral-movement claim to a host with no High/Critical event
+    // of its own, resting only on benign authentication telemetry, is floored to Medium. Runs on the
+    // possibly-already-floored severity, so a finding both content-mismatched and lateral-unconfirmed keeps
+    // the lower confidence. Skipped once the content-mismatch gate already floored it (same target severity).
+    if ((severity === "Critical" || severity === "High")) {
+      const unconfirmed = unconfirmedLateralDestinations(f, supporting, compromisedHosts);
+      if (unconfirmed.length) {
+        lateralUnconfirmed = true;
+        severity = LATERAL_UNCONFIRMED_SEVERITY_FLOOR;
+        if ((confidence ?? 100) > LATERAL_UNCONFIRMED_CONFIDENCE_CAP) confidence = LATERAL_UNCONFIRMED_CONFIDENCE_CAP;
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: claims lateral movement to ${unconfirmed.join(", ")}, which has no confirmed malicious activity of its own — the cited logon(s) may be a legitimate session by a reused account; confirm the source is a compromised node before treating as a pivot`,
+        );
+      }
+    }
+
     // Clean the old flags first so a since-corrected finding loses them (idempotent recompute).
-    const { ungrounded: _prev, contentMismatch: _prevCm, ...rest } = f;
+    const { ungrounded: _prev, contentMismatch: _prevCm, lateralUnconfirmed: _prevLu, ...rest } = f;
     return {
       ...rest,
       severity,
@@ -212,6 +287,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       semanticKey: deriveSemanticKey(f),
       ...(ungrounded ? { ungrounded: true } : {}),
       ...(contentMismatch ? { contentMismatch: true } : {}),
+      ...(lateralUnconfirmed ? { lateralUnconfirmed: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };
