@@ -76,6 +76,25 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
   return { app, stateStore, aiStatus };
 }
 
+// logActivity is deliberately FIRE-AND-FORGET (`void store.add(...)` in activityLog.ts) so a log
+// write can never fail the request — which means the response can be sent before the entry lands.
+// Reading the log straight after the POST therefore races the write: it wins on a fast dev box and
+// loses on contended CI (seen live: `Cannot read properties of undefined (reading 'detail')`).
+// Poll for the entry instead of assuming it has arrived; the assertion is unchanged, only the wait.
+async function awaitActivityEntry(
+  app: Parameters<typeof request>[0],
+  caseId: string,
+  action: string,
+): Promise<{ action: string; detail?: string } | undefined> {
+  for (let i = 0; i < 50; i++) {
+    const log = await request(app).get(`/cases/${caseId}/activity-log`);
+    const entry = (log.body as { action: string; detail?: string }[]).find((e) => e.action === action);
+    if (entry) return entry;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return undefined;
+}
+
 describe("deep-pass routes", () => {
   beforeEach(() => {
     process.env.DFIR_AI_SYNTH_MAX_EVENTS = "100";
@@ -218,10 +237,9 @@ describe("deep-pass routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.batchesFailed).toBeGreaterThan(0);
 
-    const log = await request(app).get("/cases/c1/activity-log");
-    const entry = log.body.find((e: { action: string }) => e.action === "deep-pass");
+    const entry = await awaitActivityEntry(app, "c1", "deep-pass");
     expect(entry).toBeTruthy();
-    expect(String(entry.detail)).toMatch(/fail/i);
+    expect(String(entry!.detail)).toMatch(/fail/i);
   });
 
   // The dashboard must be able to DISABLE the Run button up front instead of letting the analyst
@@ -248,8 +266,8 @@ describe("deep-pass routes", () => {
 
     await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
 
-    const log = await request(app).get("/cases/c1/activity-log");
-    const entry = log.body.find((e: { action: string }) => e.action === "deep-pass");
-    expect(String(entry.detail)).not.toMatch(/fail/i);
+    const entry = await awaitActivityEntry(app, "c1", "deep-pass");
+    expect(entry).toBeTruthy();
+    expect(String(entry!.detail)).not.toMatch(/fail/i);
   });
 });
