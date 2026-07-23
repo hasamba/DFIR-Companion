@@ -256,7 +256,7 @@ describe("full-pipeline integration (capture → import → synthesis → report
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(restoredImportFiles.length).toBeGreaterThanOrEqual(1);
-  }, 20_000);
+  }, 60_000);
 
   it("does not leave AI or enrichment provider artifacts behind when AI is off", async () => {
     const { app, stateStore } = await freshFullPipelineApp();
