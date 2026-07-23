@@ -2644,8 +2644,8 @@ import { GeminiProvider } from "./providers/gemini.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { ClaudeCodeProvider } from "./providers/claudeCode.js";
 import { CodexProvider } from "./providers/codex.js";
-import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
+import { attachLiveSocket } from "./live/wsGate.js";
 import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
 
 export interface ProviderParams {
@@ -3558,11 +3558,15 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     throw err;
   });
 
-  const wss = new WebSocketServer({ server, path: "/ws" });
-  wss.on("connection", (socket, req) => {
-    const caseId = new URL(req.url ?? "", "http://localhost").searchParams.get("caseId") ?? "";
-    hub.subscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike);
-    socket.on("close", () => hub.unsubscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike));
+  // Live state socket. Subscribing hands the socket every future broadcast of that case's FULL
+  // investigation state, so the upgrade is authorized first (#212): trusted origin, real case, and
+  // — because Express middleware never runs for a WebSocket upgrade — the same case-password check
+  // the HTTP routes get. See src/live/wsGate.ts.
+  attachLiveSocket(server, hub, {
+    store,
+    // Same load-or-create call createApp makes, so both gates verify unlock cookies with one key.
+    secret: loadOrCreateInstanceSecret(store.casesRoot),
+    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
   });
 }
 
