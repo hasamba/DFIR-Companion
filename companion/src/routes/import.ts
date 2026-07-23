@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
 import { open, readFile, mkdir, copyFile, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { parseCsv } from "../analysis/csvImport.js";
 import { parseLogLines } from "../analysis/logImport.js";
 import { parseThorReport } from "../analysis/thorImport.js";
@@ -410,7 +411,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       // Evidence-first: copy the raw file into the case's imports dir (by bytes, so a >512 MB file we
       // never string-decode is still persisted faithfully) and append the audit line.
       await mkdir(store.importsDir(caseId), { recursive: true });
-      await copyFile(filePath, join(store.importsDir(caseId), storedName));
+      // COPYFILE_EXCL: never overwrite evidence already on disk (#214) — fail loudly instead.
+      await copyFile(filePath, join(store.importsDir(caseId), storedName), fsConstants.COPYFILE_EXCL);
       const { size } = await stat(filePath);
       await store.appendImport(caseId, {
         caseId, sequenceNumber: seq, importedAt, filename: storedName,

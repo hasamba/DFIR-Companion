@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Per-case analyst notebook: free-form notes and open questions the investigator writes as they
 // work through the case. Kept in `state/notebook.json` — NOT in InvestigationState, so synthesis
@@ -42,6 +43,10 @@ export interface NewNotebookEntry {
 }
 
 export class NotebookStore {
+  // Serializes this case's load->modify->save section (#216). Guards notebook.json only — a
+  // PRIVATE lock, like HypothesisStore's, so it can never contend with the state lock.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -73,8 +78,10 @@ export class NotebookStore {
       author: (input.author || "").trim() || "anonymous",
       ...(input.linkedEntityIds?.length ? { linkedEntityIds: input.linkedEntityIds } : {}),
     };
-    await this.save(caseId, [...(await this.load(caseId)), entry]);
-    return entry;
+    return this.lock.runExclusive(caseId, async () => {
+      await this.save(caseId, [...(await this.load(caseId)), entry]);
+      return entry;
+    });
   }
 
   // Update text, type, and/or linkedEntityIds of an existing entry. Returns the updated
@@ -84,29 +91,33 @@ export class NotebookStore {
     entryId: string,
     patch: Partial<Pick<NotebookEntry, "text" | "type" | "linkedEntityIds">>,
   ): Promise<NotebookEntry | null> {
-    const entries = await this.load(caseId);
-    let updated: NotebookEntry | null = null;
-    const next = entries.map((e) => {
-      if (e.id !== entryId) return e;
-      updated = {
-        ...e,
-        ...(patch.text !== undefined ? { text: String(patch.text).trim() } : {}),
-        ...(patch.type !== undefined && NOTEBOOK_ENTRY_TYPES.includes(patch.type) ? { type: patch.type } : {}),
-        ...(patch.linkedEntityIds !== undefined ? { linkedEntityIds: patch.linkedEntityIds } : {}),
-      };
+    return this.lock.runExclusive(caseId, async () => {
+      const entries = await this.load(caseId);
+      let updated: NotebookEntry | null = null;
+      const next = entries.map((e) => {
+        if (e.id !== entryId) return e;
+        updated = {
+          ...e,
+          ...(patch.text !== undefined ? { text: String(patch.text).trim() } : {}),
+          ...(patch.type !== undefined && NOTEBOOK_ENTRY_TYPES.includes(patch.type) ? { type: patch.type } : {}),
+          ...(patch.linkedEntityIds !== undefined ? { linkedEntityIds: patch.linkedEntityIds } : {}),
+        };
+        return updated;
+      });
+      if (!updated) return null;
+      await this.save(caseId, next);
       return updated;
     });
-    if (!updated) return null;
-    await this.save(caseId, next);
-    return updated;
   }
 
   // Remove one entry by id; returns true if it existed.
   async remove(caseId: string, entryId: string): Promise<boolean> {
-    const entries = await this.load(caseId);
-    const next = entries.filter((e) => e.id !== entryId);
-    if (next.length === entries.length) return false;
-    await this.save(caseId, next);
-    return true;
+    return this.lock.runExclusive(caseId, async () => {
+      const entries = await this.load(caseId);
+      const next = entries.filter((e) => e.id !== entryId);
+      if (next.length === entries.length) return false;
+      await this.save(caseId, next);
+      return true;
+    });
   }
 }

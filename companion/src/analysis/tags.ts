@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { StateLock } from "./stateLock.js";
 
 // Analyst tags (triage labels) attached to any case entity (a forensic event, finding, IOC,
 // key question, asset…), so investigators can hand-label evidence — "confirmed-malicious",
@@ -57,6 +58,12 @@ export function normalizeLabel(label: string): string {
 }
 
 export class TagsStore {
+  // Serializes this case's load->modify->save section (#216). Guards tags.json only — a PRIVATE
+  // lock, like HypothesisStore's, so it can never contend with the investigation-state lock.
+  // It also makes add()'s duplicate check meaningful: without it, two identical tags arriving
+  // together both saw "no duplicate" and both were written.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -84,41 +91,47 @@ export class TagsStore {
     if (!label) throw new Error("label is required");
     const targetType = String(input.targetType).trim();
     const targetId = String(input.targetId).trim();
-    const existingTags = await this.load(caseId);
-    const dup = existingTags.find(
-      (t) => t.targetType === targetType && t.targetId === targetId && t.label === label,
-    );
-    if (dup) return dup;
-    const tag: Tag = {
-      id: randomUUID(),
-      targetType,
-      targetId,
-      label,
-      author: (input.author || "").trim() || "anonymous",
-      createdAt: new Date().toISOString(),
-    };
-    await this.save(caseId, [...existingTags, tag]);
-    return tag;
+    return this.lock.runExclusive(caseId, async () => {
+      const existingTags = await this.load(caseId);
+      const dup = existingTags.find(
+        (t) => t.targetType === targetType && t.targetId === targetId && t.label === label,
+      );
+      if (dup) return dup;
+      const tag: Tag = {
+        id: randomUUID(),
+        targetType,
+        targetId,
+        label,
+        author: (input.author || "").trim() || "anonymous",
+        createdAt: new Date().toISOString(),
+      };
+      await this.save(caseId, [...existingTags, tag]);
+      return tag;
+    });
   }
 
   // Remove one tag by id; returns the removed tag (so callers can inspect its label), or null if
   // no tag with that id existed.
   async remove(caseId: string, tagId: string): Promise<Tag | null> {
-    const tags = await this.load(caseId);
-    const removed = tags.find((t) => t.id === tagId) ?? null;
-    if (!removed) return null;
-    await this.save(caseId, tags.filter((t) => t.id !== tagId));
-    return removed;
+    return this.lock.runExclusive(caseId, async () => {
+      const tags = await this.load(caseId);
+      const removed = tags.find((t) => t.id === tagId) ?? null;
+      if (!removed) return null;
+      await this.save(caseId, tags.filter((t) => t.id !== tagId));
+      return removed;
+    });
   }
 
   // Remove every tag whose author starts with `prefix` in a single load+save; returns how many were
   // removed. Backs the tagger's "Clear tagger tags" (prefix "tagger:") so a noisy ruleset is fully
   // reversible WITHOUT touching analyst-authored tags. No-op write when nothing matches.
   async removeByAuthorPrefix(caseId: string, prefix: string): Promise<number> {
-    const tags = await this.load(caseId);
-    const next = tags.filter((t) => !t.author.startsWith(prefix));
-    const removed = tags.length - next.length;
-    if (removed) await this.save(caseId, next);
-    return removed;
+    return this.lock.runExclusive(caseId, async () => {
+      const tags = await this.load(caseId);
+      const next = tags.filter((t) => !t.author.startsWith(prefix));
+      const removed = tags.length - next.length;
+      if (removed) await this.save(caseId, next);
+      return removed;
+    });
   }
 }
