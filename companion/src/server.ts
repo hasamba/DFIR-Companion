@@ -142,6 +142,7 @@ import {
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
+import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
@@ -580,6 +581,10 @@ export interface AppOptions {
   // startServer stores the function and fires it after app.listen() so the probes run when
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
+  // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
+  // extension, loopback, and the server's own host). From DFIR_ALLOWED_ORIGINS — see
+  // src/http/originGuard.ts. Absent → only the built-in trusted origins.
+  allowedOrigins?: string[];
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -639,21 +644,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
   };
 
-  // Allow the browser extension (a chrome-extension:// origin) to reach this
-  // localhost-only server. Binding is 127.0.0.1, so this is local-machine access.
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
-    // Chromium Private Network Access: a request from an extension page to a
-    // private address (127.0.0.1) is blocked unless the preflight allows it.
-    res.header("Access-Control-Allow-Private-Network", "true");
-    if (req.method === "OPTIONS") {
-      res.sendStatus(204);
-      return;
-    }
-    next();
-  });
+  // Let the browser extension and the dashboard reach this localhost-only server, and turn every
+  // OTHER browser origin away (issue #211). Binding to 127.0.0.1 stops other machines, not other
+  // origins: without this gate any page you happen to be browsing could POST a custom tool here and
+  // have the companion spawn it. Non-browser callers (curl, scripted pushes) send no Origin and are
+  // unaffected. See src/http/originGuard.ts for the full threat model.
+  app.use(createOriginGuard({ allowedOrigins: options.allowedOrigins }));
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
@@ -2648,8 +2644,8 @@ import { GeminiProvider } from "./providers/gemini.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { ClaudeCodeProvider } from "./providers/claudeCode.js";
 import { CodexProvider } from "./providers/codex.js";
-import { WebSocketServer } from "ws";
 import { LiveHub } from "./live/hub.js";
+import { attachLiveSocket } from "./live/wsGate.js";
 import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
 
 export interface ProviderParams {
@@ -3362,6 +3358,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
+    // Extra browser origins permitted past the origin guard (#211), beyond the extension, loopback,
+    // and this server's own host. Comma-separated, e.g. "https://soc.example.com".
+    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     jobManager,
@@ -3559,11 +3558,15 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     throw err;
   });
 
-  const wss = new WebSocketServer({ server, path: "/ws" });
-  wss.on("connection", (socket, req) => {
-    const caseId = new URL(req.url ?? "", "http://localhost").searchParams.get("caseId") ?? "";
-    hub.subscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike);
-    socket.on("close", () => hub.unsubscribe(caseId, socket as unknown as import("./live/hub.js").SocketLike));
+  // Live state socket. Subscribing hands the socket every future broadcast of that case's FULL
+  // investigation state, so the upgrade is authorized first (#212): trusted origin, real case, and
+  // — because Express middleware never runs for a WebSocket upgrade — the same case-password check
+  // the HTTP routes get. See src/live/wsGate.ts.
+  attachLiveSocket(server, hub, {
+    store,
+    // Same load-or-create call createApp makes, so both gates verify unlock cookies with one key.
+    secret: loadOrCreateInstanceSecret(store.casesRoot),
+    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
   });
 }
 

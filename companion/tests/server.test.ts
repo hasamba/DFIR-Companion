@@ -60,7 +60,9 @@ describe("HTTP server", () => {
       .set("Access-Control-Request-Method", "POST")
       .set("Access-Control-Request-Headers", "content-type");
     expect(res.status).toBe(204);
-    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    // The extension's own origin is echoed back. This used to assert "*", which is what let any
+    // web page drive the API (#211); the wildcard is now never sent. See tests/http/originGuard.
+    expect(res.headers["access-control-allow-origin"]).toBe("chrome-extension://abc");
     expect(res.headers["access-control-allow-headers"]).toContain("Content-Type");
   });
 

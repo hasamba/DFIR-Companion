@@ -2,6 +2,7 @@ import { readFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { storeFilePath } from "../storage/safeStoreId.js";
 import {
   BUILT_IN_REPORT_TEMPLATES,
   normalizeReportTemplate,
@@ -25,8 +26,9 @@ export interface StoredReportTemplate extends ReportTemplate {
 export class ReportTemplateStore {
   constructor(private readonly root: string) {}
 
+  // Validates the id and guarantees containment beneath root (#213).
   private path(id: string): string {
-    return join(this.root, `${id}.json`);
+    return storeFilePath(this.root, id);
   }
 
   // True when an id belongs to a shipped built-in (vs. a purely custom template).

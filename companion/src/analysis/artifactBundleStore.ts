@@ -2,6 +2,7 @@ import { readFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { storeFilePath } from "../storage/safeStoreId.js";
 
 // A "triage bundle" (a.k.a. blueprint / triage pack) is a named, reusable selection of Velociraptor
 // CLIENT artifacts. The analyst picks one, runs it as a hunt, and the collected results auto-import +
@@ -281,8 +282,9 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
 export class ArtifactBundleStore {
   constructor(private readonly root: string) {}
 
+  // Validates the id and guarantees containment beneath root (#213).
   private path(id: string): string {
-    return join(this.root, `${id}.json`);
+    return storeFilePath(this.root, id);
   }
 
   // True when an id belongs to a shipped built-in (vs. a purely custom bundle). Built-ins are
