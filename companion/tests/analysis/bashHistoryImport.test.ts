@@ -103,6 +103,33 @@ describe("parseShellHistoryFile — classification + IOCs", () => {
     expect(exfil?.mitreTechniques).toContain("T1567.002");
   });
 
+  // bashHistoryImport kept its OWN CMD_RULES and was the one importer that never consulted the shared
+  // tradecraftRules table, so a command the ECAR/osquery/SIEM paths graded Medium stayed Info when it
+  // arrived via shell history — the exact divergence those shared rules were introduced to end, just
+  // in the opposite direction. On northpeak-insider-codetheft that hid the insider's staging archive
+  // and post-exfil cleanup, both of which reached the case only through bash_history.
+  it("also applies the shared tradecraft table, so staging + cleanup are not Info", () => {
+    const ops = [
+      "tar czf /home/arjun.mehta/bk-0514.tgz -C /home/arjun.mehta/src .",
+      "rm -rf /home/arjun.mehta/src /home/arjun.mehta/bk-0514.tgz /tmp/repos.txt",
+    ].join("\n");
+    const r = parseShellHistoryFile(ops, { user: "arjun.mehta" });
+    const tar = r.events.find((e) => /tar czf/.test(e.description));
+    expect(tar?.severity).toBe("Medium");
+    expect(tar?.mitreTechniques).toContain("T1560.001");
+    const cleanup = r.events.find((e) => /rm -rf/.test(e.description));
+    expect(cleanup?.severity).toBe("Medium");
+    expect(cleanup?.mitreTechniques).toContain("T1070.004");
+  });
+
+  it("keeps the worse of the two tables when both fire", () => {
+    // CMD_RULES grades history-tampering High; the shared table grades it strong (also High). The
+    // union of techniques must survive, and a High from either side must not be softened to Medium.
+    const r = parseShellHistoryFile("rm -f ~/.bash_history", { user: "u" });
+    expect(r.events[0]?.severity).toBe("High");
+    expect(r.events[0]?.mitreTechniques).toContain("T1070.003");
+  });
+
   it("aggregates identical repeated commands into one counted row", () => {
     const r = parseShellHistoryFile("ls\nls\nls\nid", { user: "u" });
     const ls = r.events.find((e) => /: ls$/.test(e.description));
