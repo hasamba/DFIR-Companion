@@ -447,7 +447,9 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         author: typeof req.body?.author === "string" ? req.body.author : "",
       });
       options.onComments?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      // Awaited, like the tag routes below: the dashboard refreshes the activity log as soon as
+      // this responds, so a fire-and-forget append can lose the race against that read.
+      await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "collaboration", action: "comment-added", actor: comment.author,
         detail: `comment on ${targetType} ${targetId}`, targetType, targetId,
       });
@@ -469,7 +471,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const removed = await options.commentsStore.remove(req.params.id, req.params.commentId);
       if (!removed) return res.status(404).json({ error: "comment not found" });
       options.onComments?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      await logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "collaboration", action: "comment-removed", detail: `comment ${req.params.commentId} removed`,
       });
       return res.status(204).end();
