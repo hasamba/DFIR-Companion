@@ -238,3 +238,28 @@ describe("CaseStore.deleteCaseFolder", () => {
     expect(s.isFile()).toBe(true);
   });
 });
+
+describe("CaseStore.nextImportSeq", () => {
+  it("hands out a distinct sequence to each concurrent caller", async () => {
+    // nextImportSeq derives the next number by COUNTING the imports log, and callers append to that
+    // log only later (after writing the blob). Concurrent imports therefore all read the same count
+    // and get the SAME seq — they overwrite each other's stored evidence file and hand the importer
+    // the same idPrefix, so their events collide by id and the state merge dedups all but one away.
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "seq-1", name: "n", investigator: "i", aiProvider: null });
+    const seqs = await Promise.all(Array.from({ length: 12 }, () => store.nextImportSeq("seq-1")));
+    expect(new Set(seqs).size).toBe(12);
+    expect([...seqs].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("resumes from the on-disk log for a case with existing imports", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "seq-2", name: "n", investigator: "i", aiProvider: null });
+    await store.appendImport("seq-2", {
+      caseId: "seq-2", sequenceNumber: 1, importedAt: new Date().toISOString(),
+      filename: "0001_a.log", originalName: "a.log", rows: 0, bytes: 1,
+    });
+    // A fresh store (server restart) must pick up where the log left off, not restart at 1.
+    expect(await new CaseStore(root).nextImportSeq("seq-2")).toBe(2);
+  });
+});

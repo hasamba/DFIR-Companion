@@ -83,6 +83,32 @@ describe("SuperTimelineStore", () => {
     expect(all.labelsAvailable).toEqual(["key-evidence"]);
   });
 
+  // Regression: append() is a read-modify-write (load -> merge -> atomicWrite). The import route
+  // fires it once per imported file, so two imports finishing close together used to read the same
+  // base array and the second write clobbered the first — rows vanished silently. atomicWrite makes
+  // each write crash-safe, not serialized; only a per-case lock makes concurrent appends additive.
+  it("serializes concurrent appends so no batch is clobbered", async () => {
+    const batches = Array.from({ length: 12 }, (_, b) =>
+      Array.from({ length: 5 }, (_, i) =>
+        ev({ id: `b${b}e${i}`, timestamp: `2026-06-0${(b % 9) + 1}T00:0${i}:00Z` })),
+    );
+    await Promise.all(batches.map((batch) => store.append("c1", batch)));
+    const r = await store.query("c1", {});
+    expect(r.total).toBe(60);
+    // Every batch must be represented — a clobber shows up as whole batches missing, not stray rows.
+    for (let b = 0; b < 12; b++) {
+      expect(r.events.filter((e) => e.id.startsWith(`b${b}e`))).toHaveLength(5);
+    }
+  });
+
+  it("serializes concurrent setLabels so no label is clobbered", async () => {
+    await store.append("c1", Array.from({ length: 6 }, (_, i) =>
+      ev({ id: `L${i}`, timestamp: `2026-06-0${i + 1}T00:00:00Z` })));
+    await Promise.all(Array.from({ length: 6 }, (_, i) => store.setLabels("c1", `L${i}`, [`tag${i}`])));
+    const r = await store.query("c1", {});
+    expect(r.labelsAvailable.sort()).toEqual(["tag0", "tag1", "tag2", "tag3", "tag4", "tag5"]);
+  });
+
   it("tolerates a malformed events file (returns empty rather than throwing)", async () => {
     await store.append("c1", [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" })]);
     await writeFile(join(cases.stateDir("c1"), "super-timeline.json"), "{ not json", "utf8");

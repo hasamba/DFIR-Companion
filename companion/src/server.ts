@@ -1183,6 +1183,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // forensic timeline so the AI only synthesizes graded signal. Promotion re-adds them if the analyst
   // wants (it goes through pipeline.promoteSuperTimeline, NOT this gate). Threshold: per-case
   // forensic-gate ?? DFIR_FORENSIC_MIN_SEVERITY ?? "Low". Returns the (possibly unchanged) state.
+  //
+  // The demote is CASE-WIDE, so with concurrent imports it can fire between another import's
+  // pre-import snapshot and that import's dual-write, stripping rows the owning import had not yet
+  // copied to super — they would then exist in neither timeline. The capture below closes that:
+  // an event may only leave the forensic timeline after it is written to the super-timeline in this
+  // same critical section. append() dedups by id, so re-capturing a row the seam already wrote is free.
   async function demoteForensicForCase(caseId: string): Promise<InvestigationState> {
     return runStateExclusive(caseId, async () => {
       const state = await options.stateStore!.load(caseId);
@@ -1193,6 +1199,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       );
       const { kept, demoted } = demoteBelowSeverity(state.forensicTimeline, min);
       if (!demoted.length) return state;
+      if (options.superTimelineStore) {
+        try {
+          await options.superTimelineStore.append(caseId, demoted);
+          options.onSuperTimeline?.(caseId);
+        } catch {
+          // Capture failed — keep the rows in the forensic timeline rather than dropping them
+          // on the floor; the next import/demote will retry.
+          return state;
+        }
+      }
       const next = { ...state, forensicTimeline: kept };
       await options.stateStore!.save(next);
       options.onState?.(next);
