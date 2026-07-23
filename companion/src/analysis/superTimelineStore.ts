@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { ForensicEvent } from "./stateTypes.js";
+import { StateLock } from "./stateLock.js";
 import { dedupeAppend, capEvents, querySuper, type SuperLabelMap, type SuperQuery, type SuperQueryResult } from "./superTimeline.js";
 
 // Per-case super-timeline: the complete record of every imported event (a copy of the forensic
@@ -14,6 +15,13 @@ import { dedupeAppend, capEvents, querySuper, type SuperLabelMap, type SuperQuer
 export const DEFAULT_SUPER_MAX = 100_000;
 
 export class SuperTimelineStore {
+  // Per-case mutex around the read-modify-write paths (append / setLabels). The import route fires
+  // append() once per imported file, so two imports finishing close together would otherwise read the
+  // same base array and the second atomicWrite would clobber the first — whole files' rows vanishing
+  // silently. atomicWrite makes each write crash-safe, NOT serialized; only this lock makes concurrent
+  // appends additive. Same primitive AnalysisPipeline uses for investigation.json.
+  private readonly lock = new StateLock();
+
   constructor(private readonly cases: CaseStore, private readonly max: number = DEFAULT_SUPER_MAX) {}
 
   private eventsPath(caseId: string): string { return join(this.cases.stateDir(caseId), "super-timeline.json"); }
@@ -43,23 +51,25 @@ export class SuperTimelineStore {
   // report an accurate "+N events" (a re-import of the same rows dedups to +0).
   async append(caseId: string, events: ForensicEvent[]): Promise<number> {
     if (!events.length) return 0;
-    const existing = await this.loadEvents(caseId);
-    const existingIds = new Set(existing.map((e) => e.id));
-    const addedCount = events.filter((e) => !existingIds.has(e.id)).length;
-    const merged = capEvents(dedupeAppend(existing, events), this.max);
-    await atomicWrite(this.eventsPath(caseId), JSON.stringify(merged, null, 2));
-    // Prune label entries for events the cap evicted — otherwise the sidecar map leaks keys forever
-    // (labels are keyed by event id and nothing else garbage-collects them). Only rewrite when something
-    // was actually pruned, so the common append-under-cap path stays a single write.
-    const labels = await this.loadLabels(caseId);
-    const retained = new Set(merged.map((e) => e.id));
-    const pruned = Object.keys(labels).filter((id) => !retained.has(id));
-    if (pruned.length) {
-      const next: SuperLabelMap = {};
-      for (const [id, val] of Object.entries(labels)) if (retained.has(id)) next[id] = val;
-      await atomicWrite(this.labelsPath(caseId), JSON.stringify(next, null, 2));
-    }
-    return addedCount;
+    return this.lock.runExclusive(caseId, async () => {
+      const existing = await this.loadEvents(caseId);
+      const existingIds = new Set(existing.map((e) => e.id));
+      const addedCount = events.filter((e) => !existingIds.has(e.id)).length;
+      const merged = capEvents(dedupeAppend(existing, events), this.max);
+      await atomicWrite(this.eventsPath(caseId), JSON.stringify(merged, null, 2));
+      // Prune label entries for events the cap evicted — otherwise the sidecar map leaks keys forever
+      // (labels are keyed by event id and nothing else garbage-collects them). Only rewrite when something
+      // was actually pruned, so the common append-under-cap path stays a single write.
+      const labels = await this.loadLabels(caseId);
+      const retained = new Set(merged.map((e) => e.id));
+      const pruned = Object.keys(labels).filter((id) => !retained.has(id));
+      if (pruned.length) {
+        const next: SuperLabelMap = {};
+        for (const [id, val] of Object.entries(labels)) if (retained.has(id)) next[id] = val;
+        await atomicWrite(this.labelsPath(caseId), JSON.stringify(next, null, 2));
+      }
+      return addedCount;
+    });
   }
 
   // `labelMap` overrides the built-in per-event label sidecar — the route passes the case's analyst
@@ -79,9 +89,13 @@ export class SuperTimelineStore {
   }
 
   async setLabels(caseId: string, eventId: string, labels: string[]): Promise<void> {
-    const map = await this.loadLabels(caseId);
-    const clean = [...new Set(labels.map((l) => String(l).trim()).filter(Boolean))];
-    if (clean.length) map[eventId] = clean; else delete map[eventId];
-    await atomicWrite(this.labelsPath(caseId), JSON.stringify(map, null, 2));
+    // Same lock as append(): labelling two rows at once is a read-modify-write of one sidecar map,
+    // so without it the second write drops the first row's label.
+    await this.lock.runExclusive(caseId, async () => {
+      const map = await this.loadLabels(caseId);
+      const clean = [...new Set(labels.map((l) => String(l).trim()).filter(Boolean))];
+      if (clean.length) map[eventId] = clean; else delete map[eventId];
+      await atomicWrite(this.labelsPath(caseId), JSON.stringify(map, null, 2));
+    });
   }
 }

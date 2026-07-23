@@ -220,6 +220,24 @@ export const TRADECRAFT_RULES: TradecraftRule[] = [
   // /tmp so ordinary log rotation (`gzip /var/log/...`) and backup jobs (`tar czf /backups/...`)
   // do not fire — see the "ordinary Linux administration" test.
   { re: /\b(?:gzip|bzip2|xz|zip|tar|7za?)\b[^\n]*(?:\.sql\b|\/tmp\/)/i, weight: "weak", ids: ["T1560.001"] },
+
+  // Archive collected data, second shape: the archive is written INTO a user home directory. This is
+  // the Linux counterpart of the robocopy/xcopy staging rule above — on the northpeak-insider-codetheft
+  // benchmark the insider's `tar czf /home/<user>/bk-0514.tgz -C /home/<user>/src .` matched nothing
+  // (no .sql, no /tmp), graded Info, and the archive step of a no-malware theft never reached synthesis.
+  // Anchored on the DESTINATION — the first path argument after the tool and its flags — so a backup
+  // job that READS a home directory but writes elsewhere (`tar czf /backups/home-nightly.tgz /home/dana`)
+  // stays quiet. Weak: a developer tarring their own work tree looks identical, so this is a lead to
+  // triage (and thus VISIBLE to synthesis), not a verdict.
+  { re: /\b(?:gzip|bzip2|xz|zip|tar|7za?)\b\s+(?:-{0,2}[A-Za-z0-9]+\s+)*(?:\/home\/[^\s/]+\/|\/Users\/[^\s/]+\/|~\/)/i,
+    weight: "weak", ids: ["T1560.001"] },
+
+  // Indicator removal: deleting an archive or dump artifact — the closing move of stage → exfil →
+  // clean up (northpeak: `rm -rf .../src .../bk-0514.tgz /tmp/repos.txt`). The T1070.003 rule above
+  // only covers shell-history targets. Scoped to archive/dump extensions so ordinary `rm -rf
+  // node_modules` and log rotation (`rm -f /var/log/syslog.1.gz`) do not fire; bare .gz/.bz2/.xz are
+  // deliberately excluded for that reason, while .tar.gz is matched explicitly.
+  { re: /\brm\b[^\n]*\.(?:tgz|tar\.gz|tar|zip|7z|rar|sql|dump)\b/i, weight: "weak", ids: ["T1070.004"] },
 ];
 
 // The weight + ATT&CK techniques a process command line indicates, or null. Strong wins over weak;

@@ -998,3 +998,44 @@ describe("synthesize — deep-pass observations block", () => {
     expect(provider.requests.length).toBeGreaterThan(afterFirst);
   });
 });
+
+// An import that parses cleanly but yields nothing used to be a SILENT no-op: every importer
+// returned the unchanged state, so the file was 202-accepted, stored under `imports/`, and left no
+// trace in the case at all. On the northpeak benchmark that hid the fact that Zeek conn.json —
+// 75,951 records, the largest artifact in the case — had contributed zero events. The analyst could
+// not tell "ingested and understood" from "silently dropped". Every importer now records a note.
+describe("pipeline import — empty imports are recorded, not silently dropped", () => {
+  it("notes a network import that parses records but produces no events or IOCs", async () => {
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    // Zeek ntp records: a real stream that carries neither an IOC nor a timeline-worthy event.
+    const ntp = [
+      { ts: 1715713200, uid: "N1", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.1", version: 4, stratum: 3 },
+      { ts: 1715713260, uid: "N2", "id.orig_h": "10.0.0.6", "id.resp_h": "10.0.0.1", version: 4, stratum: 3 },
+    ].map((o) => JSON.stringify(o)).join("\n");
+
+    const state = await pipeline.importNetwork("c1", ntp, {
+      label: "0007_ntp.json", idPrefix: "n1", importedAt: "2026-05-28T10:00:00.000Z",
+    });
+
+    expect(state.forensicTimeline).toHaveLength(0);
+    const note = state.timeline.at(-1);
+    expect(note, "an empty import must still leave a timeline note").toBeDefined();
+    expect(note?.description).toMatch(/no events/i);
+    expect(note?.description).toMatch(/2 record/);          // says how much was parsed
+    expect(note?.sourceScreenshots).toContain("0007_ntp.json");
+  });
+
+  it("notes an empty shell-history import too (the guard is shared across importers)", async () => {
+    const pipeline = new AnalysisPipeline({
+      stateStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    const state = await pipeline.importBashHistory("c1", "", {
+      label: "0008_empty.bash_history", idPrefix: "b1", importedAt: "2026-05-28T10:00:00.000Z",
+    });
+    expect(state.timeline.at(-1)?.description).toMatch(/no events/i);
+  });
+});

@@ -163,11 +163,57 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(domains).toContain("alt.bad.test");
   });
 
-  it("treats conn telemetry as IOC-free flow — no events, no noise rows", () => {
-    const r = parseNetworkLogs([conn, conn].map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json" });
+  // conn used to produce NOTHING — no events, no IOCs, no super-timeline rows. On the
+  // northpeak-insider-codetheft benchmark that silently discarded 75,951 records (the single
+  // largest artifact in the case) behind a 202-accepted, and with them the only evidence of the
+  // bulk repo clone (1.5 GB pulled from the git server) and the NFS design-doc grab (a single
+  // 412 MB read). conn is now folded into ONE flow row per src→dst:port/proto carrying the
+  // connection count and byte totals — the volume IS the signal for bulk collection.
+  it("folds conn telemetry into one aggregated flow row per src->dst:port", () => {
+    const rows = [
+      { ...conn, ts: 1512115205, orig_bytes: 100, resp_bytes: 900, "id.resp_p": 443, service: "ssl" },
+      { ...conn, ts: 1512115209, orig_bytes: 200, resp_bytes: 800, "id.resp_p": 443, service: "ssl" },
+      { ...conn, ts: 1512115211, orig_bytes: 5, resp_bytes: 5, "id.resp_p": 22 },
+    ];
+    const r = parseNetworkLogs(rows.map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json" });
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(0);
+    expect(r.events).toHaveLength(2);                       // :443 folded from 2 rows, :22 alone
+    const https = r.events.find((e) => /:443/.test(e.description));
+    expect(https?.description).toMatch(/10\.0\.0\.5/);
+    expect(https?.description).toMatch(/10\.0\.0\.9/);
+    expect(https?.description).toMatch(/2 connection/);
+    expect(https?.description).toMatch(/300 B sent/);        // 100 + 200 origin bytes
+    expect(https?.description).toMatch(/1\.7 KB received/);  // 900 + 800 = 1700 responder bytes
+    // Info: pure telemetry. The forensic gate demotes it to the analyst-only super-timeline, so a
+    // busy sensor cannot flood the AI prompt — it becomes searchable, not synthesized.
+    expect(https?.severity).toBe("Info");
+    // Earliest connection in the group timestamps the row.
+    expect(https?.timestamp).toBe(new Date(1512115205 * 1000).toISOString());
+  });
+
+  it("still extracts NO IOCs from conn — every external peer would swamp the IOC list", () => {
+    // The benchmark's conn.json alone holds 3,710 distinct external responder IPs. Promoting those
+    // to IOCs buries the handful that matter (see the "IOC/MITRE not discriminative" problem);
+    // real destination IOCs come from dns/http/ssl and the firewall/proxy importers.
+    const r = parseNetworkLogs(JSON.stringify({ ...conn, "id.resp_h": "203.0.113.9" }), { filename: "conn.json" });
     expect(r.iocs).toHaveLength(0);
+  });
+
+  it("keeps the HIGHEST-VOLUME flows when the event cap truncates", () => {
+    // The shared aggregator caps by "most-severe, then noisiest, then earliest". Every flow is Info
+    // with no count, so its cut falls on flows in TIME order — which is why the big transfer here is
+    // deliberately the LAST and LEAST recent-ordered one: a cap that ignores volume keeps 10.0.0.1
+    // and drops the 10 MB flow, exactly the failure that hid the benchmark's 1.5 GB bulk clone
+    // behind a 292 KB flow to the same server.
+    const rows = [
+      { ...conn, ts: 1512115200, "id.resp_h": "10.0.0.1", "id.resp_p": 80, orig_bytes: 1, resp_bytes: 1 },
+      { ...conn, ts: 1512115300, "id.resp_h": "10.0.0.3", "id.resp_p": 80, orig_bytes: 2, resp_bytes: 2 },
+      { ...conn, ts: 1512119999, "id.resp_h": "10.0.0.2", "id.resp_p": 80, orig_bytes: 5_000_000, resp_bytes: 5_000_000 },
+    ];
+    const r = parseNetworkLogs(rows.map((o) => JSON.stringify(o)).join("\n"), { filename: "conn.json", maxEvents: 1 });
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0]?.description).toMatch(/10\.0\.0\.2/);
+    expect(r.events[0]?.description).toMatch(/4\.8 MB received/);   // 5,000,000 B
   });
 
   it("zeekStreamFromName strips seq prefix + extension", () => {

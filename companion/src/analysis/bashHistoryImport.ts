@@ -17,6 +17,7 @@ import {
 import type { Severity } from "./stateTypes.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { tradecraftSignal } from "./tradecraftRules.js";
 
 export interface BashHistoryImportOptions extends SiemImportOptions {
   // The account the history belongs to (derived from the filename by the pipeline, e.g.
@@ -127,19 +128,28 @@ function classify(command: string): { severity: Severity; mitre: string[] } {
   // every command regardless of the severity rule, so the enumeration phase is identified even
   // though shell-history recon stays Info.
   const recon = reconTechniques("", command);
-  // A secret typed into the shell (an AWS key, a PAT, a token) is at rest in this file — it must be
-  // at least Medium so it reaches the forensic timeline synthesis reads, whichever CMD_RULE (if
-  // any) also matched. See secretSpillRules.ts for why this is shared across every importer.
+  // Two SHARED tables are consulted alongside the shell-history-specific CMD_RULES above, because
+  // the same command must not score differently depending on which sensor reported it:
+  //   - secretSpillSignal: a secret typed into the shell (an AWS key, a PAT, a token) is at rest in
+  //     this file, so it must reach at least Medium whichever CMD_RULE (if any) also matched.
+  //   - tradecraftSignal: the table ECAR/osquery/SIEM/memory grade with. Consulting only CMD_RULES
+  //     here was the same divergence tradecraftRules exists to end, pointing the other way.
+  // Worst severity wins and techniques are unioned, so no table can soften another.
   const spill = secretSpillSignal(command);
+  const tc = tradecraftSignal("", command);
+  const tcSeverity: Severity = tc ? (tc.weight === "strong" ? "High" : "Medium") : "Info";
+  const sharedSeverity: Severity = spill ? worst(tcSeverity, "Medium") : tcSeverity;
+  const sharedMitre = [...(spill?.mitre ?? []), ...(tc?.mitre ?? [])];
+
   for (const rule of CMD_RULES) {
     if (rule.re.test(command)) {
       return {
-        severity: spill ? worst(rule.severity, "Medium") : rule.severity,
-        mitre: [...new Set([...rule.mitre, ...recon, ...(spill?.mitre ?? [])])],
+        severity: worst(rule.severity, sharedSeverity),
+        mitre: [...new Set([...rule.mitre, ...sharedMitre, ...recon])],
       };
     }
   }
-  if (spill) return { severity: "Medium", mitre: [...new Set([...recon, ...spill.mitre])] };
+  if (spill || tc) return { severity: sharedSeverity, mitre: [...new Set([...sharedMitre, ...recon])] };
   return { severity: "Info", mitre: recon };
 }
 

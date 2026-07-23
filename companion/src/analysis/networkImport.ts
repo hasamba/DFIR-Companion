@@ -242,6 +242,84 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): Mapp
   };
 }
 
+// ───────────────────────── Zeek conn: flow aggregation ─────────────────────────
+// A conn record is one TCP/UDP flow, and a busy sensor emits them by the hundred thousand — far too
+// many to carry one event each, which is why they used to be dropped outright. Dropping them also
+// threw away the one thing only flow telemetry knows: HOW MUCH data moved. On the
+// northpeak-insider-codetheft benchmark the bulk repo clone and the NFS design-doc grab left no
+// trace anywhere else — they are visible only as 1.5 GB pulled from the git server and a single
+// 412 MB NFS read. Folding conn by (src → dst:port/proto) collapses 75,951 rows to ~7,000 and keeps
+// exactly that: peers, connection count, byte totals.
+
+interface FlowAgg {
+  src: string; dst: string; port: string; proto: string; service: string;
+  count: number; origBytes: number; respBytes: number; firstTs: string;
+}
+
+const KB = 1024, MB = KB * 1024, GB = MB * 1024;
+function humanBytes(n: number): string {
+  if (n >= GB) return `${(n / GB).toFixed(1)} GB`;
+  if (n >= MB) return `${(n / MB).toFixed(1)} MB`;
+  if (n >= KB) return `${(n / KB).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function flowKey(row: Row): string {
+  return [
+    str(getCI(row, "id.orig_h")), str(getCI(row, "id.resp_h")),
+    str(getCI(row, "id.resp_p")), str(getCI(row, "proto")),
+  ].join("|");
+}
+
+// Fold one conn record into the running per-flow tally.
+function tallyFlow(row: Row, sink: Map<string, FlowAgg>): void {
+  const key = flowKey(row);
+  const ts = netTime(getCI(row, "ts"));
+  const orig = Number(getCI(row, "orig_bytes")) || 0;
+  const resp = Number(getCI(row, "resp_bytes")) || 0;
+  const existing = sink.get(key);
+  if (existing) {
+    existing.count += 1;
+    existing.origBytes += orig;
+    existing.respBytes += resp;
+    if (ts && ts < existing.firstTs) existing.firstTs = ts;
+    if (!existing.service) existing.service = str(getCI(row, "service"));
+    return;
+  }
+  sink.set(key, {
+    src: str(getCI(row, "id.orig_h")), dst: str(getCI(row, "id.resp_h")),
+    port: str(getCI(row, "id.resp_p")), proto: str(getCI(row, "proto")),
+    service: str(getCI(row, "service")),
+    count: 1, origBytes: orig, respBytes: resp, firstTs: ts,
+  });
+}
+
+function mapFlow(f: FlowAgg, host: string): MappedEvent {
+  const peer = `${f.src} → ${f.dst}${f.port ? `:${f.port}` : ""}`;
+  const proto = [f.proto, f.service].filter(Boolean).join("/");
+  let description = `Flow: ${peer}${proto ? ` (${proto})` : ""}` +
+    ` — ${f.count} connection${f.count === 1 ? "" : "s"},` +
+    ` ${humanBytes(f.origBytes)} sent, ${humanBytes(f.respBytes)} received`;
+  if (host) description += ` @ ${host}`;
+  return {
+    timestamp: f.firstTs,
+    description: description.slice(0, 600),
+    // Pure telemetry: Info keeps it out of the AI prompt (the forensic gate demotes it to the
+    // analyst-only super-timeline) while making it searchable and promotable. No MITRE claim —
+    // a flow on its own asserts nothing about technique.
+    severity: "Info",
+    mitre: [],
+    // Already unique per flow, so the shared aggregator passes these straight through rather than
+    // re-folding them (and the description, not `count`, carries the connection tally).
+    aggKey: `zeek|conn|${f.src}|${f.dst}|${f.port}|${f.proto}`.slice(0, 400),
+    sources: ["Zeek"],
+    ...(host ? { asset: host } : {}),
+    ...(f.src ? { srcIp: f.src } : {}),
+    ...(f.dst ? { dstIp: f.dst } : {}),
+    ...(Number.isFinite(Number(f.port)) && f.port ? { port: Number(f.port) } : {}),
+  };
+}
+
 // ───────────────────────────── host ─────────────────────────────
 
 function pickHost(row: Row): string {
@@ -263,6 +341,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  const flowSink = new Map<string, FlowAgg>();
+  let flowHost = "";
   let alerts = 0;
   let sawSuricata = false, sawZeek = false;
   // Per-stream Zeek JSON (no `_path`): the filename is the authoritative stream for the whole file.
@@ -298,10 +378,25 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         mapped.push(m);
         alerts++;
       } else {
+        // conn is folded per-flow (see tallyFlow) and emitted once after the loop, so the byte
+        // totals can be summed across every record in the group.
+        if (zstream === "conn") { tallyFlow(row, flowSink); if (!flowHost && host) flowHost = host; }
         mergeRowIocs(iocSink, rowSink);
       }
     }
   }
+
+  // Select the flows biggest-first and truncate HERE, before handing them to the shared aggregator.
+  // That aggregator caps by "most-severe, then noisiest, then earliest" — and every flow is Info, so
+  // flows sort last and its cut would fall on them in an order that has nothing to do with volume.
+  // On the benchmark that silently discarded the 1.5 GB bulk-clone flow while keeping a 292 KB one
+  // to the same server. Pre-selecting means whatever survives is the high-volume traffic, which is
+  // the entire reason to carry flow rows at all.
+  const flowBudget = opts.maxEvents ?? maxEventsDefault();
+  const flows = [...flowSink.values()]
+    .sort((a, b) => (b.origBytes + b.respBytes) - (a.origBytes + a.respBytes))
+    .slice(0, flowBudget);
+  for (const f of flows) mapped.push(mapFlow(f, flowHost));
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

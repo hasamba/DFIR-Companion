@@ -279,6 +279,40 @@ describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
     }
   });
 
+  // Gap found on the EvidenceForge northpeak-insider-codetheft benchmark: the insider's staging
+  // archive (`tar czf /home/<user>/bk-0514.tgz -C /home/<user>/src .`) and the post-exfil cleanup
+  // (`rm -rf .../src .../bk-0514.tgz /tmp/repos.txt`) matched NOTHING — the archive rule above is
+  // scoped to .sql/​/tmp, and the T1070.003 rule only covers shell-history targets. Both graded Info,
+  // were demoted to the analyst-only super-timeline, and so the "archive then upload then delete"
+  // spine of a no-malware insider theft was invisible to synthesis. Windows already grades the
+  // equivalent staging primitive (robocopy/xcopy) unconditionally; Linux had no counterpart.
+  it("flags archiving INTO a user home directory as staging (T1560.001)", () => {
+    for (const cmd of [
+      "tar czf /home/arjun.mehta/bk-0514.tgz -C /home/arjun.mehta/src .",
+      "tar -czf ~/staging.tar.gz ~/src",
+      "zip -r /Users/dana/out.zip /Users/dana/work",
+      "gzip -9 /home/deploy/customers.csv",
+      "7z a /home/svc/archive.7z /srv/data",
+    ]) {
+      const r = sig(cmd);
+      expect(r, cmd).not.toBeNull();
+      expect(r?.mitre, cmd).toContain("T1560.001");
+    }
+  });
+
+  it("flags deletion of an archive/dump artifact as indicator removal (T1070.004)", () => {
+    for (const cmd of [
+      "rm -rf /home/arjun.mehta/src /home/arjun.mehta/bk-0514.tgz /tmp/repos.txt",
+      "rm -f /tmp/export-4291.sql",
+      "rm /var/tmp/staging.tar.gz",
+      "rm -rf /opt/out.zip",
+    ]) {
+      const r = sig(cmd);
+      expect(r, cmd).not.toBeNull();
+      expect(r?.mitre, cmd).toContain("T1070.004");
+    }
+  });
+
   it("does not fire on ordinary Linux administration", () => {
     for (const cmd of [
       "ls -la /var/backups/",
@@ -290,6 +324,12 @@ describe("tradecraftRules — Linux/Unix attacker tradecraft", () => {
       "tar czf /backups/etc-$(date +%F).tar.gz /etc",
       "cat /etc/hostname",
       "vim /opt/app/config.yaml",
+      // Backup jobs READ a home directory but write outside it — the destination is what marks
+      // staging, so a home-dir SOURCE must stay quiet or every nightly backup becomes a finding.
+      "tar czf /backups/home-nightly.tgz /home/dana",
+      "rsync -a /home/dana/ /mnt/backup/dana/",
+      "rm -rf /home/dana/project/node_modules",    // ordinary dev cleanup, no archive/dump artifact
+      "rm -f /var/log/syslog.1.gz",                // log rotation, not staged-archive cleanup
     ]) {
       expect(sig(cmd), cmd).toBeNull();
     }
