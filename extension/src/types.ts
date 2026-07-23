@@ -31,6 +31,16 @@ export function normalizeCompanionUrl(raw: string): string {
   return trimmed || DEFAULT_SETTINGS.companionUrl;
 }
 
+// A capture that had been queued during an outage but which the companion later refused
+// permanently — its case was deleted, closed or archived while the capture waited (#215). It is
+// removed from the queue so it cannot block the entries behind it, and reported here so its loss
+// is visible to the analyst rather than silent.
+export interface DroppedCapture {
+  payload: CapturePayload;
+  status: number;         // the HTTP status that made it unsendable (0 = fetch itself failed)
+  errorMessage?: string;  // the companion's explanation, when it gave one
+}
+
 export interface ConnectionStatus {
   online: boolean;
   queued: number;
@@ -39,6 +49,8 @@ export interface ConnectionStatus {
   // the analyst knows to create/select the case in the dashboard.
   rejected?: number;
   rejectedMessage?: string;
+  // Previously-queued captures discarded during this drain (see DroppedCapture).
+  dropped?: DroppedCapture[];
 }
 
 // ── Automated artifact fetching (issue #102) ──────────────────────────────────────────────────

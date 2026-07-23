@@ -42,21 +42,29 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
     imageBase64,
   });
 
+  // Captures that had been waiting in the offline queue but which the companion has now refused
+  // for good (their case was deleted/closed while they waited). They are removed so they cannot
+  // block the queue — which means their loss has to be SAID, not swallowed (#215).
+  const droppedNote = status.dropped?.length
+    ? ` · ${status.dropped.length} queued capture(s) discarded — case gone/closed (HTTP ${[...new Set(status.dropped.map((d) => d.status))].join(", ")})`
+    : "";
+
   // Record the last capture outcome so the popup can surface it.
-  const diag = status.rejected
+  const diag = (status.rejected
     ? status.rejectedMessage
       ? `rejected (HTTP ${status.rejected}) — ${status.rejectedMessage}`
       : `rejected (HTTP ${status.rejected}) — case missing? create/select it in the dashboard`
     : status.online
       ? `ok (online=true, queued=${status.queued})`
-      : `offline — capture queued for retry (queued=${status.queued})`;
+      : `offline — capture queued for retry (queued=${status.queued})`) + droppedNote;
   await chrome.storage.local.set({
     lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
   });
 
-  if (status.rejected) {
+  if (status.rejected || status.dropped?.length) {
     await chrome.action.setBadgeText({ text: "!" });
-    await chrome.action.setBadgeBackgroundColor({ color: "#d18616" }); // amber — case rejected, not queued
+    // Amber — this capture was rejected, and/or queued captures had to be discarded (#215).
+    await chrome.action.setBadgeBackgroundColor({ color: "#d18616" });
   } else {
     await chrome.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
     await chrome.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });

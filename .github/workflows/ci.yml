@@ -67,6 +67,12 @@ jobs:
         working-directory: extension
         run: npm ci
 
+      # Vite and Vitest only type-strip, so neither fails on a type error. Without this step a
+      # type error outside an exercised test path reaches the build unnoticed (#218).
+      - name: Typecheck (tsc)
+        working-directory: extension
+        run: npm run typecheck
+
       - name: Test (vitest)
         working-directory: extension
         run: npm test

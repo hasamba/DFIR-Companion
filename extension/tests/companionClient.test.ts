@@ -9,7 +9,7 @@ const payload: CapturePayload = {
 
 describe("CompanionClient", () => {
   it("postCapture reports ok + status 201 on success", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 201 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 201 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.postCapture(payload)).toEqual({ ok: true, status: 201 });
     const [url, init] = fetchFn.mock.calls[0];
@@ -18,7 +18,7 @@ describe("CompanionClient", () => {
   });
 
   it("postCapture reports the 404 status when the case does not exist", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 404 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 404 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.postCapture(payload)).toEqual({ ok: false, status: 404 });
   });
@@ -30,13 +30,13 @@ describe("CompanionClient", () => {
   });
 
   it("ping returns false on non-OK", async () => {
-    const fetchFn = vi.fn(async () => new Response("", { status: 500 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("", { status: 500 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.ping()).toBe(false);
   });
 
   it("postImport posts to /cases/:id/import and reports ok on 202", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 202 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     const payload = { json: "[{\"a\":1}]", filename: "splunk-2026.json" };
     expect(await client.postImport("c1", payload)).toEqual({ ok: true, status: 202 });
@@ -47,14 +47,14 @@ describe("CompanionClient", () => {
   });
 
   it("postImport URL-encodes the case id", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 202 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     await client.postImport("a/b", { json: "[]", filename: "f.json" });
     expect(fetchFn.mock.calls[0][0]).toBe("http://127.0.0.1:4773/cases/a%2Fb/import");
   });
 
   it("postImport reports the non-202 status (e.g. 404 case not found)", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 404 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 404 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     expect(await client.postImport("c1", { json: "[]", filename: "f.json" })).toEqual({ ok: false, status: 404 });
   });
@@ -66,7 +66,7 @@ describe("CompanionClient", () => {
   });
 
   it("postImport posts a text payload (context-menu push) without a json field", async () => {
-    const fetchFn = vi.fn(async () => new Response("{}", { status: 202 }));
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 202 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);
     const payload = { text: "https://evil.example/payload", filename: "context-menu-link-2026.json" };
     expect(await client.postImport("c1", payload)).toEqual({ ok: true, status: 202 });

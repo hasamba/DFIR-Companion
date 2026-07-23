@@ -2,6 +2,7 @@ import { readFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { storeFilePath } from "../storage/safeStoreId.js";
 import type { Severity, InvestigationQuestion, QuestionStatus, NextStep, StepPriority } from "./stateTypes.js";
 
 export interface TemplateNextStep {
@@ -188,8 +189,10 @@ export function buildInitialNextSteps(template: CaseTemplate): NextStep[] {
 export class TemplateStore {
   constructor(private readonly root: string) {}
 
+  // Validates the id and guarantees containment beneath root (#213) — the id reaches here straight
+  // from a request body/param, so `../..` must not become a path.
   private path(id: string): string {
-    return join(this.root, `${id}.json`);
+    return storeFilePath(this.root, id);
   }
 
   async list(): Promise<CaseTemplate[]> {

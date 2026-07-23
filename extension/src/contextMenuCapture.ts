@@ -11,7 +11,11 @@ import { matrixToRows } from "./adapters/domTable.js";
 import type { ContextPushResultMessage, ContextTableResult } from "./types.js";
 
 const TOAST_ID = "dfir-companion-toast";
-let toastTimer: ReturnType<typeof window.setTimeout> | undefined;
+// Explicitly `number`, not ReturnType<typeof window.setTimeout>: `window` is typed
+// `Window & typeof globalThis`, so once @types/node is in the program that lookup resolves to
+// Node's setTimeout (NodeJS.Timeout) rather than the DOM's. This is content-script code — the
+// browser timer id is a number.
+let toastTimer: number | undefined;
 let lastRightClickTarget: Element | null = null;
 
 export function initContextMenuCapture(): void {
