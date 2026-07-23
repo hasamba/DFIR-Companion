@@ -26,17 +26,18 @@ describe("CaptureQueue", () => {
     await queue.enqueue(payload(1));
     await queue.enqueue(payload(2));
     const sent: string[] = [];
-    const sender = vi.fn(async (p: CapturePayload) => { sent.push(p.timestamp); return true; });
+    const sender = vi.fn(async (p: CapturePayload) => { sent.push(p.timestamp); return { outcome: "sent" as const }; });
 
     await queue.drain(sender);
     expect(sent).toEqual(["2026-05-28T10:01:00.000Z", "2026-05-28T10:02:00.000Z"]);
     expect(await queue.size()).toBe(0);
   });
 
-  it("stops draining on first failure and keeps remaining", async () => {
+  it("stops draining on first RETRYABLE failure and keeps remaining", async () => {
     await queue.enqueue(payload(1));
     await queue.enqueue(payload(2));
-    const sender = vi.fn(async () => false); // always fails
+    // The companion is down, not refusing — every entry must survive for the next drain (#215).
+    const sender = vi.fn(async () => ({ outcome: "retry" as const, status: 0 }));
 
     await queue.drain(sender);
     expect(await queue.size()).toBe(2);
@@ -51,7 +52,7 @@ describe("CaptureQueue", () => {
       sent.push(p.timestamp);
       // yield to allow interleaving if there were no guard
       await new Promise<void>((r) => setTimeout(r, 0));
-      return true;
+      return { outcome: "sent" as const };
     });
 
     await Promise.all([queue.drain(sender), queue.drain(sender)]);

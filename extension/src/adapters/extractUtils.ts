@@ -55,7 +55,11 @@ const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 export async function inflateBase64Json(raw: string): Promise<unknown | null> {
   const compact = raw.replace(/\s+/g, "");
   if (compact.length < 8 || !BASE64_RE.test(compact)) return null;
-  let bytes: Uint8Array;
+  // Deliberately un-annotated: a bare `Uint8Array` widens to `Uint8Array<ArrayBufferLike>` under
+  // TS 5.7+, which is not a `BlobPart` (an ArrayBufferLike could be a SharedArrayBuffer). Letting
+  // it infer from `Uint8Array.from` keeps the precise `Uint8Array<ArrayBuffer>` the Blob wants,
+  // with no cast and no dependency on the newer generic syntax.
+  let bytes;
   try {
     const bin = atob(compact);
     bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
