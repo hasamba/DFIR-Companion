@@ -11394,7 +11394,10 @@
       return String(s == null ? "" : s)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
-    function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
+    // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute
+    // value is decoded before whatever consumes it runs, so an unescaped apostrophe in a
+    // single-quoted context lets attacker-controlled evidence close the string and keep going.
+    function escAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 
     // ── Inline IOC quick-actions (#221) ──────────────────────────────────────────────────────
     // A detected value inside an event description — or an IOC value — becomes a clickable target
@@ -12980,7 +12983,7 @@
       const s = d.stats;
       const countries = (d.countries || []).map(c => `<span class="geo-chip" style="border-left:3px solid ${GEO_COLOR[geoSevColor(c.severity)]};padding-left:6px;margin-right:10px">${esc(c.country)} <b>${esc(c.count)}</b></span>`).join("");
       const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
-        `<li style="cursor:pointer" onclick="geoFocusIp('${escAttr(m.ip)}')" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
+        `<li style="cursor:pointer" data-geo-ip="${escAttr(m.ip)}" title="focus on map"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)} <span style="color:var(--c-9aa4b2)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
       statsEl.innerHTML =
         `<div style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span style="color:var(--c-9aa4b2)"> · dashed = country-level (approx)</span></div>` +
         (countries ? `<div style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
@@ -15031,7 +15034,7 @@
           + (tlShow("icons", tld)
               ? `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>`
                 + `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)}`
-                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" onclick="geoFocusIp('${escAttr(e.dstIp || e.srcIp)}')">${ICON_GEO}</button>` : "")
+                + ((e.srcIp || e.dstIp) ? `<button type="button" class="ev-geo" title="Show this event's IP on the map" data-ip="${escAttr(e.dstIp || e.srcIp)}">${ICON_GEO}</button>` : "")
               : "")
           + `</div>`
           + `<div class="ev-col-sev sev-${esc(e.severity)}" title="Severity: ${escAttr(e.severity || "unrated")}"><span class="ev-sq"></span>${esc(e.severity || "")}</div>`
@@ -16555,6 +16558,13 @@
         toggleStar(caseId, star.getAttribute("data-evid"));
         return;
       }
+      // Focus an event's IP on the map (#217). The IP arrives as a data attribute and is read back
+      // as a plain string — it is never interpolated into JavaScript source, so an evidence-supplied
+      // value that looks like code stays a value. Same for the top-IP list below.
+      const geoBtn = e.target.closest && e.target.closest(".ev-geo");
+      if (geoBtn) { geoFocusIp(geoBtn.getAttribute("data-ip")); return; }
+      const geoLi = e.target.closest && e.target.closest("[data-geo-ip]");
+      if (geoLi) { geoFocusIp(geoLi.getAttribute("data-geo-ip")); return; }
       // Bulk action bar buttons (events)
       if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
       if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }

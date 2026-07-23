@@ -565,6 +565,7 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
 | `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
 | `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
+| `DFIR_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed to call the API, comma-separated. The capture extension, loopback, and the host the dashboard was served from are always trusted, so localhost/LAN/Docker need no setting; every other web origin is refused. Callers sending no `Origin` (curl, scripts, Velociraptor) are unaffected. Needed only behind a reverse proxy that rewrites `Host` |
 | `DFIR_LOG_LEVEL` | `info` | Log verbosity (`debug`/`info`/`warn`/`error`). Tees to console + `logs/session-<time>.log` (global) + `cases/<id>/logs/session-<time>.log` (per-case). `debug` traces AI calls, captures, OCR, anonymization, enrichment. Change live (no restart) via Settings → Log verbosity |
 | `DFIR_LOG_DIR` | `logs/` beside cases root | Folder for the **global** session log. Relative paths anchor to `companion/`. Per-case logs always stay in the case folder |
 
