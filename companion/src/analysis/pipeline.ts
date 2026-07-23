@@ -2062,6 +2062,44 @@ export class AnalysisPipeline {
     });
   }
 
+  // Record an import that parsed cleanly but contributed nothing.
+  //
+  // Every deterministic importer guards on "no events (and no IOCs) → return the state unchanged".
+  // That guard is correct — an empty delta must not be merged — but returning silently meant the
+  // file was 202-accepted, stored under `imports/`, and left NO trace in the case: the analyst had
+  // no way to tell "ingested and understood" from "silently dropped". On the northpeak benchmark
+  // that hid Zeek conn.json contributing zero events out of 75,951 records, the largest artifact in
+  // the case. A note costs one small timeline row and makes the outcome legible.
+  //
+  // `total` is the importer's own parsed-record count, so the note says how much was READ, not just
+  // that nothing came out — "0 events from 0 records" (wrong format) and "0 events from 75,951
+  // records" (understood but uninteresting) are very different problems.
+  private async noteEmptyImport(
+    caseId: string,
+    opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
+    kind: string,
+    total: number,
+  ): Promise<InvestigationState> {
+    const delta = deltaSchema.parse({
+      findings: [], iocs: [], mitreTechniques: [], forensicEvents: [],
+      threadsOpened: [], threadsClosed: [],
+      timelineNote: `${kind} import: no events from ${total} record(s) — nothing added to the case`,
+      summary: "",
+    });
+    return this.withStateLock(caseId, async () => {
+      let state = await this.opts.stateStore.load(caseId);
+      state = await this.mergeWithAliases(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await this.opts.stateStore.save(state);
+      this.opts.onState?.(state);
+      opts.onProgress?.(1, 1);
+      return state;
+    });
+  }
+
   // Import a THOR (Nextron) scanner report in JSON-Lines format. Unlike the CSV/log
   // paths this is DETERMINISTIC — THOR's JSON is structured and stable, so each
   // finding maps straight to a forensic event + IOCs with NO AI extraction call.
@@ -2081,7 +2119,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseThorReport(jsonText, opts.thor);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "THOR", parsed.total);
 
     // Assign stable, collision-free ids and validate the delta against the schema
     // (fills defaults like relatedFindingIds). No model call — purely structural.
@@ -2131,7 +2169,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseSiemExport(jsonText, opts.siem);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "SIEM", parsed.total);
 
     const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
     const eventIdByAggKey = new Map<string, string>();
@@ -2190,7 +2228,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseEvtxXml(xmlText, opts.siem);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Windows Event Log (XML)", parsed.total);
 
     const source = detectTool(opts.label) ?? "Windows Event Log";
     const raw = {
@@ -2241,7 +2279,7 @@ export class AnalysisPipeline {
     const user = userFromHistoryFilename(opts.label);
     const parsedRaw = parseShellHistoryFile(text, { user });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Shell history", parsed.total);
 
     const raw = {
       findings: [],
@@ -2295,7 +2333,7 @@ export class AnalysisPipeline {
     const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
     opts.onParsed?.(parsedRaw);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, opts.importer.label, parsed.total);
 
     const raw = {
       findings: [],
@@ -2380,7 +2418,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Chainsaw", parsed.total);
 
     const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
     const raw = {
@@ -2432,7 +2470,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Hayabusa", parsed.total);
 
     const raw = {
       findings: [],
@@ -2491,7 +2529,7 @@ export class AnalysisPipeline {
     // import streams live progress instead of freezing the server on one synchronous pass.
     const parsedRaw = await parseVelociraptorJsonProgress(text, { artifact, ...opts.velociraptor }, opts.onProgress);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Velociraptor", parsed.total);
 
     const eventIdByAggKey = new Map<string, string>();
     const forensicEvents = parsed.events.map((e, i) => {
@@ -2555,7 +2593,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseEcarJson(text, { ...opts.ecar });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "ECAR", parsed.total);
 
     const raw = {
       findings: [],
@@ -2604,7 +2642,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Web/proxy access-log", parsed.total);
 
     const eventIdByAggKey = new Map<string, string>();
     const forensicEvents = parsed.events.map((e, i) => {
@@ -2665,7 +2703,7 @@ export class AnalysisPipeline {
     const assumeYear = opts.ciscoAsa?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
     const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cisco ASA", parsed.total);
 
     const raw = {
       findings: [],
@@ -2718,7 +2756,7 @@ export class AnalysisPipeline {
     const assumeYear = opts.snort?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
     const parsedRaw = parseSnortLog(text, { ...opts.snort, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Snort", parsed.total);
 
     const raw = {
       findings: [],
@@ -2767,7 +2805,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseYaraOutput(text, { ...opts.yara });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "YARA", parsed.total);
 
     const raw = {
       findings: [],
@@ -2822,7 +2860,7 @@ export class AnalysisPipeline {
     const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
     const parsedRaw = parseSyslog(text, { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Syslog", parsed.total);
 
     const raw = {
       findings: [],
@@ -2873,7 +2911,7 @@ export class AnalysisPipeline {
     // routes to the right stream (#197).
     const parsedRaw = parseNetworkLogs(text, { ...opts.network, filename: opts.network?.filename ?? opts.label });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Network", parsed.total);
 
     const eventIdByAggKey = new Map<string, string>();
     const forensicEvents = parsed.events.map((e, i) => {
@@ -2931,7 +2969,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseSocrates(text, opts.socrates);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "SO-CRATES", parsed.total);
 
     const raw = {
       findings: [],
@@ -2981,7 +3019,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Security Onion", parsed.total);
 
     const eventIdByAggKey = new Map<string, string>();
     const forensicEvents = parsed.events.map((e, i) => {
@@ -3039,7 +3077,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseKapeCsv(text, opts.kape);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
 
     const raw = {
       findings: [],
@@ -3089,7 +3127,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseCybertriage(text, opts.cybertriage);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Cyber Triage", parsed.total);
 
     const raw = {
       findings: [],
@@ -3141,7 +3179,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseM365Audit(text, opts.m365);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Microsoft 365", parsed.total);
 
     const raw = {
       findings: [],
@@ -3190,7 +3228,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseCloudTrail(text, opts.aws);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "AWS CloudTrail", parsed.total);
 
     const raw = {
       findings: [],
@@ -3239,7 +3277,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseCloudActivity(text, opts.cloud);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cloud activity", parsed.total);
 
     const raw = {
       findings: [],
@@ -3289,7 +3327,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseK8sAudit(text, opts.k8s);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Kubernetes audit", parsed.total);
 
     const raw = {
       findings: [],
@@ -3338,7 +3376,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseOsqueryLog(text, opts.osquery);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "osquery", parsed.total);
 
     const raw = {
       findings: [],
@@ -3428,7 +3466,7 @@ export class AnalysisPipeline {
     opts: { label: string; idPrefix: string; importedAt: string; minSeverity?: Severity; onProgress?: (done: number, total: number) => void },
   ): Promise<InvestigationState> {
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Plaso", parsed.total);
 
     const raw = {
       findings: [],
@@ -3478,7 +3516,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseAuditdLog(text, opts.auditd);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "auditd", parsed.total);
 
     const raw = {
       findings: [],
@@ -3529,7 +3567,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseJournald(text, opts.journald);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "journald", parsed.total);
 
     const raw = {
       findings: [],
@@ -3580,7 +3618,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseSysdig(text, opts.sysdig);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "sysdig/Falco", parsed.total);
 
     const raw = {
       findings: [],
@@ -3631,7 +3669,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Wazuh", parsed.total);
 
     const raw = {
       findings: [],
@@ -3682,7 +3720,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseSandboxReport(text, opts.sandbox);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Sandbox", parsed.total);
 
     const raw = {
       findings: [],
@@ -3734,7 +3772,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Memory", parsed.total);
 
     const tool = parsed.tool || "Volatility";
     const raw = {
@@ -3787,7 +3825,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseEmail(text, opts.email);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Email", parsed.total);
 
     const raw = {
       findings: [],
@@ -3836,7 +3874,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseTheHive(text, opts.thehive);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "TheHive", parsed.total);
 
     const raw = {
       findings: [],
@@ -3886,7 +3924,7 @@ export class AnalysisPipeline {
   ): Promise<InvestigationState> {
     const parsedRaw = parseIrisCase(data, opts.iris);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.opts.stateStore.load(caseId);
+    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "DFIR-IRIS", parsed.timelineCount);
 
     const raw = {
       findings: [],
