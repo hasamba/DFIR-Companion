@@ -157,14 +157,25 @@ describe("parseCombinedLog", () => {
     expect(r.events[0].count).toBe(3);
   });
 
-  it("preserves a secret-bearing referer as a url IOC even when its request line aggregates away", () => {
-    // A benign /dashboard hit (no referer) lands FIRST, so it wins the aggregated event's
-    // description; the secret-referer /dashboard hit collapses into it. The url IOC must survive.
+  // Aggregation is first-description-wins, so a secret-bearing request that merges into a busier
+  // ref-less sibling on the same path loses its secret from the description entirely. The url IOC
+  // survived, but there was no event to anchor it to — on the spillage-full-matrix benchmark the
+  // JWT in a Referer on `GET /` produced no distinguishable event at all. A spill now keys its own
+  // group, so both the event AND the IOC survive.
+  it("keeps a secret-bearing referer in its own event rather than aggregating it into a clean sibling", () => {
     const benign = '10.66.20.30 - - [16/May/2024:13:59:30 +0000] "GET /dashboard HTTP/1.1" 200 3787 "-" "curl/8"';
     const r = parseCombinedLog([benign, REFERER_SPILL].join("\n"));
     const dash = r.events.filter((e) => e.description.includes("/dashboard"));
-    expect(dash).toHaveLength(1);
-    expect(dash[0].count).toBe(2);
+    expect(dash).toHaveLength(2);
+
+    const clean = dash.find((e) => !e.description.includes("sk_test_"))!;
+    expect(clean.severity).toBe("Info");
+    expect(clean.count).toBeUndefined();          // singleton — the spill no longer merges into it
+
+    const spill = dash.find((e) => e.description.includes("sk_test_"))!;
+    expect(spill.severity).toBe("Medium");
+    expect(spill.mitreTechniques).toContain("T1552.001");
+
     expect(r.iocs.some((i) => i.type === "url" && i.value.includes("sk_test_EvidenceForgeFake0BGU06yXEsv2"))).toBe(true);
   });
 

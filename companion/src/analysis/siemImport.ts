@@ -25,6 +25,7 @@ import type { Severity } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
+import { secretSpillSignal } from "./secretSpillRules.js";
 
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
@@ -700,6 +701,15 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     if (tc) {
       severity = worst(severity, tc.weight === "strong" ? "High" : "Medium");
       for (const t of tc.mitre) if (!mitre.includes(t)) mitre.push(t);
+    }
+    // A credential passed on the command line is readable by any user on the host and is now in the
+    // event log forever. Graded here explicitly rather than relying on whichever tradecraft rule
+    // happened to also match, so the same secret grades identically on every sensor — see
+    // secretSpillRules.ts.
+    const spill = secretSpillSignal(cmd);
+    if (spill) {
+      severity = worst(severity, "Medium");
+      for (const t of spill.mitre) if (!mitre.includes(t)) mitre.push(t);
     }
     // Tag discovery / credential-access recon (whoami, net group /domain, dir /s, findstr password,
     // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.

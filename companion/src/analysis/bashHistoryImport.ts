@@ -10,12 +10,13 @@
 // domains in the command line become IOCs. Reuses siemImport's aggregation + IOC sink.
 
 import {
-  addIoc, aggregateEvents, cleanIp, hasPlausibleTld,
+  addIoc, aggregateEvents, cleanIp, hasPlausibleTld, worst,
   type MappedEvent, type SiemImportOptions, type SiemIoc, type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { secretSpillSignal } from "./secretSpillRules.js";
 
 export interface BashHistoryImportOptions extends SiemImportOptions {
   // The account the history belongs to (derived from the filename by the pipeline, e.g.
@@ -126,9 +127,19 @@ function classify(command: string): { severity: Severity; mitre: string[] } {
   // every command regardless of the severity rule, so the enumeration phase is identified even
   // though shell-history recon stays Info.
   const recon = reconTechniques("", command);
+  // A secret typed into the shell (an AWS key, a PAT, a token) is at rest in this file — it must be
+  // at least Medium so it reaches the forensic timeline synthesis reads, whichever CMD_RULE (if
+  // any) also matched. See secretSpillRules.ts for why this is shared across every importer.
+  const spill = secretSpillSignal(command);
   for (const rule of CMD_RULES) {
-    if (rule.re.test(command)) return { severity: rule.severity, mitre: [...new Set([...rule.mitre, ...recon])] };
+    if (rule.re.test(command)) {
+      return {
+        severity: spill ? worst(rule.severity, "Medium") : rule.severity,
+        mitre: [...new Set([...rule.mitre, ...recon, ...(spill?.mitre ?? [])])],
+      };
+    }
   }
+  if (spill) return { severity: "Medium", mitre: [...new Set([...recon, ...spill.mitre])] };
   return { severity: "Info", mitre: recon };
 }
 
