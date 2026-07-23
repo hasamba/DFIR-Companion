@@ -2,6 +2,7 @@ import { readFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { storeFilePath } from "../storage/safeStoreId.js";
 import {
   BUILT_IN_DASHBOARD_VIEWS,
   normalizeDashboardView,
@@ -25,8 +26,9 @@ export interface StoredDashboardView extends DashboardView {
 export class DashboardViewStore {
   constructor(private readonly root: string) {}
 
+  // Validates the id and guarantees containment beneath root (#213).
   private path(id: string): string {
-    return join(this.root, `${id}.json`);
+    return storeFilePath(this.root, id);
   }
 
   isBuiltIn(id: string): boolean {

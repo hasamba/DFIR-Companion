@@ -136,6 +136,11 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/tools/:toolId/update-rules", async (req: Request, res: Response) => {
     const toolId = req.params.toolId;
     if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
+    // Confirm the case exists BEFORE spawning anything (#211). The case-password gate deliberately
+    // waves nonexistent cases through — a missing case is the downstream route's 404 to report, not
+    // the gate's — which left an unauthenticated caller able to reach a process-spawning route by
+    // naming a case that was never created. This is that downstream check.
+    if (!(await store.getCaseMeta(req.params.id))) return res.status(404).json({ error: `case "${req.params.id}" not found` });
     if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
     const cfg = ctx.liveToolConfigs()().get(toolId);
     if (!cfg) return res.status(400).json({ error: `tool "${toolId}" is not configured` });

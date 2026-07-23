@@ -1,6 +1,17 @@
 import type { Express, Request, Response } from "express";
 import { BUILT_IN_DASHBOARD_VIEWS } from "../analysis/dashboardViews.js";
+import { UnsafeStoreIdError } from "../storage/safeStoreId.js";
 import type { RouteContext } from "./context.js";
+
+/**
+ * Uniform failure response for the stores below. A rejected id is the CALLER's mistake (#213) — a
+ * traversal attempt or a stray character — so it is a 400, not the 500 that "something broke on the
+ * server" implies. Everything else keeps the original 500.
+ */
+function storeFailure(res: Response, err: unknown): Response {
+  const status = err instanceof UnsafeStoreIdError ? 400 : 500;
+  return res.status(status).json({ error: (err as Error).message });
+}
 
 /**
  * User-managed template & view routes: case templates (#—), global report templates (#60),
@@ -23,7 +34,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
     try {
       return res.status(200).json(await options.templateStore.list());
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -34,7 +45,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       if (!template) return res.status(404).json({ error: `template "${req.params.id}" not found` });
       return res.status(200).json(template);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -46,7 +57,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       const saved = await options.templateStore.save({ id, name, description, recommendedImports, initialKeyQuestions, initialNextSteps, severityFloor: severityFloor ?? null, huntPlatforms });
       return res.status(201).json(saved);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -58,7 +69,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       return res.status(204).send();
     } catch (err) {
       if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -71,7 +82,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
     try {
       return res.status(200).json(await options.reportTemplateStore.list());
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -82,7 +93,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       if (!tpl) return res.status(404).json({ error: `report template "${req.params.id}" not found` });
       return res.status(200).json(tpl);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -94,7 +105,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       const saved = await options.reportTemplateStore.save(req.body);
       return res.status(201).json(saved);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -107,7 +118,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
     try {
       return res.status(200).json({ views: await options.dashboardViewStore.list() });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -118,7 +129,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       if (!view) return res.status(404).json({ error: `dashboard view "${req.params.id}" not found` });
       return res.status(200).json(view);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -132,7 +143,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       const saved = await options.dashboardViewStore.save(req.body);
       return res.status(201).json(saved);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -147,7 +158,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       }
       return res.status(204).send();
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -162,7 +173,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       }
       return res.status(204).send();
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -174,7 +185,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
     try {
       return res.status(200).json(await options.artifactBundleStore.list());
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -195,7 +206,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       return res.status(201).json(saved);
     } catch (err) {
       if ((err as Error).message.includes("built-in")) return res.status(400).json({ error: (err as Error).message });
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 
@@ -210,7 +221,7 @@ export function registerTemplatesViewsRoutes(app: Express, ctx: RouteContext): v
       }
       return res.status(204).send();
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return storeFailure(res, err);
     }
   });
 }
