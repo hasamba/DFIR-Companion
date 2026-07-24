@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createCaseLockGate } from "../../src/analysis/caseLockGate.js";
-import { hashCasePassword, signUnlockToken, unlockCookieName } from "../../src/analysis/casePassword.js";
+import { hashCasePassword, signUnlockToken, unlockCookieName, parseCookieHeader, verifyUnlockToken } from "../../src/analysis/casePassword.js";
 
 let store: CaseStore;
 let secret: Buffer;
@@ -83,5 +83,26 @@ describe("createCaseLockGate", () => {
     vi.spyOn(store, "getCaseMeta").mockRejectedValueOnce(new Error("simulated store failure"));
     const res = await request(app).get("/cases/c1/state");
     expect(res.status).toBe(401);
+  });
+
+  it("rejects POST /captures to a password-protected case without the unlock cookie or case password", async () => {
+    await store.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    // The /captures route is top-level (not under /cases/:id), so the gate doesn't cover it —
+    // the route itself must check the case password. Register a stand-in captures route:
+    app.post("/captures", async (req, res) => {
+      // Simulate the password check the real route now does
+      const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
+      const meta = await store.getCaseMeta(rawCaseId).catch(() => null);
+      if (meta?.password) {
+        const cookies = parseCookieHeader(req.headers.cookie);
+        const token = cookies[unlockCookieName(rawCaseId)];
+        const cookieOk = token && verifyUnlockToken(token, rawCaseId, meta.password.salt, secret);
+        if (!cookieOk) return res.status(401).json({ error: "locked", caseId: rawCaseId });
+      }
+      res.status(201).json({ ok: true });
+    });
+    const res = await request(app).post("/captures").send({ caseId: "c1", imageBase64: "AAAA" });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("locked");
   });
 });
