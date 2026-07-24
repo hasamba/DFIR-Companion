@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-24
+
 ### Added
 - **Help icon in the toolbar** — a `?` button immediately left of the settings gear opens the online user manual (<https://hasamba.github.io/DFIR-Companion/manual/>) in a new tab, so the docs are reachable from the dashboard instead of only from the repo.
 - **Deep pass now has a dashboard surface** (#204) — a *Deep Pass* section (and toolbar button) between Findings and the Forensic Timeline. Opening it runs the AI-free pre-flight and shows one row per severity floor with the events, prompt rows, batches and estimated input tokens that floor would cost on THIS case, because prompt rows scale with hosts and no default floor is right everywhere: on a 14-host case a hardcoded High+ would read nine rows and report success. Nothing is spent until *Run deep pass*; while it runs, the batch it is on is shown beside a *Cancel* button (both fed by the existing background-job registry), and the Re-synthesize / 2nd-opinion buttons are locked because a deep pass ends in a synthesis of its own that they would overwrite. The result card names the floor, events, rows, batches and observations — and, when batches failed, says so in red as **partial coverage**, since such a run read less of the case than its event count implies; the card survives a page reload. Refusals render as guidance rather than errors: over the batch ceiling repeats the server's message naming a floor that would fit, and a closed/archived case says to reopen it. The Run button is gated on the SYNTHESIS provider (new `/health.synthesisEnabled`), not the vision one, so a vision-only config no longer offers a button that can only fail.
