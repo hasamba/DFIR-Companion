@@ -55,22 +55,38 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPs we tokenize. Public IPs are
-// PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
-export function isInternalIp(ip: string): boolean {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return false;
-  if (a === 10 || a === 127) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-  return false;
-}
+  // RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize. Public IPs are
+  // PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
+  export function isInternalIp(ip: string): boolean {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+    if (!m) return false;
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return false;
+    if (a === 10 || a === 127) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+    return false;
+  }
 
-const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+  // IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped (::ffff:x.x.x.x).
+  // Public IPv6 addresses are PRESERVED (same rationale as IPv4).
+  export function isInternalIpv6(ip: string): boolean {
+    const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
+    if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(lower);
+    if (mapped && isInternalIp(mapped[1])) return true;
+    return false;
+  }
+
+  // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
+  // Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
+  const IPV6_RE = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}/gi;
+
+  const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
 const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
 const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
@@ -146,12 +162,12 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     });
     return out;
   }
-  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   // Capture the profile-dir prefix + the username segment; tokenize only the username.
-  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/)([^\\/\r\n"'<>|:*?]+)/g;
+  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
   const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
   function anonUserPaths(t: string): string {
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
@@ -161,8 +177,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   // FromBase64String('…'). Tokenize ONLY the blob — the command verb + flag stay visible as
   // tradecraft signal (the model still sees that an encoded command ran), and victim data embedded
   // in the encoded payload never reaches the wire. The `=` padding is matched outside the class.
-  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/]{16,}={0,2})/gi;
-  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/]{16,}={0,2})(["'])/gi;
+  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
+  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/_-]{16,}={0,2})(["'])/gi;
   function anonEncodedCmd(t: string): string {
     let out = t.replace(ENC_CMD_RE, (_m, flag: string, blob: string) => flag + assign("CMD", blob));
     out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
@@ -191,7 +207,9 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return out;
   }
   function anonInternalIps(t: string): string {
-    return t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
+    let out = t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
+    out = out.replace(IPV6_RE, (ip) => (isInternalIpv6(ip) ? assign("IP", ip) : ip));
+    return out;
   }
 
   function anonCustom(t: string): string {
