@@ -69,16 +69,53 @@ function isPrivateIpv4(ip: string): boolean {
   return false;
 }
 
+// Parses a pure hex-group IPv6 address (no embedded dotted-decimal) into its 8 16-bit groups,
+// honoring "::" compression. Returns null for anything that doesn't parse cleanly.
+function expandIpv6Groups(ip: string): number[] | null {
+  const halves = ip.split("::");
+  if (halves.length > 2) return null;
+  const HEX_GROUP = /^[0-9a-f]{1,4}$/i;
+  const parseGroups = (s: string): number[] | null => {
+    if (s === "") return [];
+    const tokens = s.split(":");
+    return tokens.every((t) => HEX_GROUP.test(t)) ? tokens.map((t) => parseInt(t, 16)) : null;
+  };
+  const head = parseGroups(halves[0]);
+  const tail = halves.length === 2 ? parseGroups(halves[1]) : [];
+  if (head === null || tail === null) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const missing = 8 - head.length - tail.length;
+  return missing >= 1 ? [...head, ...new Array(missing).fill(0), ...tail] : null;
+}
+
+// Returns the dotted-decimal IPv4 address embedded in an IPv4-mapped (::ffff:a.b.c.d) or the
+// deprecated IPv4-compatible (::a.b.c.d) IPv6 address — from EITHER its dotted-decimal form OR
+// its hex-canonicalized form. This matters because `new URL()` always re-serializes an IPv6 host
+// in hex — "::ffff:127.0.0.1" round-trips through a URL as "::ffff:7f00:1" — so a check that only
+// recognizes the dotted-decimal spelling silently stops catching mapped/compatible addresses for
+// any IOC that arrives as a URL rather than a bare IP (e.g. a prompt-injected
+// `http://[::ffff:169.254.169.254]/` cloud-metadata URL would otherwise sail through).
+function embeddedIpv4(ip: string): string | null {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (dotted) return dotted[1];
+  const groups = expandIpv6Groups(ip);
+  if (!groups) return null;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  const isMapped = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff;
+  const isCompatible = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0;
+  if (!isMapped && !isCompatible) return null;
+  return [(g6 >> 8) & 0xff, g6 & 0xff, (g7 >> 8) & 0xff, g7 & 0xff].join(".");
+}
+
 // Private / internal IPv6 ranges: loopback (::1), unique-local (fc00::/7), link-local (fe80::/10),
-// IPv4-mapped loopback (::ffff:127.x.x.x), unspecified (::).
+// IPv4-mapped/compatible loopback or private (::ffff:127.x.x.x, ::a.b.c.d), unspecified (::).
 function isPrivateIpv6(ip: string): boolean {
   const lower = ip.toLowerCase();
   if (lower === "::1" || lower === "::") return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
   if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
-  // IPv4-mapped addresses (::ffff:a.b.c.d)
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(lower);
-  if (mapped && isPrivateIpv4(mapped[1])) return true;
+  const mapped = embeddedIpv4(lower);
+  if (mapped && isPrivateIpv4(mapped)) return true;
   return false;
 }
 
@@ -87,14 +124,12 @@ function isPrivateIpv6(ip: string): boolean {
 export function isInternalTarget(value: string, type?: string): boolean {
   const v = value.trim();
   if (!v) return false;
-  // Bare IP — check IPv4, IPv6, and IPv4-mapped IPv6
+  // Bare IP — check IPv4, IPv6, and any IPv4 embedded in an IPv6 host (mapped/compatible, in
+  // either dotted-decimal or hex-canonicalized form).
   if (IPV4.test(v) && isPrivateIpv4(v)) return true;
   if (IPV6_RE.test(v) && isPrivateIpv6(v)) return true;
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — not matched by IPV6_RE but still an internal target
-  if (/^::ffff:/i.test(v)) {
-    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(v);
-    if (mapped && isPrivateIpv4(mapped[1])) return true;
-  }
+  const embedded = embeddedIpv4(v);
+  if (embedded && isPrivateIpv4(embedded)) return true;
   // URL: extract the host and check if it resolves to a private IP
   if (type === "url" || v.startsWith("http://") || v.startsWith("https://") || v.startsWith("ftp://")) {
     try {
@@ -102,6 +137,8 @@ export function isInternalTarget(value: string, type?: string): boolean {
       if (!host) return false;
       if (IPV4.test(host) && isPrivateIpv4(host)) return true;
       if (IPV6_RE.test(host) && isPrivateIpv6(host)) return true;
+      const hostEmbedded = embeddedIpv4(host);
+      if (hostEmbedded && isPrivateIpv4(hostEmbedded)) return true;
       // localhost / loopback hostnames
       if (host.toLowerCase() === "localhost" || host === "127.0.0.1") return true;
       return false;
@@ -109,8 +146,11 @@ export function isInternalTarget(value: string, type?: string): boolean {
       return false;
     }
   }
-  // Domain that looks like a loopback hostname
-  if (type === "domain" && v.toLowerCase().endsWith(".localhost")) return true;
+  // Domain that looks like a loopback hostname (bare "localhost" or any "*.localhost" subdomain)
+  if (type === "domain") {
+    const lower = v.toLowerCase();
+    if (lower === "localhost" || lower.endsWith(".localhost")) return true;
+  }
   return false;
 }
 
