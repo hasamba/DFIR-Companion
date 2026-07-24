@@ -86,4 +86,8 @@ describe("createCaseLockGate", () => {
     const res = await request(app).get("/cases/c1/state");
     expect(res.status).toBe(401);
   });
+
+  // POST /captures is top-level (not under /cases/:id), so this gate never covers it — the route
+  // itself carries its own password check. See tests/server/capturesLockGate.test.ts, which
+  // exercises the REAL route (registerCaptureRoutes via createApp), not a stand-in.
 });
