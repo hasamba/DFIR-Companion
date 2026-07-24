@@ -205,12 +205,15 @@ export class BackupManager {
   /**
    * Prune the backup dir: keep at most `retain` backups per case. Within that cap, always
    * preserve the newest `preSynthRetain` pre-synthesis backups so they are never crowded out
-   * by frequent scheduled or pre-import backups. If `retain` is 0, nothing is deleted.
+   * by frequent scheduled or pre-import backups. If `retain` is 0, a fallback cap of 100 is
+   * applied so backups never grow without bound (the operator can raise `retain` for more).
    */
   async pruneBackups(caseId: string): Promise<void> {
-    if (this.config.retain === 0) return;
+    // retain=0 means "unlimited" — but apply a hard cap so backups never fill the disk.
+    const effectiveRetain = this.config.retain === 0 ? 100 : this.config.retain;
+    if (effectiveRetain === 0) return;
     const list = await this.listBackups(caseId); // newest first
-    if (list.length <= this.config.retain) return;
+    if (list.length <= effectiveRetain) return;
 
     // Always keep the newest preSynthRetain pre-synthesis backups.
     const preSynth = list.filter((b) => b.trigger === "pre-synthesis");
@@ -220,7 +223,7 @@ export class BackupManager {
     let kept = 0;
     for (const b of list) {
       if (protectedSet.has(b.filename)) continue;
-      if (kept < this.config.retain) {
+      if (kept < effectiveRetain) {
         kept++;
       } else {
         try {
