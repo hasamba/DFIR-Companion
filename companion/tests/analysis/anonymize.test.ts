@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -363,5 +363,122 @@ describe("anonymizer — user SIDs (REG)", () => {
   it("no-op when REG is disabled", () => {
     const a = createAnonymizer(policy({ REG: false }), NONE);
     expect(a.apply(`profile ${SID}`)).toBe(`profile ${SID}`);
+  });
+});
+
+describe("anonymizer — IPv6 internal IPs", () => {
+  it("tokenizes unique-local IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("connected from fd00:db8::1 to fd00:db8::a3c");
+    expect(out).not.toContain("fd00:db8::1");
+    expect(out).not.toContain("fd00:db8::a3c");
+    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toMatch(/ANON_IP_2/);
+  });
+
+  it("tokenizes link-local IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("gateway fe80::1");
+    expect(out).not.toContain("fe80::1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("tokenizes IPv4-mapped IPv6 loopback", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("mapped ::ffff:127.0.0.1");
+    expect(out).not.toContain("127.0.0.1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("tokenizes an IPv4-mapped IPv6 address given in hex-canonical form (not just dotted)", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("mapped ::ffff:7f00:1"); // hex-canonical form of ::ffff:127.0.0.1
+    expect(out).not.toContain("::ffff:7f00:1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("PRESERVES public IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const pub = "2001:4860:4860::8888";
+    expect(a.apply(`DNS ${pub}`)).toContain(pub);
+  });
+
+  it("restores IPv6 tokens back to real values", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const orig = "from fd00:db8::1";
+    expect(a.restore(a.apply(orig))).toBe(orig);
+  });
+});
+
+describe("isInternalIpv6", () => {
+  it("detects loopback, unique-local, link-local, and IPv4-mapped", () => {
+    expect(isInternalIpv6("::1")).toBe(true);
+    expect(isInternalIpv6("fd00:db8::1")).toBe(true);
+    expect(isInternalIpv6("fc00::1")).toBe(true);
+    expect(isInternalIpv6("fe80::1")).toBe(true);
+    expect(isInternalIpv6("fe90::1")).toBe(true);
+    expect(isInternalIpv6("fea0::1")).toBe(true);
+    expect(isInternalIpv6("::ffff:127.0.0.1")).toBe(true);
+    expect(isInternalIpv6("::ffff:10.0.0.1")).toBe(true);
+  });
+
+  it("preserves public IPv6", () => {
+    expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
+    expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);
+  });
+
+  // A naive IPv4-mapped check that only recognizes the dotted-decimal spelling
+  // ("::ffff:127.0.0.1") misses the hex-canonical form of the SAME address ("::ffff:7f00:1") —
+  // the form anything that re-serializes an IPv6 address (e.g. new URL(), or some logging
+  // libraries) always produces. A victim IPv6 address logged/serialized in that form would
+  // otherwise reach the external AI provider unredacted.
+  it("detects IPv4-mapped/compatible addresses in their hex-canonical form, not just dotted", () => {
+    expect(isInternalIpv6("::ffff:7f00:1")).toBe(true);  // hex form of ::ffff:127.0.0.1
+    expect(isInternalIpv6("::ffff:a00:1")).toBe(true);   // hex form of ::ffff:10.0.0.1
+    expect(isInternalIpv6("::ffff:808:808")).toBe(false); // hex form of ::ffff:8.8.8.8 — public
+  });
+});
+
+describe("anonymizer — base64url encoded commands", () => {
+  it("tokenizes base64url-encoded PowerShell commands (using - and _)", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const b64url = "SQBFAFgAIAAtAGkAcAAgAEgAdAB0AHAAOgAvAC8AZQB2AGkAbAAuAGMAbwBt";
+    const out = a.apply(`powershell -enc ${b64url}`);
+    expect(out).not.toContain(b64url);
+    expect(out).toMatch(/ANON_CMD_1/);
+    expect(a.restore(out)).toBe(`powershell -enc ${b64url}`);
+  });
+
+  it("tokenizes FromBase64String with base64url alphabet", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const b64url = "dwBoAG8AYQBtAGkAXwBzAGMAaABlAG0AYQAtAA";
+    const out = a.apply(`[System.Convert]::FromBase64String("${b64url}")`);
+    expect(out).not.toContain(b64url);
+    expect(out).toMatch(/ANON_CMD_1/);
+  });
+});
+
+describe("anonymizer — /root/ paths", () => {
+  it("tokenizes the username in /root/ paths", () => {
+    const a = createAnonymizer(policy({ PATH: true }), NONE);
+    const out = a.apply("copied from /root/secret/file");
+    expect(out).not.toContain("/root/secret");
+    expect(out).toMatch(/\/root\/ANON_USER_1/);
+  });
+});
+
+describe("anonymizer — IDN/Punycode emails", () => {
+  it("tokenizes emails with Punycode IDN domains", () => {
+    const a = createAnonymizer(policy({ EMAIL: true }), NONE);
+    const out = a.apply("contact user@example.xn--caf-dma.com");
+    expect(out).not.toContain("user@example.xn--caf-dma.com");
+    expect(out).toMatch(/ANON_EMAIL_1/);
+  });
+
+  it("still tokenizes standard ASCII emails", () => {
+    const a = createAnonymizer(policy({ EMAIL: true }), NONE);
+    const out = a.apply("contact user@victim.example.com");
+    expect(out).not.toContain("user@victim.example.com");
+    expect(out).toMatch(/ANON_EMAIL_1/);
   });
 });
