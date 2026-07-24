@@ -31,6 +31,7 @@ import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
+import { registerCommandPaletteRoutes } from "./routes/commandPalette.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -833,6 +834,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerAiSynthesisRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
+  registerCommandPaletteRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
   // then the case-core catch-all (lifecycle, archives, integration pushes, importers, jobs, settings, static
   // app shell). Both register before the terminal error handler at the end of createApp.
