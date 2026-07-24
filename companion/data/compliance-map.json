@@ -1,0 +1,98 @@
+{
+  "source": "Curated ATT&CK → regulatory/control-failure + obligation mappings",
+  "note": "Best-effort mappings of common MITRE ATT&CK techniques to control failures and compliance obligations across NIST 800-53, PCI-DSS, HIPAA, GDPR, SEC, and ISO 27001. Not legal advice — confirm with your auditor.",
+  "generated": "2026-07-24",
+  "techniqueCount": 10,
+  "map": {
+    "T1566.001": [
+      { "framework": "NIST 800-53", "control": "AT-2", "obligation": "Train workforce to recognize spearphishing; report and respond to suspected phishing attempts.", "deadline": "P30D" },
+      { "framework": "NIST 800-53", "control": "SI-4", "obligation": "Monitor inbound email for malicious attachments/links and alert on detections." },
+      { "framework": "PCI-DSS", "control": "5.2", "obligation": "Ensure all malicious software is identified and prevented via anti-phishing controls." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(A)", "obligation": "Implement a security awareness and training program including phishing." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Implement appropriate technical measures to ensure ongoing confidentiality of personal data processed via email." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Safeguard customer records against phishing-borne unauthorized access." },
+      { "framework": "ISO 27001", "control": "A.6.3", "obligation": "Ensure users are made aware of security threats via awareness training including phishing." }
+    ],
+    "T1059.001": [
+      { "framework": "NIST 800-53", "control": "SI-3", "obligation": "Block/contain malicious code, including suspicious PowerShell execution; alert on bypass." },
+      { "framework": "NIST 800-53", "control": "AU-2", "obligation": "Audit PowerShell script-block logging (EID 4104) and command invocation (EID 4103)." },
+      { "framework": "PCI-DSS", "control": "7.1", "obligation": "Restrict access to systems running PowerShell to least privilege." },
+      { "framework": "HIPAA", "control": "164.312(b)", "obligation": "Implement audit controls recording PowerShell-based access to ePHI systems." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Detect and limit automated processing of personal data via unapproved scripts." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Detect script-based exfiltration of nonpublic customer information." },
+      { "framework": "ISO 27001", "control": "A.12.6", "obligation": "Monitor and detect misuse of legitimate administrative tools (Living-off-the-Land)." }
+    ],
+    "T1003.001": [
+      { "framework": "NIST 800-53", "control": "AC-3", "obligation": "Enforce access enforcement to prevent unauthorized LSASS memory credential dumping." },
+      { "framework": "NIST 800-53", "control": "SI-4", "obligation": "Detect LSASS access by non-system processes and alert." },
+      { "framework": "PCI-DSS", "control": "8.7", "obligation": "Secure all authentication factors; prevent credential extraction from memory." },
+      { "framework": "HIPAA", "control": "164.312(d)", "obligation": "Verify person/entity seeking access to ePHI is not extracting credentials." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Protect credentials used to access personal data against memory-dump extraction." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Prevent unauthorized credential extraction that could compromise customer data." },
+      { "framework": "ISO 27001", "control": "A.9.3", "obligation": "Secure user authentication credentials against theft including memory-resident dumping." }
+    ],
+    "T1486": [
+      { "framework": "NIST 800-53", "control": "CP-9", "obligation": "Conduct backups of information to enable recovery from ransomware encryption.", "deadline": "P7D" },
+      { "framework": "NIST 800-53", "control": "IR-4", "obligation": "Execute incident handling for ransomware; isolate affected systems immediately." },
+      { "framework": "PCI-DSS", "control": "12.10", "obligation": "Implement and test an incident response plan covering ransomware events." },
+      { "framework": "HIPAA", "control": "164.308(a)(7)(ii)(A)", "obligation": "Establish and implement a data backup and recovery plan for ransomware." },
+      { "framework": "GDPR", "control": "Art. 33", "obligation": "Notify the supervisory authority within 72 hours if ransomware breaches personal data.", "deadline": "P72H" },
+      { "framework": "SEC", "control": "Reg S-ID", "obligation": "Notify affected customers of a ransomware breach of customer data within regulatory timelines." },
+      { "framework": "ISO 27001", "control": "A.12.3", "obligation": "Implement verified backups and a tested ransomware recovery procedure." }
+    ],
+    "T1021.002": [
+      { "framework": "NIST 800-53", "control": "AC-17", "obligation": "Control and monitor remote access via SMB/Admin shares to authorized users only." },
+      { "framework": "NIST 800-53", "control": "SC-8", "obligation": "Transmit confidentiality via approved channels; SMB should be restricted at perimeter." },
+      { "framework": "PCI-DSS", "control": "1.2", "obligation": "Restrict inbound/outbound SMB traffic at network boundaries." },
+      { "framework": "HIPAA", "control": "164.312(e)(1)", "obligation": "Implement encryption for ePHI transmitted over SMB across untrusted networks." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Protect personal data in transit; restrict administrative share access." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Safeguard customer information accessed via administrative shares." },
+      { "framework": "ISO 27001", "control": "A.13.1", "obligation": "Protect information in transit and restrict remote administrative share use." }
+    ],
+    "T1071.001": [
+      { "framework": "NIST 800-53", "control": "SC-7", "obligation": "Monitor and filter outbound web/HTTP C2 traffic at boundary protection devices." },
+      { "framework": "NIST 800-53", "control": "SI-4", "obligation": "Detect anomalous HTTP beaconing to unknown destinations." },
+      { "framework": "PCI-DSS", "control": "1.3", "obligation": "Restrict outbound traffic from the cardholder data environment." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(B)", "obligation": "Protect against malicious HTTP-based communication from ePHI systems." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Detect unauthorized exfiltration of personal data over HTTP channels." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Detect exfiltration of customer nonpublic personal information via web protocols." },
+      { "framework": "ISO 27001", "control": "A.13.1", "obligation": "Monitor and restrict outbound network traffic to enforce permitted destinations only." }
+    ],
+    "T1562.001": [
+      { "framework": "NIST 800-53", "control": "CM-7", "obligation": "Restrict disabling or tampering with security tools; alert on AV/EDR stoppage." },
+      { "framework": "NIST 800-53", "control": "SI-4", "obligation": "Detect impairment of security sensors and alert on tampering." },
+      { "framework": "PCI-DSS", "control": "5.2", "obligation": "Ensure anti-malware mechanisms remain active and cannot be disabled by end users." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(B)", "obligation": "Protect against malicious software including tampering with protection mechanisms." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Maintain the integrity and availability of personal-data protection controls." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Detect disabling of safeguards protecting customer information." },
+      { "framework": "ISO 27001", "control": "A.12.2", "obligation": "Protect against malware including detection of security-control impairment." }
+    ],
+    "T1070.001": [
+      { "framework": "NIST 800-53", "control": "AU-6", "obligation": "Review audit logs for tampering/incomplete records and alert on deletion." },
+      { "framework": "NIST 800-53", "control": "AU-9", "obligation": "Protect audit information and logging components from unauthorized modification." },
+      { "framework": "PCI-DSS", "control": "10.2", "obligation": "Implement automated audit trails including all modifications to audit logs." },
+      { "framework": "HIPAA", "control": "164.312(b)", "obligation": "Audit log clearing/tampering affecting ePHI access records." },
+      { "framework": "GDPR", "control": "Art. 30", "obligation": "Maintain processing records; detect deletion of logs that document processing." },
+      { "framework": "SEC", "control": "17a-4", "obligation": "Preserve electronic records; log tampering may violate books-and-records obligations." },
+      { "framework": "ISO 27001", "control": "A.12.4", "obligation": "Protect logging and monitoring information from unauthorized modification." }
+    ],
+    "T1048.002": [
+      { "framework": "NIST 800-53", "control": "AC-4", "obligation": "Monitor and control information flows over DNS to detect exfiltration." },
+      { "framework": "NIST 800-53", "control": "SI-4", "obligation": "Detect anomalous DNS traffic consistent with tunneled exfiltration." },
+      { "framework": "PCI-DSS", "control": "1.3", "obligation": "Restrict outbound DNS from the cardholder data environment to known resolvers." },
+      { "framework": "HIPAA", "control": "164.312(e)(1)", "obligation": "Implement controls to detect ePHI exfiltration over DNS tunnels." },
+      { "framework": "GDPR", "control": "Art. 33", "obligation": "Notify supervisory authority within 72 hours if DNS exfiltration breaches personal data.", "deadline": "P72H" },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Detect exfiltration of customer information via DNS tunneling." },
+      { "framework": "ISO 27001", "control": "A.13.1", "obligation": "Monitor and restrict DNS traffic to detect data exfiltration." }
+    ],
+    "T1053.005": [
+      { "framework": "NIST 800-53", "control": "CM-7", "obligation": "Restrict use of Scheduled Task for persistence and alert on suspicious creations." },
+      { "framework": "NIST 800-53", "control": "AU-2", "obligation": "Audit Scheduled Task creation, modification, and execution events (EID 4698/4702)." },
+      { "framework": "PCI-DSS", "control": "7.1", "obligation": "Restrict privileges to create Scheduled Tasks to authorized administrators." },
+      { "framework": "HIPAA", "control": "164.312(b)", "obligation": "Audit Scheduled Task use to detect unauthorized persistence on ePHI systems." },
+      { "framework": "GDPR", "control": "Art. 32", "obligation": "Detect unauthorized persistence enabling access to personal-data systems." },
+      { "framework": "SEC", "control": "Reg S-P 30", "obligation": "Detect persistence on systems holding customer nonpublic personal information." },
+      { "framework": "ISO 27001", "control": "A.12.6", "obligation": "Monitor for misuse of legitimate OS features (Scheduled Tasks) for persistence." }
+    ]
+  }
+}
