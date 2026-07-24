@@ -48,10 +48,71 @@ const HASH_LEN = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/;
 const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?$/;
 // Reject the loopback/placeholder addresses that carry no investigative signal, matching cleanIp.
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
+
 // Full IPv6 plus every valid "::"-compressed form (mirrors siemImport.ts — a naive "contains a
 // colon" check treats any colon-bearing free-text blob as a valid address).
 const IPV6_RE =
   /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,7}:$|^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}$|^(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}$|^(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}$|^(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}$|^[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})$|^:(?:(?::[0-9a-f]{1,4}){1,7}|:)$/;
+
+// Private / internal / link-local IPv4 ranges that must NEVER be sent to enrichment providers.
+// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 0.0.0.0/8, 169.254.0.0/16 (link-local / cloud metadata).
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+// Private / internal IPv6 ranges: loopback (::1), unique-local (fc00::/7), link-local (fe80::/10),
+// IPv4-mapped loopback (::ffff:127.x.x.x), unspecified (::).
+function isPrivateIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === "::1" || lower === "::") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
+  // IPv4-mapped addresses (::ffff:a.b.c.d)
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(lower);
+  if (mapped && isPrivateIpv4(mapped[1])) return true;
+  return false;
+}
+
+/** Returns true when the value is an IP or URL host that points at a private/internal target
+ *  and must not be enriched (SSRF guard). Checks both bare IPs and the host portion of URLs. */
+export function isInternalTarget(value: string, type?: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  // Bare IP — check IPv4, IPv6, and IPv4-mapped IPv6
+  if (IPV4.test(v) && isPrivateIpv4(v)) return true;
+  if (IPV6_RE.test(v) && isPrivateIpv6(v)) return true;
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — not matched by IPV6_RE but still an internal target
+  if (/^::ffff:/i.test(v)) {
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(v);
+    if (mapped && isPrivateIpv4(mapped[1])) return true;
+  }
+  // URL: extract the host and check if it resolves to a private IP
+  if (type === "url" || v.startsWith("http://") || v.startsWith("https://") || v.startsWith("ftp://")) {
+    try {
+      const host = new URL(v).hostname.replace(/^\[|\]$/g, "");
+      if (!host) return false;
+      if (IPV4.test(host) && isPrivateIpv4(host)) return true;
+      if (IPV6_RE.test(host) && isPrivateIpv6(host)) return true;
+      // localhost / loopback hostnames
+      if (host.toLowerCase() === "localhost" || host === "127.0.0.1") return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  // Domain that looks like a loopback hostname
+  if (type === "domain" && v.toLowerCase().endsWith(".localhost")) return true;
+  return false;
+}
 
 function isValidIp(v: string): boolean {
   if (NOISE_IP.has(v)) return false;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { repairIocValue, isWellFormedIocValue } from "../../src/analysis/iocValue.js";
+import { repairIocValue, isWellFormedIocValue, isInternalTarget } from "../../src/analysis/iocValue.js";
 
 describe("repairIocValue", () => {
   describe("annotation stripping (#177)", () => {
@@ -115,5 +115,57 @@ describe("isWellFormedIocValue", () => {
   it("has no opinion on free-form types — they are always well formed once trimmed", () => {
     expect(isWellFormedIocValue("file", "C:\\Windows\\Temp\\svchost32.exe")).toBe(true);
     expect(isWellFormedIocValue("other", "jsmith@globaltech.com")).toBe(true);
+  });
+});
+
+describe("isInternalTarget (SSRF guard)", () => {
+  it("blocks cloud metadata and RFC1918 IPv4 addresses", () => {
+    expect(isInternalTarget("169.254.169.254", "ip")).toBe(true);
+    expect(isInternalTarget("10.0.0.1", "ip")).toBe(true);
+    expect(isInternalTarget("172.16.0.1", "ip")).toBe(true);
+    expect(isInternalTarget("192.168.1.1", "ip")).toBe(true);
+    expect(isInternalTarget("127.0.0.1", "ip")).toBe(true);
+    expect(isInternalTarget("0.0.0.0", "ip")).toBe(true);
+  });
+
+  it("blocks private IPv6 addresses", () => {
+    expect(isInternalTarget("::1", "ip")).toBe(true);
+    expect(isInternalTarget("fd00:db8::1", "ip")).toBe(true);
+    expect(isInternalTarget("fc00::1", "ip")).toBe(true);
+    expect(isInternalTarget("fe80::1", "ip")).toBe(true);
+    expect(isInternalTarget("::ffff:127.0.0.1", "ip")).toBe(true);
+    expect(isInternalTarget("::ffff:10.0.0.1", "ip")).toBe(true);
+  });
+
+  it("allows public IP addresses", () => {
+    expect(isInternalTarget("8.8.8.8", "ip")).toBe(false);
+    expect(isInternalTarget("1.1.1.1", "ip")).toBe(false);
+    expect(isInternalTarget("2001:4860:4860::8888", "ip")).toBe(false);
+  });
+
+  it("blocks URLs pointing at internal hosts", () => {
+    expect(isInternalTarget("http://169.254.169.254/latest/meta-data/", "url")).toBe(true);
+    expect(isInternalTarget("http://10.0.0.1/admin", "url")).toBe(true);
+    expect(isInternalTarget("http://127.0.0.1:8080/", "url")).toBe(true);
+    expect(isInternalTarget("http://[::1]:8080/", "url")).toBe(true);
+  });
+
+  it("allows URLs pointing at public hosts", () => {
+    expect(isInternalTarget("http://evil.example.com/payload", "url")).toBe(false);
+    expect(isInternalTarget("https://8.8.8.8/", "url")).toBe(false);
+  });
+
+  it("blocks .localhost domains", () => {
+    expect(isInternalTarget("foo.localhost", "domain")).toBe(true);
+  });
+
+  it("allows normal domains", () => {
+    expect(isInternalTarget("evil.example.com", "domain")).toBe(false);
+  });
+
+  it("returns false for empty or non-IP/URL values", () => {
+    expect(isInternalTarget("", "ip")).toBe(false);
+    expect(isInternalTarget("evil.exe", "file")).toBe(false);
+    expect(isInternalTarget("mimikatz", "process")).toBe(false);
   });
 });
