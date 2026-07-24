@@ -60,6 +60,7 @@ import {
 } from "./analysis/casePassword.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { createCaseLockGate } from "./analysis/caseLockGate.js";
+import { createCaseIdGate } from "./analysis/caseIdGate.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, type HuntPlatform } from "./analysis/huntPlatforms.js";
 import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
@@ -695,6 +696,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     return next(err);
   });
+
+  // ── Case id validation ────────────────────────────────────────────────────────────────
+  // Gates every /cases/:id/* route behind isValidCaseId (#248) — CaseStore's own methods do
+  // zero sanitization (join(root, caseId)), so an unvalidated id of "../other" resolves outside
+  // the cases root. Mounted here, before ANY /cases/:id/* route (including the lock gate right
+  // below, whose own getCaseMeta() call is itself unvalidated), so this covers all of them via
+  // prefix matching — see caseIdGate.ts for why a per-route-file opt-in isn't enough.
+  app.use("/cases/:id", createCaseIdGate());
 
   // ── Case password protection ─────────────────────────────────────────────────────────
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted

@@ -1,8 +1,7 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
 import { open, readFile, mkdir, copyFile, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { isValidCaseId } from "../storage/caseStore.js";
 import { parseCsv } from "../analysis/csvImport.js";
 import { parseLogLines } from "../analysis/logImport.js";
 import { parseThorReport } from "../analysis/thorImport.js";
@@ -63,13 +62,6 @@ import type { RouteContext } from "./context.js";
  * vision-only ctx.hasAiProvider would wrongly 501 an OCR-less install.)
  */
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
-  // Validate :id on every import route before any handler runs. Without this, a caseId
-  // containing ".." could traverse to another directory via join(root, caseId) in caseExists/caseDir.
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
-    if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid caseId" });
-    next();
-  });
-
   const {
     store, options, recordImportFailure, recordAiError, getControl,
     runToolAndIngest, pushImportCheckpoint, moveDropFile,
