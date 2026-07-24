@@ -143,6 +143,7 @@ import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunne
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
 import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
+import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
@@ -821,6 +822,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPushNotifyRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
+
+  // Rate-limit AI-cost-bearing routes (import triggers synthesis, synthesize is explicit) to
+  // prevent an attacker who knows a caseId from burning the operator's AI budget. 20 requests
+  // per minute per case — generous for a single analyst, blocks a script hammering the endpoint.
+  const aiLimiter = getAiLimiter();
+  app.use("/cases/:id/import", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-file", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-csv", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-log", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/synthesize", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/deep-pass", aiLimiter.middleware((req) => req.params.id));
+
   registerImportRoutes(app, ctx);
   registerVelociraptorRoutes(app, ctx);
   registerThreatIntelRoutes(app, ctx);
