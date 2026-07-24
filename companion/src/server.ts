@@ -33,6 +33,7 @@ import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerCrossCaseRoutes } from "./routes/crossCase.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
@@ -188,6 +189,7 @@ import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
+import { CrossCaseStore } from "./storage/crossCaseStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
@@ -549,6 +551,9 @@ export interface AppOptions {
   clickupClient?: ClickUpClient;
   clickupExportStore?: ClickUpExportStore;
   clickupOptions?: { defaultListId?: string };
+  // Cross-case knowledge base (issue #227): indexes IOCs + MITRE techniques across all cases so
+  // prior-case matches surface on import/synthesis and FP verdicts propagate cross-case.
+  crossCaseStore?: CrossCaseStore;
   // Notifications (issue #58): a GLOBAL channel store (Slack/Teams webhooks + SMTP email) + a
   // notifier that dispatches NotificationEvents to the channels that want them. Opt-in — the store
   // starts empty. `notifier` is the dispatcher (loads channels, formats, sends, best-effort);
@@ -838,6 +843,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerCrossCaseRoutes(app, ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
@@ -3442,6 +3448,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     clickupClient: buildClickUpClient(),
     clickupExportStore,
     clickupOptions: clickupOptions(),
+    crossCaseStore: new CrossCaseStore(store),
     notificationStore,
     notifier,
     notifyEmailEnabled: true,
