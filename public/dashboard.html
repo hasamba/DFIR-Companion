@@ -10568,7 +10568,7 @@
             const uid = "exq" + i + "_" + Date.now();
             return `<div class="hunt-card">`
               + `<div class="hunt-card-head"><span>${esc(q.platform || "query")}</span>`
-              + `<button class="hunt-copy" onclick="navigator.clipboard?.writeText(${JSON.stringify(q.query)});this.textContent='✓ copied';setTimeout(()=>this.textContent='Copy',1500)">Copy</button></div>`
+              + `<button class="hunt-copy" data-q="${escAttr(q.query)}">Copy</button></div>`
               + `<pre style="margin:0;padding:10px;background:var(--c-0f1115);color:var(--c-d6deea);font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">${esc(q.query)}</pre>`
               + (q.rationale ? `<div style="padding:6px 10px;font-size:11px;color:var(--c-9aa4b2)">${esc(q.rationale)}</div>` : "")
               + `</div>`;
@@ -10590,6 +10590,15 @@
                 + `</div>` : "") +
             (qhtml ? `<div class="explain-section"><strong>Pivot queries</strong>${qhtml}</div>` : "") +
             (cited ? `<div class="explain-section"><strong>Related events</strong><span style="color:var(--c-9aa4b2);font-size:12px">${cited}</span></div>` : "");
+          // Copy buttons: attach the clipboard handler after render instead of building an inline
+          // onclick from the AI-supplied query (which could break out of the attribute/tag context).
+          // The query rides in an escAttr-escaped data-q attribute; dataset.q decodes back to the
+          // exact original string, so clipboard content and the "copied" feedback are unchanged.
+          bodyEl.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
+            navigator.clipboard?.writeText(b.dataset.q);
+            b.textContent = "✓ copied";
+            setTimeout(() => { b.textContent = "Copy"; }, 1500);
+          });
         })
         .catch(e => {
           const msg = String(e.message || e);
