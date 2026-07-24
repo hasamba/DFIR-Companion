@@ -284,7 +284,7 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
   lines.push("=== DFIR Companion — Diagnostics ===");
   lines.push(`generated:   ${r.generatedAt}`);
   lines.push(`uptime:      ${formatAge(r.uptimeMs)}`);
-  lines.push(`cases root:  ${r.casesRoot}`);
+  lines.push(`cases root:  <redacted>`);  // never expose the absolute path — reconnaissance surface
   lines.push("");
   lines.push("-- Disk --");
   lines.push(
