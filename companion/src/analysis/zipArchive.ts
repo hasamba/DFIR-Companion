@@ -120,10 +120,18 @@ export function createZip(entries: ZipEntry[]): Buffer {
   return Buffer.concat([...localParts, ...centralParts, eocd]);
 }
 
+// Per-entry and total inflated-size caps to prevent zip bombs (decompression-ratio attacks).
+// A crafted .dfircase archive with a single entry that inflates to gigabytes would OOM the
+// process before the CRC check rejects it. 512 MB per entry and 2 GB total are generous
+// ceilings for a forensic case archive (state JSON + screenshots + imports).
+const MAX_ENTRY_INFLATED = 512 * 1024 * 1024;
+const MAX_TOTAL_INFLATED = 2 * 1024 * 1024 * 1024;
+
 /**
  * Read back the entries of an archive produced by {@link createZip} (DEFLATE or stored). Walks the
  * central directory, inflates each entry, and verifies its CRC-32. Used by tests and any consumer
  * that needs to inspect a built package; not a general-purpose unzip (no ZIP64 / encryption).
+ * Throws when an entry's inflated size or the running total exceeds a safety cap (zip-bomb guard).
  */
 export function readZip(archive: Buffer): ZipEntry[] {
   // Locate the End Of Central Directory record (scan back from the end; no trailing comment).
@@ -139,6 +147,7 @@ export function readZip(archive: Buffer): ZipEntry[] {
   const total = archive.readUInt16LE(eocd + 10);
   let ptr = archive.readUInt32LE(eocd + 16); // central directory offset
   const entries: ZipEntry[] = [];
+  let totalInflated = 0;
 
   for (let i = 0; i < total; i++) {
     if (archive.readUInt32LE(ptr) !== SIG_CENTRAL) throw new Error("corrupt ZIP: bad central header");
@@ -157,6 +166,12 @@ export function readZip(archive: Buffer): ZipEntry[] {
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
     const compressed = archive.subarray(dataStart, dataStart + compSize);
     const data = method === METHOD_DEFLATE ? inflateRawSync(compressed) : Buffer.from(compressed);
+
+    // Zip-bomb guard: reject entries whose inflated size exceeds the per-entry cap, and track
+    // the running total so a multi-entry bomb can't OOM the process either.
+    if (data.length > MAX_ENTRY_INFLATED) throw new Error(`zip entry "${name}" inflated to ${data.length} bytes (cap: ${MAX_ENTRY_INFLATED}) — possible zip bomb`);
+    totalInflated += data.length;
+    if (totalInflated > MAX_TOTAL_INFLATED) throw new Error(`total inflated size ${totalInflated} bytes exceeds cap ${MAX_TOTAL_INFLATED} — possible zip bomb`);
 
     if (crc32(data) !== crc) throw new Error(`corrupt ZIP: CRC mismatch for ${name}`);
     entries.push({ path: name, data });

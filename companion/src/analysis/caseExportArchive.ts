@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, lstat } from "node:fs/promises";
 import { join, dirname, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
@@ -55,6 +55,7 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   }
   for (const entry of entries) {
     const rel = baseRel ? `${baseRel}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) continue;   // never follow symlinks — prevents host-file exfiltration
     if (entry.isDirectory()) {
       out.push(...(await walkDir(join(dir, entry.name), rel)));
     } else {
@@ -78,7 +79,12 @@ export async function exportEncryptedCase(store: CaseStore, caseId: string, pass
   const manifestFiles: Array<{ path: string; sha256: string; bytes: number }> = [];
   let totalBytes = 0;
   for (const rel of relPaths) {
-    const data = await readFile(join(caseDir, rel));
+    const fullPath = join(caseDir, rel);
+    // TOCTOU guard: re-check that the path is not a symlink before reading — the file could
+    // have been replaced with a symlink between the walk and the read.
+    const lst = await lstat(fullPath);
+    if (lst.isSymbolicLink()) throw new Error(`symlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+    const data = await readFile(fullPath);
     entries.push({ path: rel, data });
     manifestFiles.push({ path: rel, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length });
     totalBytes += data.length;
