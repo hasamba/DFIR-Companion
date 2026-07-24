@@ -8,7 +8,7 @@ import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, lstat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
@@ -1390,6 +1390,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
+  // Symlinks are rejected (lstat, not stat) to prevent a symlink-to-/etc/shadow from being read into
+  // the case as evidence — a Dropbox/OneDrive-synced cases/ root is exactly where this is realistic.
   async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
     const out: DropFileStat[] = [];
     const walk = async (dir: string): Promise<void> => {
@@ -1399,9 +1401,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const full = join(dir, e.name);
         const rel = relative(dropDir, full);
         if (shouldIgnoreDropFile(rel)) continue;
+        if (e.isSymbolicLink()) continue;   // never follow symlinks in the drop folder
         if (e.isDirectory()) { await walk(full); continue; }
         if (!e.isFile()) continue;
-        try { const st = await stat(full); out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs }); } catch { /* vanished mid-walk */ }
+        try { const st = await lstat(full); if (st.isSymbolicLink()) continue; out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs }); } catch { /* vanished mid-walk */ }
       }
     };
     await walk(dropDir);
@@ -1425,6 +1428,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
     await mkdir(dirname(dest), { recursive: true });
     try {
+      // Guard against a symlink swap (TOCTOU): rename follows symlinks on some platforms, and
+      // copyFile always does. Re-check before moving.
+      const lst = await lstat(src);
+      if (lst.isSymbolicLink()) throw new Error("symlink detected in drop folder — refused to move (security)");
       await rename(src, dest);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "EXDEV") { await copyFile(src, dest); await rm(src, { force: true }); }
@@ -1459,6 +1466,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
+      // TOCTOU guard: re-check that the path is not a symlink before reading. A file could have
+      // been replaced with a symlink between listDropFiles and this read.
+      const lst = await lstat(full);
+      if (lst.isSymbolicLink()) return { ok: false, reason: "symlink detected in drop folder — refused to read (security)" };
       // A raw file an external tool handles (built-in EVTX/PCAP, or any extension a CUSTOM tool claims)
       // — can't be read as text. Run the configured tool against the on-disk file (size-independent, so
       // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
