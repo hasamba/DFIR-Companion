@@ -937,11 +937,15 @@ export function hasPlausibleTld(domain: string): boolean {
 
 export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
+  // ReDoS guard: cap the text length before running the domain regex. The TEXT_DOMAIN_RE
+  // alternation can backtrack heavily on a long string of x.x.x.x.x.x. with no valid TLD.
+  // 10 KB is generous for a log message field; domain IOCs longer than that don't exist.
+  const cappedText = text.length > 10_000 ? text.slice(0, 10_000) : text;
   for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
   for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
   for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
   for (const m of text.match(TEXT_IPV4_RE) ?? []) { const ip = cleanIp(m); if (ip) addIoc(sink, "ip", ip); }
-  for (const m of text.matchAll(TEXT_DOMAIN_RE)) {
+  for (const m of cappedText.matchAll(TEXT_DOMAIN_RE)) {
     const d = m[0].toLowerCase();
     const after = text[(m.index ?? 0) + m[0].length] ?? "";
     if (after === "@") continue;                          // local-part of user@host, not a domain

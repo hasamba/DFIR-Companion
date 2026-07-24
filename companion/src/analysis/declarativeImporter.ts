@@ -31,8 +31,17 @@ export interface ExternalImporter {
 }
 
 // Compile a user regex defensively: invalid → null (never throws); callers bound the tested input.
+// Also reject patterns with known-bad nested quantifier shapes (e.g. (a+)+, (a*)*) that cause
+// catastrophic backtracking (ReDoS) — the `slice(0, N)` input bound doesn't prevent backtracking
+// within the bound.
 function safeRegex(src: string): RegExp | null {
-  try { return new RegExp(src); } catch { return null; }
+  try {
+    // Reject patterns with nested quantifiers like (a+)+ or (a*)* — classic ReDoS shape.
+    // This is a conservative heuristic: it may reject some safe patterns, but it catches
+    // the most common catastrophic-backtracking constructions.
+    if (/\([^)]*[+*][^)]*\)[+*]/.test(src)) return null;
+    return new RegExp(src);
+  } catch { return null; }
 }
 function getField(rec: Row, key: string): unknown {
   return key.includes(".") ? getPath(rec, key) : getCI(rec, key);

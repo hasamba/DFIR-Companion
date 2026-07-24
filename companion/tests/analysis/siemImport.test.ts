@@ -670,3 +670,18 @@ describe("maxEventsDefault", () => {
     expect(maxEventsDefault()).toBe(2000);
   });
 });
+
+describe("textIocs — ReDoS guard", () => {
+  it("handles a long pathological domain-like string without hanging", () => {
+    const sink = new Map();
+    // A 100KB string of "x.x.x.x.x.x.x.x.x." with no valid TLD — classic ReDoS bait.
+    const pathological = "x.x.x.x.x.x.x.x.x.x.".repeat(5000);
+    const start = Date.now();
+    textIocs(pathological, sink);
+    const elapsed = Date.now() - start;
+    // Should complete in well under 1s. Without the cap this would backtrack heavily.
+    expect(elapsed).toBeLessThan(1000);
+    // No domains should be extracted (no valid TLD)
+    expect(sink.size).toBe(0);
+  });
+});
