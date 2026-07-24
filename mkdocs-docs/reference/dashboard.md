@@ -104,37 +104,9 @@ The same one-click collect directive also appears wherever a next step or key qu
 
 ## Deep Pass
 
-A section (and toolbar button) sitting between **Findings** and the **Forensic Timeline** for running an
-analyst-triggered, batched AI pass that reads **every** graded forensic event at or above a chosen
-severity floor — full coverage of a large, multi-host case that a single synthesis prompt can't show,
-because prompt rows scale with hosts and there's no one floor that's right for every case (a 14-host
-case can need 13 prompts' worth of rows at Medium+, while a telemetry-heavy case may hold only a
-handful of High events in total).
+A section (and toolbar button) between **Findings** and the **Forensic Timeline** for an analyst-triggered, batched AI pass that reads **every** graded event at or above a chosen severity floor — full coverage of a large, multi-host case a single synthesis prompt can't show.
 
-**Pre-flight preview** — opening the panel runs a free, AI-free preview and shows one row per severity
-floor (Critical+ / High+ / Medium+ / Low+ …) with the **events, prompt rows, batches, and estimated
-input tokens** that floor would cost **on this specific case**. Nothing is spent until you click **Run
-deep pass** — the preview is there so you pick a floor against real numbers instead of a guess.
-
-**Run / Cancel** — while a run is in progress, the panel shows which batch it's on beside a **Cancel**
-button (both driven by the existing background-job registry). The **Re-synthesize** and **2nd opinion**
-buttons are locked for the duration, because a deep pass ends in its own synthesis call that would
-otherwise be overwritten.
-
-**Results** — the result card names the floor used, plus the events, rows, batches, and observations
-the run produced, and survives a page reload. If any batches failed partway through, the card says so
-in red as **partial coverage** — such a run read less of the case than its event count implies, so
-treat its conclusions as incomplete rather than final. Refusals render as guidance, not raw errors: a
-run over the batch ceiling repeats the server's message naming a floor that would actually fit, and
-running against a closed or archived case says to reopen it first.
-
-The **Run** button is gated on the **synthesis** provider (`/health.synthesisEnabled`), not the vision
-one — a vision-only (screenshot OCR) configuration no longer shows a Deep Pass button that could only
-ever fail.
-
-See [Advanced → Synthesis Grouping & Budget](advanced.md#synthesis-grouping--budget) and
-[Settings → AI](settings.md#ai) for the tunables (`DFIR_DEEP_PASS_MAX_BATCHES`,
-`DFIR_AI_OBSERVE_PROMPT_FILE`) that control what a deep pass will accept and which prompt it uses.
+A free pre-flight preview reports the events/rows/batches/tokens each severity floor would cost **on this case** before anything is spent. **Run** shows live batch progress with **Cancel**; **Re-synthesize**/**2nd opinion** are locked meanwhile, since a deep pass ends in its own synthesis call. The result card names the floor, events, batches and observations, flags **partial coverage** in red if any batch failed, and survives a page reload; refusals (over the batch ceiling, or a closed/archived case) render as guidance naming a floor that would fit. Gated on the **synthesis** provider, not vision — see [Advanced → Synthesis Grouping & Budget](advanced.md#synthesis-grouping--budget) and [Settings → AI](settings.md#ai) for the tunables (`DFIR_DEEP_PASS_MAX_BATCHES`, `DFIR_AI_OBSERVE_PROMPT_FILE`).
 
 ---
 
@@ -255,12 +227,7 @@ Assets are derived from events' `asset` field plus account mentions (DOMAIN\user
 
 You can manually add assets or links using the **+** button.
 
-Shares the same interactive Cytoscape view as the [Login Graph](#login-graph) and
-[Evidence Chain](#evidence-chain) below: five layouts (spread/dagre/circle/concentric/breadthfirst),
-bezier/taxi edges, selection transparency, live filter, fit, fullscreen, and PNG export — with custom
-node glyphs per entity type (host/account/service/process/file/network) preserved. The older bespoke
-horizontal/vertical/radial asset layouts and manual node-position saving have been replaced by these
-shared generic layouts.
+Shares the same interactive Cytoscape view as the [Login Graph](#login-graph) and [Evidence Chain](#evidence-chain) below (5 layouts, live filter, fullscreen, PNG export), replacing the older bespoke asset layouts.
 
 ---
 
@@ -289,12 +256,7 @@ A causal graph showing:
 
 This is the "how did we get here" graph — tracing the attack path through actual artifact relationships, not just the AI narrative. No AI — derived from structured event fields.
 
-Shares the same interactive Cytoscape view as the [Login Graph](#login-graph) and
-[Assets & IoC Graph](#compromised-assets--ioc-graph) above: five layouts
-(spread/dagre/circle/concentric/breadthfirst), bezier/taxi edges, selection transparency, live filter,
-fit, fullscreen, and PNG export, replacing the old static SVG rendering. The typed, colored, directional
-edges (process spawn, file lineage, lateral movement, network flow) are preserved on top of the shared
-view.
+Shares the same interactive Cytoscape view as the [Login Graph](#login-graph) and [Assets & IoC Graph](#compromised-assets--ioc-graph) above (5 layouts, live filter, fullscreen, PNG export), replacing the old static SVG rendering; its typed, colored, directional edges are preserved on top.
 
 Filters: severity floor.
 
