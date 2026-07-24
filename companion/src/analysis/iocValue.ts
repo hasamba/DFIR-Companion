@@ -90,12 +90,15 @@ function expandIpv6Groups(ip: string): number[] | null {
 
 // Returns the dotted-decimal IPv4 address embedded in an IPv4-mapped (::ffff:a.b.c.d) or the
 // deprecated IPv4-compatible (::a.b.c.d) IPv6 address — from EITHER its dotted-decimal form OR
-// its hex-canonicalized form. This matters because `new URL()` always re-serializes an IPv6 host
-// in hex — "::ffff:127.0.0.1" round-trips through a URL as "::ffff:7f00:1" — so a check that only
-// recognizes the dotted-decimal spelling silently stops catching mapped/compatible addresses for
-// any IOC that arrives as a URL rather than a bare IP (e.g. a prompt-injected
-// `http://[::ffff:169.254.169.254]/` cloud-metadata URL would otherwise sail through).
-function embeddedIpv4(ip: string): string | null {
+// its hex-canonicalized form. This matters because anything that re-serializes an IPv6 address
+// (e.g. `new URL()`) always does so in hex — "::ffff:127.0.0.1" round-trips as "::ffff:7f00:1" —
+// so a check that only recognizes the dotted-decimal spelling silently stops catching
+// mapped/compatible addresses wherever the hex form can occur: a prompt-injected
+// `http://[::ffff:169.254.169.254]/` cloud-metadata URL, or a hex-form victim IPv6 address in raw
+// log text (see anonymize.ts's isInternalIpv6, which imports this to stay in sync — the two
+// modules independently classify "is this IPv6 internal" for different purposes, SSRF-guarding
+// vs. PII-redaction, but must agree on what an IPv4-mapped address looks like).
+export function embeddedIpv4(ip: string): string | null {
   const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
   if (dotted) return dotted[1];
   const groups = expandIpv6Groups(ip);

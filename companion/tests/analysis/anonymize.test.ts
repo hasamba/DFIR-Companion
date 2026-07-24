@@ -390,6 +390,13 @@ describe("anonymizer — IPv6 internal IPs", () => {
     expect(out).toMatch(/ANON_IP_1/);
   });
 
+  it("tokenizes an IPv4-mapped IPv6 address given in hex-canonical form (not just dotted)", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("mapped ::ffff:7f00:1"); // hex-canonical form of ::ffff:127.0.0.1
+    expect(out).not.toContain("::ffff:7f00:1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
   it("PRESERVES public IPv6 addresses", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const pub = "2001:4860:4860::8888";
@@ -418,6 +425,17 @@ describe("isInternalIpv6", () => {
   it("preserves public IPv6", () => {
     expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
     expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);
+  });
+
+  // A naive IPv4-mapped check that only recognizes the dotted-decimal spelling
+  // ("::ffff:127.0.0.1") misses the hex-canonical form of the SAME address ("::ffff:7f00:1") —
+  // the form anything that re-serializes an IPv6 address (e.g. new URL(), or some logging
+  // libraries) always produces. A victim IPv6 address logged/serialized in that form would
+  // otherwise reach the external AI provider unredacted.
+  it("detects IPv4-mapped/compatible addresses in their hex-canonical form, not just dotted", () => {
+    expect(isInternalIpv6("::ffff:7f00:1")).toBe(true);  // hex form of ::ffff:127.0.0.1
+    expect(isInternalIpv6("::ffff:a00:1")).toBe(true);   // hex form of ::ffff:10.0.0.1
+    expect(isInternalIpv6("::ffff:808:808")).toBe(false); // hex form of ::ffff:8.8.8.8 — public
   });
 });
 

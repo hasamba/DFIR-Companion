@@ -1,5 +1,6 @@
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
+import { embeddedIpv4 } from "./iocValue.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
@@ -55,38 +56,44 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-  // RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize. Public IPs are
-  // PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
-  export function isInternalIp(ip: string): boolean {
-    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
-    if (!m) return false;
-    const [a, b] = [Number(m[1]), Number(m[2])];
-    if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return false;
-    if (a === 10 || a === 127) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-    return false;
-  }
+// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize. Public IPs are
+// PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
+export function isInternalIp(ip: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if ([a, b, Number(m[3]), Number(m[4])].some((n) => n > 255)) return false;
+  if (a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+  return false;
+}
 
-  // IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped (::ffff:x.x.x.x).
-  // Public IPv6 addresses are PRESERVED (same rationale as IPv4).
-  export function isInternalIpv6(ip: string): boolean {
-    const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
-    if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
-    if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
-    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(lower);
-    if (mapped && isInternalIp(mapped[1])) return true;
-    return false;
-  }
+// IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped/compatible
+// (::ffff:x.x.x.x or its hex-canonicalized form). Public IPv6 addresses are PRESERVED (same
+// rationale as IPv4). The mapped/compatible check delegates extraction to iocValue.ts's
+// embeddedIpv4() rather than re-deriving it here: a naive dotted-decimal-only regex misses the
+// hex-canonical spelling (e.g. "::ffff:127.0.0.1" as "::ffff:7f00:1") — a check that only
+// recognizes the dotted form would let a victim's internal IPv6 address in that spelling reach
+// the external AI provider unredacted. Classification still uses isInternalIp() (not
+// iocValue.ts's isPrivateIpv4) so the CGNAT range stays covered here.
+export function isInternalIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (lower === "::1" || lower === "::") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
+  if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
+  const mapped = embeddedIpv4(lower);
+  if (mapped && isInternalIp(mapped)) return true;
+  return false;
+}
 
-  // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
-  // Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
-  const IPV6_RE = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}/gi;
+// Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
+// Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
+const IPV6_RE = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}/gi;
 
-  const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
 const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._$-]{2,20})(?![\\/\w])/g;
 const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
