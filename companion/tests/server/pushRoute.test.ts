@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { PushTokenStore } from "../../src/analysis/pushTokenStore.js";
+import { hashCasePassword } from "../../src/analysis/casePassword.js";
 
 // A deterministic (no-AI) THOR alert the importer maps straight to a forensic event.
 const THOR_EVENT = {
@@ -130,5 +131,13 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     // empty events array → empty payload "[]" still detects as something? assert it's a 4xx either way
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
+  });
+
+  it("accepts push to a password-protected (locked) case with a valid push token", async () => {
+    const { app, stateStore } = await makeApp({ pushToken: "secret" });
+    await request(app).post("/cases/c1/password").send({ newPassword: "case-secret" });
+    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem", events: [THOR_EVENT] });
+    expect(res.status).toBe(202);
+    expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
   });
 });

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { ZodError } from "zod";
 import { ingestCapture, CaseNotFoundError } from "../ingest/captureIngest.js";
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
+import { isValidCaseId } from "../storage/caseStore.js";
+import { parseCookieHeader, unlockCookieName, verifyUnlockToken, verifyCasePassword } from "../analysis/casePassword.js";
 import type { RouteContext } from "./context.js";
 
 // Content type for an evidence file served back to the dashboard. CSVs/text are
@@ -69,11 +71,28 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
   app.post("/captures", async (req: Request, res: Response) => {
     try {
       const rawCaseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
+      if (rawCaseId && !isValidCaseId(rawCaseId)) {
+        return res.status(400).json({ error: "invalid caseId" });
+      }
       if (rawCaseId) {
         const caseMeta = await store.getCaseMeta(rawCaseId).catch(() => null);
         if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
           const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
           return res.status(423).json({ error: `Case "${rawCaseId}" is ${caseMeta.status} — ${action} before adding screenshots` });
+        }
+        // Case-password gate: when a case has a password, verify the unlock cookie OR the
+        // case password in the request body. The browser extension sends the password the
+        // analyst entered in the popup; the dashboard sends the unlock cookie. This prevents
+        // a third party from injecting screenshots into a password-protected case.
+        if (caseMeta?.password) {
+          const cookies = parseCookieHeader(req.headers.cookie);
+          const token = cookies[unlockCookieName(rawCaseId)];
+          const cookieOk = token && verifyUnlockToken(token, rawCaseId, caseMeta.password.salt, ctx.instanceSecret);
+          const bodyPassword = typeof req.body?.casePassword === "string" ? req.body.casePassword : "";
+          const passwordOk = bodyPassword && verifyCasePassword(bodyPassword, caseMeta.password);
+          if (!cookieOk && !passwordOk) {
+            return res.status(401).json({ error: "locked", caseId: rawCaseId });
+          }
         }
       }
       const metadata = await ingestCapture(store, req.body);
