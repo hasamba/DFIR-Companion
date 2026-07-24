@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
@@ -23,6 +23,8 @@ export function loadOrCreateInstanceSecret(casesRoot: string): Buffer {
   }
   mkdirSync(casesRoot, { recursive: true });
   const secret = randomBytes(SECRET_LEN);
-  writeFileSync(path, secret.toString("hex"), "utf8");
+  writeFileSync(path, secret.toString("hex"), { encoding: "utf8", mode: 0o600 });
+  // chmod again in case the file already existed (writeFileSync preserves existing mode)
+  try { chmodSync(path, 0o600); } catch { /* best-effort — may not be supported on all platforms */ }
   return secret;
 }

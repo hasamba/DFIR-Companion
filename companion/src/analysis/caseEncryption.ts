@@ -20,8 +20,15 @@ export class DecryptionError extends Error {
   }
 }
 
+// Stronger scrypt parameters for at-rest case archive encryption. Node.js defaults (N=2^14)
+// are too weak for offline brute-force — an attacker with the .dfircase file has unlimited
+// attempts. N=2^17 is OWASP's recommendation for sensitive data (~1s per derivation, acceptable
+// for a one-time export/import). The interactive case-password lock (casePassword.ts) keeps
+// the weaker default since online attempts are rate-limited (issue #244).
+const SCRYPT_PARAMS = { N: 1 << 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 } as const;
+
 function deriveKey(password: string, salt: Buffer): Buffer {
-  return scryptSync(password, salt, KEY_LEN);
+  return scryptSync(password, salt, KEY_LEN, SCRYPT_PARAMS);
 }
 
 /** Encrypt `data` under `password`. Each call uses a fresh random salt + IV. */

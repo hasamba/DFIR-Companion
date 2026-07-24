@@ -68,6 +68,10 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
       const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
       const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
+      // Set the Secure flag when the request was over HTTPS (directly or via a reverse proxy
+      // with X-Forwarded-Proto), so the unlock cookie (a bearer granting full case access)
+      // never transits in cleartext over HTTP.
+      if (req.secure || req.headers["x-forwarded-proto"] === "https") cookieOpts.secure = true;
       if (remember) cookieOpts.maxAge = ttl;
       res.cookie(unlockCookieName(id), token, cookieOpts);
       return res.status(200).json({ ok: true });
