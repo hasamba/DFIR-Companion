@@ -3,6 +3,7 @@ import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
+import { executeScriptTarget } from "./browser.js";
 import {
   DEFAULT_SETTINGS, type ContextPushResultMessage, type ContextTableResult,
   type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
@@ -78,11 +79,7 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
 async function injectHook(tabId: number | undefined): Promise<void> {
   if (typeof tabId !== "number") return;
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      files: ["pageHook.js"],
-    });
+    await executeScriptTarget(tabId, ["pageHook.js"]);
   } catch { /* page not injectable — the content script's DOM-scrape fallback still works */ }
 }
 

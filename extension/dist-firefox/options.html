@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DFIR Capture — Options</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 20px; }
+    h2 { font-size: 16px; margin-bottom: 16px; }
+    label { display: block; font-size: 13px; margin-top: 12px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }
+    .hint { margin-top: 6px; font-size: 11px; color: #888; }
+    button { margin-top: 16px; padding: 8px 20px; cursor: pointer; }
+    #msg { margin-top: 12px; font-size: 13px; color: #2d6cdf; }
+  </style>
+</head>
+<body>
+  <h2>DFIR Capture — Options</h2>
+  <label>
+    Companion URL
+    <input id="companionUrl" type="url" placeholder="http://127.0.0.1:4773" />
+    <span class="hint">The base URL of the DFIR Companion server. Change this when running the companion on a non-default host or port.</span>
+  </label>
+  <button id="save">Save</button>
+  <div id="msg"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

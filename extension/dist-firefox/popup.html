@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: system-ui, sans-serif; width: 280px; padding: 12px; }
+    label { display: block; font-size: 12px; margin-top: 8px; }
+    input, select { width: 100%; box-sizing: border-box; padding: 4px; }
+    .row { display: flex; gap: 8px; margin-top: 10px; }
+    button { flex: 1; padding: 8px; cursor: pointer; }
+    #status { margin-top: 10px; font-size: 12px; color: #555; }
+    .on { color: #2d6cdf; } .off { color: #cc3333; }
+    .hint { margin-top: 8px; font-size: 11px; color: #888; }
+  </style>
+</head>
+<body>
+  <strong>DFIR Capture</strong>
+  <label>Case <select id="caseId"></select></label>
+  <div id="toolRow">
+    <label>Detected tool <select id="toolOverride"></select></label>
+    <div id="toolHint" class="hint"></div>
+  </div>
+  <label>Companion URL <input id="companionUrl" /></label>
+  <label>Interval (seconds) <input id="intervalSeconds" type="number" min="5" /></label>
+  <label>Dedup threshold <input id="dedupThreshold" type="number" min="0" /></label>
+  <div class="hint">
+    Create cases in the <a href="#" id="openDashboard">dashboard</a>, then Refresh.
+  </div>
+  <div class="row">
+    <button id="refreshCases">Refresh cases</button>
+  </div>
+  <div class="row">
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div id="hotkey" style="margin-top:8px; font-size:11px; color:#888;">
+    Shortcut: <kbd id="hotkeyKeys">Ctrl+Shift+S</kbd> toggles capture · <a href="#" id="rebind">rebind</a>
+  </div>
+  <div id="status">idle</div>
+  <div id="lastCapture" style="margin-top:8px; font-size:11px; color:#888; word-break:break-word;"></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
