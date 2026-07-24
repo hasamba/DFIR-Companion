@@ -188,6 +188,12 @@ import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
+import { JiraClient } from "./integrations/jira/jiraClient.js";
+import { type JiraPushInput, type JiraPushResult, pushFindingToJira } from "./integrations/jira/jiraPush.js";
+import { JiraExportStore } from "./integrations/jira/jiraExportStore.js";
+import { ServiceNowClient } from "./integrations/servicenow/servicenowClient.js";
+import { type ServiceNowPushInput, type ServiceNowPushResult, pushFindingToServiceNow } from "./integrations/servicenow/servicenowPush.js";
+import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
@@ -549,6 +555,16 @@ export interface AppOptions {
   clickupClient?: ClickUpClient;
   clickupExportStore?: ClickUpExportStore;
   clickupOptions?: { defaultListId?: string };
+  // Jira export (issue #272): push individual findings as Jira issues. Configured via
+  // DFIR_JIRA_URL, DFIR_JIRA_USER, DFIR_JIRA_TOKEN, and DFIR_JIRA_PROJECT_KEY.
+  jiraClient?: JiraClient;
+  jiraExportStore?: JiraExportStore;
+  jiraOptions?: { projectKey?: string; issueType?: string };
+  // ServiceNow export (issue #272): push individual findings as ServiceNow incidents. Configured via
+  // DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD.
+  servicenowClient?: ServiceNowClient;
+  servicenowExportStore?: ServiceNowExportStore;
+  servicenowOptions?: { caller?: string; category?: string; subcategory?: string };
   // Notifications (issue #58): a GLOBAL channel store (Slack/Teams webhooks + SMTP email) + a
   // notifier that dispatches NotificationEvents to the channels that want them. Opt-in — the store
   // starts empty. `notifier` is the dispatcher (loads channels, formats, sends, best-effort);
@@ -2772,7 +2788,7 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY") {
+function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
   return buildTlsFetch({
     caCertPath: process.env[`DFIR_${name}_CA`],
     insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
@@ -2884,6 +2900,41 @@ export function buildClickUpClient(): ClickUpClient | undefined {
 
 export function clickupOptions(): { defaultListId?: string } {
   return { defaultListId: process.env.DFIR_CLICKUP_LIST_ID || undefined };
+}
+
+// Build the Jira export client from env (DFIR_JIRA_URL + DFIR_JIRA_USER + DFIR_JIRA_TOKEN + optional
+// DFIR_JIRA_PROJECT_KEY). Returns undefined when not configured, hiding the dashboard button.
+export function buildJiraClient(): JiraClient | undefined {
+  const baseUrl = process.env.DFIR_JIRA_URL;
+  const user = process.env.DFIR_JIRA_USER;
+  const token = process.env.DFIR_JIRA_TOKEN;
+  if (!baseUrl || !user || !token) return undefined;
+  return new JiraClient({ baseUrl, user, token, projectKey: process.env.DFIR_JIRA_PROJECT_KEY || "", fetchFn: tlsFetchFor("JIRA") });
+}
+
+export function jiraOptions(): { projectKey?: string; issueType?: string } {
+  return {
+    projectKey: process.env.DFIR_JIRA_PROJECT_KEY || undefined,
+    issueType: process.env.DFIR_JIRA_ISSUE_TYPE || undefined,
+  };
+}
+
+// Build the ServiceNow export client from env (DFIR_SERVICENOW_URL + DFIR_SERVICENOW_USER +
+// DFIR_SERVICENOW_PASSWORD). Returns undefined when not configured, hiding the dashboard button.
+export function buildServiceNowClient(): ServiceNowClient | undefined {
+  const baseUrl = process.env.DFIR_SERVICENOW_URL;
+  const user = process.env.DFIR_SERVICENOW_USER;
+  const password = process.env.DFIR_SERVICENOW_PASSWORD;
+  if (!baseUrl || !user || !password) return undefined;
+  return new ServiceNowClient({ baseUrl, user, password, fetchFn: tlsFetchFor("SERVICENOW") });
+}
+
+export function servicenowOptions(): { caller?: string; category?: string; subcategory?: string } {
+  return {
+    caller: process.env.DFIR_SERVICENOW_CALLER || undefined,
+    category: process.env.DFIR_SERVICENOW_CATEGORY || undefined,
+    subcategory: process.env.DFIR_SERVICENOW_SUBCATEGORY || undefined,
+  };
 }
 
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
@@ -3442,6 +3493,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     clickupClient: buildClickUpClient(),
     clickupExportStore,
     clickupOptions: clickupOptions(),
+    jiraClient: buildJiraClient(),
+    jiraExportStore: new JiraExportStore(store),
+    jiraOptions: jiraOptions(),
+    servicenowClient: buildServiceNowClient(),
+    servicenowExportStore: new ServiceNowExportStore(store),
+    servicenowOptions: servicenowOptions(),
     notificationStore,
     notifier,
     notifyEmailEnabled: true,
