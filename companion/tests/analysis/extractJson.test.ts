@@ -61,6 +61,42 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     expect(parsed.findings.map((f) => f.id)).toEqual(["f1"]);
   });
 
+  // Found by /qa on 2026-07-23: an exec-summary call failed twice in a row with
+  // "Bad control character in string literal in JSON at position 2566", burning a full
+  // AI call per retry. The model emits a LITERAL newline/tab inside a string value
+  // instead of the \n / \t escape, which JSON.parse rejects outright — and the
+  // truncation repair can't help, because the bad byte sits mid-response.
+  it("escapes a literal newline emitted inside a string value", () => {
+    const raw = '{"summary":"line one\nline two","ok":true}';
+    const parsed = parseJsonLoose(raw) as { summary: string; ok: boolean };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.summary).toBe("line one\nline two");
+  });
+
+  it("escapes a literal tab emitted inside a string value", () => {
+    const raw = '{"summary":"col1\tcol2"}';
+    expect((parseJsonLoose(raw) as { summary: string }).summary).toBe("col1\tcol2");
+  });
+
+  it("handles a control character AND truncation in the same response", () => {
+    const raw = '{"findings":[{"id":"f1","d":"a\nb"},{"id":"f2"';
+    const parsed = parseJsonLoose(raw) as { findings: { id: string; d?: string }[] };
+    expect(parsed.findings.map((f) => f.id)).toEqual(["f1"]);
+    expect(parsed.findings[0].d).toBe("a\nb");
+  });
+
+  it("leaves structural whitespace between tokens alone", () => {
+    // Newlines/tabs BETWEEN tokens are legal JSON whitespace — escaping those would
+    // corrupt the document. Only control chars inside string literals get escaped.
+    const pretty = '{\n\t"a": 1,\n\t"b": [2, 3]\n}';
+    expect(parseJsonLoose(pretty)).toEqual({ a: 1, b: [2, 3] });
+  });
+
+  it("does not corrupt an already-escaped \\n inside a string", () => {
+    const raw = '{"cmd":"line1\\nline2"}';
+    expect((parseJsonLoose(raw) as { cmd: string }).cmd).toBe("line1\nline2");
+  });
+
   it("prefers whole-response JSON over a fence that only appears INSIDE a string value", () => {
     // A finding description quoting a fenced command block: fence-extraction would slice the
     // response apart mid-string and throw, even though the raw response is already valid JSON.
