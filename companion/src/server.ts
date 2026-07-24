@@ -33,6 +33,7 @@ import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerClockSkewRoutes } from "./routes/clockSkew.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
@@ -107,6 +108,7 @@ import { NotebookStore } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "./analysis/sourceTrustStore.js";
+import { ClockSkewStore } from "./analysis/clockSkewStore.js";
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { StarredReportStore } from "./analysis/starredReportStore.js";
@@ -312,6 +314,8 @@ export interface AppOptions {
   // Per-case source-trust overrides (issue #66). onSourceTrust pings dashboard clients to re-fetch.
   sourceTrustStore?: SourceTrustStore;
   onSourceTrust?: (caseId: string) => void;
+  // Per-case clock-skew alignment toggle + last detected offsets (#228), in state/clock-skew.json.
+  clockSkewStore?: ClockSkewStore;
   // Analyst-defined attacker-presence time windows (dwell-time feature). onDwellWindow pings live
   // dashboard clients over the WS to re-fetch after a mutation, mirroring onHypotheses.
   dwellWindowStore?: DwellWindowStore;
@@ -838,6 +842,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerClockSkewRoutes(app, ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
