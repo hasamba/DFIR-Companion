@@ -36,6 +36,21 @@ export class CaseNotFoundError extends Error {
 // In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
+// Magic-byte sniff: verify the captured bytes are a real image, not arbitrary binary.
+// WebP: RIFF....WEBP  |  PNG: 89 PNG\r\n  |  JPEG: FF D8 FF  |  GIF: GIF8
+function isImageMagic(bytes: Buffer): boolean {
+  if (bytes.length < 12) return false;
+  // WebP
+  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return true;
+  // PNG
+  if (bytes[0] === 0x89 && bytes.subarray(1, 4).toString("ascii") === "PNG") return true;
+  // JPEG
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true;
+  // GIF
+  if (bytes.subarray(0, 4).toString("ascii") === "GIF8") return true;
+  return false;
+}
+
 export async function ingestCapture(
   store: CaseStore,
   rawPayload: unknown,
@@ -50,6 +65,13 @@ export async function ingestCapture(
   }
 
   const bytes = Buffer.from(payload.imageBase64, "base64");
+
+  // Validate that the bytes are a real image (magic-byte sniff) — reject arbitrary binary
+  // stored as a .webp screenshot. Accepts WebP (RIFF....WEBP), PNG, JPEG, and GIF.
+  if (!isImageMagic(bytes)) {
+    throw new Error("captured image is not a recognized image format (expected WebP/PNG/JPEG/GIF)");
+  }
+
   const hash = computeContentHash(bytes);
 
   const previous = lastHashByCase.get(payload.caseId);

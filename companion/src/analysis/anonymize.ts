@@ -128,6 +128,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g,         // JWT
       /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,                                         // GitHub tokens
       /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,                                       // Slack tokens
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/g,  // PEM private keys
     ];
     for (const re of fixed) out = out.replace(re, SECRET_PLACEHOLDER);
     return out;

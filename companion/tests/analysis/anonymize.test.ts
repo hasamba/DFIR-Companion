@@ -196,6 +196,22 @@ describe("anonymizer — secret redaction (one-way)", () => {
     expect(out).not.toContain("ABCDEF1234567890ABCDEF");
     expect(out).toContain(SECRET_PLACEHOLDER);
   });
+  it("redacts PEM private key blocks", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+    const out = a.apply(`found key: ${pem} in log`);
+    expect(out).not.toContain("MIIEowIBAAKCAQEA");
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+  it("redacts EC and OPENSSH private key blocks", () => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const ecPem = "-----BEGIN EC PRIVATE KEY-----\nMHQCAQEE...\n-----END EC PRIVATE KEY-----";
+    const sshPem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNza...\n-----END OPENSSH PRIVATE KEY-----";
+    const out = a.apply(`${ecPem} and ${sshPem}`);
+    expect(out).not.toContain("MHQCAQEE");
+    expect(out).not.toContain("b3BlbnNza");
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
 });
 
 describe("deriveKnownEntities", () => {
