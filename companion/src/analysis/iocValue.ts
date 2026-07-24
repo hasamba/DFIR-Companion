@@ -48,10 +48,111 @@ const HASH_LEN = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/;
 const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?$/;
 // Reject the loopback/placeholder addresses that carry no investigative signal, matching cleanIp.
 const NOISE_IP = new Set(["::1", "127.0.0.1", "0.0.0.0", "::", "-", "::ffff:127.0.0.1"]);
+
 // Full IPv6 plus every valid "::"-compressed form (mirrors siemImport.ts — a naive "contains a
 // colon" check treats any colon-bearing free-text blob as a valid address).
 const IPV6_RE =
   /^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,7}:$|^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|^(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}$|^(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}$|^(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}$|^(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}$|^[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})$|^:(?:(?::[0-9a-f]{1,4}){1,7}|:)$/;
+
+// Private / internal / link-local IPv4 ranges that must NEVER be sent to enrichment providers.
+// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 0.0.0.0/8, 169.254.0.0/16 (link-local / cloud metadata).
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+// Parses a pure hex-group IPv6 address (no embedded dotted-decimal) into its 8 16-bit groups,
+// honoring "::" compression. Returns null for anything that doesn't parse cleanly.
+function expandIpv6Groups(ip: string): number[] | null {
+  const halves = ip.split("::");
+  if (halves.length > 2) return null;
+  const HEX_GROUP = /^[0-9a-f]{1,4}$/i;
+  const parseGroups = (s: string): number[] | null => {
+    if (s === "") return [];
+    const tokens = s.split(":");
+    return tokens.every((t) => HEX_GROUP.test(t)) ? tokens.map((t) => parseInt(t, 16)) : null;
+  };
+  const head = parseGroups(halves[0]);
+  const tail = halves.length === 2 ? parseGroups(halves[1]) : [];
+  if (head === null || tail === null) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const missing = 8 - head.length - tail.length;
+  return missing >= 1 ? [...head, ...new Array(missing).fill(0), ...tail] : null;
+}
+
+// Returns the dotted-decimal IPv4 address embedded in an IPv4-mapped (::ffff:a.b.c.d) or the
+// deprecated IPv4-compatible (::a.b.c.d) IPv6 address — from EITHER its dotted-decimal form OR
+// its hex-canonicalized form. This matters because `new URL()` always re-serializes an IPv6 host
+// in hex — "::ffff:127.0.0.1" round-trips through a URL as "::ffff:7f00:1" — so a check that only
+// recognizes the dotted-decimal spelling silently stops catching mapped/compatible addresses for
+// any IOC that arrives as a URL rather than a bare IP (e.g. a prompt-injected
+// `http://[::ffff:169.254.169.254]/` cloud-metadata URL would otherwise sail through).
+function embeddedIpv4(ip: string): string | null {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (dotted) return dotted[1];
+  const groups = expandIpv6Groups(ip);
+  if (!groups) return null;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  const isMapped = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff;
+  const isCompatible = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0;
+  if (!isMapped && !isCompatible) return null;
+  return [(g6 >> 8) & 0xff, g6 & 0xff, (g7 >> 8) & 0xff, g7 & 0xff].join(".");
+}
+
+// Private / internal IPv6 ranges: loopback (::1), unique-local (fc00::/7), link-local (fe80::/10),
+// IPv4-mapped/compatible loopback or private (::ffff:127.x.x.x, ::a.b.c.d), unspecified (::).
+function isPrivateIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === "::1" || lower === "::") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
+  const mapped = embeddedIpv4(lower);
+  if (mapped && isPrivateIpv4(mapped)) return true;
+  return false;
+}
+
+/** Returns true when the value is an IP or URL host that points at a private/internal target
+ *  and must not be enriched (SSRF guard). Checks both bare IPs and the host portion of URLs. */
+export function isInternalTarget(value: string, type?: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  // Bare IP — check IPv4, IPv6, and any IPv4 embedded in an IPv6 host (mapped/compatible, in
+  // either dotted-decimal or hex-canonicalized form).
+  if (IPV4.test(v) && isPrivateIpv4(v)) return true;
+  if (IPV6_RE.test(v) && isPrivateIpv6(v)) return true;
+  const embedded = embeddedIpv4(v);
+  if (embedded && isPrivateIpv4(embedded)) return true;
+  // URL: extract the host and check if it resolves to a private IP
+  if (type === "url" || v.startsWith("http://") || v.startsWith("https://") || v.startsWith("ftp://")) {
+    try {
+      const host = new URL(v).hostname.replace(/^\[|\]$/g, "");
+      if (!host) return false;
+      if (IPV4.test(host) && isPrivateIpv4(host)) return true;
+      if (IPV6_RE.test(host) && isPrivateIpv6(host)) return true;
+      const hostEmbedded = embeddedIpv4(host);
+      if (hostEmbedded && isPrivateIpv4(hostEmbedded)) return true;
+      // localhost / loopback hostnames
+      if (host.toLowerCase() === "localhost" || host === "127.0.0.1") return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  // Domain that looks like a loopback hostname (bare "localhost" or any "*.localhost" subdomain)
+  if (type === "domain") {
+    const lower = v.toLowerCase();
+    if (lower === "localhost" || lower.endsWith(".localhost")) return true;
+  }
+  return false;
+}
 
 function isValidIp(v: string): boolean {
   if (NOISE_IP.has(v)) return false;
