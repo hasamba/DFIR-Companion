@@ -41,6 +41,24 @@ describe("validateBaseUrl", () => {
     expect(validateBaseUrl("http://0.0.0.0:4000/v1")).toBeNull();
   });
 
+  // A remote LiteLLM/Ollama box on the operator's own LAN (not the same host, but never leaves
+  // the private network) is an existing, already-tested, legitimate deployment — see
+  // LiteLlmProvider's "honours a custom base URL (remote / non-default port)" test, which uses
+  // exactly this address. A loopback-only check would silently break that real feature.
+  it("accepts http URLs to private-network (RFC1918/CGNAT/link-local) hosts", () => {
+    expect(validateBaseUrl("http://10.0.0.5:8000/v1")).toBeNull();
+    expect(validateBaseUrl("http://172.16.4.9:4000/v1")).toBeNull();
+    expect(validateBaseUrl("http://192.168.1.20:4000/v1")).toBeNull();
+    expect(validateBaseUrl("http://169.254.10.1:4000/v1")).toBeNull();
+    expect(validateBaseUrl("http://100.64.0.1:4000/v1")).toBeNull();
+  });
+
+  it("rejects http URLs just outside the private ranges", () => {
+    expect(validateBaseUrl("http://172.32.0.1:4000/v1")).not.toBeNull(); // just past 172.16/12
+    expect(validateBaseUrl("http://100.128.0.1:4000/v1")).not.toBeNull(); // just past CGNAT 100.64/10
+    expect(validateBaseUrl("http://11.0.0.1:4000/v1")).not.toBeNull();
+  });
+
   it("rejects http URLs to non-loopback hosts (cleartext key exfiltration risk)", () => {
     const err = validateBaseUrl("http://api.openai.com/v1");
     expect(err).not.toBeNull();
