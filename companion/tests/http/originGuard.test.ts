@@ -17,43 +17,53 @@ describe("isOriginAllowed", () => {
   it("allows a request with no Origin header at all (curl, scripts, Velociraptor pushes)", () => {
     // Non-browser clients never send Origin. They are not the threat this guard addresses —
     // any local process can already run code — and blocking them breaks every scripted push.
-    expect(isOriginAllowed(undefined, "127.0.0.1:4773", [])).toBe(true);
+    expect(isOriginAllowed(undefined, [])).toBe(true);
   });
 
   it("allows the capture extension's chrome-extension:// origin", () => {
     // Unpacked installs get a random extension id, so the scheme is what we can rely on.
-    expect(isOriginAllowed("chrome-extension://abcdefghijklmnopabcdefghijklmnop", "127.0.0.1:4773", [])).toBe(true);
-    expect(isOriginAllowed("moz-extension://11112222-3333-4444-5555-666677778888", "127.0.0.1:4773", [])).toBe(true);
+    expect(isOriginAllowed("chrome-extension://abcdefghijklmnopabcdefghijklmnop", [])).toBe(true);
+    expect(isOriginAllowed("moz-extension://11112222-3333-4444-5555-666677778888", [])).toBe(true);
   });
 
   it("allows the dashboard on loopback, on any port", () => {
-    expect(isOriginAllowed("http://127.0.0.1:4773", "127.0.0.1:4773", [])).toBe(true);
-    expect(isOriginAllowed("http://localhost:9999", "127.0.0.1:4773", [])).toBe(true);
-    expect(isOriginAllowed("http://[::1]:4773", "127.0.0.1:4773", [])).toBe(true);
+    expect(isOriginAllowed("http://127.0.0.1:4773", [])).toBe(true);
+    expect(isOriginAllowed("http://localhost:9999", [])).toBe(true);
+    expect(isOriginAllowed("http://[::1]:4773", [])).toBe(true);
   });
 
-  it("allows an origin that matches the server's own Host header (hosted demo, reverse proxy)", () => {
-    // The Railway demo serves the dashboard from a public https origin, not loopback.
-    expect(isOriginAllowed("https://demo.example.app", "demo.example.app", [])).toBe(true);
+  it("trusts a hosted/reverse-proxied origin only when it is explicitly configured, never via the Host header", () => {
+    // A public deployment (e.g. the Railway demo) serves the dashboard from a non-loopback https
+    // origin. It is trusted by listing that origin in DFIR_ALLOWED_ORIGINS — NOT by matching the
+    // request's own Host header, which is client-controlled and would open a DNS-rebinding hole.
+    expect(isOriginAllowed("https://demo.example.app", [])).toBe(false);
+    expect(isOriginAllowed("https://demo.example.app", ["https://demo.example.app"])).toBe(true);
+  });
+
+  it("rejects a rebound origin even though the attacker can make Origin and Host identical (CWE-346)", () => {
+    // DNS-rebinding: evil.example resolves to 127.0.0.1, so the victim's browser sends
+    // Origin: http://evil.example:4773 with a matching Host. The old Origin==Host branch trusted
+    // this; trust must now come only from the origin's own value, so it is refused.
+    expect(isOriginAllowed("http://evil.example:4773", [])).toBe(false);
   });
 
   it("allows an explicitly configured extra origin", () => {
-    expect(isOriginAllowed("https://soc.example.com", "127.0.0.1:4773", ["https://soc.example.com"])).toBe(true);
+    expect(isOriginAllowed("https://soc.example.com", ["https://soc.example.com"])).toBe(true);
   });
 
   it("rejects an arbitrary web page's origin", () => {
-    expect(isOriginAllowed("https://evil.example", "127.0.0.1:4773", [])).toBe(false);
-    expect(isOriginAllowed("http://evil.example", "127.0.0.1:4773", [])).toBe(false);
+    expect(isOriginAllowed("https://evil.example", [])).toBe(false);
+    expect(isOriginAllowed("http://evil.example", [])).toBe(false);
   });
 
   it("rejects an origin that merely embeds a trusted one as a substring", () => {
-    expect(isOriginAllowed("https://127.0.0.1.evil.example", "127.0.0.1:4773", [])).toBe(false);
-    expect(isOriginAllowed("https://localhost.evil.example", "127.0.0.1:4773", [])).toBe(false);
-    expect(isOriginAllowed("https://evil.example/#http://localhost", "127.0.0.1:4773", [])).toBe(false);
+    expect(isOriginAllowed("https://127.0.0.1.evil.example", [])).toBe(false);
+    expect(isOriginAllowed("https://localhost.evil.example", [])).toBe(false);
+    expect(isOriginAllowed("https://evil.example/#http://localhost", [])).toBe(false);
   });
 
   it("rejects the literal null origin used by sandboxed iframes and data: URLs", () => {
-    expect(isOriginAllowed("null", "127.0.0.1:4773", [])).toBe(false);
+    expect(isOriginAllowed("null", [])).toBe(false);
   });
 });
 

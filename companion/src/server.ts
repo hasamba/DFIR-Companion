@@ -582,8 +582,9 @@ export interface AppOptions {
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
   // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
-  // extension, loopback, and the server's own host). From DFIR_ALLOWED_ORIGINS — see
-  // src/http/originGuard.ts. Absent → only the built-in trusted origins.
+  // extension and loopback). From DFIR_ALLOWED_ORIGINS — see src/http/originGuard.ts. Absent → only
+  // the built-in trusted origins. A hosted/reverse-proxied deployment lists its own public origin
+  // here, since the guard no longer infers trust from the client-supplied Host header.
   allowedOrigins?: string[];
 }
 
@@ -3374,8 +3375,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
-    // Extra browser origins permitted past the origin guard (#211), beyond the extension, loopback,
-    // and this server's own host. Comma-separated, e.g. "https://soc.example.com".
+    // Extra browser origins permitted past the origin guard (#211), beyond the extension and
+    // loopback. Comma-separated, e.g. "https://soc.example.com".
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),

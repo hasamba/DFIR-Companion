@@ -43,7 +43,7 @@ const SAFE_CASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeDeps): Promise<WsUpgradeDecision> {
   const { headers } = req;
 
-  if (!isOriginAllowed(headers.origin, headers.host, deps.allowedOrigins)) {
+  if (!isOriginAllowed(headers.origin, deps.allowedOrigins)) {
     return { ok: false, reason: `origin "${headers.origin}" is not allowed` };
   }
 
