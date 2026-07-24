@@ -27,6 +27,7 @@ import { registerTimelineRoutes } from "./routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
 import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
+import { registerCustodyRoutes } from "./routes/custody.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
@@ -113,6 +114,7 @@ import { StarredReportStore } from "./analysis/starredReportStore.js";
 import { TaggerStore } from "./analysis/taggerStore.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
+import { CustodyStore } from "./analysis/custody.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
 import { PlaybookStore } from "./analysis/playbookStore.js";
@@ -334,6 +336,7 @@ export interface AppOptions {
   // clients over the WS to re-fetch after the per-case threshold changes.
   forensicGateControlStore?: ForensicGateControlStore;
   onForensicGate?: (caseId: string) => void;
+  custodyStore?: CustodyStore;
   // Per-case minimum-confidence display preference (#226) — a machine/analyst preference, not
   // investigation data, mirroring forensicGateControlStore's shape. Purely a display filter: nothing
   // is removed from state, only the dashboard's findings list defaults to this floor.
@@ -829,6 +832,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerAnalysisGraphRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
+  registerCustodyRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
@@ -3193,6 +3197,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
+  const custodyStore = new CustodyStore(store);
   const confidenceControlStore = new ConfidenceControlStore(store);
   const playbookStore = new PlaybookStore(store);
   const playbookHuntStore = new PlaybookHuntStore(store);
@@ -3347,6 +3352,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     starredReportStore,
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
+    custodyStore,
     confidenceControlStore,
     onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
     playbookStore,
