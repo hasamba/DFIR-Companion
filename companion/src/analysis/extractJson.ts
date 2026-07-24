@@ -56,9 +56,59 @@ export function repairTruncatedJson(s: string): string {
   return prefix + neededClosers(prefix);
 }
 
+// JSON forbids raw control characters (U+0000–U+001F) inside string literals, but models
+// routinely emit a LITERAL newline/tab in a long description instead of the \n / \t escape.
+// JSON.parse rejects the whole response for it ("Bad control character in string literal"),
+// and the truncation repair can't help because the bad byte sits mid-response — so an
+// otherwise-perfect answer is thrown away and the caller burns another full AI call.
+// This escapes those characters, but ONLY inside string literals: newlines/tabs BETWEEN
+// tokens are legal JSON whitespace and must survive untouched. Already-escaped sequences
+// pass through unchanged (the escape flag skips the char after a backslash).
+export function escapeControlCharsInStrings(s: string): string {
+  const ESCAPES: Record<string, string> = {
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+  };
+  let out = "";
+  let inStr = false;
+  let esc = false;
+  for (const c of s) {
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        out += c;
+        continue;
+      }
+      if (c === "\\") {
+        esc = true;
+        out += c;
+        continue;
+      }
+      if (c === '"') {
+        inStr = false;
+        out += c;
+        continue;
+      }
+      if (c < " ") {
+        out += ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
+        continue;
+      }
+      out += c;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    out += c;
+  }
+  return out;
+}
+
 // Parse model JSON tolerantly: strip fences/prose, then on a parse failure attempt the
-// truncation repair before giving up. Returns the parsed value or throws if even the
-// repair can't parse (so the caller's retry/error path still fires).
+// control-character escape and the truncation repair (individually and combined, since a
+// single response can hit both) before giving up. Returns the parsed value or throws if
+// nothing parses (so the caller's retry/error path still fires).
 export function parseJsonLoose(raw: string): unknown {
   // A response that is ALREADY valid JSON wins outright: extraction is fence-based and a model
   // that quotes a ```fenced``` command inside a description would otherwise get its own response
@@ -75,6 +125,18 @@ export function parseJsonLoose(raw: string): unknown {
   try {
     return JSON.parse(cleaned);
   } catch {
-    return JSON.parse(repairTruncatedJson(cleaned));
+    // Try each repair on its own before the combination, so the least-invasive one wins.
+    const escaped = escapeControlCharsInStrings(cleaned);
+    try {
+      return JSON.parse(escaped);
+    } catch {
+      try {
+        return JSON.parse(repairTruncatedJson(cleaned));
+      } catch {
+        // Escape first, then truncate: neededClosers() tracks string state, and an
+        // unescaped newline would otherwise leave it mid-string at the cut point.
+        return JSON.parse(repairTruncatedJson(escaped));
+      }
+    }
   }
 }
