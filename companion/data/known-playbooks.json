@@ -1,0 +1,53 @@
+{
+  "source": "MITRE ATT&CK + public ransomware playbook reporting",
+  "generated": "2026-07-24",
+  "playbooks": [
+    {
+      "name": "Conti",
+      "description": "Conti ransomware affiliate playbook: spearphish entry, hands-on-keyboard PowerShell, LSASS credential dumping, SMB/PsExec lateral movement, and mass encryption.",
+      "steps": [
+        { "technique": "T1566.001", "name": "Spearphishing Attachment" },
+        { "technique": "T1059.001", "name": "PowerShell" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "LockBit",
+      "description": "LockBit 3.0 affiliate playbook: initial access via exploited public-facing app or stolen RDP credentials, Cobalt Strike beaconing, credential theft, lateral spread, and double-extortion encryption.",
+      "steps": [
+        { "technique": "T1190", "name": "Exploit Public-Facing Application" },
+        { "technique": "T1105", "name": "Ingress Tool Transfer" },
+        { "technique": "T1071.001", "name": "Web Protocols C2" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "BlackCat",
+      "description": "BlackCat/ALPHV playbook: identity-driven access (compromised VPN/RDP credentials), privileged credential theft, deployment via PsExec/SMB, and cross-platform Rust encryption with exfiltration.",
+      "steps": [
+        { "technique": "T1078", "name": "Valid Accounts" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1560.001", "name": "Archive via Utility" },
+        { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "Akira",
+      "description": "Akira ransomware playbook: VPN credential compromise (often lacking MFA), hands-on-keyboard via Cisco SSH/AnyConnect, credential theft with LSASS, lateral SMB/RDP, and encryption with data exfiltration.",
+      "steps": [
+        { "technique": "T1078", "name": "Valid Accounts" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1021.001", "name": "Remote Desktop Protocol Lateral" },
+        { "technique": "T1560.001", "name": "Archive via Utility" },
+        { "technique": "T1048.002", "name": "Exfiltration Over Asymmetric Encrypted Protocol" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    }
+  ]
+}
