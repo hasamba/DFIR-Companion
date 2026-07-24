@@ -72,6 +72,42 @@ Automated passes that steer the investigation itself, not just grade individual 
 
 ---
 
+## Synthesis Grouping & Budget
+
+How the AI synthesis prompt decides which events earn one of its limited row seats, on a
+detection-heavy or multi-host case where the raw event count can outrun any reasonable per-call budget.
+
+**Detection grouping (`DFIR_SYNTH_GROUP`, default on)** — repeated hits of the same detection (same
+rule, same severity, within a time gap) collapse into a single prompt entry carrying the hit count, host
+spread, and time span, instead of consuming one row per hit. Detections are fingerprinted on their rule
+identity (`Tool [Artifact] Detector: RuleName`), not the whole description, so one rule firing across
+many hosts doesn't fragment into one pattern per host — a file hash still wins when present, so two
+distinct samples caught by the same YARA rule stay separate rows. This affects the AI prompt only: the
+case, the timeline, event ids, severities, and findings are untouched. Tunables:
+
+- **`DFIR_SYNTH_GROUP_GAP_SECONDS`** — the maximum time gap between hits for them to collapse into the
+  same grouped entry.
+- **`DFIR_SYNTH_GROUP_MIN_REPEATS`** — the minimum number of repeats before grouping kicks in (below
+  this, hits stay as individual rows).
+
+**`DFIR_SYNTH_INCLUDE_INFO` (default off)** — Info-severity events no longer compete with graded
+(Low+) detections for synthesis prompt seats; set to `1` to restore the old behaviour and let Info
+events back into the row budget. Info events are unaffected everywhere else — they remain in the case,
+the timeline, and the coverage report exactly as before, and anything genuinely important is still
+promoted out of Info by the deterministic content tagger before synthesis runs. The synthesis coverage
+card attributes events skipped this way to their own "N Info" bucket rather than blaming the size limit.
+
+**`DFIR_AI_SYNTH_MAX_EVENTS` (default 600, raised from 300)** — the per-run synthesis event cap.
+Grouping roughly halves the row count on a detection-heavy import, so the new default costs about what
+300 used to while covering an entire typical case. The synthesis coverage card also reports how many
+events arrived as grouped entries, so "did the AI read everything?" is answerable at a glance.
+
+See also [Deep Pass](dashboard.md#deep-pass) for the analyst-triggered batched run that reads every
+graded event regardless of this per-call budget, when a case's row count won't fit in one synthesis
+call at any severity floor.
+
+---
+
 ## State Backups & Restore
 
 The server automatically backs up all per-case state (findings, timeline, IOCs, playbook, etc.) before each synthesis run and every hour.

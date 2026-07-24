@@ -248,6 +248,10 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Confidence scoring + reasoning** — every finding carries a 0–100% confidence (weighing evidence strength, tool corroboration, and model certainty) plus a one-line reason; a persistent per-case min-confidence filter (survives reload) hides low-confidence findings on demand
 - **KEV / tool-confirmed / unconfirmed-lead badges** — flags whether a finding is corroborated by an actively-exploited CVE, a tool-graded detection, or only raw telemetry
 - **Efficient synthesis** — live debounced re-synthesis; skip-if-unchanged; stratified event selection + asset↔IOC digest
+- **Synthesis detection grouping** — repeated hits of the same detection (same rule, similar time) collapse into one prompt entry with the hit count, host spread, and time span, so a detection-heavy import isn't capped by its first few hundred rows
+- **Raised synthesis event cap (300 → 600)** — grouping frees up prompt budget, and Info-severity events no longer compete for it, so a typical case's graded detections all reach the model in one pass; the coverage card breaks out how many events were grouped vs. excluded as Info
+- **Batched deep pass** — an analyst-triggered, on-demand run that reads EVERY graded event at or above a chosen severity floor, in as many batches as it takes, for full AI coverage of large multi-host cases the normal single-prompt synthesis can't fit; ends in one final synthesis call, cancellable mid-run, nothing is saved until it succeeds
+- **Deep Pass panel** — a dashboard section (and toolbar button) between Findings and the Forensic Timeline: a free pre-flight shows, per severity floor, how many events/batches/tokens THIS case would cost before you spend anything; live batch progress with Cancel; the result card names the floor, events, batches and observations, and flags partial coverage in red if any batch failed
 - **Synthesis coverage audit** — the synth-meta card shows how many in-window events a run considered vs. omitted, and why
 - **Second LLM opinion** — on-demand QA: different model re-synthesizes case, reconciles disagreements (per-item accept/reject); durable across re-synthesis
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
@@ -329,14 +333,16 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 
 ### Dashboard & reports
 - **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections, scope bar, clickable evidence links, badges
+- **Help icon** — a `?` button beside the settings gear opens the online [user manual](https://hasamba.github.io/DFIR-Companion/manual/) in a new tab
 - **Background jobs** — a toolbar badge/popover tracks running imports, synthesis, and enrichment (`/api/jobs`); Cancel hard-aborts a long/stuck run; large imports stream live progress instead of appearing frozen
 - **Dark/light theme** — toggle or OS preference
 - **Forensic timeline rows** — affected host + clickable finding links; report has Host column
 - **Manual add** — record missed events/IOCs (tagged `manual`, survives re-analysis)
 - **MITRE techniques** link to [attack.mitre.org](https://attack.mitre.org/)
+- **Asset ↔ IoC graph, Evidence Chain, and Login graph share one interactive Cytoscape view** — five layouts (spread/dagre/circle/concentric/breadthfirst), bezier/taxi edges, live filter, fit, fullscreen, and PNG export, each keeping its own node glyphs/edge styling
 - **Asset ↔ IoC graph** — interactive (Host/Account/Service toggles, zoom, fullscreen)
-- **Evidence Chain graph** — process trees + lateral movement across hosts
-- **Login graph** — Timesketch-style interactive account→host logon graph (4624/4625) with layout switching, risk-colored edges and drill-down to events
+- **Evidence Chain graph** — process trees + lateral movement across hosts, with typed, colored, directional edges
+- **Login graph** — Timesketch-style interactive account→host logon graph (4624/4625), risk-colored edges and drill-down to events
 - **Timeline Swimlane** — severity/tactic × time; click details, Shift-select for bulk action, PNG export
 - **Reports** — Markdown + HTML + PDF (one-click) + Word (.docx) + CSVs (findings/IOCs/timeline) + JSON state
 - **ATT&CK Navigator layer** — techniques colored by severity; upload to [Navigator](https://mitre-attack.github.io/attack-navigator/)

@@ -2359,6 +2359,9 @@
           <div class="sfield"><label>Custom importers dir<span class="sfield-hint">DFIR_IMPORTERS_DIR — folder of *.json declarative importer specs; blank = importers/ beside cases root</span></label><input id="env-DFIR_IMPORTERS_DIR" placeholder="(importers/ beside cases root)" /></div>
           <div class="sfield"><label>Import undo depth<span class="sfield-hint">DFIR_IMPORT_UNDO_DEPTH — import undo levels kept per case (default 10)</span></label><input id="env-DFIR_IMPORT_UNDO_DEPTH" placeholder="10" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Import undo byte budget (MB)<span class="sfield-hint">DFIR_UNDO_MAX_MB — aggregate size cap across all undo checkpoints for a case; oldest are evicted first once the stack's total serialized size exceeds this (default 200)</span></label><input id="env-DFIR_UNDO_MAX_MB" placeholder="200" /></div>
+        </div>
         <div class="settings-group-head">Beacon / C2 detection</div>
         <div class="sfield-row">
           <div class="sfield"><label>Min connection count<span class="sfield-hint">DFIR_BEACON_MIN_COUNT — min outbound events before a channel is considered (default 5)</span></label><input id="env-DFIR_BEACON_MIN_COUNT" placeholder="5" /></div>
@@ -2533,6 +2536,16 @@
             </select>
           </div>
         </div>
+        <div class="settings-group-head">Synthesis detection-burst grouping</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label>Enable grouping<span class="sfield-hint">DFIR_SYNTH_GROUP — collapse repeated hits of the SAME detection/severity into ONE prompt row (hit count, host spread, time span); set 0 to send one row per occurrence (default on)</span></label><input id="env-DFIR_SYNTH_GROUP" placeholder="1" /></div>
+          <div class="sfield"><label>Grouping gap (s)<span class="sfield-hint">DFIR_SYNTH_GROUP_GAP_SECONDS — max gap between consecutive hits before a NEW burst starts (default 3600)</span></label><input id="env-DFIR_SYNTH_GROUP_GAP_SECONDS" placeholder="3600" /></div>
+          <div class="sfield"><label>Grouping min repeats<span class="sfield-hint">DFIR_SYNTH_GROUP_MIN_REPEATS — minimum hits before a burst is collapsed (default 4)</span></label><input id="env-DFIR_SYNTH_GROUP_MIN_REPEATS" placeholder="4" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><input id="env-DFIR_SYNTH_INCLUDE_INFO" placeholder="0" /></div>
+          <div class="sfield"><label>Deep-pass max batches<span class="sfield-hint">DFIR_DEEP_PASS_MAX_BATCHES — hard ceiling on batches for an analyst-triggered deep pass; above it the run is refused and a floor that would fit is suggested (default 30)</span></label><input id="env-DFIR_DEEP_PASS_MAX_BATCHES" placeholder="30" /></div>
+        </div>
         <div class="settings-group-head">Synthesis model (optional — stronger model for one-shot synthesis)</div>
         <div class="sfield-row">
           <div class="sfield">
@@ -2657,6 +2670,11 @@
         <div class="sfield-row">
           <div class="sfield"><label>Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><input id="env-DFIR_AI_DEBUG_USAGE" placeholder="off" /></div>
         </div>
+        <div class="settings-group-head">CLI provider binaries (only if not on PATH)</div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Claude Code CLI path<span class="sfield-hint">DFIR_AI_CLAUDE_CODE_BIN — path to the `claude` binary; leave blank if it's already on PATH</span></label><input id="env-DFIR_AI_CLAUDE_CODE_BIN" placeholder="(claude on PATH)" /></div>
+          <div class="sfield"><label>Codex CLI path<span class="sfield-hint">DFIR_AI_CODEX_BIN — path to the `codex` binary; leave blank if it's already on PATH</span></label><input id="env-DFIR_AI_CODEX_BIN" placeholder="(codex on PATH)" /></div>
+        </div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Point any of the AI prompts at a <strong>file</strong> to override the built-in default (re-read each call — no restart needed). The inline <code>DFIR_AI_*_PROMPT</code> overrides aren't editable here (they're multi-line); use a file path below or <code>npm run prompts:eject</code>.</p>
         <div class="sfield-row">
           <div class="sfield"><label>System prompt file<span class="sfield-hint">DFIR_AI_SYSTEM_PROMPT_FILE</span></label><input id="env-DFIR_AI_SYSTEM_PROMPT_FILE" placeholder="path/to/system.txt" /></div>
@@ -2683,8 +2701,13 @@
           <div class="sfield"><label>Query-translate prompt file<span class="sfield-hint">DFIR_AI_QUERYXLATE_PROMPT_FILE — natural-language → VQL/KQL/Sigma/… (#100)</span></label><input id="env-DFIR_AI_QUERYXLATE_PROMPT_FILE" placeholder="path/to/query-translate.txt" /></div>
           <div class="sfield"><label>Reconcile prompt file<span class="sfield-hint">DFIR_AI_RECONCILE_PROMPT_FILE — 2nd-opinion reconcile pass (#116)</span></label><input id="env-DFIR_AI_RECONCILE_PROMPT_FILE" placeholder="path/to/reconcile.txt" /></div>
         </div>
-        <div class="sfield-row">
+        <div class="sfield-row3">
           <div class="sfield"><label>Importer-gen prompt file<span class="sfield-hint">DFIR_AI_IMPORTGEN_PROMPT_FILE — custom-importer authoring prompt</span></label><input id="env-DFIR_AI_IMPORTGEN_PROMPT_FILE" placeholder="path/to/importgen.txt" /></div>
+          <div class="sfield"><label>Deep-pass observe prompt file<span class="sfield-hint">DFIR_AI_OBSERVE_PROMPT_FILE — batched deep-pass observe-batch prompt; batches return observations only, never severities/findings</span></label><input id="env-DFIR_AI_OBSERVE_PROMPT_FILE" placeholder="path/to/observe.txt" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label>Starred-report prompt file<span class="sfield-hint">DFIR_AI_STARREDREPORT_PROMPT_FILE — TimeSketch-style Starred Events Report over the analyst's starred events</span></label><input id="env-DFIR_AI_STARREDREPORT_PROMPT_FILE" placeholder="path/to/starred-report.txt" /></div>
+          <div class="sfield"><label>View-summary prompt file<span class="sfield-hint">DFIR_AI_VIEWSUMMARY_PROMPT_FILE — quick AI overview of the current super-timeline view (filters applied)</span></label><input id="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE" placeholder="path/to/view-summary.txt" /></div>
         </div>
         <div class="settings-group-head">AI analysis parameters</div>
         <div class="sfield-row">
@@ -2757,6 +2780,7 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
+          <div class="sfield"><label>Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
         <div class="settings-group-head">YETI</div>
         <div class="sfield-row">

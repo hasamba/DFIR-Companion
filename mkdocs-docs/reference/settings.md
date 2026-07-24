@@ -19,6 +19,7 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - **Evidence drop folder** — enable/disable the per-case auto-import watcher, poll interval, and per-file size cap (see [Importing Evidence](importing.md#evidence-drop-folder-auto-import-inbox))
 - **Vim-style timeline navigation** — toggle `j`/`k`/`f`/`i`/`p`/`n`/`?` keyboard shortcuts on the Forensic Timeline, default on (see [Dashboard → Forensic Timeline](dashboard.md#vim-style-keyboard-navigation))
 - **`DFIR_MAX_EVENTS`** (env var) — the per-import event ingestion cap, default 2000. Raise it for cases that need a full MFT/USN import; guarded against 0/negative/NaN silently reinstating the default.
+- **`DFIR_ALLOWED_ORIGINS`** (env var) — a comma-separated CORS allowlist of extra trusted browser origins, beyond loopback, the capture extension, and whichever host actually served the dashboard. Any other browser origin gets a `403` with no CORS headers (so its preflight fails too); callers that send no `Origin` header at all — curl, scripted pushes, Velociraptor — are unaffected. Set this only if you serve the dashboard from a different host/port than the one the API is bound to, or need another origin (e.g. a reverse proxy) to call the API directly from a browser. Localhost/LAN/Docker setups need no configuration.
 
 ---
 
@@ -33,6 +34,21 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - Preflight diagnostics disable
 - **Re-run the setup wizard**
 - **Live AI test** — confirms the current key works right now
+
+**Screenshot/vision provider** — `DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` /
+`DFIR_VISION_BASE_URL` / `DFIR_VISION_IMAGE_DETAIL` configure the model used for screenshot OCR/analysis
+only, distinct from the text-synthesis family (`DFIR_AI_SYNTH_*`). These were renamed from `DFIR_AI_*`
+to make that screenshots-only role explicit; the legacy `DFIR_AI_*` names still work as a deprecated
+fallback (the new `DFIR_VISION_*` name wins whenever both are set), so an existing `.env` keeps working
+with no change required. Text-only AI features (synthesis, ask, event explain, hunt suggestions, CSV/log
+triage, query translation, and the deep pass below) run off the synthesis provider and never require a
+vision provider to be configured.
+
+**Deep pass** — `DFIR_DEEP_PASS_MAX_BATCHES` (default 30) caps how many batches an analyst-triggered
+[deep pass](dashboard.md#deep-pass) run may take; a run that would need more is refused up front, before
+spending anything, naming a severity floor that would fit within the cap. `DFIR_AI_OBSERVE_PROMPT_FILE`
+points at an ejectable override of the batch-observation prompt the deep pass uses to read each batch
+(`npm run prompts:eject`).
 
 ---
 

@@ -255,6 +255,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-d3fend",
       "sec-iocs",
       "sec-timeline",
+      "sec-login-graph",
     ],
     defaultSort: "severity",
     reportTemplateId: "standard",
