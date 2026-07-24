@@ -2809,12 +2809,49 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
+//
+// Resolves each integration's actual target host, so tlsFetchFor can pass hostUrl to
+// buildTlsFetch's loopback guard (#246) — WITHOUT it, insecureSkipVerify's guard defaults to
+// "treat as loopback" and never rejects anything, silently defeating the guard entirely (the
+// bug this map exists to close). MISP/YETI/OPENCTI/IRIS/TIMESKETCH read their configurable
+// DFIR_<NAME>_URL. NOTION and CLICKUP have no such env var — they're fixed SaaS hosts — so their
+// entries are the literal constants those clients themselves use, which correctly makes the guard
+// treat them as non-loopback (there's no legitimate reason to skip TLS verification against the
+// real api.notion.com/api.clickup.com). NOTIFY has no entry: it's one shared fetchFn reused across
+// whichever per-channel webhook URL a notification targets (stored in NotificationStore, not a
+// single env var at boot), so there's no single host to check here — DFIR_NOTIFY_INSECURE keeps
+// today's unguarded behavior until that's threaded through per-send instead of at construction.
+const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>> = {
+  MISP: () => process.env.DFIR_MISP_URL,
+  YETI: () => process.env.DFIR_YETI_URL,
+  OPENCTI: () => process.env.DFIR_OPENCTI_URL,
+  IRIS: () => process.env.DFIR_IRIS_URL,
+  TIMESKETCH: () => process.env.DFIR_TIMESKETCH_URL,
+  NOTION: "https://api.notion.com",
+  CLICKUP: "https://api.clickup.com/api/v2",
+};
 function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY") {
-  return buildTlsFetch({
-    caCertPath: process.env[`DFIR_${name}_CA`],
-    insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-    onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
-  });
+  const hostSource = TLS_HOST_URL[name];
+  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
+  try {
+    return buildTlsFetch({
+      caCertPath: process.env[`DFIR_${name}_CA`],
+      insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
+      hostUrl,
+      onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
+    });
+  } catch (err) {
+    // buildTlsFetch throws when insecureSkipVerify targets a non-loopback host without the
+    // explicit DFIR_TLS_ALLOW_INSECURE_EXTERNAL override (#246). Every call site of tlsFetchFor
+    // sits inline in an options object built at server startup (and in the live /settings/reload
+    // path) with no surrounding try/catch — letting this propagate would crash the ENTIRE server
+    // over one optional integration's TLS misconfiguration. Disable custom TLS trust for just this
+    // provider instead (falls back to the default, fully-verified global fetch — a real self-signed
+    // cert then fails that provider's own connection attempts with a normal, contained TLS error,
+    // not a server-wide outage) and say why loudly so the operator can see it in the logs.
+    warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 function isEnvFlag(value: string | undefined): boolean {
