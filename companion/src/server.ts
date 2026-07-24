@@ -30,6 +30,7 @@ import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
+import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
@@ -832,6 +833,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
+  registerInteractiveReportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
   // then the case-core catch-all (lifecycle, archives, integration pushes, importers, jobs, settings, static
