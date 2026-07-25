@@ -22,7 +22,9 @@ const CAPTURE_BODY = {
   url: "http://victim/",
   tabTitle: "t",
   triggerType: "timer" as const,
-  imageBase64: "AAAA",
+  // Carries a real PNG signature: ingest magic-byte-checks the bytes, and this suite is about the
+  // password gate, so the payload must clear that check to reach it.
+  imageBase64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString("base64"),
 };
 
 beforeEach(async () => {

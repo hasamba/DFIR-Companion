@@ -196,6 +196,58 @@ describe("anonymizer — secret redaction (one-way)", () => {
     expect(out).not.toContain("ABCDEF1234567890ABCDEF");
     expect(out).toContain(SECRET_PLACEHOLDER);
   });
+  // Every armor a private key realistically arrives in. All fixture bodies below are fake.
+  const KEY_BODY = "MIIEowIBAAKCAQEAnotarealkey";
+  const keyForms: [string, string][] = [
+    ["RSA",                `-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
+    ["EC",                 `-----BEGIN EC PRIVATE KEY-----\n${KEY_BODY}\n-----END EC PRIVATE KEY-----`],
+    ["DSA",                `-----BEGIN DSA PRIVATE KEY-----\n${KEY_BODY}\n-----END DSA PRIVATE KEY-----`],
+    ["OPENSSH",            `-----BEGIN OPENSSH PRIVATE KEY-----\n${KEY_BODY}\n-----END OPENSSH PRIVATE KEY-----`],
+    ["PKCS#8 bare",        `-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n-----END PRIVATE KEY-----`],
+    ["PKCS#8 encrypted",   `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${KEY_BODY}\n-----END ENCRYPTED PRIVATE KEY-----`],
+    // PGP's armor ends "PRIVATE KEY BLOCK", not "PRIVATE KEY" — a pattern written for the PEM
+    // spelling silently misses every PGP key.
+    ["PGP armor",          `-----BEGIN PGP PRIVATE KEY BLOCK-----\n${KEY_BODY}\n-----END PGP PRIVATE KEY BLOCK-----`],
+    // SSH2 export uses FOUR dashes and spaces inside the delimiter.
+    ["SSH2 export",        `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\n${KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----`],
+    ["with Proc-Type",     `-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
+    ["all on one line",    `-----BEGIN OPENSSH PRIVATE KEY----- ${KEY_BODY} -----END OPENSSH PRIVATE KEY-----`],
+  ];
+  it.each(keyForms)("redacts a %s private key block", (_name, key) => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`found key: ${key} in log`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("redacts a TRUNCATED key block that never reaches its END delimiter", () => {
+    // The case that matters most in a log: the line was cut off. Requiring a matching END marker
+    // would redact nothing at all here and ship the whole body to the model in cleartext.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`2026-07-24 ERROR key=-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("does not let a stray key header swallow the log text that follows it", () => {
+    // The truncated-key fallback is length-bounded and stops at the first non-base64 character, so
+    // it takes the key material without eating the rest of the artifact.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n\nchild process: rundll32.exe /s\n`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain("rundll32.exe");
+  });
+
+  it("scans a log full of key headers in linear time", () => {
+    // A lazy scan with no length bound re-walks the rest of the input for every BEGIN marker, so
+    // artifact text full of them costs O(n^2). Over a 4x input, linear is ~4x and quadratic ~16x.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const bait = (n: number) => "-----BEGIN PRIVATE KEY-----\n.\n".repeat(n);
+    const time = (n: number) => { const t = Date.now(); a.apply(bait(n)); return Date.now() - t; };
+    time(500);                                       // warm up
+    const small = Math.max(time(2000), 1);
+    expect(time(8000) / small).toBeLessThan(8);
+  });
 });
 
 describe("deriveKnownEntities", () => {

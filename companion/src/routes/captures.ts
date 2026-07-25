@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ZodError } from "zod";
-import { ingestCapture, CaseNotFoundError } from "../ingest/captureIngest.js";
+import { ingestCapture, CaseNotFoundError, InvalidImageError } from "../ingest/captureIngest.js";
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken, verifyCasePassword } from "../analysis/casePassword.js";
@@ -130,6 +130,7 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
       return;
     } catch (err) {
       if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
+      if (err instanceof InvalidImageError) return res.status(400).json({ error: err.message });
       if (err instanceof CaseNotFoundError) {
         return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
       }
