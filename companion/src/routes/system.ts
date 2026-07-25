@@ -271,18 +271,27 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   // Per-case sizes + top-N largest evidence files. SEPARATE from /diagnostics because it walks the
   // whole cases tree (compute-on-demand, behind the dashboard's "Compute sizes" button) so the
   // default diagnostics load stays cheap. Bounded to DFIR_DIAG_MAX_FILES files (default 100k).
+  //
+  // This route spans ALL cases, so it cannot sit behind the /cases/:id lock gate — there is no single
+  // id to gate on. It enforces the same rule per case instead: a password-protected case that this
+  // caller has not unlocked contributes its bytes but not its filenames (#250). An unprotected case
+  // is as open here as it already is at /cases/:id/*, which is the app's existing security model.
   app.get("/diagnostics/sizes", async (req: Request, res: Response) => {
     try {
       const topN = Math.min(50, Math.max(1, Number(req.query.top) || 10));
       const budget = { n: Number(process.env.DFIR_DIAG_MAX_FILES) || 100_000 };
       const cases = await store.listCases();
       const files: ScannedFile[] = [];
+      const withheld = new Set<string>();
       for (const c of cases) {
         if (budget.n <= 0) break;
+        // listCases returns the raw meta (password included) — read the salt straight off it rather
+        // than re-reading each case.json just to learn whether it is locked.
+        if (c.password && !ctx.readUnlockState(req, c.caseId, c.password.salt).unlocked) withheld.add(c.caseId);
         const dir = store.caseDir(c.caseId);
         await walkCaseFiles(dir, dir, c.caseId, files, budget);
       }
-      const report = aggregateCaseSizes(files, topN);
+      const report = aggregateCaseSizes(files, topN, withheld);
       return res.status(200).json({ ...report, truncated: budget.n <= 0, scannedFiles: files.length });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
