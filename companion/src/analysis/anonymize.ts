@@ -76,6 +76,19 @@ const NETBIOS_ACCT = /(?<![\\/:.\w])([A-Za-z][A-Za-z0-9.-]{1,14})\\([A-Za-z0-9._
 const UPN_ACCT = /\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b/g;
 const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|System32|AppData|Device|Temp|Documents|Desktop|Downloads)$/i;
 
+// Private-key blocks in every armor this is likely to meet: PEM (RSA / EC / DSA / OPENSSH /
+// ENCRYPTED PKCS#8 / bare PKCS#8), the PGP form (which ends "PRIVATE KEY BLOCK", not "PRIVATE KEY"),
+// and the SSH2 export form ("---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----" — four dashes, inner spaces).
+//
+// The trailing alternation is the point. A key spilled into a log is exactly where the tail gets
+// TRUNCATED, and demanding a matching END delimiter would then redact NOTHING at all — the whole
+// body would go to the model in cleartext. When no END is found we fall back to the base64 body, so
+// the key material still goes. Both branches are length-bounded (a 4096-bit RSA PEM is ~3.2 KB):
+// that bounds the over-redaction a stray header can cause, and it keeps the scan linear, since an
+// unbounded lazy scan re-walks the rest of the input for EVERY begin marker.
+const PEM_PRIVATE_KEY =
+  /-{4,5} ?BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}(?:[\s\S]{0,8192}?-{4,5} ?END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}|[A-Za-z0-9+/=\s]{0,8192})/g;
+
 export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anonymizer {
   const toToken = new Map<string, string>();  // "CAT:reallower" -> token
   const toReal = new Map<string, string>();   // token (UPPER) -> real value
@@ -128,7 +141,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\b/g,         // JWT
       /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,                                         // GitHub tokens
       /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,                                       // Slack tokens
-      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/g,  // PEM private keys
+      PEM_PRIVATE_KEY,                                                           // PEM/PGP/SSH2 private keys
     ];
     for (const re of fixed) out = out.replace(re, SECRET_PLACEHOLDER);
     return out;

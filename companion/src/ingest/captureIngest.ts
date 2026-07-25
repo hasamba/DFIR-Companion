@@ -33,6 +33,16 @@ export class CaseNotFoundError extends Error {
   }
 }
 
+// Thrown when the posted bytes aren't a recognized image. A caller sending junk is a BAD REQUEST,
+// so this is typed rather than a bare Error — the route's fallback maps unknown errors to 500, which
+// would report a client mistake as a server fault.
+export class InvalidImageError extends Error {
+  constructor() {
+    super("captured image is not a recognized image format (expected WebP/PNG/JPEG/GIF)");
+    this.name = "InvalidImageError";
+  }
+}
+
 // In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
@@ -69,7 +79,7 @@ export async function ingestCapture(
   // Validate that the bytes are a real image (magic-byte sniff) — reject arbitrary binary
   // stored as a .webp screenshot. Accepts WebP (RIFF....WEBP), PNG, JPEG, and GIF.
   if (!isImageMagic(bytes)) {
-    throw new Error("captured image is not a recognized image format (expected WebP/PNG/JPEG/GIF)");
+    throw new InvalidImageError();
   }
 
   const hash = computeContentHash(bytes);

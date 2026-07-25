@@ -100,14 +100,12 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 // Re-serialize a header + a batch of rows to compact CSV text for the model prompt.
-// Formula injection: prefix cells starting with =, +, -, or @ with a single quote to neutralize
-// spreadsheet formula injection (=cmd|'/c calc'!A1) when the CSV is later opened in Excel.
+// NOTE deliberately no spreadsheet formula-injection guard here: this text goes into an LLM prompt,
+// never into a file anyone opens. Prefixing cells would only corrupt what the model reads — "-" is
+// the standard null placeholder in Windows event logs, so it would mangle a large share of real
+// rows. The guard belongs on the CSV *exports* (reports/csv.ts, iocWhitelist.ts), which it has.
 export function chunkToCsvText(headers: string[], rows: string[][]): string {
-  const esc = (v: string): string => {
-    let cell = v;
-    if (/^[=+\-@]/.test(cell)) cell = `'${cell}`;   // formula-injection guard
-    return /[",\n\r]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
-  };
+  const esc = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const head = headers.map(esc).join(",");
   const body = rows.map((r) => r.map(esc).join(",")).join("\n");
   return body.length > 0 ? `${head}\n${body}` : head;
