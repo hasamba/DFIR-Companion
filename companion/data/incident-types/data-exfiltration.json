@@ -1,0 +1,81 @@
+{
+  "id": "data-exfiltration",
+  "name": "Data Exfiltration",
+  "description": "Confirmed or suspected data theft — staging, bulk transfer, cloud sync abuse.",
+  "builtIn": true,
+  "recommendedImports": [
+    "siem",
+    "network",
+    "kape",
+    "velociraptor",
+    "m365"
+  ],
+  "initialKeyQuestions": [
+    "What data was exfiltrated, and how much?",
+    "What channel was used (cloud sync, email, FTP, HTTPS, USB)?",
+    "When did the exfiltration occur, and from which host/account?",
+    "Was the data staged before transfer?",
+    "Is the exfiltration ongoing?",
+    "What user/account performed the transfer?",
+    "Are there indicators of an insider vs. external attacker?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Block the exfiltration channel and the account/host performing the transfer",
+      "rationale": "Stop ongoing data loss before scoping",
+      "pointer": "Firewall / proxy / cloud-sync policy"
+    },
+    {
+      "priority": "high",
+      "action": "Quantify exfiltrated data: volume, file types, and sensitivity classification",
+      "rationale": "Drives breach-notification obligations and downstream scope",
+      "pointer": "Proxy logs, CASB file-activity report, DLP alerts"
+    },
+    {
+      "priority": "high",
+      "action": "Identify the staging location and any archive/compression used before transfer",
+      "rationale": "Staging reveals intent and the full set of targeted data",
+      "pointer": "Endpoint triage: temp dirs, zip/rar/7z creation, recent files"
+    },
+    {
+      "priority": "medium",
+      "action": "Correlate exfiltration timing with user activity and access patterns",
+      "rationale": "Distinguishes insider from compromised-account exfiltration",
+      "pointer": "SIEM user-behavior analytics, badge/access logs"
+    }
+  ],
+  "severityFloor": "High",
+  "huntPlatforms": [
+    "Velociraptor",
+    "Security Onion",
+    "Microsoft 365"
+  ],
+  "recommendedImportOrder": [
+    "network",
+    "siem",
+    "edr",
+    "cloud-audit",
+    "m365"
+  ],
+  "huntBundles": [
+    "file-staging",
+    "cloud-sync",
+    "archive-creation",
+    "bulk-transfer"
+  ],
+  "findingsSeeds": [
+    "Exfiltration channel confirmed",
+    "Data volume and sensitivity scoped",
+    "Staging location identified",
+    "Account/host performing transfer attributed",
+    "Insider vs. external actor distinguished",
+    "Ongoing exfiltration stopped"
+  ],
+  "reportFraming": {
+    "template": "exfiltration-executive",
+    "audience": "legal + DPO + executive",
+    "summaryPrompt": "Summarize the exfiltrated data, notification obligations, and containment for legal and the DPO."
+  },
+  "synthesisHint": "This is a data-exfiltration case — prioritize T1567 Exfiltration to Cloud Service, T1048 Exfiltration Over Alternative Protocol, T1052 Exfiltration Over Physical Medium, and T1074 Data Staged."
+}

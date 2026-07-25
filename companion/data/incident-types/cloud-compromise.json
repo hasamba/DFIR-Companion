@@ -1,0 +1,80 @@
+{
+  "id": "cloud-compromise",
+  "name": "Cloud Compromise",
+  "description": "Cloud account/tenant compromise — AWS/Azure/GCP, IAM abuse, key theft.",
+  "builtIn": true,
+  "recommendedImports": [
+    "aws",
+    "m365",
+    "siem",
+    "cloud-audit"
+  ],
+  "initialKeyQuestions": [
+    "Which cloud account/tenant was compromised?",
+    "How was initial access achieved (key leak, phishing, SSRF, misconfig)?",
+    "What IAM roles or permissions were abused?",
+    "Were new users, access keys, or roles created for persistence?",
+    "What resources were accessed, modified, or exfiltrated?",
+    "Were compute instances launched for cryptomining or pivoting?",
+    "Is the compromise still active?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Disable compromised credentials and revoke active sessions/tokens",
+      "rationale": "Terminates attacker's cloud access",
+      "pointer": "Cloud IAM: disable access keys, revoke sessions, rotate secrets"
+    },
+    {
+      "priority": "critical",
+      "action": "Quarantine or terminate unauthorized compute instances",
+      "rationale": "Stops cryptomining, C2 pivots, and ongoing cost accrual",
+      "pointer": "Cloud console / IaC: terminate unauthorized instances"
+    },
+    {
+      "priority": "high",
+      "action": "Pull full CloudTrail / Activity Log / Audit Log for the compromise window",
+      "rationale": "Cloud audit logs are the primary evidence source for IAM abuse",
+      "pointer": "AWS CloudTrail, Azure Activity Log, GCP Audit Logs"
+    },
+    {
+      "priority": "high",
+      "action": "Audit IAM for attacker-created users, keys, roles, and trust policies",
+      "rationale": "Persistence in the cloud is almost always new IAM principals",
+      "pointer": "IAM console + `aws iam list-entities` / `az role assignment list`"
+    }
+  ],
+  "severityFloor": "High",
+  "huntPlatforms": [
+    "AWS",
+    "Microsoft 365",
+    "Elastic SIEM"
+  ],
+  "recommendedImportOrder": [
+    "cloud-audit",
+    "aws",
+    "m365",
+    "siem",
+    "edr"
+  ],
+  "huntBundles": [
+    "iam-abuse",
+    "new-access-keys",
+    "unauthorized-instances",
+    "key-leak"
+  ],
+  "findingsSeeds": [
+    "Cloud account/tenant compromise confirmed",
+    "Initial access vector (key leak / phishing / SSRF / misconfig)",
+    "IAM roles/permissions abused",
+    "Persistence via new IAM principals",
+    "Resources accessed or exfiltrated",
+    "Unauthorized compute instances"
+  ],
+  "reportFraming": {
+    "template": "cloud-executive",
+    "audience": "cloud-ops + security + executive",
+    "summaryPrompt": "Summarize the cloud compromise, IAM abuse, and containment for cloud-ops and executive."
+  },
+  "synthesisHint": "This is a cloud-compromise case — prioritize T1078 Valid Accounts (cloud), T1098 Account Manipulation (new IAM principals), T1136 Create Account, and T1530 Data from Cloud Storage."
+}
