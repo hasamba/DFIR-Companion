@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { BackupManager, resolveBackupConfig, type BackupConfig, type BackupManagerDeps } from "../../src/storage/backupManager.js";
+import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, type BackupConfig, type BackupManagerDeps } from "../../src/storage/backupManager.js";
 import { createApp } from "../../src/server.js";
 
 // ── Pure unit tests ───────────────────────────────────────────────────────────
@@ -32,8 +32,20 @@ describe("resolveBackupConfig", () => {
 
   it("clamps negative values to 0", () => {
     const cfg = resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "-5", DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "-1" });
-    expect(cfg.retain).toBe(0);
+    // A negative retain is an unlimited request, so it lands on the fallback cap, never 0 (#251).
+    expect(cfg.retain).toBe(RETAIN_FALLBACK_CAP);
     expect(cfg.preSynthRetain).toBe(0);
+  });
+
+  it("resolves an unlimited retain request to the fallback cap (#251)", () => {
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "0" }).retain).toBe(RETAIN_FALLBACK_CAP);
+    expect(RETAIN_FALLBACK_CAP).toBeGreaterThan(0);
+  });
+
+  it("falls back to the default for blank or non-numeric retain", () => {
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "" }).retain).toBe(24);
+    // Must not resolve to NaN: `kept < NaN` is always false, which would delete every backup.
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "abc" }).retain).toBe(24);
   });
 });
 
@@ -178,17 +190,25 @@ describe("BackupManager.pruneBackups", () => {
     const preSynth = list.filter((b) => b.trigger === "pre-synthesis");
     // Both pre-synth backups must survive
     expect(preSynth.length).toBe(2);
+    // Protected entries are kept on top of the retain cap, so the real ceiling is retain + preSynthRetain.
+    expect(list.length).toBe(5);
   });
 
-  it("does nothing when retain is 0 (unlimited)", async () => {
-    const { mgr, store } = await makeManager({ retain: 0, preSynthRetain: 0 });
+  it("still prunes when the operator asks for unlimited retention (#251)", async () => {
+    // Built through resolveBackupConfig so the test covers the real env → config → prune path.
+    const cfg = resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "0", DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "0" });
+    const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
+    const store = new CaseStore(root);
+    const mgr = new BackupManager(store, cfg);
     const caseId = await makeCase(store);
 
-    for (let i = 0; i < 10; i++) {
-      await mgr.createBackup(caseId, "scheduled", `2026-06-28T${String(i).padStart(2, "0")}:00:00.000Z`);
+    for (let i = 0; i < RETAIN_FALLBACK_CAP + 5; i++) {
+      const hh = String(Math.floor(i / 60)).padStart(2, "0");
+      const mm = String(i % 60).padStart(2, "0");
+      await mgr.createBackup(caseId, "scheduled", `2026-06-28T${hh}:${mm}:00.000Z`);
     }
     const list = await mgr.listBackups(caseId);
-    expect(list.length).toBe(10);
+    expect(list.length).toBe(RETAIN_FALLBACK_CAP);
   });
 });
 
