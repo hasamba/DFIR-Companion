@@ -72,6 +72,20 @@ describe("GET /diagnostics", () => {
       delete process.env.DFIR_AI_KEY;
     }
   });
+
+  // #250: /diagnostics is unauthenticated, so the absolute cases-root path must never reach the
+  // client — it is free reconnaissance for a file-targeting attack (symlink, env injection).
+  // Asserted against the whole payload, not a named field, so reintroducing the path under ANY
+  // key (or interpolated into the text blob) fails here.
+  it("NEVER leaks the absolute cases-root path into the diagnostics payload", async () => {
+    const app = createApp(store, {});
+    const res = await request(app).get("/diagnostics");
+    expect(res.status).toBe(200);
+    expect(res.body.report).not.toHaveProperty("casesRoot");
+    expect(JSON.stringify(res.body)).not.toContain(root);
+    expect(res.body.text).not.toContain(root);
+    expect(res.body.text).not.toContain("cases root");
+  });
 });
 
 describe("GET /diagnostics/sizes", () => {

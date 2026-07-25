@@ -230,7 +230,6 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       const report: DiagnosticsReport = {
         generatedAt: new Date(now).toISOString(),
         uptimeMs: now - appStartedAt,
-        casesRoot: "<redacted>",  // never expose the absolute filesystem path — reconnaissance surface
         disk,
         cases: { count: cases.length, open, closed: cases.length - open - archived, archived },
         queue: {
