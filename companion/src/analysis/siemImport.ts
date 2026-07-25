@@ -907,7 +907,13 @@ const TEXT_HASH_RE = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 // (S-1-5-18/19/20 LocalSystem etc., S-1-5-32-* builtin groups) — those ride nearly every Windows
 // event and would flood the IOC list, exactly the signal-to-noise trap the analyst wants avoided.
 const TEXT_SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
-const TEXT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/gi;
+// The label loop is bounded at 127 — the DNS maximum — rather than left open with `+`, and that
+// bound is what keeps this regex LINEAR. Unbounded, a failed attempt walks every remaining label
+// before giving up, so a long dotted run with no valid TLD ("x.x.x.x…") costs O(n) per start
+// position and O(n^2) overall: 10 KB took 138 ms, 50 KB took 4.3 s. Capped, each failed attempt
+// gives up after 127 labels, so the whole scan is O(127n) — 400 KB now costs 380 ms, and the cost
+// grows with the input instead of squaring it. No real domain is lost: >127 labels is not resolvable.
+const TEXT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,127}[a-z]{2,}\b/gi;
 // Internal-only zones — an AD/mDNS hostname is an asset, not an indicator; don't flood the IOC list.
 const TEXT_DOMAIN_SKIP_RE = /\.(?:local|localdomain|internal|lan|home|corp|arpa)$/i;
 // A "domain" ending in a common file extension is really a filename (evil.exe, payload.bin, report.json)
@@ -937,6 +943,10 @@ export function hasPlausibleTld(domain: string): boolean {
 
 export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
+  // Every regex here is linear in the length of `text` (see TEXT_DOMAIN_RE's label bound), so this
+  // runs on the WHOLE message. An input cap would be the wrong tool: it bounds one call but not the
+  // total, since this runs per record and maxEvents only caps the events finally EMITTED — and it
+  // would silently drop indicators past the cap, which for a DFIR tool is the failure that matters.
   for (const m of text.match(TEXT_URL_RE) ?? []) addIoc(sink, "url", m.replace(/[).,;]+$/, "").slice(0, 300));
   for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
   for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());

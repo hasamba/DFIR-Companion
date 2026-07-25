@@ -21,7 +21,7 @@ import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
-import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "../settings/envManager.js";
+import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, validateEnvUpdates } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { pushCaseToIris } from "../integrations/iris/irisPush.js";
@@ -910,6 +910,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const updates = req.body?.updates;
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
+      }
+      const rejected = validateEnvUpdates(updates as Record<string, string>);
+      if (rejected.length > 0) {
+        return res.status(400).json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
       }
       await updateEnvFile(updates as Record<string, string>);
       return res.json({ ok: true });

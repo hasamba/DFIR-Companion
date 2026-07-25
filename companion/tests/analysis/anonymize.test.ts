@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -196,6 +196,58 @@ describe("anonymizer — secret redaction (one-way)", () => {
     expect(out).not.toContain("ABCDEF1234567890ABCDEF");
     expect(out).toContain(SECRET_PLACEHOLDER);
   });
+  // Every armor a private key realistically arrives in. All fixture bodies below are fake.
+  const KEY_BODY = "MIIEowIBAAKCAQEAnotarealkey";
+  const keyForms: [string, string][] = [
+    ["RSA",                `-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
+    ["EC",                 `-----BEGIN EC PRIVATE KEY-----\n${KEY_BODY}\n-----END EC PRIVATE KEY-----`],
+    ["DSA",                `-----BEGIN DSA PRIVATE KEY-----\n${KEY_BODY}\n-----END DSA PRIVATE KEY-----`],
+    ["OPENSSH",            `-----BEGIN OPENSSH PRIVATE KEY-----\n${KEY_BODY}\n-----END OPENSSH PRIVATE KEY-----`],
+    ["PKCS#8 bare",        `-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n-----END PRIVATE KEY-----`],
+    ["PKCS#8 encrypted",   `-----BEGIN ENCRYPTED PRIVATE KEY-----\n${KEY_BODY}\n-----END ENCRYPTED PRIVATE KEY-----`],
+    // PGP's armor ends "PRIVATE KEY BLOCK", not "PRIVATE KEY" — a pattern written for the PEM
+    // spelling silently misses every PGP key.
+    ["PGP armor",          `-----BEGIN PGP PRIVATE KEY BLOCK-----\n${KEY_BODY}\n-----END PGP PRIVATE KEY BLOCK-----`],
+    // SSH2 export uses FOUR dashes and spaces inside the delimiter.
+    ["SSH2 export",        `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\n${KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----`],
+    ["with Proc-Type",     `-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\n${KEY_BODY}\n-----END RSA PRIVATE KEY-----`],
+    ["all on one line",    `-----BEGIN OPENSSH PRIVATE KEY----- ${KEY_BODY} -----END OPENSSH PRIVATE KEY-----`],
+  ];
+  it.each(keyForms)("redacts a %s private key block", (_name, key) => {
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`found key: ${key} in log`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("redacts a TRUNCATED key block that never reaches its END delimiter", () => {
+    // The case that matters most in a log: the line was cut off. Requiring a matching END marker
+    // would redact nothing at all here and ship the whole body to the model in cleartext.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`2026-07-24 ERROR key=-----BEGIN RSA PRIVATE KEY-----\n${KEY_BODY}`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("does not let a stray key header swallow the log text that follows it", () => {
+    // The truncated-key fallback is length-bounded and stops at the first non-base64 character, so
+    // it takes the key material without eating the rest of the artifact.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const out = a.apply(`-----BEGIN PRIVATE KEY-----\n${KEY_BODY}\n\nchild process: rundll32.exe /s\n`);
+    expect(out).not.toContain(KEY_BODY);
+    expect(out).toContain("rundll32.exe");
+  });
+
+  it("scans a log full of key headers in linear time", () => {
+    // A lazy scan with no length bound re-walks the rest of the input for every BEGIN marker, so
+    // artifact text full of them costs O(n^2). Over a 4x input, linear is ~4x and quadratic ~16x.
+    const a = createAnonymizer(policy({}, true), NONE);
+    const bait = (n: number) => "-----BEGIN PRIVATE KEY-----\n.\n".repeat(n);
+    const time = (n: number) => { const t = Date.now(); a.apply(bait(n)); return Date.now() - t; };
+    time(500);                                       // warm up
+    const small = Math.max(time(2000), 1);
+    expect(time(8000) / small).toBeLessThan(8);
+  });
 });
 
 describe("deriveKnownEntities", () => {
@@ -363,5 +415,122 @@ describe("anonymizer — user SIDs (REG)", () => {
   it("no-op when REG is disabled", () => {
     const a = createAnonymizer(policy({ REG: false }), NONE);
     expect(a.apply(`profile ${SID}`)).toBe(`profile ${SID}`);
+  });
+});
+
+describe("anonymizer — IPv6 internal IPs", () => {
+  it("tokenizes unique-local IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("connected from fd00:db8::1 to fd00:db8::a3c");
+    expect(out).not.toContain("fd00:db8::1");
+    expect(out).not.toContain("fd00:db8::a3c");
+    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toMatch(/ANON_IP_2/);
+  });
+
+  it("tokenizes link-local IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("gateway fe80::1");
+    expect(out).not.toContain("fe80::1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("tokenizes IPv4-mapped IPv6 loopback", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("mapped ::ffff:127.0.0.1");
+    expect(out).not.toContain("127.0.0.1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("tokenizes an IPv4-mapped IPv6 address given in hex-canonical form (not just dotted)", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("mapped ::ffff:7f00:1"); // hex-canonical form of ::ffff:127.0.0.1
+    expect(out).not.toContain("::ffff:7f00:1");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("PRESERVES public IPv6 addresses", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const pub = "2001:4860:4860::8888";
+    expect(a.apply(`DNS ${pub}`)).toContain(pub);
+  });
+
+  it("restores IPv6 tokens back to real values", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const orig = "from fd00:db8::1";
+    expect(a.restore(a.apply(orig))).toBe(orig);
+  });
+});
+
+describe("isInternalIpv6", () => {
+  it("detects loopback, unique-local, link-local, and IPv4-mapped", () => {
+    expect(isInternalIpv6("::1")).toBe(true);
+    expect(isInternalIpv6("fd00:db8::1")).toBe(true);
+    expect(isInternalIpv6("fc00::1")).toBe(true);
+    expect(isInternalIpv6("fe80::1")).toBe(true);
+    expect(isInternalIpv6("fe90::1")).toBe(true);
+    expect(isInternalIpv6("fea0::1")).toBe(true);
+    expect(isInternalIpv6("::ffff:127.0.0.1")).toBe(true);
+    expect(isInternalIpv6("::ffff:10.0.0.1")).toBe(true);
+  });
+
+  it("preserves public IPv6", () => {
+    expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
+    expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);
+  });
+
+  // A naive IPv4-mapped check that only recognizes the dotted-decimal spelling
+  // ("::ffff:127.0.0.1") misses the hex-canonical form of the SAME address ("::ffff:7f00:1") —
+  // the form anything that re-serializes an IPv6 address (e.g. new URL(), or some logging
+  // libraries) always produces. A victim IPv6 address logged/serialized in that form would
+  // otherwise reach the external AI provider unredacted.
+  it("detects IPv4-mapped/compatible addresses in their hex-canonical form, not just dotted", () => {
+    expect(isInternalIpv6("::ffff:7f00:1")).toBe(true);  // hex form of ::ffff:127.0.0.1
+    expect(isInternalIpv6("::ffff:a00:1")).toBe(true);   // hex form of ::ffff:10.0.0.1
+    expect(isInternalIpv6("::ffff:808:808")).toBe(false); // hex form of ::ffff:8.8.8.8 — public
+  });
+});
+
+describe("anonymizer — base64url encoded commands", () => {
+  it("tokenizes base64url-encoded PowerShell commands (using - and _)", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const b64url = "SQBFAFgAIAAtAGkAcAAgAEgAdAB0AHAAOgAvAC8AZQB2AGkAbAAuAGMAbwBt";
+    const out = a.apply(`powershell -enc ${b64url}`);
+    expect(out).not.toContain(b64url);
+    expect(out).toMatch(/ANON_CMD_1/);
+    expect(a.restore(out)).toBe(`powershell -enc ${b64url}`);
+  });
+
+  it("tokenizes FromBase64String with base64url alphabet", () => {
+    const a = createAnonymizer(policy({ CMD: true }), NONE);
+    const b64url = "dwBoAG8AYQBtAGkAXwBzAGMAaABlAG0AYQAtAA";
+    const out = a.apply(`[System.Convert]::FromBase64String("${b64url}")`);
+    expect(out).not.toContain(b64url);
+    expect(out).toMatch(/ANON_CMD_1/);
+  });
+});
+
+describe("anonymizer — /root/ paths", () => {
+  it("tokenizes the username in /root/ paths", () => {
+    const a = createAnonymizer(policy({ PATH: true }), NONE);
+    const out = a.apply("copied from /root/secret/file");
+    expect(out).not.toContain("/root/secret");
+    expect(out).toMatch(/\/root\/ANON_USER_1/);
+  });
+});
+
+describe("anonymizer — IDN/Punycode emails", () => {
+  it("tokenizes emails with Punycode IDN domains", () => {
+    const a = createAnonymizer(policy({ EMAIL: true }), NONE);
+    const out = a.apply("contact user@example.xn--caf-dma.com");
+    expect(out).not.toContain("user@example.xn--caf-dma.com");
+    expect(out).toMatch(/ANON_EMAIL_1/);
+  });
+
+  it("still tokenizes standard ASCII emails", () => {
+    const a = createAnonymizer(policy({ EMAIL: true }), NONE);
+    const out = a.apply("contact user@victim.example.com");
+    expect(out).not.toContain("user@victim.example.com");
+    expect(out).toMatch(/ANON_EMAIL_1/);
   });
 });

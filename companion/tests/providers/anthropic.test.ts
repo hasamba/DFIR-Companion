@@ -8,6 +8,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const OK = { content: [{ type: "text", text: '{"summary":"done"}' }] };
 
+describe("AnthropicProvider — base URL validation (#246)", () => {
+  // #262 wired validateBaseUrl() into OpenAIProvider and GeminiProvider but NOT AnthropicProvider
+  // — a real gap, since this is a Claude-oriented tool where Anthropic is a very plausible default
+  // provider. These confirm the constructor actually enforces it, not just the standalone function.
+  it("throws constructing with an http:// base URL to a non-loopback host", () => {
+    expect(() => new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001", baseUrl: "http://attacker.example.com/v1" }))
+      .toThrow(ProviderError);
+  });
+
+  it("allows http:// to a loopback host", () => {
+    expect(() => new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001", baseUrl: "http://127.0.0.1:4000/v1" }))
+      .not.toThrow();
+  });
+
+  it("allows https:// to any host, including the provider default", () => {
+    expect(() => new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001" })).not.toThrow();
+  });
+});
+
 describe("AnthropicProvider", () => {
   it("sends images and returns assistant text", async () => {
     const fetchFn = vi.fn(async () => jsonResponse(OK));
