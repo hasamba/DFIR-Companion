@@ -1,4 +1,5 @@
 import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
 
@@ -20,6 +21,8 @@ export class GeminiProvider implements AIProvider {
     this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta";
+    const urlErr = validateBaseUrl(this.baseUrl);
+    if (urlErr) throw new ProviderError(urlErr, "transport");
   }
 
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {

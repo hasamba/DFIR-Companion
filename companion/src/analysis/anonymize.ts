@@ -1,5 +1,6 @@
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
+import { embeddedIpv4 } from "./iocValue.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
@@ -55,7 +56,7 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPs we tokenize. Public IPs are
+// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize. Public IPs are
 // PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
 export function isInternalIp(ip: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
@@ -69,6 +70,28 @@ export function isInternalIp(ip: string): boolean {
   if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
   return false;
 }
+
+// IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped/compatible
+// (::ffff:x.x.x.x or its hex-canonicalized form). Public IPv6 addresses are PRESERVED (same
+// rationale as IPv4). The mapped/compatible check delegates extraction to iocValue.ts's
+// embeddedIpv4() rather than re-deriving it here: a naive dotted-decimal-only regex misses the
+// hex-canonical spelling (e.g. "::ffff:127.0.0.1" as "::ffff:7f00:1") — a check that only
+// recognizes the dotted form would let a victim's internal IPv6 address in that spelling reach
+// the external AI provider unredacted. Classification still uses isInternalIp() (not
+// iocValue.ts's isPrivateIpv4) so the CGNAT range stays covered here.
+export function isInternalIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (lower === "::1" || lower === "::") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
+  if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
+  const mapped = embeddedIpv4(lower);
+  if (mapped && isInternalIp(mapped)) return true;
+  return false;
+}
+
+// Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
+// Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
+const IPV6_RE = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}/gi;
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
@@ -160,12 +183,12 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     });
     return out;
   }
-  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?:\.[A-Za-z]{2,}|\.xn--[A-Za-z0-9-]+)\b/g;
   function anonEmails(t: string): string {
     return t.replace(EMAIL_RE, (m) => assign("EMAIL", m));
   }
   // Capture the profile-dir prefix + the username segment; tokenize only the username.
-  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/)([^\\/\r\n"'<>|:*?]+)/g;
+  const USER_PATH_RE = /([A-Za-z]:\\Users\\|\\Users\\|\/home\/|\/Users\/|\/root\/)([^\\/\r\n"'<>|:*?]+)/g;
   const WELL_KNOWN_PROFILE = /^(public|default|default user|all users|administrator|admin|guest|system|systemprofile|localservice|networkservice)$/i;
   function anonUserPaths(t: string): string {
     return t.replace(USER_PATH_RE, (m, prefix: string, name: string) =>
@@ -175,8 +198,8 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   // FromBase64String('…'). Tokenize ONLY the blob — the command verb + flag stay visible as
   // tradecraft signal (the model still sees that an encoded command ran), and victim data embedded
   // in the encoded payload never reaches the wire. The `=` padding is matched outside the class.
-  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/]{16,}={0,2})/gi;
-  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/]{16,}={0,2})(["'])/gi;
+  const ENC_CMD_RE = /(?<![A-Za-z0-9])(-(?:e|ec|enc|encodedcommand)\s+)([A-Za-z0-9+\/_-]{16,}={0,2})/gi;
+  const FROM_B64_RE = /(FromBase64String\(\s*["'])([A-Za-z0-9+\/_-]{16,}={0,2})(["'])/gi;
   function anonEncodedCmd(t: string): string {
     let out = t.replace(ENC_CMD_RE, (_m, flag: string, blob: string) => flag + assign("CMD", blob));
     out = out.replace(FROM_B64_RE, (_m, a: string, blob: string, c: string) => a + assign("CMD", blob) + c);
@@ -205,7 +228,9 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return out;
   }
   function anonInternalIps(t: string): string {
-    return t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
+    let out = t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
+    out = out.replace(IPV6_RE, (ip) => (isInternalIpv6(ip) ? assign("IP", ip) : ip));
+    return out;
   }
 
   function anonCustom(t: string): string {
