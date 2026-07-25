@@ -33,6 +33,7 @@ import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerVerdictEvolutionRoutes } from "./routes/verdictEvolution.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
@@ -146,6 +147,7 @@ import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } fr
 import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
+import { VerdictEvolutionStore } from "./analysis/verdictEvolutionStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
@@ -534,6 +536,8 @@ export interface AppOptions {
   rebuildTimesketchClient?: () => TimesketchClient | undefined;
   // Case templates: built-in + user-saved templates selectable at case creation.
   templateStore?: TemplateStore;
+  // Per-case verdict-evolution config + history (#232), in state/verdict-evolution.json.
+  verdictEvolutionStore?: VerdictEvolutionStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
   mispPushClient?: MispPushClient;
@@ -860,6 +864,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerVerdictEvolutionRoutes(app, ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
@@ -3161,6 +3166,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     warnLine(`[state] ${caseId}: investigation.json save needed ${retries} rename retr${retries === 1 ? "y" : "ies"} — the state dir is contended (antivirus / search indexer / sync client). Consider excluding the cases root from real-time scanning, or raise DFIR_ATOMIC_WRITE_RETRIES.`),
   );
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
+  // Verdict-evolution store (#232): per-case config + history, state/verdict-evolution.json.
+  const verdictEvolutionStore = new VerdictEvolutionStore(store);
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -3517,6 +3524,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     timesketchOptions: timesketchPushOptions(),
     rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
+    verdictEvolutionStore,
     mispPushClient: buildMispPushClient(),
     mispPushOptions: mispPushOptions(),
     notionClient: buildNotionClient(),
