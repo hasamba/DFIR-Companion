@@ -251,10 +251,12 @@ export interface DiskDiagnostics extends DiskStats {
   thresholds: DiskWarnThresholds;
 }
 
+// NOTE: deliberately carries NO casesRoot / absolute filesystem path (#250). /diagnostics is an
+// unauthenticated route, so the cases-root path would be free reconnaissance for any file-targeting
+// attack. The operator configured DFIR_CASES_ROOT and already knows it; the client never needs it.
 export interface DiagnosticsReport {
   generatedAt: string; // ISO-8601
   uptimeMs: number;
-  casesRoot: string;
   disk: DiskDiagnostics;
   cases: { count: number; open: number; closed: number; archived: number };
   queue: QueueDiagnostics;
@@ -284,7 +286,6 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
   lines.push("=== DFIR Companion — Diagnostics ===");
   lines.push(`generated:   ${r.generatedAt}`);
   lines.push(`uptime:      ${formatAge(r.uptimeMs)}`);
-  lines.push(`cases root:  ${r.casesRoot}`);
   lines.push("");
   lines.push("-- Disk --");
   lines.push(

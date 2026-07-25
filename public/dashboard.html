@@ -20149,7 +20149,6 @@
         diagRow("Free", `${diagFmtBytes(d.freeBytes)} of ${diagFmtBytes(d.totalBytes)}`),
         diagRow("Used", `${(d.usedPct || 0).toFixed(1)}%`, lvlColor),
         diagRow("Status", esc(d.level), lvlColor),
-        diagRow("Cases root", `<code>${esc(report.casesRoot)}</code>`),
       ].join(""));
       const cs = report.cases;
       const cases = diagCard("Cases", diagRow("Total", `${cs.count} (${cs.open} open, ${cs.closed} closed)`));
