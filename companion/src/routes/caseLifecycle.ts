@@ -30,6 +30,7 @@ import { pushCaseToMisp } from "../integrations/misp/mispPush.js";
 import { pushCaseToNotion, type NotionPushTarget } from "../integrations/notion/notionPush.js";
 import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
+import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
@@ -506,8 +507,29 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "filename is required" });
     }
     try {
-      const result = await options.backupManager.restoreBackup(caseId, filename.trim());
-      return res.status(200).json(result);
+      // A restore rewrites investigation.json wholesale, so it must not land on top of another
+      // writer (#251). Two guards, because they close different windows:
+      //   - runStateExclusive serializes against the short load→save critical sections (manual
+      //     event/IOC adds, enrichment saves) that hold the same per-case lock.
+      //   - Background jobs release that lock between their critical sections — synthesis holds it
+      //     to save, not across the AI call — so a restore can slot into a gap and then be
+      //     clobbered by the job's next save. No lock can serialize against that, so refuse while
+      //     any job is in flight for this case and let the operator cancel it or wait it out.
+      //     Every kind writes case state, hence the check is on all of them, not just synthesis.
+      const outcome = await runStateExclusive(caseId, async (): Promise<{ busy: Job } | { restored: string[] }> => {
+        const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
+        if (busy) return { busy };
+        return await options.backupManager!.restoreBackup(caseId, filename.trim());
+      });
+      if ("busy" in outcome) {
+        const { kind, id, label } = outcome.busy;
+        return res.status(409).json({
+          error: `a ${kind}${label ? ` (${label})` : ""} job is in progress for this case — cancel it or wait for it to finish, then restore`,
+          jobId: id,
+          kind,
+        });
+      }
+      return res.status(200).json(outcome);
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("not found") || msg.includes("invalid backup")) {

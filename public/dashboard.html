@@ -20402,7 +20402,17 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename }),
       })
-        .then(async r => { if (!r.ok) throw new Error(await r.text().catch(() => String(r.status))); return r.json(); })
+        .then(async r => {
+          if (!r.ok) {
+            // Surface the server's `error` string rather than the raw JSON body: a restore blocked
+            // by an in-flight job (409) is a routine outcome the analyst needs to be able to read.
+            const body = await r.text().catch(() => String(r.status));
+            let detail = body;
+            try { const parsed = JSON.parse(body); if (parsed && parsed.error) detail = parsed.error; } catch {}
+            throw new Error(detail);
+          }
+          return r.json();
+        })
         .then(j => {
           if (msg) { msg.style.color = "#5ad17a"; msg.textContent = `✓ Restored ${(j.restored || []).length} file(s) — reload the page to reflect changes`; }
         })

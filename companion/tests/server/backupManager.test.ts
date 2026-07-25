@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
 import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, type BackupConfig, type BackupManagerDeps } from "../../src/storage/backupManager.js";
 import { createApp } from "../../src/server.js";
 
@@ -235,13 +237,29 @@ describe("BackupManager.summary", () => {
 
 // ── Route-level integration tests ─────────────────────────────────────────────
 
-async function makeAppWithBackup(config: Partial<BackupConfig> = {}): Promise<{ app: ReturnType<typeof createApp>; store: CaseStore }> {
+async function makeAppWithBackup(
+  config: Partial<BackupConfig> = {},
+  extra: { jobManager?: JobManager; stateLock?: StateLock } = {},
+): Promise<{ app: ReturnType<typeof createApp>; store: CaseStore }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-route-"));
   const store = new CaseStore(root);
   const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, ...config };
   const backupManager = new BackupManager(store, cfg);
-  const app = createApp(store, { backupManager });
+  const app = createApp(store, { backupManager, ...extra });
   return { app, store };
+}
+
+// Seed a case with a backup, then corrupt the live state so a successful restore is observable.
+async function seedRestorable(store: CaseStore): Promise<{ caseId: string; filename: string }> {
+  const caseId = await makeCase(store);
+  const mgr = new BackupManager(store, { retain: 24, preSynthRetain: 10, intervalMs: 0 });
+  const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T10:00:00.000Z");
+  await writeFile(join(store.stateDir(caseId), "investigation.json"), '{"corrupted":true}');
+  return { caseId, filename: info.filename };
+}
+
+async function readState(store: CaseStore, caseId: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(join(store.stateDir(caseId), "investigation.json"), "utf8")) as Record<string, unknown>;
 }
 
 describe("GET /cases/:id/backups", () => {
@@ -300,5 +318,86 @@ describe("POST /cases/:id/restore-backup", () => {
       .send({ filename: info.filename });
     expect(res.status).toBe(200);
     expect(res.body.restored).toContain("investigation.json");
+  });
+
+  // #251: a restore rewrites investigation.json wholesale, so it must not race an active writer.
+  it("refuses with 409 while a job is in flight for the case", async () => {
+    const jobManager = new JobManager();
+    const { app, store } = await makeAppWithBackup({}, { jobManager });
+    const { caseId, filename } = await seedRestorable(store);
+
+    const { jobId } = jobManager.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true });
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(409);
+    expect(res.body.kind).toBe("synthesis");
+    expect(res.body.jobId).toBe(jobId);
+    // The live state must be untouched — a rejected restore that half-wrote would be worse than none.
+    expect((await readState(store, caseId)).corrupted).toBe(true);
+  });
+
+  it("refuses for any job kind, not just synthesis", async () => {
+    const jobManager = new JobManager();
+    const { app, store } = await makeAppWithBackup({}, { jobManager });
+    const { caseId, filename } = await seedRestorable(store);
+
+    jobManager.register({ caseId, kind: "import", label: "evtx import" });
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(409);
+    expect(res.body.kind).toBe("import");
+  });
+
+  it("allows the restore once the job reaches a terminal state", async () => {
+    const jobManager = new JobManager();
+    const { app, store } = await makeAppWithBackup({}, { jobManager });
+    const { caseId, filename } = await seedRestorable(store);
+
+    const { jobId } = jobManager.register({ caseId, kind: "synthesis", cancellable: true });
+    jobManager.finish(jobId);
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(200);
+    expect((await readState(store, caseId)).corrupted).toBeUndefined();
+  });
+
+  it("is not blocked by a job belonging to a different case", async () => {
+    const jobManager = new JobManager();
+    const { app, store } = await makeAppWithBackup({}, { jobManager });
+    const { caseId, filename } = await seedRestorable(store);
+    const otherCase = await makeCase(store);
+
+    jobManager.register({ caseId: otherCase, kind: "synthesis" });
+
+    const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    expect(res.status).toBe(200);
+  });
+
+  it("waits for an in-flight state-lock critical section instead of interleaving with it", async () => {
+    const stateLock = new StateLock();
+    const { app, store } = await makeAppWithBackup({}, { stateLock });
+    const { caseId, filename } = await seedRestorable(store);
+
+    // Hold the case's lock the way a manual event/IOC add does, and don't let go yet.
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const critical = stateLock.runExclusive(caseId, () => held);
+
+    const pending = request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
+    // While the lock is held the restore can never complete, however long we wait — so this races
+    // against a generous timeout rather than draining a fixed number of event-loop turns, which an
+    // unguarded restore (~20ms end to end) would also survive, passing the test for the wrong reason.
+    const raced = await Promise.race([
+      pending.then(() => "completed" as const),
+      new Promise<"blocked">((r) => setTimeout(() => r("blocked"), 250)),
+    ]);
+    expect(raced).toBe("blocked");
+    expect((await readState(store, caseId)).corrupted).toBe(true);
+
+    release();
+    await critical;
+    const res = await pending;
+    expect(res.status).toBe(200);
+    expect((await readState(store, caseId)).corrupted).toBeUndefined();
   });
 });
