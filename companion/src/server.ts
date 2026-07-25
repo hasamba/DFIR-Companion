@@ -191,6 +191,7 @@ import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
+import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
@@ -618,13 +619,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
   const recentAiErrors: AiError[] = [];
+  // Both rings are served to the client by /diagnostics (JSON report AND the copy-to-clipboard text
+  // blob), so the message is redacted on the way IN — one choke point instead of two on the way out.
+  // The raw message still reaches serverLogger at each call site, so the console keeps full paths.
+  const redactErr = (err: unknown): string => redactedErrorMessage(err, [store.casesRoot]);
   function recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void {
-    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: (err as Error)?.message ?? String(err) });
+    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: redactErr(err) });
     if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
   }
   function recordAiError(caseId: string, phase: string, err: unknown): void {
     const kind = err instanceof ProviderError ? err.kind : "other";
-    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: (err as Error)?.message ?? String(err) });
+    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: redactErr(err) });
     if (recentAiErrors.length > DIAG_RING) recentAiErrors.length = DIAG_RING;
   }
   // Per-importer health (#84): last run's outcome per custom (declarative) importer id. Keyed by
@@ -695,6 +700,30 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       return res.status(400).json({ error: "request body is not valid JSON" });
     }
     return next(err);
+  });
+
+  // ── Absolute-path redaction on every error response (#250) ───────────────────────────
+  // ~60 route catch blocks end in `res.status(500).json({ error: (err as Error).message })`, and
+  // Node's fs errors carry the full path, so each one is a potential cases-root disclosure. Wrapping
+  // res.json here is the single choke point that covers all of them — including routes added later
+  // and the terminal error handler at the bottom of this file — with no per-handler opt-in, the same
+  // reasoning as the caseIdGate/caseLockGate mounts below.
+  //
+  // ONLY the `error` field is rewritten. Ordinary fields legitimately carry filesystem paths that
+  // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
+  // the size report's per-file paths are case-relative, not absolute. Redacting those would break
+  // features to no benefit. Request logging is untouched, so the console still shows real paths.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    const sendJson = res.json.bind(res);
+    res.json = ((body: unknown) => {
+      if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
+        // Spread rather than mutate: the caller's object literal is not ours to rewrite, and
+        // overwriting an existing key preserves its position in the response.
+        return sendJson({ ...body, error: redactPaths((body as { error: string }).error, [store.casesRoot]) });
+      }
+      return sendJson(body);
+    }) as typeof res.json;
+    next();
   });
 
   // ── Case id validation ────────────────────────────────────────────────────────────────
@@ -1143,7 +1172,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
         },
       }).catch((err) => {
-        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: (err as Error)?.message ?? String(err) });
+        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: redactErr(err) });
         throw err;
       });
     }
