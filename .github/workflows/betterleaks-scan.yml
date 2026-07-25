@@ -1,8 +1,20 @@
 name: Secret & PII Scan
 
+# push is scoped to master (not '**'), matching trufflehog-scan.yml and for the same reason.
+# `betterleaks git .` scans every commit reachable in the clone — which includes master's history —
+# but applies the config from the CHECKED-OUT tree. On a push to a feature branch that is the
+# branch's own .betterleaks-config.toml, so the moment master gains a fixture plus the allowlist
+# covering it (as fe8c831b did for the anonymizer's private-key tests), every branch cut before that
+# commit starts failing on a finding that is already allowlisted on master. The finding is real
+# history, the allowlist just hasn't reached the branch yet — a stale-base artifact, not a leak.
+#
+# pull_request covers feature branches correctly: actions/checkout resolves the MERGE commit, so the
+# config is always base+head and the allowlist is present. Master's own full history stays covered by
+# the push trigger here. This also halves the runs — every PR was scanned twice, once per event.
+
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
     types: [opened, synchronize, reopened]
 

@@ -145,4 +145,19 @@ describe("toWhitelistCsv", () => {
       { match: "exact", pattern: "deadbeef", iocType: "hash" },
     ]);
   });
+
+  it("neutralizes spreadsheet formula injection in exported cells", () => {
+    // This export is downloaded as text/csv and opened in Excel/Sheets, where a cell starting with
+    // = + - @ (or tab/CR) is EVALUATED. The values come from imported artifacts, so they are
+    // attacker-influenced; a leading apostrophe forces the cell to be read as text.
+    const csv = toWhitelistCsv([
+      rule({ id: "a", match: "exact", pattern: "=cmd|'/c calc'!A1", iocType: "domain" }),
+      rule({ id: "b", match: "exact", pattern: "@SUM(1+1)*cmd", iocType: "domain", note: "-2+3+cmd" }),
+    ]);
+    const lines = csv.split("\n");
+    expect(lines[1]).toContain("'=cmd|");
+    expect(lines[2]).toContain("'@SUM(1+1)*cmd");
+    expect(lines[2]).toContain("'-2+3+cmd");
+    expect(csv).not.toMatch(/(^|,)=cmd/m);        // no bare formula survives
+  });
 });

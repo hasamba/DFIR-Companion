@@ -8,6 +8,7 @@ import {
   unlockCookieName,
   MIN_CASE_PASSWORD_LENGTH,
 } from "../analysis/casePassword.js";
+import { getUnlockLimiter } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 
 // Cookie TTLs for a case-unlock token. Moved verbatim from createApp (they were used only by the
@@ -57,14 +58,27 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      // Rate-limit brute-force attempts: after 5 failures, lockout with exponential backoff.
+      const limiter = getUnlockLimiter();
+      const remaining = limiter.remainingLockout(id);
+      if (remaining > 0) {
+        res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
+        return res.status(429).json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
+      }
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
       const password = (req.body as { password?: unknown })?.password;
       const remember = (req.body as { remember?: unknown })?.remember === true;
       if (typeof password !== "string" || !verifyCasePassword(password, meta.password)) {
+        const lockout = limiter.recordFailure(id);
+        if (lockout > 0) {
+          res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          return res.status(429).json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
+        }
         return res.status(401).json({ error: "incorrect password" });
       }
+      limiter.clear(id);
       const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
       const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
       const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
