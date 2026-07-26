@@ -31,6 +31,8 @@ import { pushCaseToMisp } from "../integrations/misp/mispPush.js";
 import { pushCaseToNotion, type NotionPushTarget } from "../integrations/notion/notionPush.js";
 import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
+import { pushFindingToJira } from "../integrations/jira/jiraPush.js";
+import { pushFindingToServiceNow } from "../integrations/servicenow/servicenowPush.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
@@ -813,6 +815,93 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(502).json({ error: (err as Error).message });
     }
   });
+
+  // Jira status + finding push (issue #272).
+  app.get("/jira/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.jiraClient,
+      projectKey: options.jiraOptions?.projectKey ?? "",
+      issueType: options.jiraOptions?.issueType ?? "",
+    });
+  });
+
+  // Push one finding as a Jira issue. Body { findingId, projectKey?, issueType? } — the project
+  // falls back to DFIR_JIRA_PROJECT_KEY. Re-pushing the same finding UPDATES the issue it created
+  // (key remembered in `state/jira-export.json`) instead of filing a duplicate.
+  app.post("/cases/:id/push/jira", async (req: Request, res: Response) => {
+    if (!options.jiraClient) return res.status(501).json({ error: "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN)" });
+    if (!options.jiraExportStore) return res.status(501).json({ error: "jira export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
+      const finding = state.findings.find((f) => f.id === findingId);
+      if (!finding) return res.status(404).json({ error: `finding ${findingId} not found` });
+      const projectKey = typeof req.body?.projectKey === "string" && req.body.projectKey.trim()
+        ? req.body.projectKey.trim()
+        : options.jiraOptions?.projectKey;
+      if (!projectKey) return res.status(400).json({ error: "a Jira project key is required" });
+      logLine(`[jira] ${caseId} finding ${findingId} push START -> project ${projectKey}`);
+      const result = await pushFindingToJira(options.jiraClient, options.jiraExportStore, {
+        caseId,
+        projectKey,
+        issueType: typeof req.body?.issueType === "string" ? req.body.issueType : options.jiraOptions?.issueType,
+        finding,
+      });
+      logLine(`[jira] ${caseId} finding ${findingId} push DONE -> ${result.issue.key}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-jira", detail: `pushed finding ${findingId} to Jira ${result.issue.key}`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[jira] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // ServiceNow status + finding push (issue #272).
+  app.get("/servicenow/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.servicenowClient,
+      caller: options.servicenowOptions?.caller ?? "",
+      category: options.servicenowOptions?.category ?? "",
+      subcategory: options.servicenowOptions?.subcategory ?? "",
+    });
+  });
+
+  // Push one finding as a ServiceNow incident. Body { findingId, caller?, category?, subcategory? }
+  // — each falls back to its DFIR_SERVICENOW_* default. Re-pushing the same finding UPDATES the
+  // incident it opened (sys_id remembered in `state/servicenow-export.json`), never a duplicate.
+  app.post("/cases/:id/push/servicenow", async (req: Request, res: Response) => {
+    if (!options.servicenowClient) return res.status(501).json({ error: "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD)" });
+    if (!options.servicenowExportStore) return res.status(501).json({ error: "servicenow export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
+      const finding = state.findings.find((f) => f.id === findingId);
+      if (!finding) return res.status(404).json({ error: `finding ${findingId} not found` });
+      logLine(`[servicenow] ${caseId} finding ${findingId} push START`);
+      const result = await pushFindingToServiceNow(options.servicenowClient, options.servicenowExportStore, {
+        caseId,
+        finding,
+        caller: typeof req.body?.caller === "string" ? req.body.caller : options.servicenowOptions?.caller,
+        category: typeof req.body?.category === "string" ? req.body.category : options.servicenowOptions?.category,
+        subcategory: typeof req.body?.subcategory === "string" ? req.body.subcategory : options.servicenowOptions?.subcategory,
+      });
+      logLine(`[servicenow] ${caseId} finding ${findingId} push DONE -> ${result.incident.number}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-servicenow", detail: `pushed finding ${findingId} to ServiceNow ${result.incident.number}`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[servicenow] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Manually add a forensic event the AI didn't catch. Appended to the timeline (kept sorted by
   // event time), then re-synthesized so it weaves into findings/MITRE (a high-severity manual
   // event earns a finding via the backfill). Synthesis preserves the timeline, so it survives.
