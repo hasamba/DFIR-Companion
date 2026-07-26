@@ -199,9 +199,22 @@ const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|Sy
 const PEM_PRIVATE_KEY =
   /-{4,5} ?BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}(?:[\s\S]{0,8192}?-{4,5} ?END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}|[A-Za-z0-9+/=\s]{0,8192})/g;
 
-// A detector, not a validator: 13–19 digits in groups optionally separated by a single space
-// or dash. Validation happens after the match.
-const CARD_RE = /\b(?:\d[ -]?){12,18}\d\b/g;
+// A detector, not a validator: matches only real card GROUPINGS, plus a bare contiguous run.
+// Separators are permitted ONLY at genuine group boundaries — NOT between every digit (an
+// earlier version of this pattern allowed a separator after each digit, so two unrelated bare
+// numbers sitting next to each other in ordinary forensic text — a PID and a port, an offset
+// and a byte count — got silently concatenated into one candidate before the prefix/Luhn
+// filters ever ran, e.g. "30001 35174909" -> digits "3000135174909" -> passes both filters).
+// Requiring the separator to land on a real 4-4-4-4 / 4-6-5 / 4-4-4-4-3 boundary means two
+// adjacent-but-unrelated numbers essentially never happen to have exactly those group widths.
+//
+// Longest/most-specific alternative FIRST: JS regex alternation is first-match, not
+// longest-match, so the 19-digit 4-4-4-4-3 grouping must be tried before the 16-digit 4-4-4-4
+// grouping — otherwise a real 19-digit card would match only its first 16 digits (the engine
+// finds \b right after the 4th group, since the following char is a separator), leaving the
+// trailing "-123" unmasked in cleartext.
+const CARD_RE =
+  /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3}\b|\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}\b|\b\d{4}[ -]\d{6}[ -]\d{5}\b|\b\d{13,19}\b/g;
 
 /** Luhn checksum. Exported for the detector table tests. */
 export function luhnValid(digits: string): boolean {
@@ -393,10 +406,13 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
 
   // Two independent filters — a plausible issuer prefix AND Luhn — keep this out of trouble in
   // forensic text. Hashes are hexadecimal, so long bare DECIMAL runs are already uncommon.
+  // No length check here: every CARD_RE alternative already guarantees 13–19 digits once
+  // separators are stripped — the three grouped alternatives have fixed digit counts (19, 16,
+  // 15) and the contiguous alternative is itself bounded by the {13,19} quantifier — so a
+  // post-hoc length check on `digits` can never fail and would be dead code.
   function anonCards(t: string): string {
     return t.replace(CARD_RE, (m) => {
       const digits = m.replace(/[ -]/g, "");
-      if (digits.length < 13 || digits.length > 19) return m;
       if (!/^[3-6]/.test(digits)) return m;   // Amex 3, Visa 4, Mastercard 5, Discover 6
       if (!luhnValid(digits)) return m;
       return assign("CARD", m);

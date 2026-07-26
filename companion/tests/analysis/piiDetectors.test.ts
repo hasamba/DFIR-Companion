@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, luhnValid, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 
@@ -28,28 +28,55 @@ describe("CARD detector", () => {
     }
   });
 
-  it("accepts spaced and dashed groupings", () => {
+  it("accepts spaced and dashed groupings (4-4-4-4)", () => {
     const a = createAnonymizer(policy({ CARD: true }), NONE);
     const out = a.apply("card 4111 1111 1111 1111 on file");
-    expect(out).not.toContain("4111 1111 1111 1111");
-    expect(out).toMatch(/ANON_CARD_1/);
+    expect(out).toBe("card ANON_CARD_1 on file");
     expect(a.restore(out)).toBe("card 4111 1111 1111 1111 on file");
+  });
+
+  it("accepts the 4-6-5 Amex grouping", () => {
+    const a = createAnonymizer(policy({ CARD: true }), NONE);
+    const out = a.apply("card 3782 822463 10005 on file");
+    expect(out).toBe("card ANON_CARD_1 on file");
+    expect(a.restore(out)).toBe("card 3782 822463 10005 on file");
+  });
+
+  // Regression test: an earlier version of CARD_RE allowed a separator between EVERY digit
+  // (not just at real group boundaries), so two unrelated bare numbers sitting next to each
+  // other — a 5-digit field and an 8-digit field, joined by one space — got concatenated into
+  // a single 13-digit candidate that happened to pass both the issuer-prefix and Luhn filters.
+  // "30001 35174909" -> stripped "3000135174909" -> starts with 3, Luhn-valid -> was wrongly
+  // masked. Neither "30001" (5 digits) nor "35174909" (8 digits) is itself a valid card length,
+  // and the space between them is not a real 4-4-4-4 / 4-6-5 / 4-4-4-4-3 boundary, so the
+  // tightened regex must not match across it at all.
+  it("does NOT merge two unrelated adjacent bare numbers into a card candidate", () => {
+    const a = createAnonymizer(policy({ CARD: true }), NONE);
+    const out = a.apply("field 30001 35174909 recorded");
+    expect(out).toBe("field 30001 35174909 recorded");
   });
 
   it("rejects Luhn-invalid numbers", () => {
     const a = createAnonymizer(policy({ CARD: true }), NONE);
     const out = a.apply("value 4111111111111112 here");
-    expect(out).toContain("4111111111111112");
+    expect(out).toBe("value 4111111111111112 here");
   });
 
-  it("rejects long digit runs with no plausible issuer prefix", () => {
+  // Self-proving: 1234567890123452 is Luhn-VALID (verified below) but starts with "1", which is
+  // not a card issuer prefix. The digit run used in an earlier version of this test
+  // ("1234567890123456") is Luhn-INVALID on its own, so it was already rejected by the Luhn
+  // filter alone — deleting the prefix guard entirely would not have failed that test. This one
+  // isolates the prefix filter: only it can be responsible for rejecting a number Luhn would
+  // have accepted.
+  it("rejects a Luhn-VALID number whose issuer prefix is not a card prefix", () => {
+    const notACard = "1234567890123452";
+    expect(luhnValid(notACard)).toBe(true); // proves Luhn would have passed it
     const a = createAnonymizer(policy({ CARD: true }), NONE);
-    const out = a.apply("offset 1234567890123456 bytes");
-    expect(out).toContain("1234567890123456");
+    expect(a.apply(`offset ${notACard} bytes`)).toBe(`offset ${notACard} bytes`); // only the prefix filter can be rejecting it
   });
 
   it("does nothing when the category is off", () => {
     const a = createAnonymizer(policy(), NONE);
-    expect(a.apply("charge to 4111111111111111")).toContain("4111111111111111");
+    expect(a.apply("charge to 4111111111111111")).toBe("charge to 4111111111111111");
   });
 });
