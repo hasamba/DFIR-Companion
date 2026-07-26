@@ -12,7 +12,6 @@ describe("manifest-firefox.json", () => {
   it("has browser_specific_settings with a gecko id", () => {
     expect(firefoxManifest.browser_specific_settings).toBeDefined();
     expect(firefoxManifest.browser_specific_settings.gecko.id).toMatch(/.+@.+/);
-    expect(firefoxManifest.browser_specific_settings.gecko.strict_min_version).toMatch(/^\d/);
   });
 
   it("uses background.scripts instead of service_worker", () => {
@@ -33,6 +32,28 @@ describe("manifest-firefox.json", () => {
 
   it("keeps the same capture shortcut", () => {
     expect(firefoxManifest.commands["toggle-capture"].suggested_key.default).toBe("Ctrl+Shift+S");
+  });
+
+  // These two lock the MAIN-world precondition from both ends. injectHook() requests
+  // world: "MAIN" unconditionally, which is only safe because every Firefox that can install this
+  // add-on supports it (128+). Lower the floor and the injection silently degrades to the isolated
+  // world on older Firefox: the hook installs, wraps a `fetch` no page script calls, posts "ready",
+  // and captures nothing — no error anywhere, just an add-on that quietly stops intercepting.
+  it("requires Firefox 128+, where scripting.executeScript gained world: MAIN", () => {
+    const min = firefoxManifest.browser_specific_settings.gecko.strict_min_version;
+    expect(min).toMatch(/^\d+(\.\d+)*$/);
+    expect(Number.parseInt(min, 10)).toBeGreaterThanOrEqual(128);
+  });
+
+  it("injects pageHook into the MAIN world unconditionally", () => {
+    // Asserted against source: serviceWorker.ts registers listeners at import time, so it can't be
+    // imported here without standing up the whole extension environment.
+    const sw = readFileSync(resolve(__dirname, "../src/serviceWorker.ts"), "utf-8");
+    // Up to the closing brace at column 0, i.e. the end of the function.
+    const injectHook = /^async function injectHook[\s\S]*?^}/m.exec(sw)?.[0];
+    expect(injectHook, "injectHook not found in serviceWorker.ts").toBeDefined();
+    expect(injectHook).toContain('world: "MAIN"');
+    expect(injectHook).toContain('files: ["pageHook.js"]');
   });
 });
 
@@ -104,9 +125,12 @@ async function loadShim(globals: { chrome?: unknown; browser?: unknown }) {
   return import("../src/browser.js");
 }
 
+// A stand-in for whichever namespace the shim picks, recording what reached it. storage.local.get
+// is the vehicle simply because it's an ordinary promise-returning call — the shim is generic, so
+// any API would do.
 function fakeNamespace() {
-  const calls: Array<{ world?: string; target?: { tabId: number } }> = [];
-  const ns = { scripting: { executeScript: (a: unknown) => { calls.push(a as never); return Promise.resolve([]); } } };
+  const calls: string[] = [];
+  const ns = { storage: { local: { get: (key: string) => { calls.push(key); return Promise.resolve({}); } } } };
   return { ns, calls };
 }
 
@@ -122,39 +146,36 @@ describe("browser shim", () => {
     // no callback returns undefined, so `await chrome.storage.local.get(...)` yields undefined.
     const chromeNs = fakeNamespace();
     const browserNs = fakeNamespace();
-    const { executeScriptTarget, isFirefox } = await loadShim({ chrome: chromeNs.ns, browser: browserNs.ns });
+    const { browserApi, isFirefox } = await loadShim({ chrome: chromeNs.ns, browser: browserNs.ns });
 
     expect(isFirefox()).toBe(true);
-    await executeScriptTarget(42, ["pageHook.js"]);
+    await browserApi.storage.local.get("settings");
 
-    expect(browserNs.calls).toHaveLength(1);
-    expect(chromeNs.calls).toHaveLength(0);
-    expect(browserNs.calls[0].world).toBeUndefined(); // MAIN world needs Firefox 128+
+    expect(browserNs.calls).toEqual(["settings"]);
+    expect(chromeNs.calls).toEqual([]);
   });
 
-  it("falls back to `chrome` and requests the MAIN world (Chrome)", async () => {
+  it("falls back to `chrome` when that is all there is (Chrome)", async () => {
     const chromeNs = fakeNamespace();
-    const { executeScriptTarget, isFirefox } = await loadShim({ chrome: chromeNs.ns });
+    const { browserApi, isFirefox } = await loadShim({ chrome: chromeNs.ns });
 
     expect(isFirefox()).toBe(false);
-    await executeScriptTarget(43, ["pageHook.js"]);
+    await browserApi.storage.local.get("settings");
 
-    expect(chromeNs.calls).toHaveLength(1);
-    expect(chromeNs.calls[0].world).toBe("MAIN");
-    expect(chromeNs.calls[0].target).toEqual({ tabId: 43 });
+    expect(chromeNs.calls).toEqual(["settings"]);
   });
 
   it("resolves the namespace per access rather than freezing it at import", async () => {
     const first = fakeNamespace();
-    const { executeScriptTarget } = await loadShim({ chrome: first.ns });
-    await executeScriptTarget(1, ["pageHook.js"]);
+    const { browserApi } = await loadShim({ chrome: first.ns });
+    await browserApi.storage.local.get("one");
 
     const second = fakeNamespace();
     (globalThis as unknown as Record<string, unknown>).chrome = second.ns;
-    await executeScriptTarget(2, ["pageHook.js"]);
+    await browserApi.storage.local.get("two");
 
-    expect(first.calls).toHaveLength(1);
-    expect(second.calls).toHaveLength(1);
+    expect(first.calls).toEqual(["one"]);
+    expect(second.calls).toEqual(["two"]);
   });
 
   it("throws a clear error when neither namespace exists", async () => {

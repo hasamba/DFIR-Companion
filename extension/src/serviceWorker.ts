@@ -3,7 +3,7 @@ import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
-import { browserApi, executeScriptTarget } from "./browser.js";
+import { browserApi } from "./browser.js";
 import {
   DEFAULT_SETTINGS, type ContextPushResultMessage, type ContextTableResult,
   type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
@@ -76,10 +76,19 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
 // known DFIR console (#102). executeScript into world "MAIN" bypasses the page's CSP (a <script src>
 // tag would be blocked by the strict CSPs these consoles ship). Idempotent — the hook guards against
 // double install. Best-effort: a restricted/blocked page just falls back to DOM-scrape.
+//
+// MAIN is requested unconditionally: Chrome has always supported it and Firefox has since 128,
+// which manifest-firefox.json requires. It must not silently degrade to the isolated world — there
+// the hook would wrap the content script's own `fetch`, which no page script ever calls, so it
+// would install, report ready, and then capture nothing at all.
 async function injectHook(tabId: number | undefined): Promise<void> {
   if (typeof tabId !== "number") return;
   try {
-    await executeScriptTarget(tabId, ["pageHook.js"]);
+    await browserApi.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      files: ["pageHook.js"],
+    });
   } catch { /* page not injectable — the content script's DOM-scrape fallback still works */ }
 }
 
