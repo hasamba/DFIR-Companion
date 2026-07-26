@@ -64,18 +64,33 @@ export interface EnrichSummary {
 // Most-valuable kinds first so the per-run cap spends lookups where they matter.
 const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, process: 2, domain: 3, url: 4 };
 
+// The per-IOC form of enrichIocs' candidate filter: would a run query THIS IOC right now? False for
+// an IOC whose type maps to no enrichable kind (file/sid/other — no provider ever supports them) and
+// for one that every enabled provider has already checked. Shared by both pre-checks below so they
+// can't drift from each other, or from the real candidate list in enrichIocs.
+function needsEnrichment(ioc: IOC, providers: readonly EnrichmentProvider[]): boolean {
+  const kind = iocKind(ioc.type);
+  if (!kind) return false;
+  const checked = new Set(ioc.enrichedBy ?? []);
+  return providers.some((p) => p.supports(kind) && !checked.has(p.name));
+}
+
 // Cheap pre-check mirroring enrichIocs' candidate filter, WITHOUT doing any lookups: is there at
 // least one IOC that some enabled provider hasn't checked yet? Lets a caller skip the whole
 // enrich dance (job, "analyzing" status, state save/broadcast) when a run would be a pure no-op —
 // e.g. re-synthesis after marking an event/finding false-positive doesn't touch IOCs, so every
 // enabled provider has already seen them.
 export function hasEnrichableWork(iocs: readonly IOC[], providers: readonly EnrichmentProvider[]): boolean {
-  return iocs.some((ioc) => {
-    const kind = iocKind(ioc.type);
-    if (!kind) return false;
-    const checked = new Set(ioc.enrichedBy ?? []);
-    return providers.some((p) => p.supports(kind) && !checked.has(p.name));
-  });
+  return iocs.some((ioc) => needsEnrichment(ioc, providers));
+}
+
+// The COUNT behind hasEnrichableWork: how many IOCs a run would actually query right now. The
+// next-action coach labels its card with it ("Enrich 7 IOCs"), so it has to be the engine's own
+// candidate filter and not a lookalike — counting "IOCs with no enrichments yet" instead advertises
+// runs that would query nothing (an unsupported IOC type, or no providers enabled at all), and a
+// count that never reaches zero also never lets the case reach its "ready to report" state.
+export function countEnrichableWork(iocs: readonly IOC[], providers: readonly EnrichmentProvider[]): number {
+  return iocs.reduce((n, ioc) => n + (needsEnrichment(ioc, providers) ? 1 : 0), 0);
 }
 
 export async function enrichIocs(
