@@ -82,7 +82,20 @@ export async function pushFindingToServiceNow(
     subcategory: input.subcategory,
   };
 
+  // Re-push UPDATES the incident we opened for this finding (by remembered sys_id) instead of
+  // opening a duplicate — the same contract as the ClickUp playbook push.
+  if (previous?.id) {
+    const ref = await client.updateIncident(previous.id, body);
+    const incident: ServiceNowIncidentRef = {
+      id: ref.id || previous.id,
+      number: ref.number || previous.number,
+      url: ref.url ?? previous.url,
+    };
+    await store.save(input.caseId, { ...existing.incidentRefs, [input.finding.id]: incident });
+    return { created: false, updated: true, incident, warnings };
+  }
+
   const incident = await client.createIncident(body);
-  await store.save(input.caseId, { ...existing, [input.finding.id]: incident });
-  return { created: !previous, updated: !!previous, incident, warnings };
+  await store.save(input.caseId, { ...existing.incidentRefs, [input.finding.id]: incident });
+  return { created: true, updated: false, incident, warnings };
 }

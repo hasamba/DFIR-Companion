@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { pushFindingToServiceNow, type ServiceNowClientLike, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
 
@@ -26,18 +26,23 @@ function inMemoryStore(initial: { incidentRefs: Record<string, { id: string; num
   };
 }
 
-function mockClient(): { client: ServiceNowClientLike; calls: unknown[] } {
+function mockClient(): { client: ServiceNowClientLike; calls: unknown[]; created: number; updated: string[] } {
   const calls: unknown[] = [];
-  return {
-    client: {
-      me: async () => { calls.push("me"); return { userId: "admin", userName: "admin" }; },
-      createIncident: async (body) => {
-        calls.push(body);
-        return { id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" };
-      },
+  const tally = { created: 0, updated: [] as string[] };
+  const client: ServiceNowClientLike = {
+    me: async () => { calls.push("me"); return { userId: "admin", userName: "admin" }; },
+    createIncident: async (body) => {
+      calls.push(body);
+      tally.created += 1;
+      return { id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" };
     },
-    calls,
+    updateIncident: async (sysId, body) => {
+      calls.push(body);
+      tally.updated.push(sysId);
+      return { id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` };
+    },
   };
+  return { client, calls, get created() { return tally.created; }, get updated() { return tally.updated; } };
 }
 
 describe("pushFindingToServiceNow", () => {
@@ -69,5 +74,21 @@ describe("pushFindingToServiceNow", () => {
     expect(body.caller).toBe("analyst@example.com");
     expect(body.category).toBe("Security");
     expect(body.subcategory).toBe("Incident Response");
+  });
+
+  it("pushing the same finding twice opens one incident, then updates it", async () => {
+    const mock = mockClient();
+    const store = inMemoryStore();
+    const input = { caseId: "case-b", finding: makeFinding() };
+
+    const first = await pushFindingToServiceNow(mock.client, store, input);
+    const second = await pushFindingToServiceNow(mock.client, store, input);
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.updated).toBe(true);
+    expect(mock.created).toBe(1);            // no duplicate incident
+    expect(mock.updated).toEqual(["sys-100"]);
+    expect(second.incident.number).toBe("INC0012345");
   });
 });

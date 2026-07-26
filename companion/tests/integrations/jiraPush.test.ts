@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { pushFindingToJira, type JiraClientLike, type JiraExportStoreLike } from "../../src/integrations/jira/jiraPush.js";
 
@@ -26,18 +26,24 @@ function inMemoryStore(initial: { issueRefs: Record<string, { id: string; key: s
   };
 }
 
-function mockClient(): { client: JiraClientLike; calls: unknown[] } {
+function mockClient(): { client: JiraClientLike; calls: unknown[]; created: number; updated: string[] } {
   const calls: unknown[] = [];
-  return {
-    client: {
-      me: async () => { calls.push("me"); return { id: "user-1", displayName: "Analyst" }; },
-      createIssue: async (body) => {
-        calls.push(body);
-        return { id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" };
-      },
+  const tally = { created: 0, updated: [] as string[] };
+  const client: JiraClientLike = {
+    me: async () => { calls.push("me"); return { id: "user-1", displayName: "Analyst" }; },
+    createIssue: async (body) => {
+      calls.push(body);
+      tally.created += 1;
+      return { id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" };
     },
-    calls,
+    // Jira answers a real edit with 204, so the mock mirrors that: key echoed back, no id/url.
+    updateIssue: async (idOrKey, body) => {
+      calls.push(body);
+      tally.updated.push(idOrKey);
+      return { id: "", key: idOrKey, url: undefined };
+    },
   };
+  return { client, calls, get created() { return tally.created; }, get updated() { return tally.updated; } };
 }
 
 describe("pushFindingToJira", () => {
@@ -56,13 +62,32 @@ describe("pushFindingToJira", () => {
     expect(body.description).toContain("Encoded PowerShell");
   });
 
-  it("marks updated=true when a previous issue exists", async () => {
-    const { client, calls } = mockClient();
-    const store = inMemoryStore({ issueRefs: { "finding-1": { id: "x", key: "IR-1" } }, lastExportedAt: "" });
-    const result = await pushFindingToJira(client, store, { caseId: "case-a", projectKey: "IR", finding: makeFinding() });
+  it("UPDATES the remembered issue on re-push instead of creating a duplicate", async () => {
+    const mock = mockClient();
+    const store = inMemoryStore({ issueRefs: { "finding-1": { id: "x", key: "IR-1", url: "https://jira.example.com/browse/IR-1" } }, lastExportedAt: "" });
+    const result = await pushFindingToJira(mock.client, store, { caseId: "case-a", projectKey: "IR", finding: makeFinding() });
 
     expect(result.created).toBe(false);
     expect(result.updated).toBe(true);
+    expect(mock.created).toBe(0);          // no duplicate issue
+    expect(mock.updated).toEqual(["IR-1"]); // edited the one we already opened
+    // The 204 edit response must not blank out the id/url the create response gave us.
+    expect(result.issue).toEqual({ id: "x", key: "IR-1", url: "https://jira.example.com/browse/IR-1" });
+  });
+
+  it("pushing the same finding twice creates once, then updates", async () => {
+    const mock = mockClient();
+    const store = inMemoryStore();
+    const input = { caseId: "case-a", projectKey: "IR", finding: makeFinding() };
+
+    const first = await pushFindingToJira(mock.client, store, input);
+    const second = await pushFindingToJira(mock.client, store, input);
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.updated).toBe(true);
+    expect(mock.created).toBe(1);
+    expect(mock.updated).toEqual(["IR-42"]);
   });
 
   it("remembers the created issue in the store", async () => {

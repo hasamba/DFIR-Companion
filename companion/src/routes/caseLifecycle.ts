@@ -776,6 +776,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     });
   });
 
+  // Push one finding as a Jira issue. Body { findingId, projectKey?, issueType? } — the project
+  // falls back to DFIR_JIRA_PROJECT_KEY. Re-pushing the same finding UPDATES the issue it created
+  // (key remembered in `state/jira-export.json`) instead of filing a duplicate.
   app.post("/cases/:id/push/jira", async (req: Request, res: Response) => {
     if (!options.jiraClient) return res.status(501).json({ error: "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN)" });
     if (!options.jiraExportStore) return res.status(501).json({ error: "jira export store not configured" });
@@ -818,6 +821,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     });
   });
 
+  // Push one finding as a ServiceNow incident. Body { findingId, caller?, category?, subcategory? }
+  // — each falls back to its DFIR_SERVICENOW_* default. Re-pushing the same finding UPDATES the
+  // incident it opened (sys_id remembered in `state/servicenow-export.json`), never a duplicate.
   app.post("/cases/:id/push/servicenow", async (req: Request, res: Response) => {
     if (!options.servicenowClient) return res.status(501).json({ error: "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD)" });
     if (!options.servicenowExportStore) return res.status(501).json({ error: "servicenow export store not configured" });
@@ -846,6 +852,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(502).json({ error: (err as Error).message });
     }
   });
+
   // Manually add a forensic event the AI didn't catch. Appended to the timeline (kept sorted by
   // event time), then re-synthesized so it weaves into findings/MITRE (a high-severity manual
   // event earns a finding via the backfill). Synthesis preserves the timeline, so it survives.

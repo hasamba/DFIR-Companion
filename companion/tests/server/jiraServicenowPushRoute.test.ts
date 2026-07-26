@@ -28,14 +28,16 @@ const sampleFinding: Finding = {
 function mockJiraClient(): JiraClientLike {
   return {
     me: async () => ({ id: "u1", displayName: "Analyst" }),
-    createIssue: async (body) => ({ id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" }),
+    createIssue: async () => ({ id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" }),
+    updateIssue: async (idOrKey) => ({ id: "", key: idOrKey, url: undefined }),
   };
 }
 
 function mockServiceNowClient(): ServiceNowClientLike {
   return {
     me: async () => ({ userId: "admin", userName: "admin" }),
-    createIncident: async (body) => ({ id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" }),
+    createIncident: async () => ({ id: "sys-100", number: "INC0012345", url: "https://snow.example.com/incident.do?sys_id=sys-100" }),
+    updateIncident: async (sysId) => ({ id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` }),
   };
 }
 

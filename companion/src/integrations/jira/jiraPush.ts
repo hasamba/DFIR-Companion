@@ -72,12 +72,22 @@ export async function pushFindingToJira(
     labels: ["dfir-companion", input.caseId],
   };
 
-  if (previous?.id) {
-    // Jira updates are optional in this minimal client; if not supported, fall through to create.
-    // For now we create a new issue only when no previous id exists.
+  // Re-push UPDATES the issue we created for this finding (by remembered key) instead of
+  // duplicating it — the same contract as the ClickUp playbook push.
+  const target = previous ? previous.key || previous.id : "";
+  if (previous && target) {
+    const ref = await client.updateIssue(target, body);
+    // The edit endpoint answers 204, so keep whatever the create response told us.
+    const issue: JiraIssueRef = {
+      id: ref.id || previous.id,
+      key: ref.key || previous.key,
+      url: ref.url ?? previous.url,
+    };
+    await store.save(input.caseId, { ...existing.issueRefs, [input.finding.id]: issue });
+    return { created: false, updated: true, issue, warnings };
   }
 
   const issue = await client.createIssue(body);
-  await store.save(input.caseId, { ...existing, [input.finding.id]: issue });
-  return { created: !previous, updated: !!previous, issue, warnings };
+  await store.save(input.caseId, { ...existing.issueRefs, [input.finding.id]: issue });
+  return { created: true, updated: false, issue, warnings };
 }

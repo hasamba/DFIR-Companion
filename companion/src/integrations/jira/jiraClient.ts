@@ -30,6 +30,7 @@ export interface JiraIssueRef { id: string; key: string; url?: string }
 export interface JiraClientLike {
   me(): Promise<{ id?: string; displayName?: string }>;
   createIssue(body: JiraIssueBody): Promise<JiraIssueRef>;
+  updateIssue(idOrKey: string, body: JiraIssueBody): Promise<JiraIssueRef>;
 }
 
 export class JiraApiError extends Error {
@@ -100,18 +101,30 @@ export class JiraClient {
     return { id: data.accountId, displayName: data.displayName };
   }
 
-  async createIssue(body: JiraIssueBody): Promise<JiraIssueRef> {
-    const payload = {
-      fields: {
+  // Shared field map. `project` and `issuetype` are creation-only: Jira rejects a project move on
+  // update, and an issue-type change needs a separate transition on many workflows.
+  private issueFields(body: JiraIssueBody, forUpdate: boolean): Record<string, unknown> {
+    return {
+      ...(forUpdate ? {} : {
         project: { key: body.projectKey },
-        summary: body.summary,
         issuetype: { name: body.issueType || this.opts.issueType || "Task" },
-        ...(body.description ? { description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: body.description }] }] } } : {}),
-        ...(body.priority ? { priority: { name: body.priority } } : {}),
-        ...(body.labels?.length ? { labels: body.labels } : {}),
-      },
+      }),
+      summary: body.summary,
+      ...(body.description ? { description: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: body.description }] }] } } : {}),
+      ...(body.priority ? { priority: { name: body.priority } } : {}),
+      ...(body.labels?.length ? { labels: body.labels } : {}),
     };
-    const data = await this.request<{ id?: string; key?: string; self?: string }>("POST", "/rest/api/3/issue", payload);
+  }
+
+  async createIssue(body: JiraIssueBody): Promise<JiraIssueRef> {
+    const data = await this.request<{ id?: string; key?: string; self?: string }>("POST", "/rest/api/3/issue", { fields: this.issueFields(body, false) });
     return { id: String(data.id ?? ""), key: String(data.key ?? ""), url: typeof data.self === "string" ? data.self : undefined };
+  }
+
+  // Jira answers a successful edit with 204 No Content, so the ref is rebuilt from what we already
+  // knew (the caller merges it over the remembered ref to keep the id/url).
+  async updateIssue(idOrKey: string, body: JiraIssueBody): Promise<JiraIssueRef> {
+    const data = await this.request<{ id?: string; key?: string; self?: string }>("PUT", `/rest/api/3/issue/${encodeURIComponent(idOrKey)}`, { fields: this.issueFields(body, true) });
+    return { id: String(data.id ?? ""), key: String(data.key ?? idOrKey), url: typeof data.self === "string" ? data.self : undefined };
   }
 }

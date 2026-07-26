@@ -28,6 +28,7 @@ export interface ServiceNowIncidentRef { id: string; number: string; url?: strin
 export interface ServiceNowClientLike {
   me(): Promise<{ userId?: string; userName?: string }>;
   createIncident(body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef>;
+  updateIncident(sysId: string, body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef>;
 }
 
 export class ServiceNowApiError extends Error {
@@ -104,8 +105,8 @@ export class ServiceNowClient {
     return { userId: first?.sys_id, userName: first?.user_name };
   }
 
-  async createIncident(body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef> {
-    const payload: Record<string, unknown> = {
+  private incidentPayload(body: ServiceNowIncidentBody): Record<string, unknown> {
+    return {
       short_description: body.shortDescription,
       ...(body.description ? { description: body.description } : {}),
       ...(body.urgency !== undefined ? { urgency: body.urgency } : {}),
@@ -114,12 +115,24 @@ export class ServiceNowClient {
       ...(body.category ? { category: body.category } : {}),
       ...(body.subcategory ? { subcategory: body.subcategory } : {}),
     };
-    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>("POST", `/api/now/table/${encodeURIComponent(this.table)}`, payload);
-    const result = data.result ?? {};
+  }
+
+  private incidentRef(result: { sys_id?: string; number?: string }, fallbackSysId = ""): ServiceNowIncidentRef {
+    const sysId = String(result.sys_id ?? fallbackSysId);
     return {
-      id: String(result.sys_id ?? ""),
+      id: sysId,
       number: String(result.number ?? ""),
-      url: `${this.base}/${this.table}.do?sys_id=${result.sys_id ?? ""}`,
+      url: `${this.base}/${this.table}.do?sys_id=${sysId}`,
     };
+  }
+
+  async createIncident(body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef> {
+    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>("POST", `/api/now/table/${encodeURIComponent(this.table)}`, this.incidentPayload(body));
+    return this.incidentRef(data.result ?? {});
+  }
+
+  async updateIncident(sysId: string, body: ServiceNowIncidentBody): Promise<ServiceNowIncidentRef> {
+    const data = await this.request<{ result?: { sys_id?: string; number?: string } }>("PATCH", `/api/now/table/${encodeURIComponent(this.table)}/${encodeURIComponent(sysId)}`, this.incidentPayload(body));
+    return this.incidentRef(data.result ?? {}, sysId);
   }
 }
