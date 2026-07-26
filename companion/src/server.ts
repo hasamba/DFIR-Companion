@@ -150,6 +150,7 @@ import {
   parseAllowedHosts,
   parseAllowedHostSuffixes,
 } from "./http/originGuard.js";
+import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
@@ -690,6 +691,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     allowedHosts: options.allowedHosts,
     allowedHostSuffixes: options.allowedHostSuffixes,
   }));
+
+  // Content-Security-Policy on every response. Deliberately does NOT constrain script/style — the
+  // dashboard's ~80 inline handlers and ~1157 style attributes have to be converted first, and a
+  // policy carrying 'unsafe-inline' would block nothing anyway. What this DOES buy while inline
+  // script is still allowed is egress: connect-src/img-src pin network access to this origin, so an
+  // injected script (see #281) cannot beacon case data or API keys out. See http/securityHeaders.ts.
+  app.use(createSecurityHeaders());
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
