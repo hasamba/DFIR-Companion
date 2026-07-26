@@ -16,8 +16,12 @@ const ALL_CATEGORIES: Record<AnonCategory, boolean> = {
 // The export always uses MAXIMUM redaction, independent of the per-case AI-anonymization toggle:
 // every entity category is tokenized and secrets are one-way redacted. The package is meant to
 // leave the analyst's machine, so it must never depend on the wire-anonymization setting being on.
+//
+// maskPublicIps is FALSE here on purpose. This package is shared with a third party to describe
+// an incident; tokenizing the adversary's infrastructure would make it unactionable. The export
+// strips the VICTIM's identity, not the attacker's.
 export function redactedExportPolicy(): AnonPolicy {
-  return { enabled: true, categories: { ...ALL_CATEGORIES }, redactSecrets: true };
+  return { enabled: true, categories: { ...ALL_CATEGORIES }, redactSecrets: true, maskPublicIps: false };
 }
 
 export interface RedactedExportOptions {

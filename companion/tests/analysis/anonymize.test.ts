@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, isMaskableIpv4, isAnonToken, ALL_TOKEN_CATEGORIES, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -7,6 +7,7 @@ function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = fa
   return {
     enabled: true,
     redactSecrets,
+    maskPublicIps: true,
     categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, CMD: false, REG: false, ...over },
   };
 }
@@ -31,14 +32,6 @@ describe("isInternalIp", () => {
 });
 
 describe("anonymizer — internal IPs", () => {
-  it("tokenizes internal IPs and preserves public ones; restore reverses", () => {
-    const a = createAnonymizer(policy({ IP: true }), NONE);
-    const out = a.apply("victim 10.0.0.5 beaconed to 45.61.136.10");
-    expect(out).not.toContain("10.0.0.5");
-    expect(out).toContain("45.61.136.10");
-    expect(out).toMatch(/ANON_IP_1/);
-    expect(a.restore(out)).toBe("victim 10.0.0.5 beaconed to 45.61.136.10");
-  });
   it("gives the same token to repeated values (within-call correlation)", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const out = a.apply("10.0.0.5 -> 10.0.0.9 ; 10.0.0.5 again");
@@ -61,6 +54,75 @@ describe("anonymizer — internal IPs", () => {
   it("apply is a no-op when the category is disabled", () => {
     const a = createAnonymizer(policy({ IP: false }), NONE);
     expect(a.apply("10.0.0.5")).toBe("10.0.0.5");
+  });
+});
+
+describe("anonymizer — public IPs", () => {
+  it("tokenizes public IPs as EXTIP and internal ones as IP; restore reverses both", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("victim 10.0.0.5 beaconed to 45.61.136.10");
+    expect(out).not.toContain("10.0.0.5");
+    expect(out).not.toContain("45.61.136.10");
+    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toMatch(/ANON_EXTIP_1/);
+    expect(a.restore(out)).toBe("victim 10.0.0.5 beaconed to 45.61.136.10");
+  });
+
+  it("preserves public IPs when maskPublicIps is off", () => {
+    const a = createAnonymizer({ ...policy({ IP: true }), maskPublicIps: false }, NONE);
+    const out = a.apply("victim 10.0.0.5 beaconed to 45.61.136.10");
+    expect(out).toContain("45.61.136.10");
+    expect(out).toMatch(/ANON_IP_1/);
+  });
+
+  it("tokenizes public IPv6 as EXTIP", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("callback to 2001:db8::1");
+    expect(out).not.toContain("2001:db8::1");
+    expect(out).toMatch(/ANON_EXTIP_1/);
+    expect(a.restore(out)).toBe("callback to 2001:db8::1");
+  });
+
+  it("leaves octet-invalid and reserved dotted quads alone", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("build 999.1.1.1 and group 224.0.0.251 and zero 0.1.2.3");
+    expect(out).toContain("999.1.1.1");
+    expect(out).toContain("224.0.0.251");
+    expect(out).toContain("0.1.2.3");
+  });
+});
+
+describe("isMaskableIpv4", () => {
+  it("accepts routable public addresses", () => {
+    expect(isMaskableIpv4("45.61.136.10")).toBe(true);
+    expect(isMaskableIpv4("8.8.8.8")).toBe(true);
+  });
+  it("rejects octets above 255, 0/8, multicast and reserved", () => {
+    expect(isMaskableIpv4("999.1.1.1")).toBe(false);
+    expect(isMaskableIpv4("1.2.3.999")).toBe(false);
+    expect(isMaskableIpv4("0.1.2.3")).toBe(false);
+    expect(isMaskableIpv4("224.0.0.251")).toBe(false);
+    expect(isMaskableIpv4("255.255.255.255")).toBe(false);
+  });
+});
+
+describe("token category coverage", () => {
+  it("mints and restores a token for every declared category", () => {
+    for (const category of ALL_TOKEN_CATEGORIES) {
+      const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value: "marker", category }] };
+      const a = createAnonymizer(policy(), known);
+      const out = a.apply("left marker right");
+      expect(out, `category ${category} was not tokenized`).toContain(`ANON_${category}_1`);
+      expect(a.restore(out), `category ${category} did not restore`).toBe("left marker right");
+    }
+  });
+
+  it("recognises every category token via isAnonToken", () => {
+    for (const category of ALL_TOKEN_CATEGORIES) {
+      expect(isAnonToken(`ANON_${category}_7`), `category ${category}`).toBe(true);
+    }
+    expect(isAnonToken("ANON_NOTACATEGORY_1")).toBe(false);
+    expect(isAnonToken("hostname-01")).toBe(false);
   });
 });
 
@@ -449,12 +511,6 @@ describe("anonymizer — IPv6 internal IPs", () => {
     expect(out).toMatch(/ANON_IP_1/);
   });
 
-  it("PRESERVES public IPv6 addresses", () => {
-    const a = createAnonymizer(policy({ IP: true }), NONE);
-    const pub = "2001:4860:4860::8888";
-    expect(a.apply(`DNS ${pub}`)).toContain(pub);
-  });
-
   it("restores IPv6 tokens back to real values", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const orig = "from fd00:db8::1";
@@ -472,11 +528,6 @@ describe("isInternalIpv6", () => {
     expect(isInternalIpv6("fea0::1")).toBe(true);
     expect(isInternalIpv6("::ffff:127.0.0.1")).toBe(true);
     expect(isInternalIpv6("::ffff:10.0.0.1")).toBe(true);
-  });
-
-  it("preserves public IPv6", () => {
-    expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
-    expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);
   });
 
   // A naive IPv4-mapped check that only recognizes the dotted-decimal spelling

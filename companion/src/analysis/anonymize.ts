@@ -10,9 +10,31 @@ import { embeddedIpv4 } from "./iocValue.js";
 
 export type AnonCategory = "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG";
 
-// Token categories include OTHER (free-form analyst term). AnonCategory stays the 6 pattern
-// categories that drive the per-case `categories` toggle map; OTHER is token-only.
-export type AnonTokenCategory = AnonCategory | "OTHER";
+// OTHER and EXTIP are token-only: they never appear in the per-case `categories` toggle map.
+// EXTIP is produced by the IP detector when maskPublicIps is on, so a public address stays
+// distinguishable from an internal one in the token the model reads.
+export type AnonTokenCategory = AnonCategory | "OTHER" | "EXTIP";
+
+// The single source of truth for every category assign() can mint. Declaring it as a
+// Record<AnonTokenCategory, true> makes TypeScript reject any new union member that is not
+// listed here — which is what stops a new category from silently failing to restore.
+const TOKEN_CATEGORY_KEYS: Record<AnonTokenCategory, true> = {
+  IP: true, EXTIP: true, EMAIL: true, USER: true, HOST: true,
+  DOMAIN: true, PATH: true, CMD: true, REG: true, OTHER: true,
+};
+
+export const ALL_TOKEN_CATEGORIES = Object.keys(TOKEN_CATEGORY_KEYS) as readonly AnonTokenCategory[];
+
+// Longest-first so no category can be shadowed by another that is a prefix of it.
+const TOKEN_ALTERNATION = [...ALL_TOKEN_CATEGORIES].sort((a, b) => b.length - a.length).join("|");
+const TOKEN_RE = new RegExp(`ANON_(?:${TOKEN_ALTERNATION})_\\d+`, "gi");
+
+/** True when the whole string is a single anonymization token. Used to drop Presidio findings
+ *  that fired on a token rather than on real text. Builds a fresh non-global regex per call so
+ *  it never shares lastIndex state with TOKEN_RE. */
+export function isAnonToken(s: string): boolean {
+  return new RegExp(`^ANON_(?:${TOKEN_ALTERNATION})_\\d+$`, "i").test(s.trim());
+}
 
 export interface CustomEntity {
   value: string;
@@ -23,6 +45,10 @@ export interface AnonPolicy {
   enabled: boolean;
   categories: Record<AnonCategory, boolean>;
   redactSecrets: boolean;
+  // When true, PUBLIC addresses are tokenized as ANON_EXTIP_n as well. True on the AI wire
+  // (nothing about an address is asked of the model, and restore() puts it back). False for
+  // the redacted export, where the recipient needs adversary infrastructure to stay actionable.
+  maskPublicIps: boolean;
 }
 
 // Known victim entities derived from the case, used for high-precision exact-match tokenizing
@@ -50,14 +76,15 @@ export interface Anonymizer {
 }
 
 export const SECRET_PLACEHOLDER = "[REDACTED_SECRET]";
-const TOKEN_RE = /ANON_(?:IP|EMAIL|USER|HOST|DOMAIN|PATH|CMD|REG|OTHER)_\d+/gi;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize. Public IPs are
-// PRESERVED — a public IP is frequently adversary C2 we must keep (and enrich), not hide.
+// RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize as ANON_IP_n.
+// A public IP is frequently adversary C2 — classification here is unchanged by maskPublicIps;
+// it's the CALLER (anonIps in createAnonymizer) that decides whether a non-internal address is
+// tokenized as ANON_EXTIP_n (AI wire) or left visible (redacted export), never this function.
 export function isInternalIp(ip: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
   if (!m) return false;
@@ -71,9 +98,25 @@ export function isInternalIp(ip: string): boolean {
   return false;
 }
 
+// IPV4_RE is a DETECTOR, not a validator — \d{1,3} happily matches 999. Before treating a
+// non-internal match as an address worth masking, require four in-range octets and exclude
+// ranges that are never adversary infrastructure. This also spares the most common collision:
+// four-part software version strings such as "1.0.0.0" still match the regex, so anything we
+// can rule out structurally is worth ruling out.
+export function isMaskableIpv4(ip: string): boolean {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  if (nums[0] === 0) return false;     // 0.0.0.0/8 "this network"
+  if (nums[0] >= 224) return false;    // 224/4 multicast, 240/4 reserved, 255.255.255.255 broadcast
+  return true;
+}
+
 // IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped/compatible
-// (::ffff:x.x.x.x or its hex-canonicalized form). Public IPv6 addresses are PRESERVED (same
-// rationale as IPv4). The mapped/compatible check delegates extraction to iocValue.ts's
+// (::ffff:x.x.x.x or its hex-canonicalized form). As with isInternalIp(), classification here is
+// unchanged by maskPublicIps — the caller decides whether a non-internal address becomes
+// ANON_EXTIP_n or stays visible. The mapped/compatible check delegates extraction to iocValue.ts's
 // embeddedIpv4() rather than re-deriving it here: a naive dotted-decimal-only regex misses the
 // hex-canonical spelling (e.g. "::ffff:127.0.0.1" as "::ffff:7f00:1") — a check that only
 // recognizes the dotted form would let a victim's internal IPv6 address in that spelling reach
@@ -91,7 +134,12 @@ export function isInternalIpv6(ip: string): boolean {
 
 // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
 // Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
-const IPV6_RE = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}/gi;
+// Trailing \b (mirroring IPV4_RE's own boundary on both ends) matters now that a non-internal
+// match can be REPLACED rather than returned unchanged: without it, this alternation's bare
+// "::" + trailing-hex-group branch can run right into the start of an already-minted ANON_IP_n
+// token left behind by the IPV4 pass (e.g. "::ffff:ANON_IP_1" — "ffff:A" reads as valid hex),
+// silently corrupting that token. \b after the match forbids stopping mid-word like that.
+const IPV6_RE = /(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3})\b/gi;
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
@@ -227,9 +275,16 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     return out;
   }
-  function anonInternalIps(t: string): string {
-    let out = t.replace(IPV4_RE, (ip) => (isInternalIp(ip) ? assign("IP", ip) : ip));
-    out = out.replace(IPV6_RE, (ip) => (isInternalIpv6(ip) ? assign("IP", ip) : ip));
+  function anonIps(t: string): string {
+    let out = t.replace(IPV4_RE, (ip) => {
+      if (isInternalIp(ip)) return assign("IP", ip);
+      if (!policy.maskPublicIps || !isMaskableIpv4(ip)) return ip;
+      return assign("EXTIP", ip);
+    });
+    out = out.replace(IPV6_RE, (ip) => {
+      if (isInternalIpv6(ip)) return assign("IP", ip);
+      return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
+    });
     return out;
   }
 
@@ -255,7 +310,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.REG) t = anonSids(t);
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
-    if (policy.categories.IP) t = anonInternalIps(t);
+    if (policy.categories.IP) t = anonIps(t);
     return t;
   }
 

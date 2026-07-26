@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
-import { createAnonymizer, deriveKnownEntities, type CustomEntity } from "./anonymize.js";
+import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type CustomEntity } from "./anonymize.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
@@ -1758,6 +1758,7 @@ export class AnalysisPipeline {
       const count = images.length;
       let totalRedactions = 0;
       let redactedImages = 0;
+      let publicIpsBoxed = 0;
       images = await Promise.all(
         images.map(async (img, i) => {
           try {
@@ -1767,6 +1768,9 @@ export class AnalysisPipeline {
             if (res.changed) {
               redactedImages++;
               totalRedactions += res.redactions.length;
+              publicIpsBoxed += res.redactions.filter(
+                (w) => isMaskableIpv4(w.text.trim()) && !isInternalIp(w.text.trim()),
+              ).length;
               if (dumpDir) await dumpRedactedImage(dumpDir, caseId, i, img.mimeType, res.buffer);
             }
             const matched = res.redactions.map((w) => w.text).join(", ");
@@ -1790,6 +1794,13 @@ export class AnalysisPipeline {
           `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
         { caseId },
       );
+      if (publicIpsBoxed > 0) {
+        this.log.warn(
+          `[OCR] ${publicIpsBoxed} public IP(s) were blacked out of the screenshot(s). Image ` +
+            `redaction is one-way, so these will NOT be extracted as IOCs from this capture.`,
+          { caseId },
+        );
+      }
       // Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled
       // by the store). Best-effort — a write failure must not fail the analysis.
       if (this.opts.discoveredStore && discoveredFromOcr.length > 0) {

@@ -24,11 +24,12 @@ function defaultControl(): AnonControl {
 // Resolve a stored control (or null) into the policy the anonymizer consumes. A missing control
 // (store not wired) → disabled, so nothing is tokenized unless explicitly configured.
 export function toAnonPolicy(control: AnonControl | null): AnonPolicy {
-  if (!control) return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true };
+  if (!control) return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true, maskPublicIps: true };
   return {
     enabled: control.enabled,
     categories: { ...ALL_ON, ...control.categories },
     redactSecrets: control.redactSecrets !== false,
+    maskPublicIps: true,
   };
 }
 

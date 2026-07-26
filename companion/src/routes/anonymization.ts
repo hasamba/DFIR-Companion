@@ -103,7 +103,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const custom = await customEntities.load(req.params.id);
       const disc = await discoveredEntities.load(req.params.id);
       const suppressed = new Set(disc.suppressed);
-      const groups: Record<AnonTokenCategory, string[]> = { IP: [], EMAIL: [], USER: [], HOST: [], DOMAIN: [], PATH: [], CMD: [], REG: [], OTHER: [] };
+      const groups: Record<AnonTokenCategory, string[]> = { IP: [], EXTIP: [], EMAIL: [], USER: [], HOST: [], DOMAIN: [], PATH: [], CMD: [], REG: [], OTHER: [] };
       if (options.stateStore) {
         const d = deriveKnownEntities(await options.stateStore.load(req.params.id));
         groups.HOST.push(...d.hosts);
