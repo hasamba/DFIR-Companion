@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId } from "../storage/caseStore.js";
+import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { milestoneEvent } from "../analysis/notifications.js";
@@ -1128,10 +1129,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     res.redirect("/dashboard");
   });
 
-  // Serve the dashboard.
+  // Serve the dashboard. withNonce stamps this response's CSP nonce into the inline <script>
+  // blocks — without it they carry a placeholder the browser won't match, and none of them run.
   app.get("/dashboard", async (_req, res) => {
     const html = await readPublicAsset("dashboard.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 
   // Mobile companion (#59): a read-only, phone-optimized view (timeline / findings / IOCs / status)
@@ -1140,7 +1142,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // public/; the SW is served at root so its default control scope covers /mobile.
   app.get("/mobile", async (_req, res) => {
     const html = await readPublicAsset("mobile.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 
   app.get("/manifest.webmanifest", async (_req, res) => {
