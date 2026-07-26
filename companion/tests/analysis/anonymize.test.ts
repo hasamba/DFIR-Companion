@@ -393,6 +393,31 @@ describe("anonymizer — custom entities", () => {
     const a = createAnonymizer(policy({}), NONE);
     expect(a.apply("nothing here")).toBe("nothing here");
   });
+
+  it("never tokenizes a persisted EXTIP custom entity when maskPublicIps is off (redacted export)", () => {
+    // A public IP discovered earlier (e.g. from a screenshot) and persisted into known.custom as
+    // category EXTIP must NOT be exact-match-tokenized by the redacted export policy, which always
+    // sets maskPublicIps: false so adversary infrastructure stays visible/actionable to the
+    // recipient. anonCustom() runs unconditionally in apply(), before any category gate, so this
+    // guard has to live there — filtering it only at a caller (e.g. the export builder) would miss
+    // every other caller that reuses the same known.custom list.
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "45.61.136.10", category: "EXTIP" },
+    ]};
+    const a = createAnonymizer({ ...policy({ IP: true }), maskPublicIps: false }, known);
+    const out = a.apply("C2 was 45.61.136.10 and 1.1.1.1");
+    expect(out).toBe("C2 was 45.61.136.10 and 1.1.1.1");
+  });
+
+  it("still tokenizes a persisted EXTIP custom entity when maskPublicIps is on (AI wire)", () => {
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "45.61.136.10", category: "EXTIP" },
+    ]};
+    const a = createAnonymizer(policy({ IP: true }), known); // maskPublicIps: true by default
+    const out = a.apply("C2 was 45.61.136.10");
+    expect(out).toBe("C2 was ANON_EXTIP_1");
+    expect(a.restore(out)).toBe("C2 was 45.61.136.10");
+  });
 });
 
 describe("anonymizer — suppression (analyst removed a wrong entity)", () => {
@@ -498,10 +523,16 @@ describe("anonymizer — IPv6 internal IPs", () => {
   });
 
   it("tokenizes IPv4-mapped IPv6 loopback", () => {
+    // Asserts the FULL output string, not just toContain/toMatch: the embedded dotted quad
+    // "127.0.0.1" must be consumed as part of ONE ipv6-mapped match, not tokenized separately by
+    // IPV4_RE first — that ordering bug used to leave a dangling "::ffff:" for IPV6_RE to (mis)match
+    // on a later pass, corrupting the just-minted token (e.g. "ANON_EXTIP_1:ANON_IP_1" instead of
+    // one clean token). A toContain/toMatch check here would not have caught that regression.
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const out = a.apply("mapped ::ffff:127.0.0.1");
-    expect(out).not.toContain("127.0.0.1");
-    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toBe("mapped ANON_IP_1");
+    expect(a.discoveries()).toEqual([{ value: "::ffff:127.0.0.1", category: "IP" }]);
+    expect(a.restore(out)).toBe("mapped ::ffff:127.0.0.1");
   });
 
   it("tokenizes an IPv4-mapped IPv6 address given in hex-canonical form (not just dotted)", () => {

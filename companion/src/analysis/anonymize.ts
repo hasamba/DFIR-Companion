@@ -134,12 +134,16 @@ export function isInternalIpv6(ip: string): boolean {
 
 // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
 // Handles full (a:b:c:d:e:f:g:h), compressed (::), and IPv4-mapped (::ffff:x.x.x.x).
-// Trailing \b (mirroring IPV4_RE's own boundary on both ends) matters now that a non-internal
-// match can be REPLACED rather than returned unchanged: without it, this alternation's bare
-// "::" + trailing-hex-group branch can run right into the start of an already-minted ANON_IP_n
-// token left behind by the IPV4 pass (e.g. "::ffff:ANON_IP_1" — "ffff:A" reads as valid hex),
-// silently corrupting that token. \b after the match forbids stopping mid-word like that.
-const IPV6_RE = /(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}|::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3})\b/gi;
+//
+// The two "::ffff:…" (IPv4-mapped) branches are FIRST in the alternation on purpose. JS regex
+// alternation is first-match, not longest-match: a generic branch like the bare "::" one further
+// down can match a truncated prefix of a mapped address (e.g. just "::ffff:127" out of
+// "::ffff:127.0.0.1", stopping at the first "." since "." isn't a hex digit) and the engine never
+// backtracks to try the more specific, longer-matching branch below it. Putting the specific
+// dotted/hex-group mapped forms first means they get first refusal at a "::ffff:" prefix, so the
+// WHOLE address is consumed as one match before IPV4_RE (run second, see anonIps below) ever gets
+// a chance to tokenize the embedded dotted quad on its own and leave a dangling "::ffff:" behind.
+const IPV6_RE = /::ffff(?::\d{1,3}){3}|::ffff:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}?|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,5}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,6}|[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,7}|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}/gi;
 
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // DOMAIN\user — guarded so it doesn't match path segments (C:\Users\srv). Mirrors assetGraph.ts.
@@ -276,14 +280,18 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return out;
   }
   function anonIps(t: string): string {
-    let out = t.replace(IPV4_RE, (ip) => {
+    // IPV6_RE runs FIRST: an IPv4-mapped address (::ffff:127.0.0.1) must be consumed and
+    // classified as ONE IPv6 unit before IPV4_RE gets a chance to tokenize the embedded dotted
+    // quad on its own, which would leave a dangling "::ffff:" prefix for IPV6_RE to (mis)match
+    // against on a later pass. See the ::ffff branch-ordering note on IPV6_RE's definition above.
+    let out = t.replace(IPV6_RE, (ip) => {
+      if (isInternalIpv6(ip)) return assign("IP", ip);
+      return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
+    });
+    out = out.replace(IPV4_RE, (ip) => {
       if (isInternalIp(ip)) return assign("IP", ip);
       if (!policy.maskPublicIps || !isMaskableIpv4(ip)) return ip;
       return assign("EXTIP", ip);
-    });
-    out = out.replace(IPV6_RE, (ip) => {
-      if (isInternalIpv6(ip)) return assign("IP", ip);
-      return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });
     return out;
   }
@@ -294,6 +302,12 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     let out = t;
     for (const { value, category } of [...custom].sort((a, b) => b.value.length - a.value.length)) {
       if (!value || value.length < 1) continue;
+      // A public IP the anonymizer minted as EXTIP earlier (e.g. discovered from a screenshot,
+      // then persisted into known.custom) must NOT be re-tokenized here when maskPublicIps is
+      // off — otherwise the redacted export (which always disables it) would exact-match and
+      // hide adversary infrastructure that policy explicitly says to keep visible, even though
+      // anonIps() itself correctly leaves live public-IP text alone.
+      if (category === "EXTIP" && !policy.maskPublicIps) continue;
       out = out.replace(new RegExp(`\\b${escapeRegExp(value)}\\b`, "gi"), (m) => assign(category, m));
     }
     return out;

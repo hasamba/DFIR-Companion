@@ -125,7 +125,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       };
       const auto = {
         hosts: clean(groups.HOST), accounts: clean(groups.USER), internalDomains: clean(groups.DOMAIN),
-        ips: clean(groups.IP), emails: clean(groups.EMAIL), paths: clean(groups.PATH), other: clean(groups.OTHER),
+        ips: clean(groups.IP), extIps: clean(groups.EXTIP), emails: clean(groups.EMAIL),
+        paths: clean(groups.PATH), other: clean(groups.OTHER),
       };
       return res.status(200).json({ auto, custom, suppressed: disc.suppressed });
     } catch (err) {
