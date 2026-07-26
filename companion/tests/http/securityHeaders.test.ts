@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
-import { CSP_POLICY, createSecurityHeaders } from "../../src/http/securityHeaders.js";
+import {
+  CSP_POLICY,
+  CSP_NONCE_PLACEHOLDER,
+  cspWithNonce,
+  withNonce,
+  createSecurityHeaders,
+} from "../../src/http/securityHeaders.js";
 
 // A minimal app carrying the headers plus one route of each shape the real server exposes.
 function withHeaders(): Express {
@@ -9,6 +15,7 @@ function withHeaders(): Express {
   app.use(createSecurityHeaders());
   app.get("/dashboard", (_req, res) => res.type("html").send("<!doctype html><p>hi"));
   app.get("/cases/abc", (_req, res) => res.status(200).json({ id: "abc" }));
+  app.get("/nonce-echo", (_req, res) => res.type("text").send(String(res.locals.cspNonce ?? "")));
   return app;
 }
 
@@ -22,15 +29,70 @@ function directives(header: string): Record<string, string> {
   return out;
 }
 
+/** Pull the nonce back out of a sent CSP header. */
+function nonceOf(header: string): string | undefined {
+  return /'nonce-([A-Za-z0-9+/=_-]+)'/.exec(header)?.[1];
+}
+
 describe("createSecurityHeaders — CSP on every response", () => {
   it("sends a Content-Security-Policy on the dashboard document", async () => {
     const res = await request(withHeaders()).get("/dashboard");
-    expect(res.headers["content-security-policy"]).toBe(CSP_POLICY);
+    expect(res.headers["content-security-policy"]).toContain(CSP_POLICY);
   });
 
   it("sends it on API responses too, so an injected script has no unguarded route to abuse", async () => {
     const res = await request(withHeaders()).get("/cases/abc");
-    expect(res.headers["content-security-policy"]).toBe(CSP_POLICY);
+    expect(res.headers["content-security-policy"]).toContain(CSP_POLICY);
+  });
+
+  it("carries script-src 'self' plus a per-response nonce", async () => {
+    const res = await request(withHeaders()).get("/dashboard");
+    const header = res.headers["content-security-policy"];
+    expect(header).toContain("script-src 'self' 'nonce-");
+    expect(nonceOf(header)).toBeTruthy();
+  });
+
+  // A nonce reused across responses is worth no more than 'unsafe-inline': an attacker who can read
+  // one page can embed last request's nonce in the payload for the next.
+  it("mints a fresh nonce per response", async () => {
+    const app = withHeaders();
+    const a = nonceOf((await request(app).get("/dashboard")).headers["content-security-policy"]);
+    const b = nonceOf((await request(app).get("/dashboard")).headers["content-security-policy"]);
+    expect(a).toBeTruthy();
+    expect(a).not.toBe(b);
+  });
+
+  it("exposes the same nonce to the route via res.locals, so the HTML can match the header", async () => {
+    const res = await request(withHeaders()).get("/nonce-echo");
+    expect(res.text).toBe(nonceOf(res.headers["content-security-policy"]));
+  });
+});
+
+describe("withNonce — stamping the served HTML", () => {
+  it("replaces every placeholder occurrence, not just the first", () => {
+    const html = `<script nonce="${CSP_NONCE_PLACEHOLDER}">a</script>`
+      + `<script nonce="${CSP_NONCE_PLACEHOLDER}">b</script>`;
+    const out = withNonce(html, "abc123");
+    expect(out).toBe('<script nonce="abc123">a</script><script nonce="abc123">b</script>');
+    expect(out).not.toContain(CSP_NONCE_PLACEHOLDER);
+  });
+
+  it("leaves HTML without the placeholder untouched", () => {
+    expect(withNonce("<p>hi</p>", "abc123")).toBe("<p>hi</p>");
+  });
+});
+
+describe("cspWithNonce", () => {
+  it("keeps every base directive and adds script-src", () => {
+    const policy = cspWithNonce("n0nce");
+    for (const directive of CSP_POLICY.split("; ")) expect(policy).toContain(directive);
+    expect(policy).toContain("script-src 'self' 'nonce-n0nce'");
+  });
+
+  // 'unsafe-inline' would silently undo the whole change: browsers ignore it when a nonce is
+  // present in CSP3, but a CSP2-only client would honour it and run injected inline script.
+  it("never emits 'unsafe-inline' for scripts", () => {
+    expect(cspWithNonce("n0nce")).not.toContain("unsafe-inline");
   });
 });
 

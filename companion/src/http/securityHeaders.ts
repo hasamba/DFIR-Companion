@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Request, RequestHandler, Response, NextFunction } from "express";
 
 /**
@@ -53,15 +54,48 @@ export const CSP_POLICY = [
 ].join("; ");
 
 /**
- * Express middleware stamping {@link CSP_POLICY} on every response.
+ * Marker the served HTML carries in place of a real nonce (`<script nonce="__CSP_NONCE__">`).
+ * {@link withNonce} swaps it for the per-response value just before the document is sent.
+ */
+export const CSP_NONCE_PLACEHOLDER = "__CSP_NONCE__";
+
+/**
+ * {@link CSP_POLICY} plus the script rule.
+ *
+ * `'self'` covers the external bundles (/vendor/*, /js/*); the nonce covers the handful of inline
+ * `<script>` blocks the pages still carry. Note what is NOT here: `'unsafe-inline'`. A CSP3 browser
+ * ignores it once a nonce is present, but a CSP2-only client would honour it and happily run
+ * injected inline script — which is the exact thing this is meant to stop.
+ *
+ * Inline event-handler ATTRIBUTES (`onclick=`) are not noncible at all; they are simply forbidden
+ * now. That is why every one of them moved to the `data-act` dispatch table in dashboard.html.
+ */
+export function cspWithNonce(nonce: string): string {
+  return `${CSP_POLICY}; script-src 'self' 'nonce-${nonce}'`;
+}
+
+/** Stamp the per-response nonce into a served document. */
+export function withNonce(html: string, nonce: string): string {
+  return html.split(CSP_NONCE_PLACEHOLDER).join(nonce);
+}
+
+/**
+ * Express middleware stamping the policy on every response.
  *
  * Applied to API responses as well as documents. A JSON body is not a script host, but a uniform
  * header costs nothing and leaves no route whose response an attacker can steer into a document
  * context without the policy attached.
+ *
+ * A fresh nonce is minted per response and published on `res.locals.cspNonce` so the HTML routes can
+ * stamp the matching value into the document. Per-response is the point: a nonce reused across
+ * requests is worth no more than `'unsafe-inline'`, because an attacker who can read one page can
+ * embed that value in the payload they inject into the next.
  */
 export function createSecurityHeaders(): RequestHandler {
   return (_req: Request, res: Response, next: NextFunction): void => {
-    res.setHeader("Content-Security-Policy", CSP_POLICY);
+    const nonce = randomBytes(16).toString("base64");
+    res.locals.cspNonce = nonce;
+    res.setHeader("Content-Security-Policy", cspWithNonce(nonce));
     next();
   };
 }

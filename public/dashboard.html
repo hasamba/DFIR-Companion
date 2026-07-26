@@ -13,7 +13,7 @@
   <script defer src="/vendor/cytoscape/cytoscape-dagre.js"></script>
   <script type="module" src="/js/graph-view.js"></script>
   <script type="module" src="/js/command-palette.js"></script>
-  <script>
+  <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
     (function () {
@@ -2511,7 +2511,7 @@
           </div>
           <div id="cc-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
         </div>
-        <script>
+        <script nonce="__CSP_NONCE__">
         (function () {
           var sel = document.getElementById('env-DFIR_VISION_PROVIDER');
           var card = document.getElementById('claude-code-status');
@@ -2618,7 +2618,7 @@
           </div>
           <div id="cx-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
         </div>
-        <script>
+        <script nonce="__CSP_NONCE__">
         (function () {
           var sel = document.getElementById('env-DFIR_AI_SYNTH_PROVIDER');
           var card = document.getElementById('codex-status');
@@ -3932,7 +3932,7 @@
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
-    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
     <!-- Deep pass (#204). Sits between the conclusions it rewrites and the timeline it reads. -->
@@ -3948,11 +3948,11 @@
       </div>
       <div id="deepPassResult"></div>
     </section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" data-stop-click><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" data-stop-click><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" data-stop-click><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" data-stop-click><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <input id="meTime" type="datetime-local" title="Event time in UTC (defaults to now if blank)" />
           <input id="meDesc" placeholder="what happened" style="flex:1; min-width:220px" />
           <select id="meSev" title="Severity"><option>Critical</option><option>High</option><option selected>Medium</option><option>Low</option><option>Info</option></select>
@@ -4111,7 +4111,7 @@
     <section id="sec-assets" style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph<span class="ev-sub">assets and IOCs derived from findings and the timeline, plus any you add by hand — edges show how they connect</span><button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <span style="color:var(--c-9aa4b2)">Add asset:</span>
           <input id="assetAddName" placeholder="hostname or account" style="min-width:180px" />
           <select id="assetAddType" title="Asset type">
@@ -4123,7 +4123,7 @@
           <button id="addAssetBtn" type="button">Add</button>
           <span id="addAssetMsg" class="manual-msg"></span>
         </form>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <span style="color:var(--c-9aa4b2)">Link asset↔IoC:</span>
           <input id="assetLinkAsset" placeholder="asset id (e.g. host:win-01)" style="min-width:210px" />
           <input id="assetLinkIoc" placeholder="IoC id" style="min-width:160px" />
@@ -4282,27 +4282,27 @@
       <div id="geoStats" class="geo-stats">—</div>
       <div id="geoControls" class="geo-controls" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0;font-size:12px;color:var(--c-9aa4b2)">
         <span class="sev-legend" title="Show/hide markers by severity">
-          <label class="sev-item sev-Critical"><input type="checkbox" class="geo-sev-filter" value="Critical" checked onchange="renderGeoView()"><span class="sev-dot"></span>Critical</label>
-          <label class="sev-item sev-High"><input type="checkbox" class="geo-sev-filter" value="High" checked onchange="renderGeoView()"><span class="sev-dot"></span>High</label>
-          <label class="sev-item sev-Medium"><input type="checkbox" class="geo-sev-filter" value="Medium" checked onchange="renderGeoView()"><span class="sev-dot"></span>Medium</label>
-          <label class="sev-item sev-Low"><input type="checkbox" class="geo-sev-filter" value="Low" checked onchange="renderGeoView()"><span class="sev-dot"></span>Low</label>
-          <label class="sev-item sev-Info"><input type="checkbox" class="geo-sev-filter" value="Info" checked onchange="renderGeoView()"><span class="sev-dot"></span>Info</label>
+          <label class="sev-item sev-Critical"><input type="checkbox" class="geo-sev-filter" value="Critical" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Critical</label>
+          <label class="sev-item sev-High"><input type="checkbox" class="geo-sev-filter" value="High" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>High</label>
+          <label class="sev-item sev-Medium"><input type="checkbox" class="geo-sev-filter" value="Medium" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Medium</label>
+          <label class="sev-item sev-Low"><input type="checkbox" class="geo-sev-filter" value="Low" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Low</label>
+          <label class="sev-item sev-Info"><input type="checkbox" class="geo-sev-filter" value="Info" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Info</label>
         </span>
-        <label>Source <select id="geoSrcFilter" onchange="renderGeoView()" style="font-size:12px"><option value="">all</option></select></label>
-        <label>From <input type="date" id="geoFrom" onchange="renderGeoView()"></label>
-        <label>To <input type="date" id="geoTo" onchange="renderGeoView()"></label>
-        <label><input type="checkbox" id="geoFlows" onchange="renderGeoMarkers()"> Flows</label>
-        <button type="button" onclick="geoDownloadCsv()" title="Download IPs + geolocation as CSV">⬇ CSV</button>
+        <label>Source <select id="geoSrcFilter" data-act="renderGeoView" data-act-on="change" style="font-size:12px"><option value="">all</option></select></label>
+        <label>From <input type="date" id="geoFrom" data-act="renderGeoView" data-act-on="change"></label>
+        <label>To <input type="date" id="geoTo" data-act="renderGeoView" data-act-on="change"></label>
+        <label><input type="checkbox" id="geoFlows" data-act="renderGeoMarkers" data-act-on="change"> Flows</label>
+        <button type="button" data-act="geoDownloadCsv" title="Download IPs + geolocation as CSV">⬇ CSV</button>
       </div>
       <div id="geoMapWrap" style="display:none;position:relative">
         <div id="geoMap" style="height:440px;border-radius:6px;display:none"></div>
-        <button type="button" id="geoShowMapBtn" onclick="ensureGeoMap()" style="padding:8px 14px">🗺 Show map (loads tiles from OpenStreetMap)</button>
+        <button type="button" id="geoShowMapBtn" data-act="ensureGeoMap" style="padding:8px 14px">🗺 Show map (loads tiles from OpenStreetMap)</button>
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><select class="corrob-sel" id="riskIocs" title="Risk lens (#63) — show only IOCs at or above a composite risk tier (verdict + severity + corroboration + KEV). A lens; nothing is deleted." onclick="event.stopPropagation()"><option value="0">🎚 any risk</option><option value="2">◆ medium+</option><option value="3">◆ high+</option><option value="4">◆ critical</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" onclick="event.stopPropagation()"><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" onsubmit="return false" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" data-stop-click><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><select class="corrob-sel" id="riskIocs" title="Risk lens (#63) — show only IOCs at or above a composite risk tier (verdict + severity + corroboration + KEV). A lens; nothing is deleted." data-stop-click><option value="0">🎚 any risk</option><option value="2">◆ medium+</option><option value="3">◆ high+</option><option value="4">◆ critical</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" data-stop-click><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" data-act="noSubmit" data-act-on="submit" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
           <input id="miValue" placeholder="indicator value" style="flex:1; min-width:240px" />
           <input id="miNote" placeholder="note (optional) — host, port, why" title="Context to record alongside the indicator. Keep it OUT of the value: a value like &quot;10.10.20.15 (DC01)&quot; is not a valid IP and strict consumers (MISP) reject it." style="flex:1; min-width:180px" />
@@ -4372,7 +4372,7 @@
       #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
-    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" onclick="generateRemediation(this)" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
+    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" data-act="generateRemediation" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
     <style>
       #sec-d3fend .rem-h{font-size:13px;font-weight:bold;color:var(--c-c79bff);margin:0 0 6px}
       #sec-d3fend .rem-sub{font-size:11px;font-weight:400;color:var(--c-9aa4b2);margin-left:6px}
@@ -4646,11 +4646,11 @@
       <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">The complete record of every event ever imported (from any source — Velociraptor, firewall, VPN, host triage, anything), before scope/legitimate filtering. Filter by time, origin, and tag; star / comment / tag rows for triage; then <em>promote</em> the events that matter up into the analyzed forensic timeline (where the AI synthesizes them). Nothing here is removed — this is a superset view.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-        <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
-        <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
-        <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" onchange="applyTimeframe()"><option value="">— none —</option></select></label>
-        <button class="ev-bulk-btn" onclick="saveTimeframe()" title="Save the current From/To as a reusable named timeframe">Save current range</button>
-        <button class="ev-bulk-btn" onclick="clearSuperTime()" title="Clear the time range (show all)">Clear time</button>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" data-act="superPageReset" data-act-on="change" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" data-act="superPageReset" data-act-on="change" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" data-act="applyTimeframe" data-act-on="change"><option value="">— none —</option></select></label>
+        <button class="ev-bulk-btn" data-act="saveTimeframe" title="Save the current From/To as a reusable named timeframe">Save current range</button>
+        <button class="ev-bulk-btn" data-act="clearSuperTime" title="Clear the time range (show all)">Clear time</button>
         <span id="stSaveMsg" style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"></span>
         <div class="sf-sep"></div>
         <span class="src-legend st-dd" id="stOriginWrap" style="display:none;margin-left:0" title="Show or hide events by origin (the artifact/source that produced them)"><button type="button" class="src-filter-btn" id="stOriginBtn">⛏ Origins</button><div class="src-filter-menu" id="stOriginMenu" hidden></div></span>
@@ -4665,10 +4665,10 @@
       <div id="stAiPanel" hidden style="margin:6px 0"></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
         <strong style="font-size:12px;color:var(--c-9aa4b2)">🏷 Content tagger</strong>
-        <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
-        <button class="ev-bulk-btn" onclick="clearTaggerTags()" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
-        <button class="ev-bulk-btn" onclick="toggleTaggerRules()" title="View / edit the tagging rules (YAML)">Edit rules</button>
-        <button id="taggerSuggestToggle" class="ev-bulk-btn" onclick="toggleTaggerSuggest()" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
+        <button class="ev-bulk-btn" data-act="runTagger" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
+        <button class="ev-bulk-btn" data-act="clearTaggerTags" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
+        <button class="ev-bulk-btn" data-act="toggleTaggerRules" title="View / edit the tagging rules (YAML)">Edit rules</button>
+        <button id="taggerSuggestToggle" class="ev-bulk-btn" data-act="toggleTaggerSuggest" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
         <span id="taggerMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
       </div>
       <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
@@ -4682,7 +4682,7 @@
         <textarea id="taggerSuggestInput" spellcheck="true" placeholder="e.g. flag any time the Windows security event log is cleared"
           style="width:100%;min-height:44px;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <button id="taggerSuggestBtn" class="ev-bulk-btn" onclick="suggestTaggerRule()" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
+          <button id="taggerSuggestBtn" class="ev-bulk-btn" data-act="suggestTaggerRule" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
           <span id="taggerSuggestMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
         <div id="taggerSuggestResult" hidden style="margin-top:6px">
@@ -4690,9 +4690,9 @@
           <textarea id="taggerSuggestYaml" spellcheck="false"
             style="width:100%;min-height:140px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <button class="ev-bulk-btn" onclick="previewTaggerRule()" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
-            <button class="ev-bulk-btn" onclick="addSuggestedTaggerRule()" title="Add this rule to the ruleset">Add rule</button>
-            <button class="ev-bulk-btn" onclick="discardSuggestedTaggerRule()">Discard</button>
+            <button class="ev-bulk-btn" data-act="previewTaggerRule" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
+            <button class="ev-bulk-btn" data-act="addSuggestedTaggerRule" title="Add this rule to the ruleset">Add rule</button>
+            <button class="ev-bulk-btn" data-act="discardSuggestedTaggerRule">Discard</button>
             <span id="taggerSuggestResultMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
           </div>
           <div id="taggerSuggestMatches" hidden style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--c-2b3242);border-radius:6px;padding:6px;font-size:11px;font-family:monospace;color:var(--c-9aa4b2)"></div>
@@ -4702,8 +4702,8 @@
       <div id="taggerRuleList" style="margin-bottom:8px">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
           <strong style="font-size:12px;color:var(--c-9aa4b2)">Active rules</strong>
-          <button class="ev-bulk-btn" onclick="refreshTaggerRuleList()" title="Reload the rule list">↻</button>
-          <button class="ev-bulk-btn" onclick="resetTaggerRules()" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
+          <button class="ev-bulk-btn" data-act="refreshTaggerRuleList" title="Reload the rule list">↻</button>
+          <button class="ev-bulk-btn" data-act="resetTaggerRules" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
           <span id="taggerRuleListMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
         <div id="taggerRuleRows" style="font-size:12px"></div>
@@ -4713,20 +4713,20 @@
         <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
         <textarea id="taggerRulesText" spellcheck="false" style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-          <button class="ev-bulk-btn" onclick="saveTaggerRules()" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
-          <button class="ev-bulk-btn" onclick="toggleTaggerRules()">Close</button>
+          <button class="ev-bulk-btn" data-act="saveTaggerRules" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
+          <button class="ev-bulk-btn" data-act="toggleTaggerRules">Close</button>
           <span id="taggerRulesMsg" style="font-size:12px"></span>
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <label style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"><input type="checkbox" id="stSelectAll" title="Select every row on this page" /> All</label>
         <span id="stSelCount" style="font-size:12px;color:var(--c-9aa4b2)"></span>
-        <button class="ev-bulk-btn" onclick="promoteSuperSelected()" title="Copy the selected events up into the analyzed forensic timeline">⬆ Promote selected → forensic timeline</button>
+        <button class="ev-bulk-btn" data-act="promoteSuperSelected" title="Copy the selected events up into the analyzed forensic timeline">⬆ Promote selected → forensic timeline</button>
         <button id="stBulkStar" class="ev-bulk-btn" title="Star / unstar every selected event">★ Star selected</button>
         <button id="stBulkTag" class="ev-bulk-btn" title="Add a tag to every selected event">🏷️ Tag selected</button>
         <span id="stPager" style="font-size:12px;color:var(--c-9aa4b2)"></span>
-        <button id="stPrev" class="ev-bulk-btn" onclick="superPage(-1)">‹ Prev</button>
-        <button id="stNext" class="ev-bulk-btn" onclick="superPage(1)">Next ›</button>
+        <button id="stPrev" class="ev-bulk-btn" data-act="superPagePrev">‹ Prev</button>
+        <button id="stNext" class="ev-bulk-btn" data-act="superPageNext">Next ›</button>
       </div>
       <div id="superTimelineList">—</div>
     </section>
@@ -4824,7 +4824,7 @@
       <div id="caseLoadingText" style="color:var(--c-c9d1d9);font-size:14px;font-weight:500;">Loading case…</div>
     </div>
   </div>
-  <script>
+  <script nonce="__CSP_NONCE__">
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
     // The effective theme lives in <html data-theme>. It was set FOUC-free by the <head> bootstrap;
     // here we wire the toggle, persist the choice, follow OS changes (until the user overrides), and
@@ -5320,7 +5320,7 @@
         title,
         // Placed right after the host chip (before the description) to save a line — the panel itself
         // stays block-level wherever it's placed, so it still drops to its own row when expanded.
-        toggle: `<button type="button" class="ev-details-toggle" onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[details ▶]':'[details ▼]'">[details ▶]</button>`,
+        toggle: `<button type="button" class="ev-details-toggle" data-act="evDetailsToggle" data-target="${uid}">[details ▶]</button>`,
         panel: `<div id="${uid}" hidden class="ev-details-panel">${parts.map(p => `<div>${p}</div>`).join("")}</div>`,
       };
     }
@@ -6563,14 +6563,14 @@
       el.innerHTML = notebookEntries.map(e => {
         const who = e.author ? `<span style="font-size:10px;color:var(--c-cbd3df);font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:var(--c-52617a)">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
-        const promote = `<button class="nb-action-btn" onclick="promoteToHypothesis('${escAttr(e.id)}')" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
+        const promote = `<button class="nb-action-btn" data-act="promoteToHypothesis" data-id="${escAttr(e.id)}" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
           `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +
           `<div class="nb-entry-actions">` +
           promote +
-          `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
-          `<button class="nb-action-btn del" onclick="nbDelete('${escAttr(e.id)}')">Delete</button>` +
+          `<button class="nb-action-btn" data-act="nbStartEdit" data-id="${escAttr(e.id)}">Edit</button>` +
+          `<button class="nb-action-btn del" data-act="nbDelete" data-id="${escAttr(e.id)}">Delete</button>` +
           `</div></div>`;
       }).join("");
     }
@@ -6703,15 +6703,15 @@
         : "";
       return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
         `<div class="hyp-row1">` +
-          `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
+          `<select class="hyp-status" data-act="hypPatchStatus" data-act-on="change" data-id="${id}">${opts}</select>` +
           `<span class="hyp-title">${esc(h.title)}</span>${src}${review}${exhausted}` +
           // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
-          (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" onclick="linkNextHuntToHypothesis('${id}', this.getAttribute('data-t'))" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
-          `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
+          (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" data-act="linkNextHunt" data-id="${id}" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
+          `<button class="hyp-del" data-act="hypDelete" data-id="${id}" title="Delete">✕</button>` +
         `</div>${outcome}${desc}${discrim}${meta}${history}` +
         `<div class="hyp-row2">` +
-          `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" onchange="hypPatch('${id}',{assignee:this.value})" />` +
-          `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" onchange="hypPatch('${id}',{notes:this.value})" />` +
+          `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" data-act="hypPatchAssignee" data-act-on="change" data-id="${id}" />` +
+          `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" data-act="hypPatchNotes" data-act-on="change" data-id="${id}" />` +
         `</div>` +
       `</div>`;
     }
@@ -6731,7 +6731,7 @@
     function linkNextHuntToHypothesis(id, title) {
       pendingHuntHypothesis = { id, title: title || id };
       const msg = document.getElementById("suggestHuntsMsg");
-      if (msg) msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" onclick="pendingHuntHypothesis=null;this.parentElement.textContent='';return false;" style="color:var(--c-6aa9ff)">cancel</a>`;
+      if (msg) msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" data-act="clearPendingHunt" style="color:var(--c-6aa9ff)">cancel</a>`;
       const sec = document.getElementById("sec-velohunts");
       if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -6810,7 +6810,7 @@
         reviews.map(r => {
           const st = r.recommendedStatus || "unknown";
           const apply = st === "open" ? "" :
-            `<button class="hyp-rev-apply" onclick="hypApplyReview('${escAttr(r.hypothesisId)}','${escAttr(st)}')" title="Set this hypothesis's status to ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)} (marks it analyst-edited)">Apply → ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</button>`;
+            `<button class="hyp-rev-apply" data-act="hypApplyReview" data-id="${escAttr(r.hypothesisId)}" data-st="${escAttr(st)}" title="Set this hypothesis's status to ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)} (marks it analyst-edited)">Apply → ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</button>`;
           return `<div class="hyp-rev-item">` +
             `<div class="hyp-rev-title">${esc(r.title)}<span class="hyp-rev-rec ${esc(st)}">recommends: ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</span>${apply}</div>` +
             `<div class="hyp-rev-cols"><div class="hyp-rev-for"><b>Supports</b>${bullets(r.supportingEvidence, "for")}</div>` +
@@ -7318,7 +7318,7 @@
         // behave like the same component, just fed from different sources.
         return `<div class="ev-row" data-evid="${escAttr(e.id)}">` +
           `<div class="ev-col-ctrl">` +
-          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />` +
+          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" data-act="toggleSuperPromote" data-act-on="change" data-id="${escAttr(e.id)}" />` +
           `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>` +
           `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}` +
           `</div>` +
@@ -7740,7 +7740,7 @@
       el.innerHTML = tasks.map(t => {
         const opts = PB_STATUS.map(([v, l]) => `<option value="${v}" ${t.status === v ? "selected" : ""}>${l}</option>`).join("");
         const src = t.source === "custom" ? "custom" : (t.source === "finding" ? "from finding" : "from next step");
-        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" onclick="pbJumpFinding();return false">↳ finding</a>` : "";
+        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" data-act="pbJumpFinding">↳ finding</a>` : "";
         const desc = t.description ? `<div class="pb-desc">${esc(t.description)}</div>` : "";
         const blockedByTitles = (t.blockedBy || []).map(id => {
           const dep = playbookTasks.find(o => o.id === id);
@@ -7757,21 +7757,21 @@
           `<div class="pb-row1">` +
             `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
             (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
-            `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
+            `<select class="pb-status" data-act="pbPatchStatus" data-act-on="change" data-id="${escAttr(t.id)}">${opts}</select>` +
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
             blockedBadge +
             `<span class="pb-src">${src}</span>${findingLink}` +
             `<span class="pb-move">` +
-              `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
-              `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
-              `<button class="pb-del" onclick="pbDelete('${escAttr(t.id)}')" title="Delete">✕</button>` +
+              `<button data-act="pbMovePrev" data-id="${escAttr(t.id)}" title="Move up">▲</button>` +
+              `<button data-act="pbMoveNext" data-id="${escAttr(t.id)}" title="Move down">▼</button>` +
+              `<button class="pb-del" data-act="pbDelete" data-id="${escAttr(t.id)}" title="Delete">✕</button>` +
             `</span>` +
           `</div>` + desc +
           `<div class="pb-row2">` +
-            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
-            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
-            `<button type="button" class="pb-deps-btn" onclick="pbToggleDeps('${escAttr(t.id)}')" title="Set which tasks must be done before this one can start">🔗 depends on${depCount ? ` (${depCount})` : ""}</button>` +
+            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" data-act="pbPatchAssignee" data-act-on="change" data-id="${escAttr(t.id)}" />` +
+            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" data-act="pbPatchDueDate" data-act-on="change" data-id="${escAttr(t.id)}" title="Due date" />` +
+            `<button type="button" class="pb-deps-btn" data-act="pbToggleDeps" data-id="${escAttr(t.id)}" title="Set which tasks must be done before this one can start">🔗 depends on${depCount ? ` (${depCount})` : ""}</button>` +
           `</div>` +
           pbDepsPanel(t) +
           renderTaskHunts(t.id) +
@@ -7831,7 +7831,7 @@
       if (!others.length) return `<div class="pb-deps-panel"><em style="color:var(--c-9aa4b2);font-size:11px">No other tasks yet.</em></div>`;
       const cur = new Set(t.dependsOn || []);
       const rows = others.map(o =>
-        `<label class="pb-dep-opt"><input type="checkbox" ${cur.has(o.id) ? "checked" : ""} onchange="pbToggleDep('${escAttr(t.id)}','${escAttr(o.id)}',this.checked)" /> ` +
+        `<label class="pb-dep-opt"><input type="checkbox" ${cur.has(o.id) ? "checked" : ""} data-act="pbToggleDep" data-act-on="change" data-id="${escAttr(t.id)}" data-dep="${escAttr(o.id)}" /> ` +
         `${o.shortId ? esc(o.shortId) + " — " : ""}${esc(o.title)}</label>`
       ).join("");
       return `<div class="pb-deps-panel">${rows}</div>`;
@@ -12359,7 +12359,7 @@
       };
       el.innerHTML = "<div class='eg-list'>" + items.map(it => {
         if (it.kind === "silence_gap") {
-          return `<div class="eg-item eg-gap"><span class="eg-kind">silent window</span><span class="eg-label">${esc(it.label)}</span><br><a class="eg-gaplink" onclick="var g=document.getElementById('sec-gaps'); if(g) g.scrollIntoView({behavior:'smooth'})">See Timeline Gaps →</a></div>`;
+          return `<div class="eg-item eg-gap"><span class="eg-kind">silent window</span><span class="eg-label">${esc(it.label)}</span><br><a class="eg-gaplink" data-act="jumpToGaps">See Timeline Gaps →</a></div>`;
         }
         if (it.kind === "likely_next_technique") {
           return `<div class="eg-item eg-next"><span class="eg-kind">likely next</span><span class="eg-label">${esc(it.label)}</span></div>`;
@@ -12647,7 +12647,7 @@
       let scope = "";
       if (d.topHosts && d.topHosts.length && w.start) {
         const fmt = (t) => esc((t || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace("Z", ""));
-        scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" onclick="applyHostRankingScope()">Apply scope window</button></div>`;
+        scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" data-act="applyHostRankingScope">Apply scope window</button></div>`;
       }
       const rows = d.ranks.map(r => {
         const key = `${r.type}:${r.name.toLowerCase()}`;
@@ -12808,7 +12808,7 @@
           const ds = (n.dataSources && n.dataSources.length)
             ? `<div class="adv-next-ds" title="ATT&CK data sources — telemetry to hunt in for this technique">🔍 ${esc(n.dataSources.join(" · "))}</div>` : "";
           // A targeted hunt: hand this technique to the AI Fleet-Hunts feature to generate a VQL query.
-          const huntBtn = `<button type="button" class="adv-next-hunt" onclick="huntForTechnique('${escAttr(n.id)}', this)" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
+          const huntBtn = `<button type="button" class="adv-next-hunt" data-act="huntForTechnique" data-id="${escAttr(n.id)}" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
           return `<div class="adv-next-row">${tech}${nm}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}${huntBtn}</div>${ds}`;
         }).join("");
         return `<div class="adv-next">` +
@@ -13798,7 +13798,7 @@
       el.innerHTML =
         `<span style="color:var(--c-6aa9ff)">⧉ Showing ${shown} of ${n} event${n !== 1 ? "s" : ""} in this group` +
         `${evIdFilterLabel ? " — " + esc(evIdFilterLabel) : ""}</span>` +
-        ` <button type="button" onclick="clearEvIdFilter()" style="margin-left:8px;font-size:11px;background:var(--c-2a2f3a);border:none;color:var(--c-c9d1db);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
+        ` <button type="button" data-act="clearEvIdFilter" style="margin-left:8px;font-size:11px;background:var(--c-2a2f3a);border:none;color:var(--c-c9d1db);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
     }
 
     // Reveal a forensic event by id and scroll+flash it — used by the Evidence panel's supporting-event
@@ -14091,7 +14091,7 @@
         const isActive = kcSelectedTac === tac && !isEmpty;
         return `<div class="kc-phase${isEmpty ? " kc-empty" : ""}${isActive ? " kc-active" : ""}" ` +
           `data-tac="${escAttr(tac)}" ` +
-          `onclick="if(!this.classList.contains('kc-empty'))kcSelect('${escAttr(tac)}')">` +
+          `data-act="kcSelect" data-tac="${escAttr(tac)}">` +
           `<div class="kc-phase-header" style="border-top-color:${topColor}">` +
           `<span class="kc-tac">${esc(tac)}</span>` +
           `<span class="kc-count" style="color:${isEmpty ? "#2a2f3a" : topColor}">${count}</span>` +
@@ -14547,14 +14547,14 @@
       const iocPageSizeOpts = iocPageSizes.map(n =>
         `<option value="${n}"${iocPageSize === n ? " selected" : ""}>${n === 0 ? "All" : n}</option>`).join("");
       const iocPaginationBar = (iocPageSize > 0 && totalFiltered > iocPageSize) ? `<div class="tl-page-bar">`
-        + `<button class="tl-page-btn" onclick="iocPageStep(-1)" ${iocPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<button class="tl-page-btn" data-act="iocPagePrev" ${iocPage === 0 ? "disabled" : ""}>‹ Prev</button>`
         + `<span class="tl-page-info">${iocStart + 1}–${iocEnd} of ${totalFiltered}</span>`
-        + `<button class="tl-page-btn" onclick="iocPageStep(1)" ${iocPage >= iocTotalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `<button class="tl-page-btn" data-act="iocPageNext" ${iocPage >= iocTotalPages - 1 ? "disabled" : ""}>Next ›</button>`
         + `</div>` : "";
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
         + `<span>Type</span><span>${countLabel}</span>`
-        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" onchange="iocSetPageSize(+this.value)">${iocPageSizeOpts}</select></span>`
+        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" data-act="iocSetPageSize" data-act-on="change">${iocPageSizeOpts}</select></span>`
         + `</div>`;
       const rows = pageVisible.map(i => {
         const isNew = newIocKeys.has(i.value);
@@ -14897,7 +14897,7 @@
         const from = new Date(b.startMs).toISOString();
         const to = new Date(b.endMs).toISOString();
         const label = `${b.count} event${b.count === 1 ? "" : "s"} · ${b.maxSeverity} · ${from.slice(0, 16).replace("T", " ")}–${to.slice(0, 16).replace("T", " ")} UTC (click to zoom)`;
-        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
+        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" data-act="zoomToTimeWindow" data-from="${from}" data-to="${to}"></div>`;
       }).join("");
     }
 
@@ -15048,9 +15048,9 @@
         `<option value="${n}"${tlPageSize === n ? " selected" : ""}>${pageSizeLabel(n)}</option>`
       ).join("");
       const paginationBar = (tlPageSize > 0 && totalFiltered > tlPageSize) ? `<div class="tl-page-bar">`
-        + `<button class="tl-page-btn" onclick="if(tlPage>0){_tlKeepPage=true;tlPage--;renderTimelineEvents(lastFt)}" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<button class="tl-page-btn" data-act="tlPagePrev" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
         + `<span class="tl-page-info">${pStart + 1}–${pEnd} of ${totalFiltered}</span>`
-        + `<button class="tl-page-btn" onclick="if(tlPage<${totalPages - 1}){_tlKeepPage=true;tlPage++;renderTimelineEvents(lastFt)}" ${tlPage >= totalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `<button class="tl-page-btn" data-act="tlPageNext" data-total="${totalPages - 1}" ${tlPage >= totalPages - 1 ? "disabled" : ""}>Next ›</button>`
         + `</div>` : "";
 
       const headerRow = `<div class="ev-header-row">`
@@ -15058,7 +15058,7 @@
         + `<div class="ev-header-sev">Severity${sortArrows("severity")}</div>`
         + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
         + `<div style="flex:1">Message</div>`
-        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" onchange="tlPageSize=+this.value;renderTimelineEvents(lastFt)">${pageSizeOpts}</select></div>`
+        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" data-act="tlSetPageSize" data-act-on="change">${pageSizeOpts}</select></div>`
         + `</div>`;
 
       const tld = loadTlDisplay();   // per-browser timeline-row display toggles (Settings → General)
@@ -18238,6 +18238,119 @@
       saveCollapsed(map);
       updateToggleAllLabel();
     };
+
+    // ── data-act dispatch (CSP: no inline handlers) ───────────────────────────────────────────
+    //
+    // Every control that used to carry an inline `onclick=` / `onchange=` / `onsubmit=` now carries
+    // `data-act="<name>"` (plus `data-act-on="change|submit"` when it isn't a click), and the
+    // behaviour lives in ACTIONS below. This is what lets the server send `script-src 'self'`:
+    // an inline handler attribute is script, and CSP blocks it outright — a nonce cannot whitelist
+    // one (nonces apply to <script nonce="__CSP_NONCE__"> blocks only), so the attributes had to go.
+    //
+    // Dispatch is DELEGATED from <main>, so markup rendered later into innerHTML is covered with no
+    // re-wiring at each render site — the pattern the pivot-query Copy button already used (#281).
+    // ACTIONS is a fixed literal, deliberately NOT a `window[name]` lookup: `name` comes from a DOM
+    // attribute, and resolving that against the global scope would hand any future markup-injection
+    // bug a call-anything primitive — the opposite of the point of this change.
+    //
+    // `el` is the element carrying data-act; interpolated ids/values ride in data-* beside it,
+    // escAttr-escaped exactly as they were inside the old handler string.
+    const ACTIONS = {
+      // Geo map
+      renderGeoView:              (el) => renderGeoView(),
+      renderGeoMarkers:           (el) => renderGeoMarkers(),
+      geoDownloadCsv:             (el) => geoDownloadCsv(),
+      ensureGeoMap:               (el) => ensureGeoMap(),
+      // Tagger
+      runTagger:                  (el) => runTagger(),
+      clearTaggerTags:            (el) => clearTaggerTags(),
+      toggleTaggerRules:          (el) => toggleTaggerRules(),
+      toggleTaggerSuggest:        (el) => toggleTaggerSuggest(),
+      suggestTaggerRule:          (el) => suggestTaggerRule(),
+      previewTaggerRule:          (el) => previewTaggerRule(),
+      addSuggestedTaggerRule:     (el) => addSuggestedTaggerRule(),
+      discardSuggestedTaggerRule: (el) => discardSuggestedTaggerRule(),
+      refreshTaggerRuleList:      (el) => refreshTaggerRuleList(),
+      resetTaggerRules:           (el) => resetTaggerRules(),
+      saveTaggerRules:            (el) => saveTaggerRules(),
+      // Supertimeline
+      superPageReset:             (el) => superPage(0),
+      superPagePrev:              (el) => superPage(-1),
+      superPageNext:              (el) => superPage(1),
+      promoteSuperSelected:       (el) => promoteSuperSelected(),
+      toggleSuperPromote:         (el) => toggleSuperPromote(el.dataset.id, el.checked),
+      applyTimeframe:             (el) => applyTimeframe(),
+      saveTimeframe:              (el) => saveTimeframe(),
+      clearSuperTime:             (el) => clearSuperTime(),
+      // Findings / remediation
+      generateRemediation:        (el) => generateRemediation(el),
+      // Notebook + hypotheses
+      promoteToHypothesis:        (el) => promoteToHypothesis(el.dataset.id),
+      nbStartEdit:                (el) => nbStartEdit(el.dataset.id),
+      nbDelete:                   (el) => nbDelete(el.dataset.id),
+      hypPatchStatus:             (el) => hypPatch(el.dataset.id, { status: el.value }),
+      hypPatchAssignee:           (el) => hypPatch(el.dataset.id, { assignee: el.value }),
+      hypPatchNotes:              (el) => hypPatch(el.dataset.id, { notes: el.value }),
+      hypDelete:                  (el) => hypDelete(el.dataset.id),
+      hypApplyReview:             (el) => hypApplyReview(el.dataset.id, el.dataset.st),
+      linkNextHunt:               (el) => linkNextHuntToHypothesis(el.dataset.id, el.getAttribute("data-t")),
+      clearPendingHunt:           (el, e) => { pendingHuntHypothesis = null; el.parentElement.textContent = ""; e.preventDefault(); },
+      // Playbook tasks
+      pbJumpFinding:              (el, e) => { pbJumpFinding(); e.preventDefault(); },
+      pbPatchStatus:              (el) => pbPatch(el.dataset.id, { status: el.value }),
+      pbPatchAssignee:            (el) => pbPatch(el.dataset.id, { assignee: el.value }),
+      pbPatchDueDate:             (el) => pbPatch(el.dataset.id, { dueDate: el.value }),
+      pbMovePrev:                 (el) => pbMove(el.dataset.id, -1),
+      pbMoveNext:                 (el) => pbMove(el.dataset.id, 1),
+      pbDelete:                   (el) => pbDelete(el.dataset.id),
+      pbToggleDeps:               (el) => pbToggleDeps(el.dataset.id),
+      pbToggleDep:                (el) => pbToggleDep(el.dataset.id, el.dataset.dep, el.checked),
+      // Timeline
+      evDetailsToggle:            (el) => {
+        const d = document.getElementById(el.dataset.target);
+        if (!d) return;
+        d.hidden = !d.hidden;
+        el.textContent = d.hidden ? "[details ▶]" : "[details ▼]";
+      },
+      zoomToTimeWindow:           (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
+      tlPagePrev:                 (el) => { if (tlPage > 0) { _tlKeepPage = true; tlPage--; renderTimelineEvents(lastFt); } },
+      tlPageNext:                 (el) => { if (tlPage < Number(el.dataset.total)) { _tlKeepPage = true; tlPage++; renderTimelineEvents(lastFt); } },
+      tlSetPageSize:              (el) => { tlPageSize = +el.value; renderTimelineEvents(lastFt); },
+      clearEvIdFilter:            (el) => clearEvIdFilter(),
+      // IOCs
+      iocPagePrev:                (el) => iocPageStep(-1),
+      iocPageNext:                (el) => iocPageStep(1),
+      iocSetPageSize:             (el) => iocSetPageSize(+el.value),
+      // ATT&CK / kill chain / hosts
+      huntForTechnique:           (el) => huntForTechnique(el.dataset.id, el),
+      kcSelect:                   (el) => { if (!el.classList.contains("kc-empty")) kcSelect(el.dataset.tac); },
+      applyHostRankingScope:      (el) => applyHostRankingScope(),
+      jumpToGaps:                 (el) => {
+        const g = document.getElementById("sec-gaps");
+        if (g) g.scrollIntoView({ behavior: "smooth" });
+      },
+      // Forms that never navigate (were an inline onsubmit returning false)
+      noSubmit:                   (el, e) => e.preventDefault(),
+    };
+
+    function dispatchAct(e, type) {
+      const el = e.target.closest("[data-act]");
+      if (!el) return;
+      if ((el.dataset.actOn || "click") !== type) return;
+      const fn = ACTIONS[el.dataset.act];
+      if (typeof fn !== "function") return;   // unknown key: ignore rather than throw mid-render
+      fn(el, e);
+    }
+    ["click", "change", "submit"].forEach((type) => {
+      document.addEventListener(type, (e) => dispatchAct(e, type));
+    });
+
+    // These sit inside collapsible <h2> headers and previously carried an inline click handler
+    // to keep a click on the wrapper from toggling the section. The listener has to live ON the element
+    // (not delegated at document level) so it runs while the event is still below the <h2> handler.
+    document.querySelectorAll("[data-stop-click]").forEach((el) => {
+      el.addEventListener("click", (e) => e.stopPropagation());
+    });
 
     setupCollapsible();
     setupReorder();
