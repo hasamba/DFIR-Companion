@@ -50,12 +50,19 @@ export class StateStore {
       // A state file past the ~512 MB max string length can never be decoded again, so every
       // route that loads the case fails with an opaque RangeError and the case looks bricked.
       // Say so explicitly and name the recovery path (mirrors the 413 the import route returns
-      // for an oversized input file, so the two limits read as the same limit).
+      // for an oversized input file, so the two limits read as the same limit). This ceiling is
+      // permanent: the SQLite-backed store that would have lifted it (#237) was closed as not
+      // planned, so the message must not imply a bigger backend is coming.
       if (isTooLargeToDecode(err)) {
+        const backups = join(this.cases.stateDir(caseId), "backups");
         throw new Error(
-          `case "${caseId}" state file is too large to load: ${this.path(caseId)} exceeds the ~512 MB in-memory limit ` +
-            `(roughly 900K events). Restore an earlier, smaller snapshot from the case's state/backups/ dir, ` +
-            `or split the investigation across cases and re-import — no further imports into this case can be loaded.`,
+          `case "${caseId}" cannot be opened: its state file is too large to load. ` +
+            `${this.path(caseId)} has passed V8's ~512 MB max string length (roughly 900K events), so nothing in the ` +
+            `case is readable — timeline, findings, IOCs and reports are all unreachable, not just new imports. ` +
+            `This is a hard ceiling of the JSON state store and there is no larger-capacity backend, so the file ` +
+            `will not become loadable on its own. Recover by restoring the newest backup still under that size from ` +
+            `${backups}, then carry the investigation forward in a second case; re-importing into this one fails ` +
+            `the same way.`,
         );
       }
       throw err;
