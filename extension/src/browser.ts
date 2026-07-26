@@ -52,6 +52,6 @@ export const browserApi: typeof chrome = new Proxy({} as typeof chrome, {
     return prop in resolveApi();
   },
 });
-// NOTE: scripting.executeScript needs no shim. Firefox gained `world: "MAIN"` in 128 and
-// manifest-firefox.json requires it (strict_min_version), so both runtimes take the same call —
-// see injectHook() in serviceWorker.ts.
+// NOTE: scripting.executeScript needs no shim. Firefox gained `world: "MAIN"` in 128 and the
+// generated Firefox manifest requires it (see scripts/manifest-firefox.mjs), so both runtimes take
+// the same call — see injectHook() in serviceWorker.ts.
