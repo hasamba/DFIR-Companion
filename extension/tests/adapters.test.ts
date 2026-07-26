@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { adapterForUrl, adapterForPage, adapterById, ADAPTERS } from "../src/adapters/registry.js";
 import { splunkAdapter } from "../src/adapters/splunk.js";
 import { velociraptorAdapter, velociraptorSourceLabel } from "../src/adapters/velociraptor.js";
@@ -7,7 +7,7 @@ import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
 import { securityOnionAdapter } from "../src/adapters/securityonion.js";
 import { socratesAdapter } from "../src/adapters/socrates.js";
 import { volwebAdapter, volwebSourceLabel } from "../src/adapters/volweb.js";
-import { parseResponseBodies, decodeCapturedBodies } from "../src/adapters/extractUtils.js";
+import { parseResponseBodies, decodeCapturedBodies, zipColumnsRows, unflattenDotted } from "../src/adapters/extractUtils.js";
 import { deflateSync, gzipSync } from "node:zlib";
 
 describe("adapterForUrl", () => {
@@ -303,6 +303,34 @@ describe("velociraptor.extractRows", () => {
 
   it("returns null on an unrecognized shape", () => {
     expect(velociraptorAdapter.extractRows("u", { foo: "bar" })).toBeNull();
+  });
+});
+
+// A forged DFIR_CAPTURE_MSG can name columns whatever the attacker likes. zipColumnsRows /
+// unflattenDotted must never let a "__proto__"/"constructor"/"prototype" column (or dotted segment)
+// reach a global/object prototype (CWE-1321); benign dotted columns must still nest exactly as before.
+describe("extractUtils prototype-pollution hardening (untrusted column names)", () => {
+  afterEach(() => { delete (Object.prototype as Record<string, unknown>).polluted; });
+
+  it("zipColumnsRows: a '__proto__' column is stored inert, not applied as the row's prototype", () => {
+    const rows = zipColumnsRows({ columns: ["__proto__", "_Source"], rows: [[{ polluted: true }, "art"]] }) as Record<string, unknown>[];
+    expect(Object.getPrototypeOf(rows[0])).toBe(Object.prototype);                     // prototype not swapped
+    expect(Object.prototype.hasOwnProperty.call(rows[0], "__proto__")).toBe(true);     // kept as an inert own key
+    expect((rows[0] as { polluted?: unknown }).polluted).toBeUndefined();              // not inherited onto the row
+    expect(rows[0]._Source).toBe("art");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();                  // global prototype untouched
+  });
+
+  it("unflattenDotted: a dotted '__proto__.polluted' key does not pollute Object.prototype", () => {
+    const out = unflattenDotted({ "__proto__.polluted": true, "_Source": "art" });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();                  // Object.prototype clean
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__.polluted")).toBe(true); // inert flat own key
+    expect(out._Source).toBe("art");
+  });
+
+  it("unflattenDotted: benign dotted columns still unflatten to the nested shape", () => {
+    expect(unflattenDotted({ "Detection.Name": "x", "System.Computer": "DC01" }))
+      .toEqual({ Detection: { Name: "x" }, System: { Computer: "DC01" } });
   });
 });
 
