@@ -258,16 +258,27 @@ function buildSyntheticState(eventCount: number, iocCount: number): Investigatio
 
 interface Measurement { ms: number; result: unknown }
 
-// Best of N runs. Contention and GC can only ever ADD time, so the minimum is the closest
-// estimate of the code's own cost and — unlike a single sample — one scheduler stall can't
-// skew it.
+// Best of N runs, measured in CPU time rather than wall clock.
+//
+// Wall clock counts every millisecond this process spends descheduled while some other test
+// worker holds the core, so under a loaded machine it reports the machine's contention, not the
+// code's cost. Best-of-N was meant to absorb that, and does when a stall is occasional — but it
+// only helps if SOME sample runs clean, and the full-size run is GROWTH_FACTOR times longer than
+// the baseline, so under sustained load it is proportionally likelier that every one of its
+// samples is hit while the short baseline escapes. That asymmetry inflates the ratio and fails
+// the assertion for reasons that have nothing to do with the code under test.
+//
+// process.cpuUsage() counts only cycles actually burned on this process's behalf, so time spent
+// waiting for a core simply isn't counted. Every measured fn here is synchronous, so nothing else
+// in this worker can run inside the window and contribute. Same minimum-of-N, honest clock.
 function bestOf(fn: () => unknown, repeats: number): Measurement {
   let ms = Infinity;
   let result: unknown;
   for (let i = 0; i < repeats; i++) {
-    const t0 = performance.now();
+    const start = process.cpuUsage();
     result = fn();
-    const elapsed = performance.now() - t0;
+    const { user, system } = process.cpuUsage(start);
+    const elapsed = (user + system) / 1000;   // microseconds → milliseconds
     if (elapsed < ms) ms = elapsed;
   }
   return { ms, result };
