@@ -142,8 +142,10 @@ const SWEEP_INTERVAL_MS = 5 * 60_000;
 
 let _unlockLimiter: AttemptLimiter | null = null;
 let _aiLimiter: SlidingWindowLimiter | null = null;
+let _importLimiter: AttemptLimiter | null = null;
 let _unlockSweepTimer: NodeJS.Timeout | null = null;
 let _aiSweepTimer: NodeJS.Timeout | null = null;
+let _importSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -165,13 +167,31 @@ export function getAiLimiter(): SlidingWindowLimiter {
   return _aiLimiter;
 }
 
+/** Failed-decrypt limiter for POST /cases/import/encrypted. Separate from the unlock limiter
+ *  because it is keyed by CLIENT IP, not caseId — an import names no case until the archive has
+ *  been decrypted, and the two key spaces must not share a Map (an IP-shaped string is a legal
+ *  caseId, so one bucket would let either route lock out the other). Same 5-then-backoff shape:
+ *  a mistyped archive password is free, a loop of them is not. */
+export function getImportLimiter(): AttemptLimiter {
+  if (!_importLimiter) {
+    const limiter = new AttemptLimiter(5, 30_000);
+    _importLimiter = limiter;
+    _importSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _importSweepTimer.unref?.();
+  }
+  return _importLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
   if (_unlockSweepTimer) clearInterval(_unlockSweepTimer);
   if (_aiSweepTimer) clearInterval(_aiSweepTimer);
+  if (_importSweepTimer) clearInterval(_importSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
+  _importSweepTimer = null;
   _unlockLimiter = null;
   _aiLimiter = null;
+  _importLimiter = null;
 }

@@ -19,6 +19,25 @@ const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "rememb
 const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
 
 /**
+ * Did this request reach us over HTTPS — directly, or on the browser-facing hop of a proxy chain?
+ *
+ * `req.secure` only answers for TLS this process terminated itself, which it never does (the
+ * companion serves plain HTTP and is fronted by a proxy in every deployment where this matters),
+ * so X-Forwarded-Proto is the live branch. Each proxy APPENDS to that header, so a request that
+ * crossed more than one arrives as a list — "https, http" — and it is the FIRST entry, the hop
+ * facing the browser, that decides whether the cookie would ever travel in cleartext. Matching
+ * the whole header against "https" silently drops the Secure flag on exactly those chained
+ * deployments. Node collapses repeated headers into one comma-joined string, but the type admits
+ * an array, so handle both.
+ */
+function isHttpsRequest(req: Request): boolean {
+  if (req.secure) return true;
+  const header = req.headers["x-forwarded-proto"];
+  const clientFacingHop = (Array.isArray(header) ? header[0] : header)?.split(",")[0]?.trim();
+  return clientFacingHop?.toLowerCase() === "https";
+}
+
+/**
  * Case-password protection domain: set / change / clear a case password, unlock a case (issuing the
  * signed unlock cookie), explicitly forget this browser's unlock, and report lock status. Pure
  * structural move out of createApp (see routes/system.ts for the conventions) — no handler logic
@@ -82,6 +101,10 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
       const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
       const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
+      // Set the Secure flag when the request was over HTTPS (directly or via a reverse proxy
+      // with X-Forwarded-Proto), so the unlock cookie (a bearer granting full case access)
+      // never transits in cleartext over HTTP.
+      if (isHttpsRequest(req)) cookieOpts.secure = true;
       if (remember) cookieOpts.maxAge = ttl;
       res.cookie(unlockCookieName(id), token, cookieOpts);
       return res.status(200).json({ ok: true });

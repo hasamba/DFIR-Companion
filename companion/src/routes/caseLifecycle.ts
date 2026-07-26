@@ -15,6 +15,7 @@ import {
   dfircaseFilename,
 } from "../analysis/caseExportArchive.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
+import { getImportLimiter } from "../http/rateLimiter.js";
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { logActivity, ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
@@ -443,8 +444,26 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // codebase's existing convention for binary uploads elsewhere (no multipart/multer). 409 if the
   // target id already exists (the dashboard re-prompts with a new id), 400 on a wrong password,
   // corrupt archive, or malformed payload.
+  //
+  // Rate-limited like /unlock, and for a sharper reason: opening an archive costs a deliberate
+  // ~1s scrypt derivation (caseEncryption.ts) on the SYNCHRONOUS path, so an unauthenticated
+  // caller looping wrong-password imports holds the event loop — the whole server, not just this
+  // route — for as long as it cares to. The origin guard doesn't stop it (a caller with no Origin
+  // header is allowed by design, see http/originGuard.ts) and in container mode the port is on the
+  // network. Keyed by client IP because an import names no case until it has been decrypted; the
+  // key is coarse behind a reverse proxy that doesn't strip its own address, where every caller
+  // shares one bucket. That's the deliberate trade: a shared 30s import lockout is a far smaller
+  // failure than a wedged event loop, and refusing to trust a spoofable X-Forwarded-For is worth
+  // more than a per-caller bucket.
   app.post("/cases/import/encrypted", async (req: Request, res: Response) => {
+    const limiter = getImportLimiter();
+    const limiterKey = req.ip ?? "unknown";
     try {
+      const remaining = limiter.remainingLockout(limiterKey);
+      if (remaining > 0) {
+        res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
+        return res.status(429).json({ error: "too many failed imports, try again later", retryAfterMs: remaining });
+      }
       const body = (req.body ?? {}) as Record<string, unknown>;
       const { data, password, targetCaseId } = body;
       if (typeof data !== "string" || !data.trim()) {
@@ -461,12 +480,20 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
       // the client, same as every other route that serializes a CaseMeta.
+      limiter.clear(limiterKey);
       return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
+      // A conflict means the archive DID open — a real analyst re-importing, not an attacker
+      // burning CPU. Deliberately not counted as a failure.
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
       }
       if (err instanceof DecryptionError) {
+        const lockout = limiter.recordFailure(limiterKey);
+        if (lockout > 0) {
+          res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          return res.status(429).json({ error: "too many failed imports, locked out", retryAfterMs: lockout });
+        }
         return res.status(400).json({ error: err.message });
       }
       const msg = (err as Error).message;
