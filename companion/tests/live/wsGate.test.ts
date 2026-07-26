@@ -90,4 +90,34 @@ describe("authorizeWsUpgrade (#212)", () => {
     const result = await upgrade("/ws?caseId=..%2f..%2fetc");
     expect(result.ok).toBe(false);
   });
+
+  it("refuses an upgrade whose Host is a rebound name, even with no Origin at all", async () => {
+    // The upgrade is the highest-value target for rebinding: one socket streams the case's FULL
+    // state forever. A rebound page looks same-origin to the browser, so Origin may be absent.
+    const result = await authorizeWsUpgrade(
+      { url: "/ws?caseId=open", headers: { host: "evil.example:4773" } },
+      deps(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/host/i);
+  });
+
+  it("admits the dashboard served from a LAN address, so remote investigators get live updates", async () => {
+    const result = await authorizeWsUpgrade(
+      { url: "/ws?caseId=open", headers: { host: "192.168.1.50:4773", origin: "http://192.168.1.50:4773" } },
+      deps(),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("admits a platform-proxied host once its suffix is configured", async () => {
+    const result = await authorizeWsUpgrade(
+      {
+        url: "/ws?caseId=open",
+        headers: { host: "abc123-4773.environments.killercoda.com", origin: "https://abc123-4773.environments.killercoda.com" },
+      },
+      { ...deps(), allowedHostSuffixes: [".killercoda.com"] },
+    );
+    expect(result.ok).toBe(true);
+  });
 });

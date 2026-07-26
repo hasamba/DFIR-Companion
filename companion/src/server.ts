@@ -144,7 +144,12 @@ import {
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
-import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
+import {
+  createOriginGuard,
+  parseAllowedOrigins,
+  parseAllowedHosts,
+  parseAllowedHostSuffixes,
+} from "./http/originGuard.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
@@ -602,9 +607,15 @@ export interface AppOptions {
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
   // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
-  // extension, loopback, and the server's own host). From DFIR_ALLOWED_ORIGINS — see
-  // src/http/originGuard.ts. Absent → only the built-in trusted origins.
+  // extension and loopback). From DFIR_ALLOWED_ORIGINS — see src/http/originGuard.ts.
+  // Absent → only the built-in trusted origins.
   allowedOrigins?: string[];
+  // Extra Host header values this companion answers to, beyond loopback and bare IP addresses.
+  // From DFIR_ALLOWED_HOSTS / DFIR_ALLOWED_HOST_SUFFIXES. Needed only when the dashboard is reached
+  // through a NAME rather than an address (reverse proxy, PaaS) — an unrecognised name is how a
+  // DNS-rebinding attack announces itself, so it cannot be inferred. See src/http/originGuard.ts.
+  allowedHosts?: string[];
+  allowedHostSuffixes?: string[];
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -668,12 +679,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
   };
 
-  // Let the browser extension and the dashboard reach this localhost-only server, and turn every
-  // OTHER browser origin away (issue #211). Binding to 127.0.0.1 stops other machines, not other
-  // origins: without this gate any page you happen to be browsing could POST a custom tool here and
-  // have the companion spawn it. Non-browser callers (curl, scripted pushes) send no Origin and are
-  // unaffected. See src/http/originGuard.ts for the full threat model.
-  app.use(createOriginGuard({ allowedOrigins: options.allowedOrigins }));
+  // Let the browser extension and the dashboard reach this server, and turn every OTHER browser
+  // origin away (issue #211) — plus every request arriving under a hostname we do not answer to
+  // (#280), which is what a DNS-rebinding attack looks like from in here. Binding to 127.0.0.1
+  // stops other machines, not other origins: without this gate any page you happen to be browsing
+  // could POST a custom tool here and have the companion spawn it. Non-browser callers (curl,
+  // scripted pushes) are unaffected. See src/http/originGuard.ts for the full threat model.
+  app.use(createOriginGuard({
+    allowedOrigins: options.allowedOrigins,
+    allowedHosts: options.allowedHosts,
+    allowedHostSuffixes: options.allowedHostSuffixes,
+  }));
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
@@ -3541,9 +3557,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
-    // Extra browser origins permitted past the origin guard (#211), beyond the extension, loopback,
-    // and this server's own host. Comma-separated, e.g. "https://soc.example.com".
+    // Extra browser origins permitted past the origin guard (#211), beyond the extension and
+    // loopback. Comma-separated, e.g. "https://soc.example.com".
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
+    // Extra hostnames this companion answers to (#280), beyond loopback and bare IP addresses.
+    // Only a deployment reached through a NAME needs these — e.g. "dfir.example.com", or the
+    // suffix ".killercoda.com" where the platform mints a fresh hostname per session.
+    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
+    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     jobManager,
@@ -3748,14 +3769,18 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
 
   // Live state socket. Subscribing hands the socket every future broadcast of that case's FULL
-  // investigation state, so the upgrade is authorized first (#212): trusted origin, real case, and
-  // — because Express middleware never runs for a WebSocket upgrade — the same case-password check
-  // the HTTP routes get. See src/live/wsGate.ts.
+  // investigation state, so the upgrade is authorized first (#212): recognised host and trusted
+  // origin (#280), real case, and — because Express middleware never runs for a WebSocket upgrade
+  // — the same case-password check the HTTP routes get. See src/live/wsGate.ts.
   attachLiveSocket(server, hub, {
     store,
     // Same load-or-create call createApp makes, so both gates verify unlock cookies with one key.
     secret: loadOrCreateInstanceSecret(store.casesRoot),
+    // Same guard config the HTTP middleware gets, so a socket can never be admitted where a fetch
+    // to the same path would be refused.
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
+    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
+    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
   });
 }
 
