@@ -418,6 +418,38 @@ describe("anonymizer — custom entities", () => {
     expect(out).toBe("C2 was ANON_EXTIP_1");
     expect(a.restore(out)).toBe("C2 was 45.61.136.10");
   });
+
+  it("does not let a known.custom IPv4 value corrupt an IPv4-mapped IPv6 literal it happens to be embedded in", () => {
+    // pipeline.ts persists auto-discovered IPs into known.custom and re-injects them as exact-match
+    // rules on the next call (discoveredStore -> known.custom). anonCustom() runs BEFORE anonIps(),
+    // so a custom value of "10.0.0.5" would, without protection, substring-match and tokenize the
+    // embedded quad inside "::ffff:10.0.0.5" on its own — the SAME corruption class as the
+    // IPV4_RE-vs-IPV6_RE bug above, just reached through anonCustom instead. The IPv6 literal must
+    // stay atomic: it is reserved before anonCustom ever runs, so the custom entity here correctly
+    // does NOT fire on the embedded substring — the whole address is classified as one internal
+    // IPv6 unit instead, which is the CORRECT outcome (10.0.0.5 is internal either way).
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "10.0.0.5", category: "IP" },
+    ]};
+    const a = createAnonymizer(policy({ IP: true }), known);
+    const out = a.apply("session from ::ffff:10.0.0.5 established");
+    expect(out).toBe("session from ANON_IP_1 established");
+    expect(a.discoveries()).toEqual([{ value: "::ffff:10.0.0.5", category: "IP" }]);
+    expect(a.restore(out)).toBe("session from ::ffff:10.0.0.5 established");
+  });
+
+  it("still lets a known.custom value win OUTSIDE any IPv6 literal, even in the same string", () => {
+    // The IPv6-atomicity guard must not demote anonCustom's "analyst-added entities always win"
+    // property for occurrences that are NOT inside an IPv6 literal — only the embedded one is
+    // protected.
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "10.0.0.5", category: "IP" },
+    ]};
+    const a = createAnonymizer(policy({ IP: true }), known);
+    const out = a.apply("bare 10.0.0.5 and mapped ::ffff:10.0.0.5");
+    expect(out).not.toContain("10.0.0.5");
+    expect(a.restore(out)).toBe("bare 10.0.0.5 and mapped ::ffff:10.0.0.5");
+  });
 });
 
 describe("anonymizer — suppression (analyst removed a wrong entity)", () => {
@@ -533,6 +565,33 @@ describe("anonymizer — IPv6 internal IPs", () => {
     expect(out).toBe("mapped ANON_IP_1");
     expect(a.discoveries()).toEqual([{ value: "::ffff:127.0.0.1", category: "IP" }]);
     expect(a.restore(out)).toBe("mapped ::ffff:127.0.0.1");
+  });
+
+  it("still tokenizes an internal IPv6 address abutting a word character — must fail CLOSED, not open", () => {
+    // Regression for a bug introduced (then reverted) while fixing the mapped-loopback corruption
+    // above: a candidate fix added a trailing \b to IPV6_RE. Since every branch of that alternation
+    // ends in a hex character class, requiring a trailing boundary meant an address followed
+    // directly by a word character (no space) failed to match AT ALL — isInternalIpv6 was never
+    // even called, so a victim IPv6 address reached the AI wire completely untokenized. That is
+    // the opposite of the corruption bug: silent failure to redact, not a corrupted token. No
+    // \b was ever needed — the real fix was reordering IPV6_RE/IPV4_RE and its branches (see
+    // above) — so this asserts the ORIGINAL (correct) fail-CLOSED behavior stays locked in: the
+    // matcher still finds and tokenizes as much of the address as forms a valid IPv6 literal, even
+    // when it runs directly into trailing text with no separator.
+    const a1 = createAnonymizer(policy({ IP: true }), NONE);
+    const out1 = a1.apply("addr fd00:db8::1x");
+    expect(out1).toBe("addr ANON_IP_1x");
+    expect(a1.discoveries()).toContainEqual({ value: "fd00:db8::1", category: "IP" });
+
+    const a2 = createAnonymizer(policy({ IP: true }), NONE);
+    const out2 = a2.apply("addr fd00:db8::1_suffix");
+    expect(out2).toBe("addr ANON_IP_1_suffix");
+    expect(a2.discoveries()).toContainEqual({ value: "fd00:db8::1", category: "IP" });
+
+    const a3 = createAnonymizer(policy({ IP: true }), NONE);
+    const out3 = a3.apply("host fe80::1abcd");
+    expect(out3).toBe("host ANON_IP_1d");
+    expect(a3.discoveries()).toContainEqual({ value: "fe80::1abc", category: "IP" });
   });
 
   it("tokenizes an IPv4-mapped IPv6 address given in hex-canonical form (not just dotted)", () => {

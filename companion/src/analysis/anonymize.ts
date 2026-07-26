@@ -279,21 +279,44 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     return out;
   }
-  function anonIps(t: string): string {
-    // IPV6_RE runs FIRST: an IPv4-mapped address (::ffff:127.0.0.1) must be consumed and
-    // classified as ONE IPv6 unit before IPV4_RE gets a chance to tokenize the embedded dotted
-    // quad on its own, which would leave a dangling "::ffff:" prefix for IPV6_RE to (mis)match
-    // against on a later pass. See the ::ffff branch-ordering note on IPV6_RE's definition above.
-    let out = t.replace(IPV6_RE, (ip) => {
+  // An IPv6 literal (especially an IPv4-mapped one like ::ffff:10.0.0.5) is an atomic lexical
+  // unit: whatever text is embedded inside it must be classified and tokenized as ONE address,
+  // never as a separately-matched substring. Every OTHER detector in apply() (anonCustom,
+  // accounts, emails, paths, encoded commands, SIDs, hosts, domains) does word-boundary text
+  // substitution and none of them know about IPv6 syntax — a known.custom IPv4 value (exactly
+  // what pipeline.ts persists from auto-discovery and re-injects on the next call) or any other
+  // pass that happens to substring-match inside "::ffff:10.0.0.5" would leave a mutated remnant
+  // for IPV6_RE to (mis)parse when the real IP pass finally runs, corrupting the token. So every
+  // IPv6 literal is pulled out and replaced with an inert placeholder BEFORE any other pass runs,
+  // and only spliced back in — correctly classified via isInternalIpv6, exactly as if nothing had
+  // run before it — right before the IPv4 pass. Placeholders use \uE000 (never occurs in real
+  // case text) so no other detector's pattern can ever match one.
+  const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
+
+  function reserveIpv6Literals(t: string): { text: string; literals: string[] } {
+    const literals: string[] = [];
+    const text = t.replace(IPV6_RE, (m) => {
+      const i = literals.length;
+      literals.push(m);
+      return `\uE000IPV6:${i}\uE000`;
+    });
+    return { text, literals };
+  }
+
+  function restoreIpv6Literals(t: string, literals: string[]): string {
+    return t.replace(IPV6_PLACEHOLDER_RE, (_m, idxStr: string) => {
+      const ip = literals[Number(idxStr)];
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });
-    out = out.replace(IPV4_RE, (ip) => {
+  }
+
+  function anonIpv4(t: string): string {
+    return t.replace(IPV4_RE, (ip) => {
       if (isInternalIp(ip)) return assign("IP", ip);
       if (!policy.maskPublicIps || !isMaskableIpv4(ip)) return ip;
       return assign("EXTIP", ip);
     });
-    return out;
   }
 
   function anonCustom(t: string): string {
@@ -306,7 +329,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       // then persisted into known.custom) must NOT be re-tokenized here when maskPublicIps is
       // off — otherwise the redacted export (which always disables it) would exact-match and
       // hide adversary infrastructure that policy explicitly says to keep visible, even though
-      // anonIps() itself correctly leaves live public-IP text alone.
+      // anonIpv4()/restoreIpv6Literals() themselves correctly leave live public-IP text alone.
       if (category === "EXTIP" && !policy.maskPublicIps) continue;
       out = out.replace(new RegExp(`\\b${escapeRegExp(value)}\\b`, "gi"), (m) => assign(category, m));
     }
@@ -315,7 +338,16 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
 
   function apply(text: string): string {
     let t = text;
-    t = anonCustom(t);                       // analyst-added entities always win
+    // Reserve IPv6 literals FIRST — before anonCustom or any other pass — so nothing can
+    // substitute inside one. Only when IP masking is active: if the IP category is off, no later
+    // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.
+    let ipv6Literals: string[] = [];
+    if (policy.categories.IP) {
+      const reserved = reserveIpv6Literals(t);
+      t = reserved.text;
+      ipv6Literals = reserved.literals;
+    }
+    t = anonCustom(t);                       // analyst-added entities always win (outside IPv6 literals)
     if (policy.redactSecrets) t = redactSecrets(t);
     if (policy.categories.USER) t = anonAccounts(t);
     if (policy.categories.EMAIL) t = anonEmails(t);
@@ -324,7 +356,10 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     if (policy.categories.REG) t = anonSids(t);
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
-    if (policy.categories.IP) t = anonIps(t);
+    if (policy.categories.IP) {
+      t = restoreIpv6Literals(t, ipv6Literals);  // classify + tokenize the reserved literals
+      t = anonIpv4(t);                           // then any standalone (non-embedded) IPv4 address
+    }
     return t;
   }
 
