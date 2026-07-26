@@ -18,8 +18,11 @@ beforeEach(async () => {
   await store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
 });
 
-// A distinct 1x1-ish payload per index, so every capture has different bytes (and a different hash).
-const imageFor = (i: number): string => Buffer.from(`capture-payload-${i}`).toString("base64");
+// A distinct payload per index, so every capture has different bytes (and a different hash). Carries
+// a real PNG signature because ingest magic-byte-checks the bytes before writing them.
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const imageFor = (i: number): string =>
+  Buffer.concat([PNG_SIGNATURE, Buffer.from(`capture-payload-${i}`)]).toString("base64");
 
 describe("capture sequence allocation (#214)", () => {
   it("hands out a unique sequence number to every concurrent capture", async () => {
@@ -58,7 +61,7 @@ describe("capture sequence allocation (#214)", () => {
     expect(files).toHaveLength(CONCURRENT);
     for (let i = 0; i < CONCURRENT; i++) {
       const bytes = await readFile(join(store.screenshotsDir(CASE), results[i].screenshotFile!));
-      expect(bytes.toString("utf8"), `capture ${i} content`).toBe(`capture-payload-${i}`);
+      expect(bytes.equals(Buffer.from(imageFor(i), "base64")), `capture ${i} content`).toBe(true);
     }
 
     // And the audit log has one complete line per capture.

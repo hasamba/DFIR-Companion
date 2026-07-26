@@ -8,6 +8,7 @@ import {
   unlockCookieName,
   MIN_CASE_PASSWORD_LENGTH,
 } from "../analysis/casePassword.js";
+import { getUnlockLimiter } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 
 // Cookie TTLs for a case-unlock token. Moved verbatim from createApp (they were used only by the
@@ -16,6 +17,25 @@ import type { RouteContext } from "./context.js";
 // server.ts) and readUnlockState (ctx) verify these tokens; they don't need these TTLs.
 const UNLOCK_TTL_REMEMBER_MS = 365 * 24 * 60 * 60 * 1000; // ~1 year — "remember on this computer"
 const UNLOCK_TTL_SESSION_MS = 12 * 60 * 60 * 1000;        // 12h backstop for a browser-session cookie
+
+/**
+ * Did this request reach us over HTTPS — directly, or on the browser-facing hop of a proxy chain?
+ *
+ * `req.secure` only answers for TLS this process terminated itself, which it never does (the
+ * companion serves plain HTTP and is fronted by a proxy in every deployment where this matters),
+ * so X-Forwarded-Proto is the live branch. Each proxy APPENDS to that header, so a request that
+ * crossed more than one arrives as a list — "https, http" — and it is the FIRST entry, the hop
+ * facing the browser, that decides whether the cookie would ever travel in cleartext. Matching
+ * the whole header against "https" silently drops the Secure flag on exactly those chained
+ * deployments. Node collapses repeated headers into one comma-joined string, but the type admits
+ * an array, so handle both.
+ */
+function isHttpsRequest(req: Request): boolean {
+  if (req.secure) return true;
+  const header = req.headers["x-forwarded-proto"];
+  const clientFacingHop = (Array.isArray(header) ? header[0] : header)?.split(",")[0]?.trim();
+  return clientFacingHop?.toLowerCase() === "https";
+}
 
 /**
  * Case-password protection domain: set / change / clear a case password, unlock a case (issuing the
@@ -57,17 +77,34 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
     try {
       const { id } = req.params;
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
+      // Rate-limit brute-force attempts: after 5 failures, lockout with exponential backoff.
+      const limiter = getUnlockLimiter();
+      const remaining = limiter.remainingLockout(id);
+      if (remaining > 0) {
+        res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
+        return res.status(429).json({ error: "too many failed attempts, try again later", retryAfterMs: remaining });
+      }
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
       if (!meta.password) return res.status(200).json({ ok: true }); // nothing to unlock
       const password = (req.body as { password?: unknown })?.password;
       const remember = (req.body as { remember?: unknown })?.remember === true;
       if (typeof password !== "string" || !verifyCasePassword(password, meta.password)) {
+        const lockout = limiter.recordFailure(id);
+        if (lockout > 0) {
+          res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          return res.status(429).json({ error: "too many failed attempts, locked out", retryAfterMs: lockout });
+        }
         return res.status(401).json({ error: "incorrect password" });
       }
+      limiter.clear(id);
       const ttl = remember ? UNLOCK_TTL_REMEMBER_MS : UNLOCK_TTL_SESSION_MS;
       const token = signUnlockToken(id, meta.password.salt, instanceSecret, ttl, remember);
       const cookieOpts: CookieOptions = { httpOnly: true, sameSite: "strict", path: "/" };
+      // Set the Secure flag when the request was over HTTPS (directly or via a reverse proxy
+      // with X-Forwarded-Proto), so the unlock cookie (a bearer granting full case access)
+      // never transits in cleartext over HTTP.
+      if (isHttpsRequest(req)) cookieOpts.secure = true;
       if (remember) cookieOpts.maxAge = ttl;
       res.cookie(unlockCookieName(id), token, cookieOpts);
       return res.status(200).json({ ok: true });

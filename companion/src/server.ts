@@ -8,7 +8,7 @@ import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { writeFile, readFile, rm, readdir, stat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, lstat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
 import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
@@ -60,6 +60,7 @@ import {
 } from "./analysis/casePassword.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { createCaseLockGate } from "./analysis/caseLockGate.js";
+import { createCaseIdGate } from "./analysis/caseIdGate.js";
 import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
 import { resolveHuntPlatforms, type HuntPlatform } from "./analysis/huntPlatforms.js";
 import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
@@ -143,6 +144,7 @@ import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunne
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
 import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
+import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
@@ -195,6 +197,7 @@ import { ServiceNowClient } from "./integrations/servicenow/servicenowClient.js"
 import { type ServiceNowPushInput, type ServiceNowPushResult, pushFindingToServiceNow } from "./integrations/servicenow/servicenowPush.js";
 import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
+import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
@@ -632,13 +635,17 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
   const recentAiErrors: AiError[] = [];
+  // Both rings are served to the client by /diagnostics (JSON report AND the copy-to-clipboard text
+  // blob), so the message is redacted on the way IN — one choke point instead of two on the way out.
+  // The raw message still reaches serverLogger at each call site, so the console keeps full paths.
+  const redactErr = (err: unknown): string => redactedErrorMessage(err, [store.casesRoot]);
   function recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void {
-    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: (err as Error)?.message ?? String(err) });
+    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: redactErr(err) });
     if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
   }
   function recordAiError(caseId: string, phase: string, err: unknown): void {
     const kind = err instanceof ProviderError ? err.kind : "other";
-    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: (err as Error)?.message ?? String(err) });
+    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: redactErr(err) });
     if (recentAiErrors.length > DIAG_RING) recentAiErrors.length = DIAG_RING;
   }
   // Per-importer health (#84): last run's outcome per custom (declarative) importer id. Keyed by
@@ -710,6 +717,38 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
     return next(err);
   });
+
+  // ── Absolute-path redaction on every error response (#250) ───────────────────────────
+  // ~60 route catch blocks end in `res.status(500).json({ error: (err as Error).message })`, and
+  // Node's fs errors carry the full path, so each one is a potential cases-root disclosure. Wrapping
+  // res.json here is the single choke point that covers all of them — including routes added later
+  // and the terminal error handler at the bottom of this file — with no per-handler opt-in, the same
+  // reasoning as the caseIdGate/caseLockGate mounts below.
+  //
+  // ONLY the `error` field is rewritten. Ordinary fields legitimately carry filesystem paths that
+  // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
+  // the size report's per-file paths are case-relative, not absolute. Redacting those would break
+  // features to no benefit. Request logging is untouched, so the console still shows real paths.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    const sendJson = res.json.bind(res);
+    res.json = ((body: unknown) => {
+      if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
+        // Spread rather than mutate: the caller's object literal is not ours to rewrite, and
+        // overwriting an existing key preserves its position in the response.
+        return sendJson({ ...body, error: redactPaths((body as { error: string }).error, [store.casesRoot]) });
+      }
+      return sendJson(body);
+    }) as typeof res.json;
+    next();
+  });
+
+  // ── Case id validation ────────────────────────────────────────────────────────────────
+  // Gates every /cases/:id/* route behind isValidCaseId (#248) — CaseStore's own methods do
+  // zero sanitization (join(root, caseId)), so an unvalidated id of "../other" resolves outside
+  // the cases root. Mounted here, before ANY /cases/:id/* route (including the lock gate right
+  // below, whose own getCaseMeta() call is itself unvalidated), so this covers all of them via
+  // prefix matching — see caseIdGate.ts for why a per-route-file opt-in isn't enough.
+  app.use("/cases/:id", createCaseIdGate());
 
   // ── Case password protection ─────────────────────────────────────────────────────────
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
@@ -837,6 +876,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPushNotifyRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
+
+  // Rate-limit AI-cost-bearing routes (import triggers synthesis, synthesize is explicit) to
+  // prevent an attacker who knows a caseId from burning the operator's AI budget. 20 requests
+  // per minute per case — generous for a single analyst, blocks a script hammering the endpoint.
+  const aiLimiter = getAiLimiter();
+  app.use("/cases/:id/import", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-file", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-csv", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/import-log", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/synthesize", aiLimiter.middleware((req) => req.params.id));
+  app.use("/cases/:id/deep-pass", aiLimiter.middleware((req) => req.params.id));
+
   registerImportRoutes(app, ctx);
   registerVelociraptorRoutes(app, ctx);
   registerThreatIntelRoutes(app, ctx);
@@ -1137,7 +1188,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
         },
       }).catch((err) => {
-        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: (err as Error)?.message ?? String(err) });
+        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: redactErr(err) });
         throw err;
       });
     }
@@ -1406,6 +1457,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
+  // Symlinks are rejected (lstat, not stat) to prevent a symlink-to-/etc/shadow from being read into
+  // the case as evidence — a Dropbox/OneDrive-synced cases/ root is exactly where this is realistic.
+  // Hardlinks are rejected too (nlink > 1): a hardlink is indistinguishable from a normal file via
+  // stat/lstat, but a legitimately-dropped file (synced, copied, or dragged in) is always nlink === 1
+  // — a multiply-linked path in the drop folder means some OTHER directory entry aliases the same
+  // inode, which is exactly the "read /etc/shadow via drop/" vector this whole guard exists for.
   async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
     const out: DropFileStat[] = [];
     const walk = async (dir: string): Promise<void> => {
@@ -1415,9 +1472,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         const full = join(dir, e.name);
         const rel = relative(dropDir, full);
         if (shouldIgnoreDropFile(rel)) continue;
+        if (e.isSymbolicLink()) continue;   // never follow symlinks in the drop folder
         if (e.isDirectory()) { await walk(full); continue; }
         if (!e.isFile()) continue;
-        try { const st = await stat(full); out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs }); } catch { /* vanished mid-walk */ }
+        try {
+          const st = await lstat(full);
+          if (st.isSymbolicLink() || st.nlink > 1) continue;
+          out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs });
+        } catch { /* vanished mid-walk */ }
       }
     };
     await walk(dropDir);
@@ -1441,6 +1503,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
     await mkdir(dirname(dest), { recursive: true });
     try {
+      // Guard against a symlink swap (TOCTOU): rename follows symlinks on some platforms, and
+      // copyFile always does. Re-check before moving. Also refuse a hardlink (nlink > 1) — see
+      // listDropFiles for why that's just as much a host-file-exfiltration vector as a symlink.
+      const lst = await lstat(src);
+      if (lst.isSymbolicLink()) throw new Error("symlink detected in drop folder — refused to move (security)");
+      if (lst.nlink > 1) throw new Error("hardlink detected in drop folder — refused to move (security)");
       await rename(src, dest);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "EXDEV") { await copyFile(src, dest); await rm(src, { force: true }); }
@@ -1475,6 +1543,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
+      // TOCTOU guard: re-check that the path is not a symlink before reading. A file could have
+      // been replaced with a symlink between listDropFiles and this read. Also refuse a hardlink
+      // (nlink > 1) — indistinguishable from a normal file via stat, but a legitimately-dropped
+      // file is always nlink === 1 (see listDropFiles).
+      const lst = await lstat(full);
+      if (lst.isSymbolicLink()) return { ok: false, reason: "symlink detected in drop folder — refused to read (security)" };
+      if (lst.nlink > 1) return { ok: false, reason: "hardlink detected in drop folder — refused to read (security)" };
       // A raw file an external tool handles (built-in EVTX/PCAP, or any extension a CUSTOM tool claims)
       // — can't be read as text. Run the configured tool against the on-disk file (size-independent, so
       // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
@@ -2788,12 +2863,51 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
 // Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
 // self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
 // DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
+//
+// Resolves each integration's actual target host, so tlsFetchFor can pass hostUrl to
+// buildTlsFetch's loopback guard (#246) — WITHOUT it, insecureSkipVerify's guard defaults to
+// "treat as loopback" and never rejects anything, silently defeating the guard entirely (the
+// bug this map exists to close). MISP/YETI/OPENCTI/IRIS/TIMESKETCH/JIRA/SERVICENOW read their configurable
+// DFIR_<NAME>_URL. NOTION and CLICKUP have no such env var — they're fixed SaaS hosts — so their
+// entries are the literal constants those clients themselves use, which correctly makes the guard
+// treat them as non-loopback (there's no legitimate reason to skip TLS verification against the
+// real api.notion.com/api.clickup.com). NOTIFY has no entry: it's one shared fetchFn reused across
+// whichever per-channel webhook URL a notification targets (stored in NotificationStore, not a
+// single env var at boot), so there's no single host to check here — DFIR_NOTIFY_INSECURE keeps
+// today's unguarded behavior until that's threaded through per-send instead of at construction.
+const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>> = {
+  MISP: () => process.env.DFIR_MISP_URL,
+  YETI: () => process.env.DFIR_YETI_URL,
+  OPENCTI: () => process.env.DFIR_OPENCTI_URL,
+  IRIS: () => process.env.DFIR_IRIS_URL,
+  TIMESKETCH: () => process.env.DFIR_TIMESKETCH_URL,
+  JIRA: () => process.env.DFIR_JIRA_URL,
+  SERVICENOW: () => process.env.DFIR_SERVICENOW_URL,
+  NOTION: "https://api.notion.com",
+  CLICKUP: "https://api.clickup.com/api/v2",
+};
 function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
-  return buildTlsFetch({
-    caCertPath: process.env[`DFIR_${name}_CA`],
-    insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-    onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
-  });
+  const hostSource = TLS_HOST_URL[name];
+  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
+  try {
+    return buildTlsFetch({
+      caCertPath: process.env[`DFIR_${name}_CA`],
+      insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
+      hostUrl,
+      onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
+    });
+  } catch (err) {
+    // buildTlsFetch throws when insecureSkipVerify targets a non-loopback host without the
+    // explicit DFIR_TLS_ALLOW_INSECURE_EXTERNAL override (#246). Every call site of tlsFetchFor
+    // sits inline in an options object built at server startup (and in the live /settings/reload
+    // path) with no surrounding try/catch — letting this propagate would crash the ENTIRE server
+    // over one optional integration's TLS misconfiguration. Disable custom TLS trust for just this
+    // provider instead (falls back to the default, fully-verified global fetch — a real self-signed
+    // cert then fails that provider's own connection attempts with a normal, contained TLS error,
+    // not a server-wide outage) and say why loudly so the operator can see it in the logs.
+    warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 function isEnvFlag(value: string | undefined): boolean {

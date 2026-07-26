@@ -20149,7 +20149,6 @@
         diagRow("Free", `${diagFmtBytes(d.freeBytes)} of ${diagFmtBytes(d.totalBytes)}`),
         diagRow("Used", `${(d.usedPct || 0).toFixed(1)}%`, lvlColor),
         diagRow("Status", esc(d.level), lvlColor),
-        diagRow("Cases root", `<code>${esc(report.casesRoot)}</code>`),
       ].join(""));
       const cs = report.cases;
       const cases = diagCard("Cases", diagRow("Total", `${cs.count} (${cs.open} open, ${cs.closed} closed)`));
@@ -20334,9 +20333,12 @@
             <span style="color:#9aa4b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.caseId)}/${esc(f.path)}</span>
             <span>${diagFmtBytes(f.bytes)}</span></div>`).join("") || `<div style="color:#9aa4b2">none</div>`;
         const trunc = j.truncated ? ` <span style="color:#ffb05a">(scan truncated at ${j.scannedFiles} files)</span>` : "";
+        // Locked cases still count toward the byte totals but withhold their filenames, so say so —
+        // otherwise a short "Largest files" list on a passworded install just looks broken.
+        const locked = j.lockedCases ? ` <span style="font-weight:400">— hidden for ${j.lockedCases} locked case(s)</span>` : "";
         target.innerHTML = diagCard("Case sizes — total " + diagFmtBytes(j.totalBytes) + trunc,
           `<div style="font-weight:600;color:#9aa4b2;margin:2px 0">By case</div>${cases}
-           <div style="font-weight:600;color:#9aa4b2;margin:8px 0 2px">Largest files</div>${files}`);
+           <div style="font-weight:600;color:#9aa4b2;margin:8px 0 2px">Largest files${locked}</div>${files}`);
       }).catch(e => { target.innerHTML = `<div style="color:#ff9f9f">Size scan failed: ${esc(e.message)}</div>`; })
         .finally(() => { if (btn) btn.disabled = false; });
     }
@@ -20402,7 +20404,17 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename }),
       })
-        .then(async r => { if (!r.ok) throw new Error(await r.text().catch(() => String(r.status))); return r.json(); })
+        .then(async r => {
+          if (!r.ok) {
+            // Surface the server's `error` string rather than the raw JSON body: a restore blocked
+            // by an in-flight job (409) is a routine outcome the analyst needs to be able to read.
+            const body = await r.text().catch(() => String(r.status));
+            let detail = body;
+            try { const parsed = JSON.parse(body); if (parsed && parsed.error) detail = parsed.error; } catch {}
+            throw new Error(detail);
+          }
+          return r.json();
+        })
         .then(j => {
           if (msg) { msg.style.color = "#5ad17a"; msg.textContent = `✓ Restored ${(j.restored || []).length} file(s) — reload the page to reflect changes`; }
         })

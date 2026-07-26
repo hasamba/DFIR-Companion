@@ -4,6 +4,7 @@
 
 import type { IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { iocKind, withRateLimitRetry, type EnrichmentProvider, type IocKind, type RetryPolicy } from "./provider.js";
+import { isInternalTarget } from "../analysis/iocValue.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
@@ -73,6 +74,7 @@ export function hasEnrichableWork(iocs: readonly IOC[], providers: readonly Enri
   return iocs.some((ioc) => {
     const kind = iocKind(ioc.type);
     if (!kind) return false;
+    if (isInternalTarget(ioc.value, ioc.type)) return false;  // SSRF guard
     const checked = new Set(ioc.enrichedBy ?? []);
     return providers.some((p) => p.supports(kind) && !checked.has(p.name));
   });
@@ -97,6 +99,10 @@ export async function enrichIocs(
   const candidates = iocs
     .map((ioc, idx) => ({ ioc, idx, kind: iocKind(ioc.type) }))
     .filter((c): c is { ioc: IOC; idx: number; kind: IocKind } => c.kind !== undefined)
+    // SSRF guard: never enrich an IOC whose value points at a private/internal target
+    // (169.254.169.254 cloud metadata, RFC1918, loopback, link-local IPv6). A crafted log line
+    // or prompt-injected AI response can plant such a value as an IOC.
+    .filter((c) => !isInternalTarget(c.ioc.value, c.ioc.type))
     .map((c) => {
       const supporting = opts.providers.filter((p) => p.supports(c.kind));
       const checked = new Set(c.ioc.enrichedBy ?? []);

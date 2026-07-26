@@ -15,13 +15,14 @@ import {
   dfircaseFilename,
 } from "../analysis/caseExportArchive.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
+import { getImportLimiter } from "../http/rateLimiter.js";
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { logActivity, ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
-import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "../settings/envManager.js";
+import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, validateEnvUpdates } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { pushCaseToIris } from "../integrations/iris/irisPush.js";
@@ -32,6 +33,7 @@ import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
 import { pushFindingToJira } from "../integrations/jira/jiraPush.js";
 import { pushFindingToServiceNow } from "../integrations/servicenow/servicenowPush.js";
+import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
@@ -444,8 +446,26 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // codebase's existing convention for binary uploads elsewhere (no multipart/multer). 409 if the
   // target id already exists (the dashboard re-prompts with a new id), 400 on a wrong password,
   // corrupt archive, or malformed payload.
+  //
+  // Rate-limited like /unlock, and for a sharper reason: opening an archive costs a deliberate
+  // ~1s scrypt derivation (caseEncryption.ts) on the SYNCHRONOUS path, so an unauthenticated
+  // caller looping wrong-password imports holds the event loop — the whole server, not just this
+  // route — for as long as it cares to. The origin guard doesn't stop it (a caller with no Origin
+  // header is allowed by design, see http/originGuard.ts) and in container mode the port is on the
+  // network. Keyed by client IP because an import names no case until it has been decrypted; the
+  // key is coarse behind a reverse proxy that doesn't strip its own address, where every caller
+  // shares one bucket. That's the deliberate trade: a shared 30s import lockout is a far smaller
+  // failure than a wedged event loop, and refusing to trust a spoofable X-Forwarded-For is worth
+  // more than a per-caller bucket.
   app.post("/cases/import/encrypted", async (req: Request, res: Response) => {
+    const limiter = getImportLimiter();
+    const limiterKey = req.ip ?? "unknown";
     try {
+      const remaining = limiter.remainingLockout(limiterKey);
+      if (remaining > 0) {
+        res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
+        return res.status(429).json({ error: "too many failed imports, try again later", retryAfterMs: remaining });
+      }
       const body = (req.body ?? {}) as Record<string, unknown>;
       const { data, password, targetCaseId } = body;
       if (typeof data !== "string" || !data.trim()) {
@@ -462,12 +482,20 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
       // the client, same as every other route that serializes a CaseMeta.
+      limiter.clear(limiterKey);
       return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
+      // A conflict means the archive DID open — a real analyst re-importing, not an attacker
+      // burning CPU. Deliberately not counted as a failure.
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
       }
       if (err instanceof DecryptionError) {
+        const lockout = limiter.recordFailure(limiterKey);
+        if (lockout > 0) {
+          res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          return res.status(429).json({ error: "too many failed imports, locked out", retryAfterMs: lockout });
+        }
         return res.status(400).json({ error: err.message });
       }
       const msg = (err as Error).message;
@@ -508,8 +536,29 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "filename is required" });
     }
     try {
-      const result = await options.backupManager.restoreBackup(caseId, filename.trim());
-      return res.status(200).json(result);
+      // A restore rewrites investigation.json wholesale, so it must not land on top of another
+      // writer (#251). Two guards, because they close different windows:
+      //   - runStateExclusive serializes against the short load→save critical sections (manual
+      //     event/IOC adds, enrichment saves) that hold the same per-case lock.
+      //   - Background jobs release that lock between their critical sections — synthesis holds it
+      //     to save, not across the AI call — so a restore can slot into a gap and then be
+      //     clobbered by the job's next save. No lock can serialize against that, so refuse while
+      //     any job is in flight for this case and let the operator cancel it or wait it out.
+      //     Every kind writes case state, hence the check is on all of them, not just synthesis.
+      const outcome = await runStateExclusive(caseId, async (): Promise<{ busy: Job } | { restored: string[] }> => {
+        const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
+        if (busy) return { busy };
+        return await options.backupManager!.restoreBackup(caseId, filename.trim());
+      });
+      if ("busy" in outcome) {
+        const { kind, id, label } = outcome.busy;
+        return res.status(409).json({
+          error: `a ${kind}${label ? ` (${label})` : ""} job is in progress for this case — cancel it or wait for it to finish, then restore`,
+          jobId: id,
+          kind,
+        });
+      }
+      return res.status(200).json(outcome);
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("not found") || msg.includes("invalid backup")) {
@@ -977,6 +1026,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const updates = req.body?.updates;
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
+      }
+      const rejected = validateEnvUpdates(updates as Record<string, string>);
+      if (rejected.length > 0) {
+        return res.status(400).json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
       }
       await updateEnvFile(updates as Record<string, string>);
       return res.json({ ok: true });

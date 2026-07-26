@@ -90,7 +90,9 @@ The server automatically backs up all per-case state (findings, timeline, IOCs, 
 
 View and restore backups in **Settings → Diagnostics → Per-case backup list**. One click restores to any saved state.
 
-Configure in the same tab: `DFIR_STATE_BACKUP_RETAIN` (max backups kept per case, oldest pruned; default 24, 0 = unbounded), `DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN` (of those slots, how many stay reserved for pre-synthesis backups so interval backups can't crowd them out; default 10), `DFIR_STATE_BACKUP_INTERVAL_MS` (time-based backup interval; default 1h, 0 = off).
+A restore overwrites the live state wholesale, so it is refused while an import, synthesis, enrichment, or deep pass is running for that case — the job would save over the restored state moments later. Cancel the job in **Settings → Jobs** (or let it finish), then restore.
+
+Configure in the same tab: `DFIR_STATE_BACKUP_RETAIN` (max backups kept per case, oldest pruned; default 24 — 0 asks for no limit but is capped at 100, since each backup is a full copy of the case state and an uncapped dir will fill the disk), `DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN` (how many pre-synthesis backups are preserved on top of that cap, so interval backups can't crowd them out; default 10), `DFIR_STATE_BACKUP_INTERVAL_MS` (time-based backup interval; default 1h, 0 = off).
 
 ---
 
