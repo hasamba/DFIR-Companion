@@ -225,6 +225,26 @@ describe("parseVelociraptorJson — prototype-pollution hardening (forged dotted
     expect(r.events[0].severity).toBe("High");             // "psexec" keyword — proves Detection.StringHit unflattened into the verdict
     expect(r.events[0].description).toContain("PsExec.exe");
   });
+
+  // The multi-field collapse in normalizeElasticRow runs BEFORE unflattenDotted and does its own
+  // bracket assignment plus `bare in collapsed` membership tests. A forged bare "__proto__" column
+  // carrying an object would set that accumulator's prototype, so every subsequent `in` test consults
+  // the attacker's object — silently discarding the real ".keyword" columns whose bare names it names.
+  it("a forged bare '__proto__' column cannot suppress a benign '.keyword' column via the collapse step", () => {
+    const row = JSON.parse(String.raw`{
+      "__proto__": { "Artifact": "attacker-suppressed", "EntryPath": "attacker-suppressed" },
+      "_index": "artifact_detectraptor_windows_detection_mft",
+      "@timestamp": "2026-05-07T16:03:56.000Z",
+      "Detection.StringHit": "PsExec.exe",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT",
+      "EntryPath.keyword": "c:\\tools\\psexec.exe"
+    }`);
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    // The real Artifact/EntryPath values still reach the event — not dropped by a poisoned `in` test.
+    expect(r.events[0].description).toContain("DetectRaptor MFT detection:");
+    expect(r.events[0].description).toContain("PsExec.exe");
+    expect(r.events[0].description).not.toContain("attacker-suppressed");
+  });
 });
 
 // DetectRaptor-style "*.Detection.*" artifacts carry the verdict in a `Detection`/`RuleName`
