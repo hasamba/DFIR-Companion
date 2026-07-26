@@ -122,6 +122,17 @@ describe("HTTP server", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /captures returns 400 (not 500) when the bytes are not an image", async () => {
+    // Junk bytes are the CALLER's mistake, so this must not surface as a server fault.
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).post("/captures").send({
+      caseId: "c1", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",
+      triggerType: "timer", imageBase64: Buffer.from("not an image at all").toString("base64"),
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not a recognized image format/);
+  });
+
   it("POST /captures returns 404 for a case that does not exist", async () => {
     const res = await request(app).post("/captures").send({
       caseId: "ghost", timestamp: "2026-05-28T10:00:00.000Z", url: "u", tabTitle: "t",

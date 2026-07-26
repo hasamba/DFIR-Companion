@@ -95,4 +95,15 @@ describe("chunkToCsvText", () => {
   it("returns just the header when there are no rows", () => {
     expect(chunkToCsvText(["a", "b"], [])).toBe("a,b");
   });
+  it("passes leading =, +, - and @ through UNCHANGED (this is prompt text, not a spreadsheet)", () => {
+    // A formula-injection guard belongs on the CSV exports, not here: this string goes into an LLM
+    // prompt and nothing opens it in Excel. Quoting it would corrupt what the model reads — "-" is
+    // the standard null placeholder in Windows event logs, and offsets/flags/negatives all lead with
+    // one of these characters.
+    const text = chunkToCsvText(["Offset", "User", "CommandLine", "Delta"], [
+      ["-0500", "-", "-ExecutionPolicy Bypass", "-42"],
+      ["+0200", "jdoe", "@echo off", "0"],
+    ]);
+    expect(text).toBe("Offset,User,CommandLine,Delta\n-0500,-,-ExecutionPolicy Bypass,-42\n+0200,jdoe,@echo off,0");
+  });
 });

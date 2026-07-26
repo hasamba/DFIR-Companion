@@ -4,6 +4,7 @@
 
 import type { IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { iocKind, withRateLimitRetry, type EnrichmentProvider, type IocKind, type RetryPolicy } from "./provider.js";
+import { isInternalTarget } from "../analysis/iocValue.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
@@ -65,12 +66,13 @@ export interface EnrichSummary {
 const KIND_PRIORITY: Record<IocKind, number> = { hash: 0, ip: 1, process: 2, domain: 3, url: 4 };
 
 // The per-IOC form of enrichIocs' candidate filter: would a run query THIS IOC right now? False for
-// an IOC whose type maps to no enrichable kind (file/sid/other — no provider ever supports them) and
-// for one that every enabled provider has already checked. Shared by both pre-checks below so they
-// can't drift from each other, or from the real candidate list in enrichIocs.
+// an IOC whose type maps to no enrichable kind (file/sid/other — no provider ever supports them), for
+// one held back by the SSRF guard below, and for one that every enabled provider has already checked.
+// Shared by both pre-checks below so they can't drift from each other, or from enrichIocs' own list.
 function needsEnrichment(ioc: IOC, providers: readonly EnrichmentProvider[]): boolean {
   const kind = iocKind(ioc.type);
   if (!kind) return false;
+  if (isInternalTarget(ioc.value, ioc.type)) return false;  // SSRF guard
   const checked = new Set(ioc.enrichedBy ?? []);
   return providers.some((p) => p.supports(kind) && !checked.has(p.name));
 }
@@ -87,8 +89,9 @@ export function hasEnrichableWork(iocs: readonly IOC[], providers: readonly Enri
 // The COUNT behind hasEnrichableWork: how many IOCs a run would actually query right now. The
 // next-action coach labels its card with it ("Enrich 7 IOCs"), so it has to be the engine's own
 // candidate filter and not a lookalike — counting "IOCs with no enrichments yet" instead advertises
-// runs that would query nothing (an unsupported IOC type, or no providers enabled at all), and a
-// count that never reaches zero also never lets the case reach its "ready to report" state.
+// runs that would query nothing (an unsupported IOC type, an internal target held back by the SSRF
+// guard, or no providers enabled at all), and a count that never reaches zero also never lets the
+// case reach its "ready to report" state.
 export function countEnrichableWork(iocs: readonly IOC[], providers: readonly EnrichmentProvider[]): number {
   return iocs.reduce((n, ioc) => n + (needsEnrichment(ioc, providers) ? 1 : 0), 0);
 }
@@ -112,6 +115,10 @@ export async function enrichIocs(
   const candidates = iocs
     .map((ioc, idx) => ({ ioc, idx, kind: iocKind(ioc.type) }))
     .filter((c): c is { ioc: IOC; idx: number; kind: IocKind } => c.kind !== undefined)
+    // SSRF guard: never enrich an IOC whose value points at a private/internal target
+    // (169.254.169.254 cloud metadata, RFC1918, loopback, link-local IPv6). A crafted log line
+    // or prompt-injected AI response can plant such a value as an IOC.
+    .filter((c) => !isInternalTarget(c.ioc.value, c.ioc.type))
     .map((c) => {
       const supporting = opts.providers.filter((p) => p.supports(c.kind));
       const checked = new Set(c.ioc.enrichedBy ?? []);

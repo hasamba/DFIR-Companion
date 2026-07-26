@@ -169,7 +169,10 @@ export function sanitizeObservations(raw: unknown, validEventIds: ReadonlySet<st
 /**
  * The prompt block the FINAL synthesis receives. Labelled explicitly as evidence from parts of the
  * timeline the model is not being shown row-by-row, so it weighs them as reported evidence rather
- * than assuming it saw them itself.
+ * than assuming it saw them itself. The `whyItMatters` field is a batch analyst's read of a narrow
+ * slice with no cross-batch visibility (it cannot know a file/command it flagged also appears,
+ * benignly, under unrelated accounts on other hosts elsewhere in the case) — treat it as a lead to
+ * weigh against the rest of the case, not as a settled verdict to repeat.
  */
 export function renderObservationDigest(observations: readonly Observation[]): string {
   if (!observations.length) return "";
@@ -183,8 +186,14 @@ export function renderObservationDigest(observations: readonly Observation[]): s
   });
   return (
     "DEEP-PASS OBSERVATIONS (a batched read of the REST of the timeline — these events are NOT shown " +
-    "to you row-by-row below, so treat each line as reported evidence; they carry no severity verdict " +
-    "of their own).\n" +
+    "to you row-by-row below). The `summary` on each line is factual. The clause after the dash is " +
+    "one batch analyst's WHY-IT-MATTERS READ of that narrow slice, written with no visibility into the " +
+    "rest of the case — including whether the same file/command/account recurs elsewhere, which would " +
+    "change the read entirely (e.g. the same installer run by several unrelated employees is routine " +
+    "software deployment, not attacker tooling, however it reads in isolation). Corroborate against the " +
+    "timeline rows you ARE shown below before elevating an observation into a finding, and do not restate " +
+    "a batch's why-it-matters clause as your own confirmed conclusion. These observations carry no " +
+    "severity verdict of their own.\n" +
     "The ids in each [events: …] list are REAL case event ids: when a finding rests on an observation, " +
     "copy those ids into that finding's relatedEventIds exactly as written. A finding built on an " +
     "observation but left with no relatedEventIds cannot be verified by the analyst and will have its " +
