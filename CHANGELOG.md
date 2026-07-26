@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Clearer error when a case's state file passes the ~512 MB load ceiling** — says the whole case is unreadable rather than just new imports, prints the absolute `state/backups/` path, and states the limit is permanent now that the SQLite-backed store (#237) is not planned.
+
 ## [0.33.0] - 2026-07-24
 
 ### Added
