@@ -17,6 +17,10 @@ const DENIED_ENV_KEYS = new Set([
   "DFIR_DEMO_MODE",
   "DFIR_ANONYMIZE",
   "DFIR_ALLOWED_ORIGINS",
+  // Same class of control as DFIR_ALLOWED_ORIGINS: these decide which hostnames the companion
+  // answers to, so a writable one would let the dashboard re-open the DNS-rebinding hole (#280).
+  "DFIR_ALLOWED_HOSTS",
+  "DFIR_ALLOWED_HOST_SUFFIXES",
   "DFIR_LOG_DIR",
 ]);
 
