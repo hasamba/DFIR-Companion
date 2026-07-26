@@ -11,6 +11,7 @@ import type { ZipEntry } from "./zipArchive.js";
 
 const ALL_CATEGORIES: Record<AnonCategory, boolean> = {
   IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
+  CARD: true, PHONE: true, NATID: true,
 };
 
 // The export always uses MAXIMUM redaction, independent of the per-case AI-anonymization toggle:

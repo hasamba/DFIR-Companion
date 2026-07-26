@@ -10846,11 +10846,12 @@
 
     // ── Anonymization — tokenize sensitive victim data before the AI; restore on display ──
     const ANON_CATEGORIES = [
-      ["IP", "Internal IPs"], ["USER", "Usernames"], ["HOST", "Hostnames"],
+      ["IP", "IP addresses"], ["USER", "Usernames"], ["HOST", "Hostnames"],
       ["DOMAIN", "Internal domains"], ["EMAIL", "Emails"], ["PATH", "User paths"],
       ["CMD", "Encoded commands"], ["REG", "SIDs"],
+      ["CARD", "Credit cards"], ["PHONE", "Phone numbers"], ["NATID", "ID numbers"],
     ];
-    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EMAIL", "PATH", "CMD", "REG", "OTHER"];
+    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EXTIP", "EMAIL", "PATH", "CMD", "REG", "CARD", "PHONE", "NATID", "PERSON", "OTHER"];
     let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
     let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
     let anonCustom = [];             // working copy: [{ value, category }]

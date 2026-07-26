@@ -8,7 +8,7 @@ function policy(over: Partial<AnonPolicy["categories"]> = {}, redactSecrets = fa
     enabled: true,
     redactSecrets,
     maskPublicIps: true,
-    categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, CMD: false, REG: false, ...over },
+    categories: { IP: false, EMAIL: false, USER: false, HOST: false, DOMAIN: false, PATH: false, CMD: false, REG: false, CARD: false, PHONE: false, NATID: false, ...over },
   };
 }
 

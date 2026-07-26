@@ -14,7 +14,10 @@ export interface AnonControl {
   redactSecrets: boolean;
 }
 
-const ALL_ON: Record<AnonCategory, boolean> = { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true };
+const ALL_ON: Record<AnonCategory, boolean> = {
+  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
+  CARD: true, PHONE: true, NATID: true,
+};
 
 function defaultControl(): AnonControl {
   const off = /^(0|false|no|off)$/i.test(process.env.DFIR_ANONYMIZE ?? "");

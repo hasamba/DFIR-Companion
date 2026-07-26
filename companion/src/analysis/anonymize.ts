@@ -8,19 +8,25 @@ import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 // walks the model's PARSED JSON response (not the raw string) so real values containing JSON
 // metacharacters — e.g. a Windows path's backslashes — never corrupt parsing.
 
-export type AnonCategory = "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG";
+export type AnonCategory =
+  | "IP" | "EMAIL" | "USER" | "HOST" | "DOMAIN" | "PATH" | "CMD" | "REG"
+  | "CARD" | "PHONE" | "NATID";
 
 // OTHER and EXTIP are token-only: they never appear in the per-case `categories` toggle map.
 // EXTIP is produced by the IP detector when maskPublicIps is on, so a public address stays
 // distinguishable from an internal one in the token the model reads.
-export type AnonTokenCategory = AnonCategory | "OTHER" | "EXTIP";
+//
+// PERSON is token-only: there is no local detector for it. It is minted solely from Presidio
+// findings, which arrive as custom entities.
+export type AnonTokenCategory = AnonCategory | "OTHER" | "EXTIP" | "PERSON";
 
 // The single source of truth for every category assign() can mint. Declaring it as a
 // Record<AnonTokenCategory, true> makes TypeScript reject any new union member that is not
 // listed here — which is what stops a new category from silently failing to restore.
 const TOKEN_CATEGORY_KEYS: Record<AnonTokenCategory, true> = {
   IP: true, EXTIP: true, EMAIL: true, USER: true, HOST: true,
-  DOMAIN: true, PATH: true, CMD: true, REG: true, OTHER: true,
+  DOMAIN: true, PATH: true, CMD: true, REG: true,
+  CARD: true, PHONE: true, NATID: true, PERSON: true, OTHER: true,
 };
 
 export const ALL_TOKEN_CATEGORIES = Object.keys(TOKEN_CATEGORY_KEYS) as readonly AnonTokenCategory[];
@@ -192,6 +198,26 @@ const PATH_DOMAINS = /^(Users|Windows|Program|ProgramData|ProgramFiles|System|Sy
 // unbounded lazy scan re-walks the rest of the input for EVERY begin marker.
 const PEM_PRIVATE_KEY =
   /-{4,5} ?BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}(?:[\s\S]{0,8192}?-{4,5} ?END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)? ?-{4,5}|[A-Za-z0-9+/=\s]{0,8192})/g;
+
+// A detector, not a validator: 13–19 digits in groups optionally separated by a single space
+// or dash. Validation happens after the match.
+const CARD_RE = /\b(?:\d[ -]?){12,18}\d\b/g;
+
+/** Luhn checksum. Exported for the detector table tests. */
+export function luhnValid(digits: string): boolean {
+  let sum = 0;
+  let double = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (double) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
 
 export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anonymizer {
   const toToken = new Map<string, string>();  // "CAT:reallower" -> token
@@ -365,6 +391,18 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     });
   }
 
+  // Two independent filters — a plausible issuer prefix AND Luhn — keep this out of trouble in
+  // forensic text. Hashes are hexadecimal, so long bare DECIMAL runs are already uncommon.
+  function anonCards(t: string): string {
+    return t.replace(CARD_RE, (m) => {
+      const digits = m.replace(/[ -]/g, "");
+      if (digits.length < 13 || digits.length > 19) return m;
+      if (!/^[3-6]/.test(digits)) return m;   // Amex 3, Visa 4, Mastercard 5, Discover 6
+      if (!luhnValid(digits)) return m;
+      return assign("CARD", m);
+    });
+  }
+
   function anonCustom(t: string): string {
     const custom = known.custom ?? [];
     if (custom.length === 0) return t;
@@ -406,6 +444,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       t = restoreIpv6Literals(t, ipv6Literals);  // classify + tokenize the reserved literals
       t = anonIpv4(t);                           // then any standalone (non-embedded) IPv4 address
     }
+    if (policy.categories.CARD) t = anonCards(t);
     return t;
   }
 
