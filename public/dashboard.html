@@ -10605,8 +10605,7 @@
         .then(result => {
           const section = (label, content, color) =>
             content ? `<div class="explain-section"><strong>${label}</strong><span style="color:${color || "var(--c-c9d1d9)"}">${esc(content)}</span></div>` : "";
-          const qhtml = (result.pivotQueries || []).map((q, i) => {
-            const uid = "exq" + i + "_" + Date.now();
+          const qhtml = (result.pivotQueries || []).map((q) => {
             return `<div class="hunt-card">`
               + `<div class="hunt-card-head"><span>${esc(q.platform || "query")}</span>`
               + `<button class="hunt-copy" data-q="${escAttr(q.query)}">Copy</button></div>`
