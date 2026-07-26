@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "dfir-companion@example.com",
+      "strict_min_version": "121.0"
+    }
+  },
+  "name": "DFIR Companion — Evidence Capture & Push",
+  "version": "0.33.0",
+  "description": "Connects to your local DFIR Companion server. Captures screenshots and pushes detections from DFIR consoles to the dashboard.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus"],
+  "host_permissions": ["<all_urls>"],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "background": { "scripts": ["serviceWorker.js"], "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "toggle-capture": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Toggle DFIR screenshot capture on/off"
+    },
+    "_execute_action": {
+      "description": "Open the DFIR Companion popup"
+    }
+  },
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }
+  ]
+}

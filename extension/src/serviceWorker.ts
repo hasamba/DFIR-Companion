@@ -3,6 +3,7 @@ import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
 import { setActionIcon } from "./actionIcon.js";
 import { buildArtifactFilename } from "./adapters/artifactName.js";
+import { browserApi, executeScriptTarget } from "./browser.js";
 import {
   DEFAULT_SETTINGS, type ContextPushResultMessage, type ContextTableResult,
   type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
@@ -13,7 +14,7 @@ const ALARM = "dfir-capture-timer";
 const queue = new CaptureQueue();
 
 async function getSettings(): Promise<Settings> {
-  const stored = await chrome.storage.local.get("settings");
+  const stored = await browserApi.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
 }
 
@@ -25,12 +26,12 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
   const settings = await getSettings();
   if (!settings.running || !settings.caseId) return;
 
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || tab.id === undefined || !tab.url || tab.url.startsWith("chrome")) return;
 
   let dataUrl: string;
   try {
-    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    dataUrl = await browserApi.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   } catch {
     return; // e.g. capturing not allowed on this page
   }
@@ -57,17 +58,17 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
     : status.online
       ? `ok (online=true, queued=${status.queued})`
       : `offline — capture queued for retry (queued=${status.queued})`) + droppedNote;
-  await chrome.storage.local.set({
+  await browserApi.storage.local.set({
     lastCapture: { at: new Date().toISOString(), trigger, url: tab.url, bytes: imageBase64.length, diag },
   });
 
   if (status.rejected || status.dropped?.length) {
-    await chrome.action.setBadgeText({ text: "!" });
+    await browserApi.action.setBadgeText({ text: "!" });
     // Amber — this capture was rejected, and/or queued captures had to be discarded (#215).
-    await chrome.action.setBadgeBackgroundColor({ color: "#d18616" });
+    await browserApi.action.setBadgeBackgroundColor({ color: "#d18616" });
   } else {
-    await chrome.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
-    await chrome.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
+    await browserApi.action.setBadgeText({ text: status.online ? (status.queued ? String(status.queued) : "") : "off" });
+    await browserApi.action.setBadgeBackgroundColor({ color: status.online ? "#2d6cdf" : "#cc3333" });
   }
 }
 
@@ -78,11 +79,7 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
 async function injectHook(tabId: number | undefined): Promise<void> {
   if (typeof tabId !== "number") return;
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "MAIN",
-      files: ["pageHook.js"],
-    });
+    await executeScriptTarget(tabId, ["pageHook.js"]);
   } catch { /* page not injectable — the content script's DOM-scrape fallback still works */ }
 }
 
@@ -110,7 +107,7 @@ async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResul
     : await client.postImport(settings.caseId, { text: text as string, filename });
 
   const rowCount = rows?.length ?? 0;
-  await chrome.storage.local.set({
+  await browserApi.storage.local.set({
     lastArtifactPush: {
       at: new Date().toISOString(), adapterId: msg.adapterId, rows: rowCount,
       caseId: settings.caseId, ok: result.ok, status: result.status,
@@ -134,13 +131,13 @@ const MENU_LINK = "dfir-send-link";
 
 // Menu items persist across service-worker restarts once created, so this only needs to run on
 // install/update — removeAll() first makes it idempotent (Chrome throws "duplicate id" otherwise).
-function registerContextMenus(): void {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: MENU_PARENT, title: "DFIR-Companion", contexts: ["page", "selection", "link"] });
-    chrome.contextMenus.create({ id: MENU_SELECTION, parentId: MENU_PARENT, title: "Send selection to DFIR-Companion", contexts: ["selection"] });
-    chrome.contextMenus.create({ id: MENU_TABLE, parentId: MENU_PARENT, title: "Send table to DFIR-Companion", contexts: ["page"] });
-    chrome.contextMenus.create({ id: MENU_LINK, parentId: MENU_PARENT, title: "Send link to DFIR-Companion", contexts: ["link"] });
-  });
+// Awaited rather than passed a callback: the promise form is the one both namespaces agree on.
+async function registerContextMenus(): Promise<void> {
+  await browserApi.contextMenus.removeAll();
+  browserApi.contextMenus.create({ id: MENU_PARENT, title: "DFIR-Companion", contexts: ["page", "selection", "link"] });
+  browserApi.contextMenus.create({ id: MENU_SELECTION, parentId: MENU_PARENT, title: "Send selection to DFIR-Companion", contexts: ["selection"] });
+  browserApi.contextMenus.create({ id: MENU_TABLE, parentId: MENU_PARENT, title: "Send table to DFIR-Companion", contexts: ["page"] });
+  browserApi.contextMenus.create({ id: MENU_LINK, parentId: MENU_PARENT, title: "Send link to DFIR-Companion", contexts: ["link"] });
 }
 
 // Best-effort toast delivery — a tab that can't receive messages (chrome://, a PDF viewer, or one
@@ -148,7 +145,7 @@ function registerContextMenus(): void {
 // completed (or failed) server-side regardless.
 async function sendContextToast(tabId: number, ok: boolean, message: string): Promise<void> {
   const payload: ContextPushResultMessage = { kind: "context_push_result", ok, message };
-  try { await chrome.tabs.sendMessage(tabId, payload); } catch { /* tab unreachable */ }
+  try { await browserApi.tabs.sendMessage(tabId, payload); } catch { /* tab unreachable */ }
 }
 
 async function handleContextMenuClick(
@@ -173,7 +170,7 @@ async function handleContextMenuClick(
     let result: ContextTableResult | undefined;
     try {
       const req: GetContextTableMessage = { kind: "get_context_table" };
-      result = await chrome.tabs.sendMessage(tabId, req);
+      result = await browserApi.tabs.sendMessage(tabId, req);
     } catch {
       result = undefined; // content script unreachable on this tab
     }
@@ -204,9 +201,9 @@ async function handleContextMenuClick(
 
 async function rescheduleAlarm(): Promise<void> {
   const settings = await getSettings();
-  await chrome.alarms.clear(ALARM);
+  await browserApi.alarms.clear(ALARM);
   if (settings.running) {
-    await chrome.alarms.create(ALARM, { periodInMinutes: Math.max(settings.intervalSeconds, 5) / 60 });
+    await browserApi.alarms.create(ALARM, { periodInMinutes: Math.max(settings.intervalSeconds, 5) / 60 });
   }
   // Keep the toolbar icon in sync with capture state (recording dot vs idle ring).
   await setActionIcon(settings.running).catch(() => {});
@@ -219,21 +216,21 @@ async function rescheduleAlarm(): Promise<void> {
 async function toggleCapture(): Promise<void> {
   const settings = await getSettings();
   const next: Settings = { ...settings, running: !settings.running };
-  await chrome.storage.local.set({ settings: next });
+  await browserApi.storage.local.set({ settings: next });
   await rescheduleAlarm();
-  await chrome.action.setBadgeText({ text: next.running ? "REC" : "off" });
-  await chrome.action.setBadgeBackgroundColor({ color: next.running ? "#cc3333" : "#777777" });
+  await browserApi.action.setBadgeText({ text: next.running ? "REC" : "off" });
+  await browserApi.action.setBadgeBackgroundColor({ color: next.running ? "#cc3333" : "#777777" });
   if (next.running) void captureActiveTab("timer");
 }
 
-chrome.alarms.onAlarm.addListener((alarm) => {
+browserApi.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) void captureActiveTab("timer");
 });
-chrome.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
-chrome.webNavigation.onCommitted.addListener((d) => {
+browserApi.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
+browserApi.webNavigation.onCommitted.addListener((d) => {
   if (d.frameId === 0) void captureActiveTab("navigation");
 });
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }
   if (msg?.kind === "settings_changed") { void rescheduleAlarm(); return; }
   if (msg?.kind === "ensure_hook") { void injectHook(sender.tab?.id); return; }
@@ -243,10 +240,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
-chrome.runtime.onInstalled.addListener(() => { void rescheduleAlarm(); registerContextMenus(); });
-chrome.runtime.onStartup.addListener(() => void rescheduleAlarm());
-chrome.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
+browserApi.runtime.onInstalled.addListener(() => { void rescheduleAlarm(); void registerContextMenus(); });
+browserApi.runtime.onStartup.addListener(() => void rescheduleAlarm());
+browserApi.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
 // Keyboard shortcut (default Ctrl+Shift+S / Cmd+Shift+S) to toggle capture on/off.
-chrome.commands?.onCommand.addListener((command) => {
+browserApi.commands?.onCommand.addListener((command) => {
   if (command === "toggle-capture") void toggleCapture();
 });
