@@ -2713,7 +2713,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
   // cytoscape+dagre for the graphs) plus first-party browser modules (the shared graph-view module
-  // used by the Login/Assets/Evidence graphs). Whitelisted paths only.
+  // used by the Login/Assets/Evidence graphs, and the command palette, #238). Whitelisted paths only.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
     "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
@@ -2722,6 +2722,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
     "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
     "/js/graph-view.js": "application/javascript; charset=utf-8",
+    "/js/command-palette.js": "application/javascript; charset=utf-8",
   };
   for (const [route, type] of Object.entries(vendorFiles)) {
     app.get(route, async (_req, res) => {

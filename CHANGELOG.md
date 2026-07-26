@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`DFIR_ALLOWED_HOSTS` / `DFIR_ALLOWED_HOST_SUFFIXES`** — name the hostnames a proxied or hosted deployment answers to. Railway auto-detects its own; the Killercoda tutorial reads its exact session origin from `/etc/killercoda/host`.
+- **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action from one overlay; `>` filters by category, recently-run actions float to the top, and actions unavailable for the current case are hidden (closes #238).
 
 ### Changed
 - **Clearer error when a case's state file passes the ~512 MB load ceiling** — says the whole case is unreadable rather than just new imports, prints the absolute `state/backups/` path, and states the limit is permanent now that the SQLite-backed store (#237) is not planned.
