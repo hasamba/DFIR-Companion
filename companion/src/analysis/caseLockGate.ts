@@ -9,7 +9,10 @@ import { unlockCookieName, verifyUnlockToken, parseCookieHeader } from "./casePa
 //  - import: the capture extension's evidence-ingestion route. A background capture
 //    session should keep recording evidence even while the dashboard is locked — it's
 //    write-only and never exposes case content back to the caller.
-const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/lock", "/import"];
+//  - push: the generic push-ingest route for external SIEM webhooks / Velociraptor
+//    pollers. Same rationale as import — write-only evidence ingestion must continue
+//    while the dashboard is locked.
+const EXEMPT_SUFFIXES = ["/lock-status", "/unlock", "/lock", "/import", "/push"];
 
 function pathOnly(url: string): string {
   const q = url.indexOf("?");

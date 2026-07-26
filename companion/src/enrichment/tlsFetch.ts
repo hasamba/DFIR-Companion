@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { Agent, fetch as undiciFetch } from "undici";
 import type { FetchFn } from "./provider.js";
+import { isLoopbackHost } from "../providers/urlValidation.js";
+
+function isLoopbackUrl(url: string): boolean {
+  try { return isLoopbackHost(new URL(url).host); } catch { return false; }
+}
 
 // Custom TLS trust for self-hosted intel servers (MISP / YETI) that present an internal-CA
 // or self-signed certificate. We scope this to ONE provider's fetch (not the whole process)
@@ -13,6 +18,7 @@ import type { FetchFn } from "./provider.js";
 export interface TlsFetchOptions {
   caCertPath?: string;          // PEM bundle for an internal/private CA
   insecureSkipVerify?: boolean; // skip cert verification entirely (self-signed)
+  hostUrl?: string;            // the provider's base URL, used to check if insecureSkipVerify targets a loopback host
   onWarn?: (message: string) => void;
 }
 
@@ -37,6 +43,18 @@ export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): F
 
   if (opts.caCertPath) connect.ca = read(opts.caCertPath);
   if (opts.insecureSkipVerify) {
+    // Guard: only allow insecureSkipVerify for loopback hosts. A non-loopback host with cert
+    // verification disabled is a MITM risk — an on-path attacker can harvest the API key and
+    // every queried IOC. The operator can override with DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true,
+    // but they must explicitly opt in.
+    const allowInsecureExternal = process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL === "true";
+    const isLoopback = opts.hostUrl ? isLoopbackUrl(opts.hostUrl) : true;
+    if (!isLoopback && !allowInsecureExternal) {
+      throw new Error(
+        "TLS certificate verification DISABLED for a non-loopback host. This is a MITM risk — an on-path attacker can harvest the API key. " +
+        "Set DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true to override (not recommended), or use a CA bundle (DFIR_*_CA) instead.",
+      );
+    }
     connect.rejectUnauthorized = false;
     opts.onWarn?.(
       "TLS certificate verification DISABLED for a self-hosted intel host (accepting self-signed certs). Insecure — lab use only; prefer an internal-CA bundle.",

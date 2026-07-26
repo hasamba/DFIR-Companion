@@ -73,79 +73,130 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 
 ---
 
-### Executive Summary & Recommended Next Steps
+### Executive Summary, Narrative & Attack Path
 
-AI-generated case summary and AI-prioritized remediation actions (Critical → Medium), each with
-rationale and a pointer to the finding or artifact it came from.
+AI-generated case summary, minute-by-minute narrative, and attacker-path write-up — from initial
+access to ransomware deployment.
 
-<img src="docs/screenshots/companion-demo-01.png" alt="DFIR Companion — AI executive summary and prioritized remediation next steps" width="900" />
+<img src="docs/screenshots/companion-executive-summary.png" alt="DFIR Companion — executive summary, narrative timeline, and attack path" width="900" />
 
 ---
 
 ### Forensic Timeline
 
-events from Chainsaw · THOR · Suricata · severity filters, per-row
-triage tags (`initial-access`, `c2-comms`, `key-evidence`, …), import change tracking
-(+19 new events banner with expandable diff), and analyst star / bulk-action controls.
+Analyzed events with severity filters, triage tags, per-row detail links, and import change
+tracking (new-events banner with expandable diff).
 
-<img src="docs/screenshots/companion-demo-02.png" alt="DFIR Companion — forensic timeline with 31 events, severity filters, triage tags, and import tracking" width="900" />
+<img src="docs/screenshots/companion-forensic-timeline.png" alt="DFIR Companion — forensic timeline with severity filters and triage tags" width="900" />
 
 ---
 
-### Attack Path Narrative · MITRE ATT&CK Kill Chain · Findings
+### Super-Timeline
 
-Full attacker-path write-up from initial access to ransomware attempt, an interactive kill chain
-(click a tactic to expand its events), and the top findings with confidence scores.
+Every event ever imported, before scope/severity filtering — filter, tag, star, and promote rows
+up into the analyzed forensic timeline; nothing is removed, this is a superset view.
 
-<img src="docs/screenshots/companion-demo-03.png" alt="DFIR Companion — attack path narrative, MITRE ATT&CK kill chain, and findings" width="900" />
+<img src="docs/screenshots/companion-super-timeline.png" alt="DFIR Companion — super-timeline showing every imported event before promotion" width="900" />
+
+---
+
+### Timeline Swimlane
+
+Visual chart of events by asset (Y-axis) and time (X-axis), colored by severity — drag the time
+axis to filter the forensic timeline to a range.
+
+<img src="docs/screenshots/companion-timeline-swimlane.png" alt="DFIR Companion — timeline swimlane chart grouped by asset" width="900" />
 
 ---
 
 ### Findings
 
-8 AI-generated findings (2 Critical · 2 High · 2 Medium · 1 Low) — each with a confidence %,
-analyst triage tags, MITRE technique links, and a synthesis freshness diff.
+AI-generated findings with confidence scores, analyst triage tags, and MITRE ATT&CK technique
+links; tracks what changed since the prior synthesis run.
 
-<img src="docs/screenshots/companion-demo-04.png" alt="DFIR Companion — findings with confidence scores, analyst triage tags, and MITRE ATT&CK links" width="900" />
-
----
-
-### Evidence Chain Graph
-
-Process trees + lateral movement stitched into one causal
-attack graph. Derived deterministically from importer-populated fields — no AI, no cost, runs offline.
-
-<img src="docs/screenshots/companion-demo-05.png" alt="DFIR Companion — evidence chain graph with process trees and lateral movement across hosts" width="900" />
+<img src="docs/screenshots/companion-findings.png" alt="DFIR Companion — findings list with confidence scores and MITRE ATT&CK links" width="900" />
 
 ---
 
-### IOCs with Threat-Intel Enrichments
+### Kill Chain
 
-indicators (IPs · domains · hashes · files · processes · URL) enriched against VirusTotal,
-AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar — verdict badges, detection scores, `NEW` import
-highlights, and analyst `confirmed-malicious` / `pivot-point` triage labels.
+Events bucketed by MITRE ATT&CK tactic — a categorization, not a confirmed kill-chain stage,
+derived deterministically with no AI.
 
-<img src="docs/screenshots/companion-demo-06.png" alt="DFIR Companion — IOCs with VirusTotal, AbuseIPDB, ThreatFox, URLhaus, and MalwareBazaar enrichments" width="900" />
-
----
-
-### Customer Exposure & Compromised Assets · IoC Graph
-
-**Customer Exposure** (top): credential-leak check for the victim org's own domains and emails
-against HIBP / DeHashed / Shodan — breach names, exposed services, no raw passwords stored.
-**Compromised Assets & IoC graph** (bottom): interactive graph linking victim hosts and accounts
-to the indicators that touched each — Host / Account toggles, fullscreen, drag-to-pin nodes.
-
-<img src="docs/screenshots/companion-demo-07.png" alt="DFIR Companion — customer exposure panel and compromised assets IoC graph" width="900" />
+<img src="docs/screenshots/companion-kill-chain.png" alt="DFIR Companion — kill chain view bucketing events by MITRE ATT&CK tactic" width="900" />
 
 ---
 
 ### Key Investigative Questions
 
-Standard DFIR questions auto-answered from the synthesized case
-(answered ✅ / partial 🟡 / unknown ❓), each with an evidence pointer or a "collect this next" directive.
+Standard DFIR questions auto-answered from the synthesized case (answered / partial / unknown),
+each with an evidence pointer or a "collect this next" directive.
 
-<img src="docs/screenshots/companion-demo-08.png" alt="DFIR Companion — key investigative questions with answers and evidence pointers" width="900" />
+<img src="docs/screenshots/companion-key-questions.png" alt="DFIR Companion — key investigative questions with answers and evidence pointers" width="900" />
+
+---
+
+### Playbook
+
+Actionable remediation checklist auto-derived from findings and recommended next steps; re-synced
+on each synthesis run while preserving analyst status, assignee, and due dates.
+
+<img src="docs/screenshots/companion-playbook.png" alt="DFIR Companion — remediation playbook checklist derived from findings" width="900" />
+
+---
+
+### Host & Account Ranking
+
+Which hosts/accounts carry the attack, scored by signal (severity-weighted events + techniques +
+connective IOCs) rather than volume, with a suggested scope window.
+
+<img src="docs/screenshots/companion-host-ranking.png" alt="DFIR Companion — host and account ranking scored by signal" width="900" />
+
+---
+
+### Evidence Chain Graph
+
+Process trees, lateral movement, and file lineage stitched into one causal attack graph. Derived
+deterministically from importer-populated fields — no AI, no cost, runs offline.
+
+<img src="docs/screenshots/companion-evidence-chain.png" alt="DFIR Companion — evidence chain graph with process trees and lateral movement" width="900" />
+
+---
+
+### Login Graph
+
+Who logged on where — accounts and hosts linked from super-timeline logon events, distinguishing
+successful, failed, and risky (RDP/runas/netonly) logons.
+
+<img src="docs/screenshots/companion-login-graph.png" alt="DFIR Companion — login graph linking accounts to hosts" width="900" />
+
+---
+
+### Beacon Candidates
+
+Periodic outbound channels too regular to be human traffic — a hunting lead, not a verdict, with
+interval, jitter, and event count per candidate.
+
+<img src="docs/screenshots/companion-beacon-candidates.png" alt="DFIR Companion — beacon candidates table with interval and jitter" width="900" />
+
+---
+
+### IOCs with Threat-Intel Enrichments
+
+Indicators (IPs · domains · hashes · files · processes · accounts) enriched against VirusTotal,
+AbuseIPDB, ThreatFox, and other providers — verdict badges, detection scores, `NEW` import
+highlights, and analyst triage labels.
+
+<img src="docs/screenshots/companion-iocs.png" alt="DFIR Companion — IOCs enriched with VirusTotal, AbuseIPDB, and ThreatFox" width="900" />
+
+---
+
+### Compromised Assets & IOC Graph
+
+Interactive graph linking victim hosts and accounts to the indicators that touched each, plus a
+list of known compromised hosts and users.
+
+<img src="docs/screenshots/companion-compromised-assets.png" alt="DFIR Companion — compromised assets and IOC graph" width="900" />
 
 ---
 
@@ -567,7 +618,9 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
 | `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
 | `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
-| `DFIR_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed to call the API, comma-separated. The capture extension, loopback, and the host the dashboard was served from are always trusted, so localhost/LAN/Docker need no setting; every other web origin is refused. Callers sending no `Origin` (curl, scripts, Velociraptor) are unaffected. Needed only behind a reverse proxy that rewrites `Host` |
+| `DFIR_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed to call the API, comma-separated. The capture extension, loopback, and any origin the companion itself served are always trusted, so localhost/LAN/Docker need no setting; every other web origin is refused. Callers sending no `Origin` (curl, scripts, Velociraptor) are unaffected. Needed when the dashboard is served from a **hostname** — a reverse proxy or a hosted deployment |
+| `DFIR_ALLOWED_HOSTS` | _(none)_ | Extra hostnames this companion answers to, comma-separated. Loopback and bare IP addresses are always accepted, so localhost, Docker, and reaching the dashboard over the LAN at `http://192.168.1.50:4773` need no setting. Any **name** that is not listed is refused — that is what stops DNS rebinding (a hostile site pointing its own domain at your machine). Set this when a reverse proxy forwards a `Host` that differs from the origin you put in `DFIR_ALLOWED_ORIGINS` |
+| `DFIR_ALLOWED_HOST_SUFFIXES` | _(none)_ | Same as above but matched on a domain suffix, e.g. `.lab.example.com`, for platforms that mint a fresh hostname per session. Matching is on a label boundary, so `.acme.com` never matches `evilacme.com` |
 | `DFIR_LOG_LEVEL` | `info` | Log verbosity (`debug`/`info`/`warn`/`error`). Tees to console + `logs/session-<time>.log` (global) + `cases/<id>/logs/session-<time>.log` (per-case). `debug` traces AI calls, captures, OCR, anonymization, enrichment. Change live (no restart) via Settings → Log verbosity |
 | `DFIR_LOG_DIR` | `logs/` beside cases root | Folder for the **global** session log. Relative paths anchor to `companion/`. Per-case logs always stay in the case folder |
 

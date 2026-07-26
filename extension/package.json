@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:firefox": "node scripts/build-firefox.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

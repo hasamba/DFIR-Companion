@@ -2,6 +2,8 @@
 // a dim hollow ring when OFF. Rendered at runtime with OffscreenCanvas (available
 // in MV3 service workers) so the extension ships no binary icon assets.
 
+import { browserApi } from "./browser.js";
+
 const RECORDING_RED = "#e5484d";
 const IDLE_GREY = "#8b94a3";
 
@@ -32,10 +34,10 @@ export function drawActionIcon(size: number, recording: boolean): ImageData {
 
 // Update the toolbar icon + tooltip to match the current capture state.
 export async function setActionIcon(recording: boolean): Promise<void> {
-  await chrome.action.setIcon({
+  await browserApi.action.setIcon({
     imageData: { 16: drawActionIcon(16, recording), 32: drawActionIcon(32, recording) },
   });
-  await chrome.action.setTitle({
+  await browserApi.action.setTitle({
     title: recording ? "DFIR Companion — recording" : "DFIR Companion — stopped",
   });
 }
