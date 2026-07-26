@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, isMaskableIpv4, isAnonToken, ALL_TOKEN_CATEGORIES, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, isInternalIp, isInternalIpv6, SECRET_PLACEHOLDER, deriveKnownEntities, isNoiseDomain, isNoiseAccount, isLocalAiProvider, isMaskableIpv4, isMaskableIpv6, isAnonToken, ALL_TOKEN_CATEGORIES, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
@@ -103,6 +103,37 @@ describe("isMaskableIpv4", () => {
     expect(isMaskableIpv4("0.1.2.3")).toBe(false);
     expect(isMaskableIpv4("224.0.0.251")).toBe(false);
     expect(isMaskableIpv4("255.255.255.255")).toBe(false);
+  });
+});
+
+describe("isMaskableIpv6", () => {
+  it("accepts globally routable 2000::/3 addresses", () => {
+    expect(isMaskableIpv6("2001:4860:4860::8888")).toBe(true); // Google DNS
+    expect(isMaskableIpv6("2606:4700:4700::1111")).toBe(true); // Cloudflare DNS
+    expect(isMaskableIpv6("2001:db8::1")).toBe(true);          // documentation range
+    expect(isMaskableIpv6("[2001:db8::1]")).toBe(true);        // bracketed URL form
+    expect(isMaskableIpv6("3fff:ffff::1")).toBe(true);         // top of 2000::/3
+  });
+
+  it("rejects the IPV6_RE false positives that ordinary text is full of", () => {
+    // Each of these is a real IPV6_RE match taken from a real string: "[Convert]::FromBase64String("
+    // yields "::F", "[System.Text.Encoding]::ASCII" yields "::A", "WIN11::admin" yields "11::ad",
+    // "std::cout" yields "::c". They are syntactically legal IPv6 literals, which is exactly why a
+    // syntax-only check cannot reject them — only the 2000::/3 routability test can.
+    expect(isMaskableIpv6("::F")).toBe(false);
+    expect(isMaskableIpv6("::A")).toBe(false);
+    expect(isMaskableIpv6("::c")).toBe(false);
+    expect(isMaskableIpv6("11::ad")).toBe(false);
+    expect(isMaskableIpv6("ac::ad")).toBe(false);
+    expect(isMaskableIpv6("abc::def")).toBe(false);
+    expect(isMaskableIpv6("not-an-address")).toBe(false);
+  });
+
+  it("judges an IPv4-mapped address by its embedded IPv4, in either spelling", () => {
+    expect(isMaskableIpv6("::ffff:8.8.8.8")).toBe(true);
+    expect(isMaskableIpv6("::ffff:808:808")).toBe(true);   // hex-canonical form of the same
+    expect(isMaskableIpv6("::ffff:0.1.2.3")).toBe(false);  // 0/8 — isMaskableIpv4 rejects it
+    expect(isMaskableIpv6("::ffff:224.0.0.251")).toBe(false); // multicast
   });
 });
 
@@ -442,12 +473,22 @@ describe("anonymizer — custom entities", () => {
     // The IPv6-atomicity guard must not demote anonCustom's "analyst-added entities always win"
     // property for occurrences that are NOT inside an IPv6 literal — only the embedded one is
     // protected.
+    //
+    // The custom category is deliberately HOST, not IP: with category IP this test could not tell
+    // "anonCustom won" from "the IP pass got there first", because anonIpv4() would label the bare
+    // 10.0.0.5 as IP anyway. Moving anonCustom after the IP pass would then still produce a passing
+    // run. HOST is a category no detector in this string can mint, so the token itself proves which
+    // pass claimed the value — hence the exact-token assertion rather than a not.toContain.
     const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
-      { value: "10.0.0.5", category: "IP" },
+      { value: "10.0.0.5", category: "HOST" },
     ]};
     const a = createAnonymizer(policy({ IP: true }), known);
     const out = a.apply("bare 10.0.0.5 and mapped ::ffff:10.0.0.5");
-    expect(out).not.toContain("10.0.0.5");
+    expect(out).toBe("bare ANON_HOST_1 and mapped ANON_IP_1");
+    expect(a.discoveries()).toEqual([
+      { value: "10.0.0.5", category: "HOST" },
+      { value: "::ffff:10.0.0.5", category: "IP" },
+    ]);
     expect(a.restore(out)).toBe("bare 10.0.0.5 and mapped ::ffff:10.0.0.5");
   });
 });
@@ -605,6 +646,137 @@ describe("anonymizer — IPv6 internal IPs", () => {
     const a = createAnonymizer(policy({ IP: true }), NONE);
     const orig = "from fd00:db8::1";
     expect(a.restore(a.apply(orig))).toBe(orig);
+  });
+});
+
+// IPV6_RE is a DETECTOR: it fires on any "::" followed by hex, so ordinary forensic text is full
+// of matches that are legal IPv6 literals but are not addresses. Reserving a match hides it from
+// every later pass, so an unvalidated reservation both mints a garbage ANON_EXTIP_n AND blinds
+// whichever detector actually owned that text. isMaskableIpv6() is the gate that stops it; each
+// test below asserts the FULL output string, because a toContain-style assertion cannot see the
+// difference between "tokenized correctly" and "tokenized the wrong substring".
+describe("anonymizer — IPv6 detector false positives must not blind other detectors", () => {
+  it("tokenizes an encoded-command payload even though '::F' looks like an IPv6 literal", () => {
+    // The one that matters most: "[Convert]::FromBase64String(" contains the IPv6 match "::F", and
+    // "[System.Text.Encoding]::ASCII" contains "::A". Reserving those swallowed FROM_B64_RE's
+    // literal anchor, so the base64 payload — which is where victim data hides — went to the
+    // external provider IN CLEARTEXT while two garbage EXTIP tokens were minted and persisted.
+    const a = createAnonymizer(policy({ IP: true, CMD: true }), NONE);
+    const src = "IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('QUJDREVGR0hJSktMTU5PUA==')))";
+    const out = a.apply(src);
+    expect(out).toBe("IEX ([System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('ANON_CMD_1')))");
+    expect(a.discoveries()).toEqual([{ value: "QUJDREVGR0hJSktMTU5PUA==", category: "CMD" }]);
+    expect(a.restore(out)).toBe(src);
+  });
+
+  it("tokenizes a hostname that runs into a '::' sequence", () => {
+    // "WIN11::admin" yields the IPv6 match "11::ad", which straddles the hostname AND the text
+    // after it: reserving it left "WIN" + a garbage token, so anonHosts never saw WIN11 at all and
+    // discoveries() reported no HOST.
+    const a = createAnonymizer(policy({ IP: true, HOST: true }), { hosts: ["WIN11"], accounts: [], internalDomains: [] });
+    const out = a.apply("WIN11::admin logged in");
+    expect(out).toBe("ANON_HOST_1::admin logged in");
+    expect(a.discoveries()).toEqual([{ value: "WIN11", category: "HOST" }]);
+    expect(a.restore(out)).toBe("WIN11::admin logged in");
+  });
+
+  it("tokenizes an internal domain that runs into a '::' sequence", () => {
+    const a = createAnonymizer(policy({ IP: true, DOMAIN: true }), { hosts: [], accounts: [], internalDomains: ["corp.local"] });
+    const out = a.apply("srv::corp.local");   // IPV6_RE match: "::c"
+    expect(out).toBe("srv::ANON_DOMAIN_1");
+    expect(a.discoveries()).toEqual([{ value: "corp.local", category: "DOMAIN" }]);
+    expect(a.restore(out)).toBe("srv::corp.local");
+  });
+
+  it("tokenizes the WHOLE account, not a truncated tail, next to a '::' sequence", () => {
+    // "ac::admin@corp.local" yields the match "ac::ad". Reserving it did not stop UPN_ACCT firing —
+    // it made it fire on the REMNANT, tokenizing "min@corp.local" and persisting that mangled value
+    // into the case's auto-discovery store as a USER.
+    const a = createAnonymizer(policy({ IP: true, USER: true }), { hosts: [], accounts: [], internalDomains: ["corp.local"] });
+    const out = a.apply("ac::admin@corp.local");
+    expect(out).toBe("ac::ANON_USER_1");
+    expect(a.discoveries()).toEqual([{ value: "admin@corp.local", category: "USER" }]);
+    expect(a.restore(out)).toBe("ac::admin@corp.local");
+  });
+
+  it("tokenizes the WHOLE email, not a truncated tail, next to a '::' sequence", () => {
+    const a = createAnonymizer(policy({ IP: true, EMAIL: true }), NONE);
+    const out = a.apply("ab::bob@evil.com");  // IPV6_RE match: "ab::b"
+    expect(out).toBe("ab::ANON_EMAIL_1");
+    expect(a.discoveries()).toEqual([{ value: "bob@evil.com", category: "EMAIL" }]);
+    expect(a.restore(out)).toBe("ab::bob@evil.com");
+  });
+
+  it("tokenizes a user path containing a '::' sequence and stays restorable", () => {
+    // The worst shape: the reserved placeholder itself landed inside the username capture, so the
+    // minted USER token stood for the literal text "\uE000IPV6" and restore() produced a path that
+    // never existed. Round-trip integrity, not just the token, is the assertion here.
+    const a = createAnonymizer(policy({ IP: true, PATH: true }), NONE);
+    const out = a.apply("C:\\Users\\abc::def\\x.txt");  // IPV6_RE match: "abc::de"
+    expect(out).toBe("C:\\Users\\ANON_USER_1::def\\x.txt");
+    expect(a.discoveries()).toEqual([{ value: "abc", category: "USER" }]);
+    expect(a.restore(out)).toBe("C:\\Users\\abc::def\\x.txt");
+  });
+
+  it("tokenizes an analyst-added custom entity that a '::' match would otherwise swallow", () => {
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [
+      { value: "deadbeef", category: "OTHER" },
+    ]};
+    const a = createAnonymizer(policy({ IP: true }), known);
+    const out = a.apply("ab::deadbeef");   // IPV6_RE match: "ab::dead"
+    expect(out).toBe("ab::ANON_OTHER_1");
+    expect(a.discoveries()).toEqual([{ value: "deadbeef", category: "OTHER" }]);
+    expect(a.restore(out)).toBe("ab::deadbeef");
+  });
+
+  it("tokenizes a user SID sitting next to a PowerShell '::' accessor", () => {
+    // A SID cannot itself be straddled by an IPV6_RE match (its pattern contains no colon and
+    // starts with 'S', which is not a hex digit), so the REG token survived even before the fix —
+    // but the surrounding text did not: "[IO.File]::Exists" was rewritten to
+    // "[IO.File]ANON_EXTIP_1xists", which is why this asserts the whole line.
+    const SID = "S-1-5-21-1004336348-1177238915-682003330-1003";
+    const a = createAnonymizer(policy({ IP: true, REG: true }), NONE);
+    const out = a.apply(`profile ${SID} via [IO.File]::Exists`);
+    expect(out).toBe("profile ANON_REG_1 via [IO.File]::Exists");
+    expect(a.discoveries()).toEqual([{ value: SID, category: "REG" }]);
+    expect(a.restore(out)).toBe(`profile ${SID} via [IO.File]::Exists`);
+  });
+
+  it("leaves a C++ scope operator completely alone instead of minting a token for it", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    expect(a.apply("std::cout << x; [System.Net]::Dns")).toBe("std::cout << x; [System.Net]::Dns");
+    expect(a.discoveries()).toEqual([]);
+  });
+
+  it("still masks a REAL public IPv6 — rejecting false positives must not fail open", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("beacon to 2606:4700:4700::1111 and 2001:db8::1");
+    expect(out).toBe("beacon to ANON_EXTIP_1 and ANON_EXTIP_2");
+    expect(a.restore(out)).toBe("beacon to 2606:4700:4700::1111 and 2001:db8::1");
+  });
+});
+
+describe("anonymizer — forged IPv6 placeholders in attacker-influenced case text", () => {
+  // The reservation placeholder is delimited by \uE000. Case text comes from logs, screenshots and
+  // imported evidence, so "it never occurs in real text" is an assumption an attacker gets to
+  // break: a forged "\uE000IPV6:0\uE000" used to index the literals table and either crash apply()
+  // or make restore() invent a victim IP in text that never contained one.
+  const forged = "\uE000IPV6:0\uE000";
+
+  it("does not crash when the input contains a forged placeholder and no real IPv6", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply(`evil ${forged} marker`);
+    expect(out).toBe("evil IPV6:0 marker");   // sentinel stripped, nothing minted
+    expect(a.discoveries()).toEqual([]);
+  });
+
+  it("never lets a forged placeholder borrow a real address from the literals table", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply(`real fd00::1 evil ${forged} marker`);
+    expect(out).toBe("real ANON_IP_1 evil IPV6:0 marker");
+    expect(a.discoveries()).toEqual([{ value: "fd00::1", category: "IP" }]);
+    // The decisive assertion: restore() must NOT re-materialise fd00::1 at the forged site.
+    expect(a.restore(out)).toBe("real fd00::1 evil IPV6:0 marker");
   });
 });
 

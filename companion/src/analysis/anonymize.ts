@@ -1,6 +1,6 @@
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
-import { embeddedIpv4 } from "./iocValue.js";
+import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 
 // Reversible anonymization of the TEXT sent to the LLM. Real values stay in state; only the
 // wire is tokenized. Typed numbered tokens keep the model's semantic understanding (it still
@@ -130,6 +130,35 @@ export function isInternalIpv6(ip: string): boolean {
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;
   return false;
+}
+
+// The IPv6 counterpart of isMaskableIpv4(), and for the same reason: IPV6_RE is a DETECTOR, not a
+// validator. It fires on any "::" followed by hex, so ordinary text is full of matches that are
+// syntactically legal IPv6 literals but are not addresses at all — "[Convert]::FromBase64String"
+// yields "::F", "std::cout" yields "::c", "WIN11::admin" yields "11::ad".
+//
+// While public addresses were PRESERVED this was harmless (a junk match was left alone), but once
+// they are tokenized every false positive is destructive: it mints a garbage ANON_EXTIP_n, that
+// garbage is persisted into the case's auto-discovery store, and — because a reserved literal is
+// hidden from every other pass (see reserveIpv6Literals) — it blinds the encoded-command, host,
+// account, email, path, domain and custom detectors over the span it swallowed.
+//
+// So a non-internal match is only worth masking when it is a real, routable IPv6 address:
+//   - 2000::/3 — the entire globally-routable unicast space. Adversary infrastructure lives here
+//     (as does 2001:db8::/32 documentation space, which tests and sanitized reports use).
+//   - an IPv4-mapped/compatible address whose embedded IPv4 is itself maskable, judged by
+//     isMaskableIpv4 so the two families cannot disagree.
+// Everything else (::F, ::a, 11::ad, abc::def, fe00::…) is left completely untouched — not
+// reserved, not tokenized — so the pass that actually owns that text still gets to see it.
+// Internal/victim addresses are NOT routed through here: isInternalIpv6() decides those, and they
+// always fail CLOSED regardless of how odd the surrounding text looks.
+export function isMaskableIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  const mapped = embeddedIpv4(lower);
+  if (mapped) return isMaskableIpv4(mapped);
+  const groups = expandIpv6Groups(lower);
+  if (!groups) return false;                            // not a well-formed IPv6 literal
+  return groups[0] >= 0x2000 && groups[0] <= 0x3fff;    // 2000::/3 global unicast
 }
 
 // Match full and compressed IPv6 addresses. Not a validator — a detector for anonymization.
@@ -286,26 +315,43 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   // substitution and none of them know about IPv6 syntax — a known.custom IPv4 value (exactly
   // what pipeline.ts persists from auto-discovery and re-injects on the next call) or any other
   // pass that happens to substring-match inside "::ffff:10.0.0.5" would leave a mutated remnant
-  // for IPV6_RE to (mis)parse when the real IP pass finally runs, corrupting the token. So every
+  // for IPV6_RE to (mis)parse when the real IP pass finally runs, corrupting the token. So an
   // IPv6 literal is pulled out and replaced with an inert placeholder BEFORE any other pass runs,
   // and only spliced back in — correctly classified via isInternalIpv6, exactly as if nothing had
-  // run before it — right before the IPv4 pass. Placeholders use \uE000 (never occurs in real
-  // case text) so no other detector's pattern can ever match one.
+  // run before it — right before the IPv4 pass. Placeholders are delimited by \uE000 so no other
+  // detector's pattern can match one.
+  //
+  // Reservation is a BLINDFOLD: whatever it swallows becomes invisible to every later pass. So a
+  // literal is reserved ONLY when this anonymizer would genuinely tokenize it — an internal/victim
+  // address (isInternalIpv6, unconditionally, so it still fails CLOSED when it abuts trailing
+  // text) or a real routable one (isMaskableIpv6). IPV6_RE's many false positives ("::F" out of
+  // "[Convert]::FromBase64String(", "11::ad" out of "WIN11::admin", "::c" out of "std::cout") are
+  // left in place verbatim, so the encoded-command / host / account / email / path / SID / domain /
+  // custom passes still see the text they own. Reserving on the raw detector match with no
+  // validator is what silently sent base64 payloads and hostnames to the wire in cleartext.
+  const IPV6_SENTINEL = "\uE000";
+  const IPV6_SENTINEL_RE = /\uE000/g;
   const IPV6_PLACEHOLDER_RE = /\uE000IPV6:(\d+)\uE000/g;
 
   function reserveIpv6Literals(t: string): { text: string; literals: string[] } {
     const literals: string[] = [];
-    const text = t.replace(IPV6_RE, (m) => {
+    // Case text is ATTACKER-INFLUENCED (logs, screenshots, imported evidence), so a hand-crafted
+    // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
+    // a forged placeholder must never index the literals table and make restore() invent an
+    // address in text that never contained one.
+    const text = t.replace(IPV6_SENTINEL_RE, "").replace(IPV6_RE, (m) => {
+      if (!isInternalIpv6(m) && !isMaskableIpv6(m)) return m; // detector false positive — leave it alone
       const i = literals.length;
       literals.push(m);
-      return `\uE000IPV6:${i}\uE000`;
+      return `${IPV6_SENTINEL}IPV6:${i}${IPV6_SENTINEL}`;
     });
     return { text, literals };
   }
 
   function restoreIpv6Literals(t: string, literals: string[]): string {
-    return t.replace(IPV6_PLACEHOLDER_RE, (_m, idxStr: string) => {
+    return t.replace(IPV6_PLACEHOLDER_RE, (m, idxStr: string) => {
       const ip = literals[Number(idxStr)];
+      if (ip === undefined) return m; // belt-and-braces with the strip above: never invent a value
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });

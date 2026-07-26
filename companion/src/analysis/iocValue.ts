@@ -71,7 +71,10 @@ function isPrivateIpv4(ip: string): boolean {
 
 // Parses a pure hex-group IPv6 address (no embedded dotted-decimal) into its 8 16-bit groups,
 // honoring "::" compression. Returns null for anything that doesn't parse cleanly.
-function expandIpv6Groups(ip: string): number[] | null {
+// Exported so anonymize.ts's isMaskableIpv6() can judge an address's high-order group (2000::/3
+// global unicast) against the SAME parser that decides mapped/compatible here, rather than
+// re-deriving IPv6 syntax a second time and drifting from it.
+export function expandIpv6Groups(ip: string): number[] | null {
   const halves = ip.split("::");
   if (halves.length > 2) return null;
   const HEX_GROUP = /^[0-9a-f]{1,4}$/i;
