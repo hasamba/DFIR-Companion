@@ -15,7 +15,8 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus", "<all_urls>"],
+  "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus"],
+  "host_permissions": ["<all_urls>"],
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "background": { "scripts": ["serviceWorker.js"], "type": "module" },
   "action": {

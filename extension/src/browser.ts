@@ -1,27 +1,62 @@
-// Cross-browser namespace shim for the DFIR Companion extension.
-// Chrome exposes the `chrome` global; Firefox exposes `browser` (Promise-based) but also supports
-// most `chrome.*` APIs in Manifest V3. This module exports the available namespace and a few tiny
-// helpers for APIs that differ between the two runtimes.
+// Cross-browser extension-API shim.
+//
+// Chrome exposes only `chrome`, whose MV3 APIs return a promise when called without a callback.
+// Firefox exposes BOTH `browser` and `chrome` — but its `chrome` namespace is only a porting aid
+// that speaks callbacks: an async call made without a callback returns `undefined`, so
+// `await chrome.storage.local.get("settings")` silently yields `undefined` instead of the stored
+// data (see MDN, "Chrome incompatibilities": Firefox "supports `chrome` using callbacks and
+// `browser` using promises"). Preferring `browser` therefore gets promise semantics everywhere.
+//
+// Every module in this extension must go through `browserApi` rather than touching `chrome.*`
+// directly — a stray `chrome.*` value reference compiles and passes tests but breaks on Firefox.
+// `chrome.*` remains correct in TYPE positions (chrome.tabs.Tab, chrome.runtime.MessageSender, …),
+// which come from @types/chrome and have no runtime existence.
 
-// Minimal global type declarations so the shim compiles without adding a full Firefox types package.
+// Minimal global declaration so the shim compiles without a full Firefox types package. Always
+// read this off `globalThis`: a bare `browser` reference is a ReferenceError on Chrome.
 declare const browser: typeof chrome | undefined;
 
-export const browserApi = (globalThis as typeof globalThis & { chrome?: typeof chrome; browser?: typeof browser }).chrome
-  ?? (globalThis as typeof globalThis & { browser?: typeof browser }).browser;
+type ExtensionGlobals = typeof globalThis & { chrome?: typeof chrome; browser?: typeof browser };
 
-if (!browserApi) {
-  throw new Error("Neither chrome nor browser extension namespace is available");
+function globals(): ExtensionGlobals {
+  return globalThis as ExtensionGlobals;
 }
 
-// Firefox MV3 does not support scripting.executeScript with world: "MAIN". Chrome requires it to
-// inject into the page's world under CSP. Use ISOLATED in Firefox; the content script's DOM-scrape
-// fallback already handles pages where the main-world hook can't be installed.
+/** True on runtimes that expose the promise-based `browser` namespace (Firefox, Safari). */
+export function isFirefox(): boolean {
+  return typeof globals().browser !== "undefined";
+}
+
+function resolveApi(): typeof chrome {
+  const { browser: browserNs, chrome: chromeNs } = globals();
+  const api = browserNs ?? chromeNs;
+  if (!api) throw new Error("Neither the browser nor the chrome extension namespace is available");
+  return api;
+}
+
+// Resolved per property access rather than captured at module load. The namespace is always
+// present before any of our code runs in a real extension context, but resolving lazily keeps
+// the shim honest under test (where the globals are installed and swapped between cases) instead
+// of freezing whichever namespace happened to exist at import time.
+export const browserApi: typeof chrome = new Proxy({} as typeof chrome, {
+  get(_target, prop: string | symbol) {
+    return (resolveApi() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+  has(_target, prop: string | symbol) {
+    return prop in resolveApi();
+  },
+});
+
+// Firefox only gained `world: "MAIN"` for scripting.executeScript in Firefox 128; manifest-firefox
+// .json still admits 121, so the MAIN world is requested on Chrome only. Where it is omitted the
+// hook lands in the isolated world and never sees the page's own fetch — the content script's
+// DOM-scrape fallback (artifactCapture.ts) is what actually carries those pages.
 export function executeScriptTarget(tabId: number, files: string[]): Promise<void> {
-  const scripting = browserApi.scripting;
-  const isFirefox = typeof (globalThis as typeof globalThis & { browser?: typeof browser }).browser !== "undefined";
-  return scripting.executeScript({
-    target: { tabId },
-    files,
-    ...(isFirefox ? {} : { world: "MAIN" as const }),
-  } as chrome.scripting.InjectTarget & { world?: "MAIN" | "ISOLATED" }).then(() => undefined);
+  return browserApi.scripting
+    .executeScript({
+      target: { tabId },
+      files,
+      ...(isFirefox() ? {} : { world: "MAIN" as const }),
+    })
+    .then(() => undefined);
 }
