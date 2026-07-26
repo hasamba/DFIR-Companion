@@ -2,6 +2,7 @@
 // on load so a hand-written / LLM-generated file fails LOUDLY with field-pathed errors the analyst
 // can paste back to an LLM to fix. See declarativeImporter.ts for the interpreter.
 import { z } from "zod";
+import { checkRegexSafety } from "./regexSafety.js";
 
 // The built-in ImportKind values a custom id must NOT shadow (kept in sync with importDetect.ts).
 export const BUILTIN_KINDS: ReadonlySet<string> = new Set([
@@ -47,10 +48,24 @@ const matchSpec = z.object({
   keyEquals: z.record(z.string(), z.string()).optional(),
   filenamePattern: z.string().optional(),
   priority: z.number().int().default(100),
-}).strict().refine(
-  (m) => !!(m.requireHeaders || m.anyHeaders || m.requireKeys || m.anyKeys || m.keyEquals || m.filenamePattern),
-  { message: "match needs at least one discriminator (requireHeaders/anyHeaders/requireKeys/anyKeys/keyEquals/filenamePattern)" },
-);
+}).strict().superRefine((m, ctx) => {
+  if (!(m.requireHeaders || m.anyHeaders || m.requireKeys || m.anyKeys || m.keyEquals || m.filenamePattern)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "match needs at least one discriminator (requireHeaders/anyHeaders/requireKeys/anyKeys/keyEquals/filenamePattern)",
+    });
+  }
+  // Vet every user regex HERE rather than at compile time in declarativeImporter, so a
+  // catastrophic-backtracking pattern is a loud 400 on POST /importers (never persisted) and a
+  // named entry in the GET /importers errors list — not a silently disabled importer.
+  const patterns: [string[], string][] = [];
+  if (m.filenamePattern !== undefined) patterns.push([["filenamePattern"], m.filenamePattern]);
+  for (const [k, p] of Object.entries(m.keyEquals ?? {})) patterns.push([["keyEquals", k], p]);
+  for (const [path, src] of patterns) {
+    const r = checkRegexSafety(src);
+    if (!r.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: r.reason ?? "unsafe regex" });
+  }
+});
 
 const mapSpec = z.object({
   timestamp: fieldBinding,

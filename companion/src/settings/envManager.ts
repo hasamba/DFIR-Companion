@@ -1,10 +1,67 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isSeaRuntime } from "../serverAssets.js";
 import { withVisionEnvAliases } from "../config/aiEnv.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 const SECRET_SUFFIXES = ["_KEY", "_SECRET", "_PASSWORD", "_TOKEN"];
+
+// Keys that must NEVER be writable via POST /settings/env — changing them at runtime
+// can redirect case data, disable security features, or hijack the AI endpoint.
+const DENIED_ENV_KEYS = new Set([
+  "DFIR_CASES_ROOT",
+  "DFIR_ENV_FILE",
+  "DFIR_HOST",
+  "DFIR_PORT",
+  "DFIR_DEMO_MODE",
+  "DFIR_ANONYMIZE",
+  "DFIR_ALLOWED_ORIGINS",
+  // Same class of control as DFIR_ALLOWED_ORIGINS: these decide which hostnames the companion
+  // answers to, so a writable one would let the dashboard re-open the DNS-rebinding hole (#280).
+  "DFIR_ALLOWED_HOSTS",
+  "DFIR_ALLOWED_HOST_SUFFIXES",
+  "DFIR_LOG_DIR",
+]);
+
+// Only keys starting with one of these prefixes may be written via POST /settings/env.
+// Mirrors RELOADABLE_PREFIXES in caseLifecycle.ts (the /settings/reload allowlist) — the
+// dashboard can configure AI, integrations, enrichment, push, NSRL, and tools, but cannot
+// rewrite core server config, security toggles, or filesystem paths.
+const WRITABLE_ENV_PREFIXES = [
+  "DFIR_VISION_", "DFIR_AI_", "DFIR_IRIS_", "DFIR_VELOCIRAPTOR_", "DFIR_TIMESKETCH_", "DFIR_NOTION_", "DFIR_CLICKUP_",
+  "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
+  "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
+  "DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_PUSH_TOKEN", "DFIR_NSRL_", "DFIR_TOOL_",
+  "DFIR_NOTIFY_", "DFIR_SMTP_", "DFIR_HASHLOOKUP_", "DFIR_RDAP_", "DFIR_OCR_", "DFIR_SYNTH_",
+  "DFIR_DEEP_PASS_", "DFIR_ASK_", "DFIR_GAP_", "DFIR_SSH_", "DFIR_TIMESTOMP_",
+  "DFIR_ANOMALY_", "DFIR_ADVERSARY_", "DFIR_ATTACK_", "DFIR_HUNT_", "DFIR_PBHUNT_",
+  "DFIR_MEMORY_", "DFIR_IMPORT_", "DFIR_UNDO_", "DFIR_CORRELATE_", "DFIR_SUPERTIMELINE_",
+  "DFIR_REPORT_", "DFIR_LOG_LEVEL", "DFIR_UPDATE_CHECK", "DFIR_STATE_BACKUP_",
+  "DFIR_DEMO_RESET_HOURS", "DFIR_MAX_EVENTS", "DFIR_MAX_BODY_MB", "DFIR_FORENSIC_",
+  "DFIR_DROP_", "DFIR_BEACON_", "DFIR_PHASE_", "DFIR_LEARNED_", "DFIR_SYNTH_ADVERSARY",
+  "DFIR_AI_TIMEOUT_MS", "DFIR_AI_MAX_TOKENS", "DFIR_AI_CONTEXT_TOKENS", "DFIR_AI_SYNTH_MAX_EVENTS",
+  "DFIR_AI_AUTO_SYNTHESIZE", "DFIR_AI_AUTO_SYNTHESIZE_MS", "DFIR_AI_SYNTH_THINKING_TOKENS",
+  "DFIR_AI_DEBUG_USAGE", "DFIR_AI_VELO_", "DFIR_AI_SECOND_OPINION_",
+  "DFIR_AI_CLAUDE_CODE_BIN", "DFIR_AI_CODEX_BIN", "DFIR_VISION_IMAGE_DETAIL",
+  "DFIR_AI_", "DFIR_VISION_",
+];
+
+/** Validate that every key in `updates` is on the writable allowlist and not explicitly denied.
+ * Returns an array of rejected keys (empty = all ok). */
+export function validateEnvUpdates(updates: Record<string, string>): string[] {
+  const rejected: string[] = [];
+  for (const key of Object.keys(updates)) {
+    if (DENIED_ENV_KEYS.has(key)) {
+      rejected.push(key);
+      continue;
+    }
+    if (!WRITABLE_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+      rejected.push(key);
+    }
+  }
+  return rejected;
+}
 
 /** The per-user, writable .env the installers seed (Windows: %LOCALAPPDATA%\DFIR-Companion\.env). */
 export function perUserEnvFile(): string | null {
@@ -117,5 +174,5 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
     }
   }
 
-  await writeFile(resolveEnvFilePath(), newLines.join("\n"), "utf8");
+  await atomicWrite(resolveEnvFilePath(), newLines.join("\n"));
 }

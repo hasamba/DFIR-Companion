@@ -46,6 +46,14 @@ regexes = [
   '''PsExec/WMI/WinRM''',             # DFIR tradecraft prose in attack-groups.json (false generic-api-key match)
 ]
 
+# The anonymizer's private-key redaction tests must contain PEM/PGP/SSH2 key headers as fixtures — that IS
+# what they assert gets redacted. The bodies are placeholder strings, not key material. Scoped to the one
+# rule and the one file, so a real key committed anywhere else still fails the scan.
+[[allowlists]]
+description = "Fake private-key armor fixtures in the anonymizer redaction tests"
+targetRules = ["private-key"]
+paths = ['''companion/tests/analysis/anonymize\.test\.ts''']
+
 # The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
 # own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.
 [[allowlists]]

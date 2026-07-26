@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, symlink, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -55,6 +55,41 @@ describe("exportEncryptedCase", () => {
   it("rejects an invalid case id instead of reading outside the cases root", async () => {
     const store = await harness();
     await expect(exportEncryptedCase(store, "../../etc", PASSWORD)).rejects.toThrow(/invalid case id/);
+  });
+});
+
+describe("exportEncryptedCase — symlink/hardlink rejection (#247)", () => {
+  // #247's own threat model: a symlink screenshots/loot -> /etc/shadow bundled into the export
+  // exfiltrates host files to whoever imports the archive. A hardlink achieves the identical
+  // outcome and is indistinguishable from a normal file via readdir's Dirent — only lstat's
+  // nlink count reveals it. These drive the REAL exportEncryptedCase end to end (not the private
+  // walkDir helper in isolation), planting a real symlink/hardlink on disk.
+
+  it("refuses to export a case containing a symlink to a file outside the case directory", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-SYM");
+    const secretFile = join(await mkdtemp(join(tmpdir(), "dfir-cea-secret-")), "shadow.txt");
+    await writeFile(secretFile, "TOPSECRET-HOST-FILE-CONTENTS", "utf8");
+    await symlink(secretFile, join(store.caseDir("INC-SYM"), "screenshots", "loot"));
+
+    await expect(exportEncryptedCase(store, "INC-SYM", PASSWORD)).rejects.toThrow(/symlink/i);
+  });
+
+  it("refuses to export a case containing a hardlink to a file outside the case directory", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-HARD");
+    const secretFile = join(await mkdtemp(join(tmpdir(), "dfir-cea-secret-")), "shadow.txt");
+    await writeFile(secretFile, "TOPSECRET-HOST-FILE-CONTENTS", "utf8");
+    await link(secretFile, join(store.caseDir("INC-HARD"), "screenshots", "loot"));
+
+    await expect(exportEncryptedCase(store, "INC-HARD", PASSWORD)).rejects.toThrow(/hardlink/i);
+  });
+
+  it("still exports a normal case with no symlinks/hardlinks (no regression)", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-CLEAN");
+    const archive = await exportEncryptedCase(store, "INC-CLEAN", PASSWORD);
+    expect(archive.length).toBeGreaterThan(0);
   });
 });
 

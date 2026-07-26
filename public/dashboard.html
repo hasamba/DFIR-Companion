@@ -12,6 +12,7 @@
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape-dagre.js"></script>
   <script type="module" src="/js/graph-view.js"></script>
+  <script type="module" src="/js/command-palette.js"></script>
   <script>
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
@@ -662,6 +663,28 @@
     .mention-chip { background: var(--c-11202e); color: var(--c-6aa9ff); border: 1px solid var(--c-2d4a6a);
       border-radius: 8px; padding: 0 5px; font-weight: 600; white-space: nowrap; }
     .comment-del { background: transparent; border: 0; color: var(--c-ff7a7a); cursor: pointer; font-size: 11px; padding: 0 4px; }
+    /* Command palette (issue #238) — the Ctrl+K launcher, driven by /js/command-palette.js.
+       Anchored near the top rather than vertically centred like .comment-modal: the result list
+       grows and shrinks on every keystroke, and a centred box would slide up and down under the
+       cursor while the analyst is still typing. z-index sits above .comment-overlay (50) and
+       .wiz-overlay (60) so the palette is never opened behind another modal. */
+    .cmdp-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 70; }
+    .cmdp-overlay.open { display: block; }
+    .cmdp-modal { position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);
+      width: min(620px, 94vw); background: var(--c-161a22); border: 1px solid var(--c-2a2f3a);
+      border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.5); overflow: hidden; }
+    .cmdp-modal input { width: 100%; box-sizing: border-box; background: transparent; border: 0;
+      border-bottom: 1px solid var(--c-2a2f3a); color: var(--c-cbd3df); font-size: 15px;
+      padding: 12px 14px; outline: none; }
+    .cmdp-list { max-height: 52vh; overflow-y: auto; }
+    .cmdp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 8px 14px; cursor: pointer; font-size: 13px; color: var(--c-cbd3df); }
+    .cmdp-row:hover { background: var(--c-1c2230); }
+    .cmdp-row.sel { background: var(--c-11202e); }
+    .cmdp-row.sel .cmdp-label { color: var(--c-6aa9ff); }
+    .cmdp-cat { color: var(--c-9aa4b2); font-size: 11px; white-space: nowrap; }
+    .cmdp-empty { padding: 14px; color: var(--c-9aa4b2); font-size: 13px; }
+    .cmdp-hint { border-top: 1px solid var(--c-2a2f3a); padding: 6px 14px; color: var(--c-9aa4b2); font-size: 11px; }
     #commentText { width: 100%; box-sizing: border-box; background: var(--c-0f1115); color: var(--c-e6e6e6);
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
     /* First-run AI setup wizard (#181) — a friendly onboarding overlay shown once when no AI provider
@@ -2216,8 +2239,10 @@
     <div class="comment-modal">
       <h3>⌨ Keyboard shortcuts</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
-        Active on the Forensic Timeline whenever you're not typing in a field. Toggle in Settings → General.</p>
+        Ctrl+K works anywhere, always. The rest are active on the Forensic Timeline whenever you're
+        not typing in a field, and can be switched off in Settings → General.</p>
       <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace; white-space:nowrap;">Ctrl+K / ⌘K</td><td style="padding:4px 0;">Command palette — fuzzy-search every action (<code>&gt;exports</code> filters by category)</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace; white-space:nowrap;">j / k</td><td style="padding:4px 0;">Next / previous event</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">f</td><td style="padding:4px 0;">Flag (star) the focused event</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">i</td><td style="padding:4px 0;">Add the focused event's IP/host as an IOC</td></tr>
@@ -2230,6 +2255,22 @@
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="kbdHelpClose">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Command palette (issue #238) ──────────────────────────────────────────
+       Markup only; all behaviour lives in /js/command-palette.js, which fills #cmdpList from the
+       registry the inline script publishes as window.DfirPaletteConfig (see buildPaletteActions).
+       role=listbox/option is what lets a screen reader follow the ↑/↓ selection, since the focus
+       stays in the input the whole time. -->
+  <div id="cmdpOverlay" class="cmdp-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdp-modal">
+      <input id="cmdpInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Type a command…  (&gt; filters by category)"
+             aria-label="Search commands" aria-controls="cmdpList" />
+      <div id="cmdpList" class="cmdp-list" role="listbox" aria-label="Commands"></div>
+      <div id="cmdpEmpty" class="cmdp-empty" style="display:none">No matching command.</div>
+      <div class="cmdp-hint">↑ ↓ to move · Enter to run · Esc to close</div>
     </div>
   </div>
 
@@ -18263,6 +18304,131 @@
       if (vis[id] === undefined) { const d = SECTION_DEFS.find(s => s.id === id); return !(d && d.defaultHidden); }
       return vis[id] !== false;
     }
+
+    // ── Command palette registry (issue #238) ────────────────────────────────────────────────────
+    // The matching, ranking and overlay live in /js/command-palette.js; only the registry lives
+    // here, because this is the only scope that can see the dashboard's own functions and state.
+    //
+    // Almost every entry is DERIVED from a control that already exists — the section list, the two
+    // export <select>s, the toolbar buttons — rather than transcribed into a parallel list. A
+    // hand-written registry is stale the day someone adds a panel or an export, and stale entries
+    // are worse than missing ones: they point at ids that no longer resolve.
+
+    // The un-collapse + scroll idiom used by the panel deep-links elsewhere in this file.
+    function revealSection(id) {
+      const sec = document.getElementById(id);
+      if (!sec) return;
+      sec.classList.remove("collapsed");
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // display:none / detached elements have no client rects; offsetParent would report the same for
+    // these but lies about position:fixed ancestors, and the toolbar may end up inside one.
+    function paletteVisible(el) {
+      return !!el && el.getClientRects().length > 0;
+    }
+
+    // Curated entries: the toolbar controls, driven by .click() so each one reuses the handler that
+    // is already wired to it. Availability comes free — buttons the dashboard hides or disables for
+    // the current case state (2nd opinion, undo import, lifecycle, demo seed) drop out of the
+    // palette on their own, with no second copy of the gating logic to keep in sync.
+    const PALETTE_BUTTONS = [
+      { id: "act.synthesize",    btn: "synthesize",      category: "Actions",    label: "AI Re-synthesize",                        keywords: ["synthesize", "ai", "analysis", "rerun"] },
+      { id: "act.deepPass",      btn: "deepPassBtn",     category: "Actions",    label: "Run Deep Pass",                           keywords: ["deep", "pass", "reasoning"] },
+      { id: "act.secondOpinion", btn: "secondOpinion",   category: "Actions",    label: "Second Opinion",                          keywords: ["second", "opinion", "review", "model"] },
+      { id: "act.import",        btn: "importBtn",       category: "Actions",    label: "Import Evidence",                         keywords: ["import", "ingest", "upload", "evidence"] },
+      { id: "act.importUndo",    btn: "importUndoBtn",   category: "Actions",    label: "Undo Import",                             keywords: ["undo", "import", "revert"] },
+      { id: "act.importRedo",    btn: "importRedoBtn",   category: "Actions",    label: "Redo Import",                             keywords: ["redo", "import"] },
+      { id: "act.present",       btn: "presentBtn",      category: "Actions",    label: "Presentation Mode",                       keywords: ["present", "slides", "deck", "briefing"] },
+      { id: "nav.filter",        btn: "toggleSearchBar", category: "Navigation", label: "Search & Filter",                         keywords: ["search", "filter", "find", "query"] },
+      { id: "nav.toggleAll",     btn: "toggleAll",       category: "Navigation", label: "Collapse / Expand All Sections",          keywords: ["collapse", "expand", "all", "sections"] },
+      { id: "nav.jobs",          btn: "jobsBadge",       category: "Navigation", label: "Background Jobs",                         keywords: ["jobs", "queue", "background", "tasks"] },
+      { id: "set.settings",      btn: "settingsBtn",     category: "Settings",   label: "Open Settings",                           keywords: ["settings", "preferences", "config", "options"] },
+      { id: "set.theme",         btn: "themeToggle",     category: "Settings",   label: "Toggle Theme (light / dark)",             keywords: ["theme", "dark", "light", "appearance"] },
+      { id: "set.ai",            btn: "aiToggle",        category: "Settings",   label: "Toggle AI",                               keywords: ["ai", "llm", "enable", "disable"] },
+      { id: "set.enrich",        btn: "enrichToggle",    category: "Settings",   label: "Toggle Enrichment",                       keywords: ["enrich", "threatintel", "lookup"] },
+      { id: "set.anon",          btn: "anonToggle",      category: "Settings",   label: "Toggle Anonymization",                    keywords: ["anon", "anonymize", "redact", "privacy"] },
+      { id: "set.views",         btn: "dashViewBtn",     category: "Settings",   label: "Dashboard Views",                         keywords: ["view", "layout", "dashboard", "saved"] },
+      { id: "set.manual",        btn: "helpBtn",         category: "Settings",   label: "Open User Manual",                        keywords: ["help", "manual", "docs", "documentation"] },
+      { id: "case.new",          btn: "newCaseBtn",      category: "Case",       label: "New Case",                                keywords: ["new", "case", "create"] },
+      { id: "case.connect",      btn: "connect",         category: "Case",       label: "Connect to Case",                         keywords: ["connect", "open", "switch", "case"] },
+      { id: "case.import",       btn: "importCaseBtn",   category: "Case",       label: "Import Case",                             keywords: ["import", "case", "restore"] },
+      { id: "case.lifecycle",    btn: "lifecycleBtn",    category: "Case",       label: "Case Lifecycle (archive, close, delete)", keywords: ["archive", "close", "delete", "lifecycle", "status"] },
+      { id: "case.demo",         btn: "seedDemoBtn",     category: "Case",       label: "Seed Demo Case",                          keywords: ["demo", "seed", "sample", "example"] },
+    ];
+
+    // Panel labels double as their own keywords, so "swimlane" or "kill chain" finds the section
+    // even though every label is prefixed with the same "Go to".
+    function paletteSectionKeywords(label) {
+      return label.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+    }
+
+    // Turns the options of one toolbar <select> into actions. Running one sets the value and fires
+    // change, which is exactly what picking it with the mouse does — the existing onchange handler
+    // stays the single implementation of every export.
+    function paletteSelectActions(selectId, idPrefix, keywords, gate) {
+      const sel = document.getElementById(selectId);
+      if (!sel) return [];
+      return [...sel.options].filter(o => o.value).map(o => ({
+        id: idPrefix + o.value,
+        label: o.textContent.replace(/…\s*$/, "").trim(),
+        category: "Exports",
+        keywords: keywords,
+        available: () => gate() && !o.disabled && !sel.disabled,
+        run: () => { sel.value = o.value; sel.dispatchEvent(new Event("change")); },
+      }));
+    }
+
+    function buildPaletteActions() {
+      const vis = loadSectionsVis();                     // read once per keystroke, not once per panel
+      const caseIdEl = document.getElementById("caseId");
+      const hasCase = () => !!(caseIdEl && caseIdEl.value.trim());
+
+      const nav = SECTION_DEFS.map(s => ({
+        id: "nav." + s.id,
+        label: "Go to " + s.label,
+        category: "Navigation",
+        keywords: paletteSectionKeywords(s.label),
+        // A panel the analyst has switched off in Settings is not somewhere to jump to.
+        available: () => !!document.getElementById(s.id) && isSectionVisible(s.id, vis),
+        run: () => revealSection(s.id),
+      }));
+
+      const buttons = PALETTE_BUTTONS.map(b => ({
+        id: b.id,
+        label: b.label,
+        category: b.category,
+        keywords: b.keywords,
+        available: () => {
+          const el = document.getElementById(b.btn);
+          return paletteVisible(el) && !el.disabled;
+        },
+        run: () => document.getElementById(b.btn).click(),
+      }));
+
+      // Every export needs a connected case — the onchange handler bails without one, so offering
+      // them on an empty dashboard would produce actions that silently do nothing.
+      const exports = paletteSelectActions("exportSelect", "exp.", ["export", "download", "save"], hasCase);
+      const pushes = paletteSelectActions("pushSelect", "push.", ["push", "send", "integration"],
+        () => hasCase() && paletteVisible(document.getElementById("pushSelect")));
+
+      const extras = [{
+        id: "set.shortcuts",
+        label: "Keyboard Shortcuts",
+        category: "Settings",
+        keywords: ["keyboard", "shortcuts", "keys", "cheat", "help"],
+        run: () => kbdOpenHelp(),
+      }];
+
+      return [...nav, ...buttons, ...exports, ...pushes, ...extras];
+    }
+
+    // Published as a global rather than passed in a call because module scripts run AFTER this
+    // inline one — the palette module reads this when it loads, so neither side has to wait on the
+    // other. Both fields are thunks: the registry and `lastState` are re-read on every keystroke,
+    // so a palette opened before the case loads is correct the moment it does.
+    window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => lastState };
+
     function loadSectionsOrder() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
     }
@@ -20158,7 +20324,6 @@
         diagRow("Free", `${diagFmtBytes(d.freeBytes)} of ${diagFmtBytes(d.totalBytes)}`),
         diagRow("Used", `${(d.usedPct || 0).toFixed(1)}%`, lvlColor),
         diagRow("Status", esc(d.level), lvlColor),
-        diagRow("Cases root", `<code>${esc(report.casesRoot)}</code>`),
       ].join(""));
       const cs = report.cases;
       const cases = diagCard("Cases", diagRow("Total", `${cs.count} (${cs.open} open, ${cs.closed} closed)`));
@@ -20343,9 +20508,12 @@
             <span style="color:#9aa4b2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.caseId)}/${esc(f.path)}</span>
             <span>${diagFmtBytes(f.bytes)}</span></div>`).join("") || `<div style="color:#9aa4b2">none</div>`;
         const trunc = j.truncated ? ` <span style="color:#ffb05a">(scan truncated at ${j.scannedFiles} files)</span>` : "";
+        // Locked cases still count toward the byte totals but withhold their filenames, so say so —
+        // otherwise a short "Largest files" list on a passworded install just looks broken.
+        const locked = j.lockedCases ? ` <span style="font-weight:400">— hidden for ${j.lockedCases} locked case(s)</span>` : "";
         target.innerHTML = diagCard("Case sizes — total " + diagFmtBytes(j.totalBytes) + trunc,
           `<div style="font-weight:600;color:#9aa4b2;margin:2px 0">By case</div>${cases}
-           <div style="font-weight:600;color:#9aa4b2;margin:8px 0 2px">Largest files</div>${files}`);
+           <div style="font-weight:600;color:#9aa4b2;margin:8px 0 2px">Largest files${locked}</div>${files}`);
       }).catch(e => { target.innerHTML = `<div style="color:#ff9f9f">Size scan failed: ${esc(e.message)}</div>`; })
         .finally(() => { if (btn) btn.disabled = false; });
     }
@@ -20411,7 +20579,17 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename }),
       })
-        .then(async r => { if (!r.ok) throw new Error(await r.text().catch(() => String(r.status))); return r.json(); })
+        .then(async r => {
+          if (!r.ok) {
+            // Surface the server's `error` string rather than the raw JSON body: a restore blocked
+            // by an in-flight job (409) is a routine outcome the analyst needs to be able to read.
+            const body = await r.text().catch(() => String(r.status));
+            let detail = body;
+            try { const parsed = JSON.parse(body); if (parsed && parsed.error) detail = parsed.error; } catch {}
+            throw new Error(detail);
+          }
+          return r.json();
+        })
         .then(j => {
           if (msg) { msg.style.color = "#5ad17a"; msg.textContent = `✓ Restored ${(j.restored || []).length} file(s) — reload the page to reflect changes`; }
         })
