@@ -3562,7 +3562,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     // Extra hostnames this companion answers to (#280), beyond loopback and bare IP addresses.
     // Only a deployment reached through a NAME needs these — e.g. "dfir.example.com", or the
-    // suffix ".killercoda.com" where the platform mints a fresh hostname per session.
+    // suffix ".lab.example.com" where the platform mints a fresh hostname per session.
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
     allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
     importUndoStore,

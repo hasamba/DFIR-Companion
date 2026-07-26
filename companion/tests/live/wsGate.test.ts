@@ -114,9 +114,9 @@ describe("authorizeWsUpgrade (#212)", () => {
     const result = await authorizeWsUpgrade(
       {
         url: "/ws?caseId=open",
-        headers: { host: "abc123-4773.environments.killercoda.com", origin: "https://abc123-4773.environments.killercoda.com" },
+        headers: { host: "abc123-4773.env.lab.example.com", origin: "https://abc123-4773.env.lab.example.com" },
       },
-      { ...deps(), allowedHostSuffixes: [".killercoda.com"] },
+      { ...deps(), allowedHostSuffixes: [".lab.example.com"] },
     );
     expect(result.ok).toBe(true);
   });

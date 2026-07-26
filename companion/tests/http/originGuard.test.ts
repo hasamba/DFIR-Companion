@@ -112,16 +112,18 @@ describe("isHostAllowed", () => {
   });
 
   it("allows a configured suffix, for platforms that hand out a fresh hostname per session", () => {
-    // Killercoda proxies port 4773 through a per-session hostname, so only the suffix is knowable.
-    const cfg: GuardConfig = { allowedHostSuffixes: [".killercoda.com"] };
-    expect(isHostAllowed("abc123-4773.environments.killercoda.com", cfg)).toBe(true);
-    expect(isHostAllowed("killercoda.com", cfg)).toBe(true);
+    // For a lab platform that proxies the port through a hostname minted per learner, where only
+    // the domain is fixed. (The Killercoda tutorial does better than this — it reads its exact
+    // public origin from /etc/killercoda/host at start-up — but not every platform offers that.)
+    const cfg: GuardConfig = { allowedHostSuffixes: [".lab.example.com"] };
+    expect(isHostAllowed("abc123-4773.env.lab.example.com", cfg)).toBe(true);
+    expect(isHostAllowed("lab.example.com", cfg)).toBe(true);
   });
 
   it("matches a suffix only on a label boundary, never as a bare string ending", () => {
-    const cfg: GuardConfig = { allowedHostSuffixes: [".killercoda.com"] };
-    expect(isHostAllowed("evilkillercoda.com", cfg)).toBe(false);
-    expect(isHostAllowed("killercoda.com.evil.example", cfg)).toBe(false);
+    const cfg: GuardConfig = { allowedHostSuffixes: [".lab.example.com"] };
+    expect(isHostAllowed("evillab.example.com", cfg)).toBe(false);
+    expect(isHostAllowed("lab.example.com.evil.example", cfg)).toBe(false);
   });
 
   it("allows a request with no Host header at all", () => {
@@ -216,7 +218,7 @@ describe("parseAllowedHostSuffixes", () => {
   it("splits a comma-separated list, lowercases, and gives every entry a leading dot", () => {
     // A missing dot is the whole footgun this parser exists to remove: "acme.com" as a raw suffix
     // would also match "evilacme.com".
-    expect(parseAllowedHostSuffixes("killercoda.com, .Example.COM")).toEqual([".killercoda.com", ".example.com"]);
+    expect(parseAllowedHostSuffixes("lab.example.com, .Other.COM")).toEqual([".lab.example.com", ".other.com"]);
   });
 
   it("returns an empty list for undefined or blank config", () => {
@@ -342,11 +344,11 @@ describe("createOriginGuard", () => {
   });
 
   it("serves a platform-proxied host once its suffix is configured", async () => {
-    const cfg: GuardConfig = { allowedHostSuffixes: [".killercoda.com"] };
+    const cfg: GuardConfig = { allowedHostSuffixes: [".lab.example.com"] };
     const res = await request(guarded(cfg))
       .get("/tools/custom")
-      .set("Host", "abc123-4773.environments.killercoda.com")
-      .set("Origin", "https://abc123-4773.environments.killercoda.com");
+      .set("Host", "abc123-4773.env.lab.example.com")
+      .set("Origin", "https://abc123-4773.env.lab.example.com");
     expect(res.status).toBe(200);
   });
 });
