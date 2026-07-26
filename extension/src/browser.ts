@@ -22,7 +22,13 @@ function globals(): ExtensionGlobals {
   return globalThis as ExtensionGlobals;
 }
 
-/** True on runtimes that expose the promise-based `browser` namespace (Firefox, Safari). */
+/**
+ * True on runtimes that expose the promise-based `browser` namespace (Firefox, Safari).
+ *
+ * Reach for this only where the two runtimes genuinely diverge in BEHAVIOUR, not in API surface —
+ * a growing pile of branches here is the sign the shim is being used to paper over something that
+ * belongs in the manifest or in a capability check.
+ */
 export function isFirefox(): boolean {
   return typeof globals().browser !== "undefined";
 }
@@ -46,17 +52,6 @@ export const browserApi: typeof chrome = new Proxy({} as typeof chrome, {
     return prop in resolveApi();
   },
 });
-
-// Firefox only gained `world: "MAIN"` for scripting.executeScript in Firefox 128; manifest-firefox
-// .json still admits 121, so the MAIN world is requested on Chrome only. Where it is omitted the
-// hook lands in the isolated world and never sees the page's own fetch — the content script's
-// DOM-scrape fallback (artifactCapture.ts) is what actually carries those pages.
-export function executeScriptTarget(tabId: number, files: string[]): Promise<void> {
-  return browserApi.scripting
-    .executeScript({
-      target: { tabId },
-      files,
-      ...(isFirefox() ? {} : { world: "MAIN" as const }),
-    })
-    .then(() => undefined);
-}
+// NOTE: scripting.executeScript needs no shim. Firefox gained `world: "MAIN"` in 128 and
+// manifest-firefox.json requires it (strict_min_version), so both runtimes take the same call —
+// see injectHook() in serviceWorker.ts.
