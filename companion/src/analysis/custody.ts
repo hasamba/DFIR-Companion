@@ -1,7 +1,19 @@
 import { readFile, appendFile, mkdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
+
+// Evidence here is disk images, memory dumps and Plaso super-timelines — routinely 400 MB+, and
+// past V8's ~512 MB string ceiling. readFile() would OOM on exactly the artifacts custody matters
+// most for, so hash in 1 MB chunks and never hold the file in memory.
+export async function hashFile(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path, { highWaterMark: 1 << 20 })) {
+    hash.update(chunk as Buffer);
+  }
+  return hash.digest("hex");
+}
 
 export interface CustodyRecord {
   artifactPath: string;
@@ -59,8 +71,7 @@ export class CustodyStore {
     for (const record of records) {
       let actual: string | null = null;
       try {
-        const bytes = await readFile(record.artifactPath);
-        actual = createHash("sha256").update(bytes).digest("hex");
+        actual = await hashFile(record.artifactPath);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
           mismatches.push({ artifactPath: record.artifactPath, recordedSha256: record.sha256, actualSha256: null, reason: "missing" });
