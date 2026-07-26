@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -8,6 +8,7 @@ import {
   ingestCapture,
   _resetDedupCache,
   isDedupEnabled,
+  InvalidImageError,
 } from "../../src/ingest/captureIngest.js";
 
 let root: string;
@@ -99,6 +100,37 @@ describe("ingestCapture", () => {
     const bad = payload({ imageBase64: await pngBase64(1, 1, 1) });
     delete (bad as Record<string, unknown>).url;
     await expect(ingestCapture(store, bad)).rejects.toThrow();
+  });
+});
+
+describe("ingestCapture — image magic-byte validation", () => {
+  const b64 = (...bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+  it("rejects arbitrary binary posing as a screenshot", async () => {
+    await expect(ingestCapture(store, payload({ imageBase64: b64(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) })))
+      .rejects.toBeInstanceOf(InvalidImageError);
+  });
+
+  it("rejects bytes too short to carry a signature", async () => {
+    await expect(ingestCapture(store, payload({ imageBase64: b64(...PNG) })))
+      .rejects.toBeInstanceOf(InvalidImageError);
+  });
+
+  it("writes nothing to disk when the bytes are rejected", async () => {
+    await expect(ingestCapture(store, payload({ imageBase64: b64(...Array(16).fill(0x41)) })))
+      .rejects.toBeInstanceOf(InvalidImageError);
+    await expect(readdir(store.screenshotsDir("c1"))).resolves.toEqual([]);
+  });
+
+  it.each([
+    ["PNG",  [...PNG, 0, 0, 0, 13]],
+    ["JPEG", [0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]],
+    ["GIF",  [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0]],
+    ["WebP", [0x52, 0x49, 0x46, 0x46, 26, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]],
+  ])("accepts %s", async (_name, bytes) => {
+    const meta = await ingestCapture(store, payload({ imageBase64: b64(...bytes) }));
+    expect(meta.screenshotFile).toBeTruthy();
   });
 });
 

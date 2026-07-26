@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, lstat } from "node:fs/promises";
 import { join, dirname, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
@@ -55,9 +55,29 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   }
   for (const entry of entries) {
     const rel = baseRel ? `${baseRel}/${entry.name}` : entry.name;
+    // A one-shot export should FAIL LOUDLY on a symlink/hardlink, not silently drop it: this is a
+    // security-sensitive export the analyst explicitly requested, and a planted link pointing
+    // outside the case directory (e.g. screenshots/loot -> /etc/shadow) is itself a signal worth
+    // surfacing, not something to quietly paper over into an incomplete-but-unannounced archive.
+    // Matches the throw-hard posture of the TOCTOU re-check below, which catches the read-time race.
+    if (entry.isSymbolicLink()) {
+      throw new Error(`symlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+    }
     if (entry.isDirectory()) {
       out.push(...(await walkDir(join(dir, entry.name), rel)));
-    } else {
+      continue;
+    }
+    if (entry.isFile()) {
+      // Hardlink guard: a hardlink is indistinguishable from a normal file via readdir's Dirent
+      // (isSymbolicLink() is false for it too) — only lstat's nlink count reveals it. A file
+      // legitimately written into the case directory (imports, screenshots, state) is always
+      // nlink === 1, so a multiply-linked path here means some OTHER directory entry — anywhere
+      // on the same filesystem, e.g. /etc/shadow — aliases this exact inode. Same exfiltration
+      // vector as a symlink, just via a different mechanism.
+      const st = await lstat(join(dir, entry.name));
+      if (st.nlink > 1) {
+        throw new Error(`hardlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+      }
       out.push(rel);
     }
   }
@@ -78,7 +98,13 @@ export async function exportEncryptedCase(store: CaseStore, caseId: string, pass
   const manifestFiles: Array<{ path: string; sha256: string; bytes: number }> = [];
   let totalBytes = 0;
   for (const rel of relPaths) {
-    const data = await readFile(join(caseDir, rel));
+    const fullPath = join(caseDir, rel);
+    // TOCTOU guard: re-check that the path is not a symlink (or hardlink — see walkDir) before
+    // reading. The file could have been replaced/swapped between the walk and the read.
+    const lst = await lstat(fullPath);
+    if (lst.isSymbolicLink()) throw new Error(`symlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+    if (lst.nlink > 1) throw new Error(`hardlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+    const data = await readFile(fullPath);
     entries.push({ path: rel, data });
     manifestFiles.push({ path: rel, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length });
     totalBytes += data.length;
