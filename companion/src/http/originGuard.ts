@@ -14,8 +14,9 @@ import type { Request, RequestHandler, Response, NextFunction } from "express";
  *  1. NO `Origin` header — curl, the push-to-companion scripts, Velociraptor, MCP clients. Allowed.
  *     These are not the threat: a process that can already run on this machine does not need the
  *     companion's help to run more code, and blocking them breaks every documented scripted flow.
- *  2. A TRUSTED browser origin — the capture extension, the dashboard on loopback, the server's own
- *     host (so the hosted demo and reverse-proxy setups work), or an operator-configured origin.
+ *  2. A TRUSTED browser origin — the capture extension, the dashboard on loopback, or an
+ *     operator-configured origin (this is how a hosted demo or reverse-proxy deployment is trusted:
+ *     its public origin must be listed in DFIR_ALLOWED_ORIGINS, never inferred from the Host header).
  *     Allowed, and answered with that exact origin echoed back rather than a wildcard.
  *  3. Anything else — a real web page. Rejected with 403 before the route runs, and with no CORS or
  *     private-network headers, so the browser fails the preflight too.
@@ -41,10 +42,15 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
 /**
  * Is this browser origin allowed to talk to the companion?
  *
- * `host` is the server's own Host header, which makes same-origin work without configuration no
- * matter where the companion is deployed (loopback, the Railway demo, behind a reverse proxy).
+ * Trust is derived ONLY from the origin itself plus the operator's allow-list — never from the
+ * request's own `Host` header. `Host` is client-controlled, so blessing an origin merely because it
+ * equals the Host is a DNS-rebinding bypass (CWE-346): an attacker rebinds `evil.example` to
+ * 127.0.0.1 and sends `Origin: http://evil.example` with `Host: evil.example`; the two match and the
+ * gate would open. Loopback and configured origins are each recognised on their own merits below, so
+ * a deployment behind a public host or reverse proxy is trusted by listing its origin in
+ * DFIR_ALLOWED_ORIGINS, not by echoing back whatever Host the caller supplied.
  */
-export function isOriginAllowed(origin: string | undefined, host: string | undefined, extra: string[]): boolean {
+export function isOriginAllowed(origin: string | undefined, extra: string[]): boolean {
   if (!origin) return true; // non-browser caller — see group 1 above
 
   let url: URL;
@@ -57,7 +63,6 @@ export function isOriginAllowed(origin: string | undefined, host: string | undef
   if (EXTENSION_SCHEMES.has(url.protocol)) return true;
   // Compare parsed components, never substrings: `https://127.0.0.1.evil.example` contains a
   // trusted host as a prefix but is a completely different origin.
-  if (host && url.host.toLowerCase() === host.toLowerCase()) return true;
   if (LOOPBACK_HOSTNAMES.has(url.hostname.toLowerCase())) return true;
   return extra.includes(`${url.protocol}//${url.host}`);
 }
@@ -67,7 +72,7 @@ export function createOriginGuard(opts: { allowedOrigins?: string[] } = {}): Req
   const extra = opts.allowedOrigins ?? [];
   return (req: Request, res: Response, next: NextFunction): void => {
     const origin = req.headers.origin;
-    if (!isOriginAllowed(origin, req.headers.host, extra)) {
+    if (!isOriginAllowed(origin, extra)) {
       // 403 with no CORS headers: the page cannot read this response, and a preflight shaped like
       // this fails, so the browser never sends the real request either.
       res.status(403).json({
