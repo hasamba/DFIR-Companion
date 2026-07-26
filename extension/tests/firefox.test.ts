@@ -3,12 +3,16 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { resolve, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 
+import { toFirefoxManifest, FIREFOX_ONLY_KEYS, MIN_FIREFOX_VERSION } from "../scripts/manifest-firefox.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (name: string) => JSON.parse(readFileSync(resolve(__dirname, "..", name), "utf-8"));
-const firefoxManifest = read("manifest-firefox.json");
 const chromeManifest = read("manifest.json");
+// Not a file on disk — build-firefox.mjs derives it from manifest.json through this same function,
+// so asserting on the transform's output is asserting on what actually ships.
+const firefoxManifest = toFirefoxManifest(chromeManifest);
 
-describe("manifest-firefox.json", () => {
+describe("the generated Firefox manifest", () => {
   it("has browser_specific_settings with a gecko id", () => {
     expect(firefoxManifest.browser_specific_settings).toBeDefined();
     expect(firefoxManifest.browser_specific_settings.gecko.id).toMatch(/.+@.+/);
@@ -31,7 +35,7 @@ describe("manifest-firefox.json", () => {
   });
 
   it("keeps the same capture shortcut", () => {
-    expect(firefoxManifest.commands["toggle-capture"].suggested_key.default).toBe("Ctrl+Shift+S");
+    expect(firefoxManifest.commands["toggle-capture"].suggested_key?.default).toBe("Ctrl+Shift+S");
   });
 
   // These two lock the MAIN-world precondition from both ends. injectHook() requests
@@ -57,26 +61,32 @@ describe("manifest-firefox.json", () => {
   });
 });
 
-describe("manifest parity with manifest.json", () => {
-  // The two manifests are maintained by hand; anything that isn't deliberately browser-specific
-  // must not drift. `background` and `host_permissions`/`permissions` differ by design.
-  it.each(["version", "name", "description", "icons", "options_ui", "action", "commands", "content_scripts"])(
-    "%s matches the Chrome manifest",
-    (key) => {
-      expect(firefoxManifest[key]).toEqual(chromeManifest[key]);
-    },
-  );
-
-  it("declares the same API permissions", () => {
-    const apiPerms = (m: { permissions: string[] }) =>
-      m.permissions.filter((p) => !p.includes("://") && p !== "<all_urls>").sort();
-    expect(apiPerms(firefoxManifest)).toEqual(apiPerms(chromeManifest));
+describe("the Chrome → Firefox transform", () => {
+  // Field-by-field parity tests would be tautological now that one manifest is generated from the
+  // other. What still needs guarding is the transform's SCOPE: every key it doesn't touch is shared
+  // by both browsers, so a change that quietly drops `commands` or rewrites `permissions` would
+  // ship a Firefox add-on missing features nobody removed on purpose.
+  it("changes only the keys it declares, and passes everything else through untouched", () => {
+    const changed = [...new Set([...Object.keys(chromeManifest), ...Object.keys(firefoxManifest)])].filter(
+      (key) => JSON.stringify(chromeManifest[key]) !== JSON.stringify(firefoxManifest[key]),
+    );
+    expect(changed.sort()).toEqual([...FIREFOX_ONLY_KEYS].sort());
   });
 
-  it("requests the same host access, however each manifest spells it", () => {
-    const hosts = (m: { host_permissions?: string[]; permissions: string[] }) =>
-      [...(m.host_permissions ?? []), ...m.permissions.filter((p) => p.includes("://") || p === "<all_urls>")].sort();
-    expect(hosts(firefoxManifest)).toEqual(hosts(chromeManifest));
+  it("reuses the Chrome background bundle rather than naming it again", () => {
+    // Both targets emit the same serviceWorker.js; reading the filename off the Chrome key is what
+    // stops the two from falling out of step if that entry point is ever renamed.
+    expect(firefoxManifest.background.scripts).toEqual([chromeManifest.background.service_worker]);
+    expect(firefoxManifest.background.type).toBe(chromeManifest.background.type);
+  });
+
+  it("pins the Firefox floor at the version the transform advertises", () => {
+    expect(firefoxManifest.browser_specific_settings.gecko.strict_min_version).toBe(MIN_FIREFOX_VERSION);
+  });
+
+  it("fails loudly if there is no background bundle to derive from", () => {
+    const { background: _dropped, ...noBackground } = chromeManifest;
+    expect(() => toFirefoxManifest(noBackground)).toThrow(/background\.service_worker/);
   });
 });
 

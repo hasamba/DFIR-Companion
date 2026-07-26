@@ -78,7 +78,8 @@ async function captureActiveTab(trigger: TriggerType): Promise<void> {
 // double install. Best-effort: a restricted/blocked page just falls back to DOM-scrape.
 //
 // MAIN is requested unconditionally: Chrome has always supported it and Firefox has since 128,
-// which manifest-firefox.json requires. It must not silently degrade to the isolated world — there
+// which scripts/manifest-firefox.mjs pins as the floor. It must not silently degrade to the
+// isolated world — there
 // the hook would wrap the content script's own `fetch`, which no page script ever calls, so it
 // would install, report ready, and then capture nothing at all.
 async function injectHook(tabId: number | undefined): Promise<void> {
