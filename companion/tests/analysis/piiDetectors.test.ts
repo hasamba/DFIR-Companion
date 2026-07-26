@@ -80,3 +80,41 @@ describe("CARD detector", () => {
     expect(a.apply("charge to 4111111111111111")).toBe("charge to 4111111111111111");
   });
 });
+
+describe("PHONE detector", () => {
+  it("tokenizes E.164 numbers", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    const out = a.apply("called +972501234567 twice");
+    expect(out).not.toContain("+972501234567");
+    expect(out).toMatch(/ANON_PHONE_1/);
+    expect(a.restore(out)).toBe("called +972501234567 twice");
+  });
+
+  it("tokenizes Israeli mobile and landline numbers, dashed or bare", () => {
+    for (const phone of ["052-1234567", "0521234567", "03-1234567"]) {
+      const a = createAnonymizer(policy({ PHONE: true }), NONE);
+      const out = a.apply(`contact ${phone} now`);
+      expect(out, phone).not.toContain(phone);
+      expect(out, phone).toMatch(/ANON_PHONE_1/);
+      expect(a.restore(out)).toBe(`contact ${phone} now`);
+    }
+  });
+
+  it("tokenizes NANP numbers only when separators are present", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    const out = a.apply("dial 555-123-4567 please");
+    expect(out).not.toContain("555-123-4567");
+    expect(out).toMatch(/ANON_PHONE_1/);
+  });
+
+  it("leaves a bare ten-digit run alone", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("seq 5551234567 done")).toContain("5551234567");
+  });
+
+  it("does not fire on dotted quads or timestamps", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("host 192.168.1.1 up")).toContain("192.168.1.1");
+    expect(a.apply("at 2026-07-26 12:00:00")).toContain("2026-07-26");
+  });
+});

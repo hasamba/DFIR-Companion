@@ -216,6 +216,13 @@ const PEM_PRIVATE_KEY =
 const CARD_RE =
   /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3}\b|\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}\b|\b\d{4}[ -]\d{6}[ -]\d{5}\b|\b\d{13,19}\b/g;
 
+// Three NARROW patterns. A bare run of ten digits is deliberately NOT matched — forensic text is
+// full of PIDs, ports, offsets and sequence numbers, and a generic rule would shred it. Every
+// pattern demands either a leading + or explicit separators.
+const PHONE_E164 = /\+\d{7,15}\b/g;
+const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
+const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
+
 /** Luhn checksum. Exported for the detector table tests. */
 export function luhnValid(digits: string): boolean {
   let sum = 0;
@@ -419,6 +426,15 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     });
   }
 
+  // E.164 runs first: it is the most specific, and an international number has no leading zero
+  // for the Israeli pattern to latch onto.
+  function anonPhones(t: string): string {
+    let out = t.replace(PHONE_E164, (m) => assign("PHONE", m));
+    out = out.replace(PHONE_IL, (m) => assign("PHONE", m));
+    out = out.replace(PHONE_NANP, (m) => assign("PHONE", m));
+    return out;
+  }
+
   function anonCustom(t: string): string {
     const custom = known.custom ?? [];
     if (custom.length === 0) return t;
@@ -461,6 +477,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       t = anonIpv4(t);                           // then any standalone (non-embedded) IPv4 address
     }
     if (policy.categories.CARD) t = anonCards(t);
+    if (policy.categories.PHONE) t = anonPhones(t);
     return t;
   }
 
