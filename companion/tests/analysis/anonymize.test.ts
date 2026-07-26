@@ -561,6 +561,11 @@ describe("isInternalIpv6", () => {
     expect(isInternalIpv6("::ffff:10.0.0.1")).toBe(true);
   });
 
+  it("preserves public IPv6", () => {
+    expect(isInternalIpv6("2001:4860:4860::8888")).toBe(false);
+    expect(isInternalIpv6("2606:4700:4700::1111")).toBe(false);
+  });
+
   // A naive IPv4-mapped check that only recognizes the dotted-decimal spelling
   // ("::ffff:127.0.0.1") misses the hex-canonical form of the SAME address ("::ffff:7f00:1") —
   // the form anything that re-serializes an IPv6 address (e.g. new URL(), or some logging
