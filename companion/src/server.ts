@@ -13,6 +13,7 @@ import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
+import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext, ImportBase } from "./routes/context.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerCaptureRoutes } from "./routes/captures.js";
@@ -3898,7 +3899,11 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   const envFile = resolveEnvFilePath();
   loadDotenv({ path: envFile, quiet: true });
   logLine(`[DFIR] env file: ${envFile}`);
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  // Expand a leading "~" to the user's home directory. dotenv does NOT do this
+  // expansion, so DFIR_CASES_ROOT=~/Documents/cases would otherwise create a
+  // literal "~/Documents" folder beside the companion package instead of using
+  // $HOME/Documents. See src/storage/expandHome.ts.
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.
   // (Otherwise "./cases" resolves against cwd and you can end up with two folders.)
@@ -3929,7 +3934,7 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // the cases root.
   const rawLogDir = process.env.DFIR_LOG_DIR;
   const logDir = rawLogDir && rawLogDir.trim() !== ""
-    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
+    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, expandHome(rawLogDir)))
     : undefined;
 
   startServer(casesRoot, port, host, logDir);
