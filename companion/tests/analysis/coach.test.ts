@@ -30,8 +30,10 @@ function finding(over: Partial<Finding> = {}): Finding {
   };
 }
 
+// Routable by default: enrichment holds back internal targets (isInternalTarget's SSRF guard), so an
+// RFC1918 fixture would sit on that path and quietly test the wrong branch.
 function ioc(over: Partial<IOC> = {}): IOC {
-  return { id: "i1", type: "ip", value: "10.0.0.1", firstSeen: new Date().toISOString(), ...over };
+  return { id: "i1", type: "ip", value: "185.220.101.47", firstSeen: new Date().toISOString(), ...over };
 }
 
 function event(over: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -254,6 +256,16 @@ describe("recommendNextActions — enrichment work comes from the engine", () =>
     const pendingEnrichmentIocs = countEnrichableWork(state.iocs, providers);
     expect(pendingEnrichmentIocs).toBe(1);
     expect(recommendNextActions(state, { pendingEnrichmentIocs })[0]?.id).toBe("enrich-iocs");
+  });
+
+  it("does not chase an internal target the SSRF guard holds back", () => {
+    const state = makeState({
+      forensicTimeline: [event()],
+      iocs: [ioc({ id: "i1", type: "ip", value: "10.10.20.15" }), ioc({ id: "i2", type: "url", value: "http://169.254.169.254/latest/meta-data/" })],
+    });
+    const pendingEnrichmentIocs = countEnrichableWork(state.iocs, providers);
+    expect(pendingEnrichmentIocs).toBe(0);
+    expect(recommendNextActions(state, { pendingEnrichmentIocs }).some((r) => r.id === "enrich-iocs")).toBe(false);
   });
 
   it("says nothing about enrichment when no providers are enabled", () => {
