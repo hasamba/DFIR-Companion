@@ -42,7 +42,7 @@ The first time an AI call reaches a value Presidio has flagged that this case ha
 
 Either way, the panel lists each flagged value with two buttons:
 
-- **Hide from AI** — the value joins the case's known entities. From then on it is tokenized like anything else the built-in anonymizer catches, restored in the answer you see, and never asked about again.
+- **Hide from AI** — the value is added to the **Custom entities** list in the same Anonymization panel. From then on it is tokenized like anything else the built-in anonymizer catches, restored in the answer you see, and never asked about again. Because it lands in the custom list rather than the read-only auto-detected one, you can edit or remove it later like any entity you added by hand.
 - **Leave visible — not PII** — the value joins the suppression list instead. It is never tokenized and never asked about again — but note this only means an analyst judged it a false positive here, not that it's guaranteed harmless elsewhere.
 
     Both buttons name what happens to the *value*, deliberately. An earlier pair labelled **Approve** / **Not PII** was ambiguous in the one direction that matters: the gate is holding an AI call, so "Approve" reads naturally as "approve the send" — the exact opposite of what it does.

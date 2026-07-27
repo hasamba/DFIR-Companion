@@ -7,6 +7,7 @@ import type { Response } from "express";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
+import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { PresidioApprovalRequired } from "../../src/analysis/presidio.js";
 import { sendPipelineError } from "../../src/routes/presidioApproval.js";
@@ -18,6 +19,7 @@ let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
 let pendingStore: PresidioPendingStore;
 let discoveredStore: DiscoveredEntitiesStore;
+let customStore: CustomEntitiesStore;
 // Captures every line the route handlers pass to ctx.serverLogger (logLine), so tests can assert
 // on what actually lands in the server/case log — never the PII value itself. createApp captures
 // the CURRENT server logger by reference when it builds ctx, so the fake must be installed BEFORE
@@ -41,6 +43,7 @@ beforeEach(async () => {
   app = createApp(cases, { stateStore: new StateStore(cases), activityLogStore: new ActivityLogStore(cases) });
   pendingStore = new PresidioPendingStore(cases);
   discoveredStore = new DiscoveredEntitiesStore(cases);
+  customStore = new CustomEntitiesStore(cases);
   await pendingStore.save("c1", [{ value: "Jane Doe", category: "PERSON" }]);
 });
 
@@ -62,15 +65,37 @@ describe("presidio approval routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST .../approve moves a value into the discovered list and clears it from pending", async () => {
+  it("POST .../approve moves a value into the CUSTOM list and clears it from pending", async () => {
     const res = await request(app)
       .post("/cases/c1/presidio-pending/approve")
       .send({ value: "Jane Doe", category: "PERSON" });
     expect(res.status).toBe(200);
-    expect((await discoveredStore.load("c1")).discovered).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
+    // Custom, not discovered: the dashboard renders `discovered` as a read-only AUTO-DETECTED
+    // section, and approving is the opposite of automatic — an analyst was shown the value and
+    // decided. It lands where they can edit or remove it afterwards.
+    expect(await customStore.load("c1")).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
+    expect((await discoveredStore.load("c1")).discovered).toEqual([]);
     expect(await pendingStore.load("c1")).toEqual([]);
     // Approve must NOT touch the suppressed list — it's a distinct outcome from veto.
     expect((await discoveredStore.load("c1")).suppressed).toEqual([]);
+  });
+
+  it("POST .../approve twice does not duplicate the entity", async () => {
+    const body = { value: "Jane Doe", category: "PERSON" };
+    await request(app).post("/cases/c1/presidio-pending/approve").send(body);
+    await request(app).post("/cases/c1/presidio-pending/approve").send(body);
+    expect(await customStore.load("c1")).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
+  });
+
+  it("POST .../approve keeps entities the analyst added by hand", async () => {
+    await customStore.save("c1", [{ value: "PROJECT-ORION", category: "OTHER" }]);
+    await request(app)
+      .post("/cases/c1/presidio-pending/approve")
+      .send({ value: "Jane Doe", category: "PERSON" });
+    expect(await customStore.load("c1")).toEqual([
+      { value: "PROJECT-ORION", category: "OTHER" },
+      { value: "Jane Doe", category: "PERSON" },
+    ]);
   });
 
   it("POST .../suppress vetoes a value and clears it from pending", async () => {
@@ -80,8 +105,9 @@ describe("presidio approval routes", () => {
     expect(res.status).toBe(200);
     expect((await discoveredStore.load("c1")).suppressed).toContain("jane doe");
     expect(await pendingStore.load("c1")).toEqual([]);
-    // Suppress must NOT add the value to the discovered (tokenize) list — it's a distinct outcome from approve.
+    // Suppress must NOT add the value anywhere that tokenizes it — a distinct outcome from approve.
     expect((await discoveredStore.load("c1")).discovered).toEqual([]);
+    expect(await customStore.load("c1")).toEqual([]);
   });
 
   it("rejects a blank value on suppress", async () => {

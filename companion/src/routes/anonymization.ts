@@ -183,9 +183,18 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Approve: the value joins the case's discovered list, so from now on it is tokenized like any
-  // other known entity and never prompts again. Distinct from suppress (below) — this path ADDS
-  // the value to `discovered`, never to `suppressed`.
+  // Approve ("Hide from AI"): the value joins the case's CUSTOM entity list, so from now on it is
+  // tokenized like any other known entity and never prompts again. Distinct from suppress (below)
+  // — this path ADDS the value, never vetoes it.
+  //
+  // Custom rather than `discovered` on purpose. Both feed the anonymizer identically (the pipeline
+  // builds `known.custom` from custom ∪ discovered), so masking is unaffected either way — but the
+  // dashboard renders them very differently. `discovered` is the AUTO-DETECTED section: read-only,
+  // described as what the companion found by itself. Approving is the opposite of automatic: an
+  // analyst was shown a value and decided it is PII. That belongs in CUSTOM ENTITIES, which the UI
+  // labels "add anything the auto-detection missed" — a precise description of a Presidio finding,
+  // since Presidio exists to catch what the built-in patterns cannot. It also leaves the analyst
+  // able to edit or remove it afterwards, which the read-only auto list does not.
   //
   // The log line deliberately omits the value itself, same as suppress below — but for the
   // OPPOSITE reason: a suppressed value might still be real PII (the analyst merely judged it a
@@ -199,7 +208,11 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const caseId = req.params.id;
       const entities = sanitizeCustomEntities([req.body]);
       if (entities.length === 0) return res.status(400).json({ error: "value is required" });
-      await discoveredEntities.addDiscovered(caseId, entities);
+      // CustomEntitiesStore has no append, so read-modify-write. sanitizeCustomEntities dedupes
+      // case-insensitively with first-wins, so re-approving an already-present value is a no-op
+      // rather than a duplicate row.
+      const existing = await customEntities.load(caseId);
+      await customEntities.save(caseId, [...existing, ...entities]);
       const rest = (await presidioPending.load(caseId)).filter(
         (e) => e.value.toLowerCase() !== entities[0].value.toLowerCase(),
       );
