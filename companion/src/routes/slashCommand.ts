@@ -25,6 +25,7 @@ import {
   parseHostList,
 } from "../analysis/slashCommandAuth.js";
 import { getAiLimiter } from "../http/rateLimiter.js";
+import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../analysis/telegramPoller.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
@@ -109,7 +110,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    await dispatchCommand(res, {
+    await answer(res, {
       platform: "slack",
       channelId,
       userId: String(body.user_id ?? ""),
@@ -137,7 +138,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    await dispatchCommand(res, {
+    await answer(res, {
       platform: "teams",
       channelId,
       userId: String(body.from?.id ?? body.userId ?? ""),
@@ -168,7 +169,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    await dispatchCommand(res, {
+    await answer(res, {
       platform: "telegram",
       channelId,
       userId: String(message.from?.id ?? ""),
@@ -181,7 +182,70 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   });
 }
 
-interface DispatchInput {
+/**
+ * Start the Telegram long-poll transport, so Telegram commands work with no inbound URL at all —
+ * no tunnel, no DFIR_ALLOWED_HOSTS entry, no setWebhook to redo whenever the hostname changes. The
+ * Companion calls Telegram instead of being called; see analysis/telegramPoller.ts.
+ *
+ * Returns the poller so the caller can stop it, or undefined when polling is not configured. The
+ * webhook route stays registered either way, but a bot cannot serve both at once — Telegram
+ * refuses getUpdates while a webhook is registered, which the poller reports with the fix.
+ */
+export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefined {
+  const { options } = ctx;
+  const channelStore = options.slashCommandChannelStore;
+  const botToken = (process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim();
+  if (!channelStore) return undefined;
+  if (!botToken) {
+    ctx.serverLogger.warn("[telegram] polling requested but DFIR_TELEGRAM_BOT_TOKEN is not set — not starting");
+    return undefined;
+  }
+  const apiBase = (process.env.DFIR_TELEGRAM_API_BASE ?? "").trim() || undefined;
+
+  const poller = new TelegramPoller({
+    botToken,
+    apiBase,
+    log: ctx.serverLogger,
+    onUpdate: async (update: TelegramUpdate) => {
+      const message = update.message ?? update.edited_message ?? update.channel_post ?? {};
+      const chatId = String(message.chat?.id ?? "");
+      const text = String(message.text ?? message.caption ?? "");
+      if (!chatId || !text.trim()) return; // a join notice, a photo with no caption — nothing to run
+
+      const result = await dispatchSlashCommand({
+        platform: "telegram",
+        channelId: chatId,
+        userId: String(message.from?.id ?? ""),
+        responseUrl: "", // polled commands deliver through the Bot API, same as async results
+        text,
+        actionAllowlist: parseHostList(process.env.DFIR_TELEGRAM_ACTION_USERS),
+        channelStore,
+        ctx,
+      });
+      await sendTelegramMessage({
+        botToken,
+        apiBase,
+        chatId,
+        text: renderText(result.reply),
+        log: ctx.serverLogger,
+      });
+      if (result.background) void result.background();
+    },
+  });
+  poller.start();
+  return poller;
+}
+
+/** Dispatch a webhook-delivered command and write the answer in the platform's envelope. Any
+ *  follow-up work starts only after the answer is on its way, so the platform's ~3s budget is
+ *  spent on the ACK and not on an AI call. */
+async function answer(res: Response, input: DispatchInput): Promise<void> {
+  const result = await dispatchSlashCommand(input);
+  res.status(200).json(chatResponse(input, result.reply, result.ephemeral));
+  if (result.background) void result.background();
+}
+
+export interface DispatchInput {
   platform: ChatPlatform;
   channelId: string;
   userId: string;
@@ -192,12 +256,27 @@ interface DispatchInput {
   ctx: RouteContext;
 }
 
-async function dispatchCommand(res: Response, input: DispatchInput): Promise<void> {
+/** What a dispatched command produced: the card to answer with, and — for the async commands —
+ *  the work to run once that answer is on its way. */
+export interface DispatchResult {
+  reply: SlashCommandResponse;
+  ephemeral: boolean;
+  background?: () => Promise<void>;
+}
+
+/**
+ * Run one slash command and say what to answer with. Deliberately knows nothing about HTTP: the
+ * webhook routes wrap the result in the platform's envelope, and the Telegram poller
+ * (analysis/telegramPoller.ts) sends the same result through the Bot API, having never received
+ * an HTTP request at all.
+ */
+export async function dispatchSlashCommand(input: DispatchInput): Promise<DispatchResult> {
   const { platform, channelId, userId, text, actionAllowlist, channelStore, ctx } = input;
   const { options, store } = ctx;
-  const reply = (r: SlashCommandResponse | string, ephemeral = true): void => {
-    res.status(200).json(chatResponse(input, typeof r === "string" ? { title: r, lines: [] } : r, ephemeral));
-  };
+  const reply = (r: SlashCommandResponse | string, ephemeral = true): DispatchResult => ({
+    reply: typeof r === "string" ? { title: r, lines: [] } : r,
+    ephemeral,
+  });
   const audit = (caseId: string, entry: Parameters<typeof logActivity>[3]): void => {
     void logActivity(options.activityLogStore, options.onActivity, caseId, { actor: `${platform}:${userId}`, ...entry });
   };
@@ -295,19 +374,21 @@ async function dispatchCommand(res: Response, input: DispatchInput): Promise<voi
 
   // Async commands: ACK immediately, then run and deliver the result out of band.
   if (isAsyncCommand(cmd.name)) {
-    reply(`Working on /dfir ${cmd.name} for case ${cmd.caseId}…`);
-    void runActionCommand(cmd, input).catch((err) => {
-      audit(cmd.caseId, {
-        category: "collaboration",
-        action: "slash-command-error",
-        detail: `/dfir ${cmd.name} failed: ${(err as Error).message}`,
-        outcome: "error",
-      });
-    });
-    return;
+    return {
+      ...reply(`Working on /dfir ${cmd.name} for case ${cmd.caseId}…`),
+      background: () =>
+        runActionCommand(cmd, input).catch((err) => {
+          audit(cmd.caseId, {
+            category: "collaboration",
+            action: "slash-command-error",
+            detail: `/dfir ${cmd.name} failed: ${(err as Error).message}`,
+            outcome: "error",
+          });
+        }),
+    };
   }
 
-  reply(formatHelpCommand());
+  return reply(formatHelpCommand());
 }
 
 /** Refuse a case the bot must not serve: one that doesn't exist, or one behind a password (chat
@@ -406,7 +487,8 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
 
 // ── Platform envelopes + delivery ───────────────────────────────────────────────────────
 
-function renderText(r: SlashCommandResponse): string {
+/** Flatten a card into the plain text every platform renders. */
+export function renderText(r: SlashCommandResponse): string {
   const body = r.lines.filter(Boolean).map((l) => `• ${l}`).join("\n");
   return `${r.title}${body ? `\n${body}` : ""}`;
 }

@@ -226,11 +226,12 @@ Inbound slash commands from Slack / Teams / Telegram — see [War-Room Slash-Com
 
 | Variable | Meaning |
 |---|---|
-| `DFIR_ALLOWED_HOSTS` | Hostnames the Companion answers to. **Required** — the tunnel/proxy hostname the platform delivers to must be listed, or requests are refused with 403 |
+| `DFIR_TELEGRAM_POLL` | `=on` to receive Telegram commands by long polling. **No tunnel, no inbound URL** — the preferred setup on a workstation. Needs only `DFIR_TELEGRAM_BOT_TOKEN` |
+| `DFIR_TELEGRAM_BOT_TOKEN` | @BotFather token. Required for polling; in webhook mode it delivers `ask`/`hunt`/`synthesize` results |
+| `DFIR_ALLOWED_HOSTS` | Hostnames the Companion answers to. **Required in webhook mode** — the tunnel/proxy hostname must be listed, or requests are refused with 403. Not used by polling |
 | `DFIR_SLACK_SIGNING_SECRET` | Slack app signing secret; enables `/integrations/slack/command` |
 | `DFIR_TEAMS_TOKEN` | Shared bearer token; enables `/integrations/teams/command` |
-| `DFIR_TELEGRAM_SECRET_TOKEN` | `setWebhook` secret; enables `/integrations/telegram/command` |
-| `DFIR_TELEGRAM_BOT_TOKEN` | @BotFather token — used to deliver `ask`/`hunt`/`synthesize` results |
+| `DFIR_TELEGRAM_SECRET_TOKEN` | `setWebhook` secret; enables `/integrations/telegram/command`. Webhook mode only |
 | `DFIR_SLACK_ACTION_USERS`<br>`DFIR_TEAMS_ACTION_USERS`<br>`DFIR_TELEGRAM_ACTION_USERS` | Comma-separated user ids allowed to run `ask`/`hunt`/`synthesize`/`bind`. Unset = open to the whole channel; once set, everyone else is confined to the channel's bound case |
 | `DFIR_SLACK_RESPONSE_HOSTS`<br>`DFIR_TEAMS_RESPONSE_HOSTS` | Extra hosts an async result may be delivered to, for a self-hosted Slack-compatible server. Defaults cover the platforms' own hosts |
 | `DFIR_TELEGRAM_API_BASE` | Bot API base URL override (default `https://api.telegram.org`) |

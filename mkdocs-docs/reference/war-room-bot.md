@@ -29,12 +29,18 @@ Once a channel is bound, every command can omit the case id. Name a case explici
 
 ---
 
-## You need a public URL
+## Two ways to receive commands
 
-The chat platform delivers commands to the Companion, so it has to be able to reach it. On a normal workstation install that means a tunnel.
+**Telegram can poll — start here if you can.** The Companion calls Telegram and asks for new commands, so nothing about your machine needs to be reachable. No tunnel, no `DFIR_ALLOWED_HOSTS`, no webhook registration to redo. Skip to [Telegram (polling)](#telegram-polling).
+
+**Slack and Teams must be delivered to** — and so must Telegram, if you'd rather use a webhook. The platform pushes each command to the Companion, which means it needs a public address. On a workstation install, that means a tunnel.
 
 !!! note "This is the opposite direction from notifications"
-    Outbound Telegram/Slack notifications work with no tunnel, because the Companion calls *them*. Commands arrive the other way, so they need an address the platform can reach.
+    Outbound Telegram/Slack notifications work with no tunnel, because the Companion calls *them*. Webhook commands arrive the other way, so they need an address the platform can reach. Polling puts Telegram back in the outbound direction.
+
+---
+
+## The tunnel (webhook mode only)
 
 Cloudflare's quick tunnel needs no account:
 
@@ -92,7 +98,42 @@ DFIR_TEAMS_TOKEN=<shared secret>
 
 ---
 
-## Telegram
+## Telegram (polling)
+
+The simplest setup of the three, and the one to prefer on a workstation: **no tunnel, no inbound URL, nothing exposed.**
+
+1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token (`123456789:AAF…`).
+2. Add two lines to `.env`:
+
+```
+DFIR_TELEGRAM_POLL=on
+DFIR_TELEGRAM_BOT_TOKEN=123456789:AAF...
+```
+
+3. Restart. The log confirms it:
+
+```
+[telegram] long-polling for commands (no inbound URL needed)
+```
+
+Message the bot. That's the whole setup — `DFIR_ALLOWED_HOSTS`, `DFIR_TELEGRAM_SECRET_TOKEN` and `setWebhook` are all webhook-mode concerns and play no part here.
+
+Under the hood the Companion asks Telegram for new commands and Telegram holds the connection open until one arrives, so replies are near-instant without polling in a tight loop. If the connection drops it retries with a widening backoff, and one failing command never stops the loop.
+
+!!! warning "A bot does one or the other, not both"
+    Telegram refuses `getUpdates` while a webhook is registered for that bot, and refuses a second poller for the same bot. Either shows up as a `409` in the log with the fix spelled out. If you previously registered a webhook, clear it first:
+
+    ```bash
+    curl https://api.telegram.org/bot<TOKEN>/deleteWebhook
+    ```
+
+    Running the same bot from two Companion instances will have them fighting over updates — give each its own bot.
+
+---
+
+## Telegram (webhook)
+
+Use this only if you need it — a shared server that's already reachable, say. Polling is less setup and less exposure.
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token (`123456789:AAF…`).
 2. Invent a long random string for the webhook secret.
@@ -186,6 +227,21 @@ If you see that, the whole chain works: tunnel → hostname guard → secret ver
 ---
 
 ## When it doesn't work
+
+### Polling mode
+
+Everything is in the Companion's own log, since there's no network path to misconfigure. Look for:
+
+| Log line | Cause |
+|---|---|
+| `[telegram] long-polling for commands` | Started fine — if commands still don't work, the bot you messaged isn't the token you configured |
+| *(nothing at all)* | `DFIR_TELEGRAM_POLL` isn't `on`, or the Companion wasn't restarted after setting it |
+| `polling requested but DFIR_TELEGRAM_BOT_TOKEN is not set` | Exactly that |
+| `409 … a webhook is registered for this bot` | Clear it with `deleteWebhook`, or stop the other poller |
+| `Unauthorized — DFIR_TELEGRAM_BOT_TOKEN is wrong or revoked` | Bad or revoked token |
+| `poll failed (…); retrying in Ns` | Network trouble; it recovers on its own |
+
+### Webhook mode
 
 Every setup failure looks the same from the chat window — nothing happens. Don't debug through the chat client; send the request yourself and read the status code:
 

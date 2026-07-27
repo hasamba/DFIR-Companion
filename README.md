@@ -913,26 +913,29 @@ of switching to the dashboard for every question:
 
 Each platform turns on when you set its secret:
 
-| Platform | Endpoint | Enable with |
+| Platform | How commands arrive | Enable with |
 |---|---|---|
+| Telegram | **Long polling — no inbound URL** | `DFIR_TELEGRAM_POLL=on` + `DFIR_TELEGRAM_BOT_TOKEN` |
 | Slack | `POST /integrations/slack/command` | `DFIR_SLACK_SIGNING_SECRET` (Basic Information → Signing Secret) |
 | MS Teams | `POST /integrations/teams/command` | `DFIR_TEAMS_TOKEN` (shared secret in the `Authorization` header) |
 | Telegram | `POST /integrations/telegram/command` | `DFIR_TELEGRAM_SECRET_TOKEN` (the `secret_token` you pass to `setWebhook`) |
 
-Telegram setup — create the bot with [@BotFather](https://t.me/BotFather), then register the webhook
-**with a secret** (without one, anyone who learns the URL could drive your cases, so the endpoint
-refuses to run until it is set):
+**Telegram needs no tunnel.** Create the bot with [@BotFather](https://t.me/BotFather), set two
+variables, restart, and message it:
 
 ```bash
-curl -F url=https://dfir.example.com/integrations/telegram/command -F secret_token=$DFIR_TELEGRAM_SECRET_TOKEN https://api.telegram.org/bot<TOKEN>/setWebhook
+DFIR_TELEGRAM_POLL=on
+DFIR_TELEGRAM_BOT_TOKEN=123456789:AAF...
 ```
 
-`DFIR_TELEGRAM_BOT_TOKEN` is needed as well, for `ask`/`hunt`/`synthesize` — those answers arrive
-long after the 3-second webhook reply, so they go back through the Bot API.
+The companion calls Telegram and asks for new commands, so nothing about the machine is reachable
+from the internet — the same outbound direction the notifier already uses. A bot can't do both:
+clear any existing webhook with `.../deleteWebhook` first.
 
-> **These are inbound webhooks**, so the chat platform reaches this companion from the internet via
-> your tunnel or reverse proxy — and that hostname **must** be in `DFIR_ALLOWED_HOSTS`, or the
-> DNS-rebinding guard turns the request away before the bot sees it.
+> **Slack and Teams are inbound webhooks**, so the platform reaches this companion from the internet
+> via your tunnel or reverse proxy — and that hostname **must** be in `DFIR_ALLOWED_HOSTS`, or the
+> DNS-rebinding guard turns the request away before the bot sees it. Telegram can also run this way
+> (`DFIR_TELEGRAM_SECRET_TOKEN` + `setWebhook`) if the companion is already reachable.
 
 > **OPSEC** — anyone who can post in the channel can pull case content. Password-protected cases are
 > refused over chat entirely (a chat message carries no unlock). Set `DFIR_*_ACTION_USERS` to keep
