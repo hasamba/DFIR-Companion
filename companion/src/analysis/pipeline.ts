@@ -4942,6 +4942,9 @@ export class AnalysisPipeline {
         ), retries, backoffMs);
         observations.push(...sanitizeObservations(raw, validEventIds));
       } catch (err) {
+        // The approval gate is not a batch failure to swallow and carry on past — it must reach the
+        // route layer as a 409 so the analyst gets the approval panel, not a silently degraded run.
+        if (err instanceof PresidioApprovalRequired) throw err;
         if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
         batchesFailed++;
         this.log.warn(
@@ -4970,6 +4973,9 @@ export class AnalysisPipeline {
           ), retries, backoffMs);
           condensed.push(...sanitizeObservations(raw, validEventIds));
         } catch (err) {
+          // Same gate as the observe loop above — propagate rather than paper over it as an
+          // uncondensed group.
+          if (err instanceof PresidioApprovalRequired) throw err;
           if (opts.signal?.aborted) { aborted = true; break; }
           // A group that will not condense keeps its ORIGINAL observations rather than vanishing —
           // dropping evidence to a formatting failure would be the worst possible trade here.

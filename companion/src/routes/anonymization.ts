@@ -3,6 +3,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import { AnonControlStore, type AnonControl } from "../analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { isLocalAiProvider, deriveKnownEntities, type AnonTokenCategory } from "../analysis/anonymize.js";
 import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "../analysis/redactedExport.js";
@@ -50,6 +51,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
+  const presidioPending = new PresidioPendingStore(store);
   const visionIsLocal = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
@@ -163,6 +165,67 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       if (!value) return res.status(400).json({ error: "value is required" });
       const next = await discoveredEntities.unsuppress(req.params.id, value);
       return res.status(200).json({ suppressed: next.suppressed });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Presidio findings awaiting approval (issue: optional Presidio PII gate). The AI call that
+  // produced them failed with 409 (see sendPipelineError in presidioApproval.ts); the analyst
+  // resolves each value here, then re-runs the action.
+  app.get("/cases/:id/presidio-pending", async (req: Request, res: Response) => {
+    if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid case id" });
+    try {
+      return res.json({ pending: await presidioPending.load(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Approve: the value joins the case's discovered list, so from now on it is tokenized like any
+  // other known entity and never prompts again. Distinct from suppress (below) — this path ADDS
+  // the value to `discovered`, never to `suppressed`.
+  app.post("/cases/:id/presidio-pending/approve", async (req: Request, res: Response) => {
+    if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid case id" });
+    try {
+      const caseId = req.params.id;
+      const entities = sanitizeCustomEntities([req.body]);
+      if (entities.length === 0) return res.status(400).json({ error: "value is required" });
+      await discoveredEntities.addDiscovered(caseId, entities);
+      const rest = (await presidioPending.load(caseId)).filter(
+        (e) => e.value.toLowerCase() !== entities[0].value.toLowerCase(),
+      );
+      await presidioPending.save(caseId, rest);
+      logLine(`[presidio] approved "${entities[0].value}" (${entities[0].category}) for case ${caseId}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "anonymization", action: "presidio-approve", detail: `Approved Presidio finding for masking: ${entities[0].category}`,
+      });
+      return res.json({ pending: rest });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Never ask again: the value is vetoed at the assign() chokepoint (added to `suppressed`) and
+  // hidden from the list. Distinct from approve (above) — this path NEVER adds to `discovered`, so
+  // the value is never tokenized. The log line deliberately omits the value itself: the analyst
+  // marked it a false positive, but it may still be real PII.
+  app.post("/cases/:id/presidio-pending/suppress", async (req: Request, res: Response) => {
+    if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid case id" });
+    try {
+      const caseId = req.params.id;
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "value is required" });
+      await discoveredEntities.suppress(caseId, value);
+      const rest = (await presidioPending.load(caseId)).filter(
+        (e) => e.value.toLowerCase() !== value.toLowerCase(),
+      );
+      await presidioPending.save(caseId, rest);
+      logLine(`[presidio] suppressed a finding for case ${caseId}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "anonymization", action: "presidio-suppress", detail: "Suppressed a Presidio finding (marked not PII)",
+      });
+      return res.json({ pending: rest });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
