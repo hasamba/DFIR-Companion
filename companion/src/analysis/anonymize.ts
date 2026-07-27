@@ -219,7 +219,14 @@ const CARD_RE =
 // Three NARROW patterns. A bare run of ten digits is deliberately NOT matched — forensic text is
 // full of PIDs, ports, offsets and sequence numbers, and a generic rule would shred it. Every
 // pattern demands either a leading + or explicit separators.
-const PHONE_E164 = /\+\d{7,15}\b/g;
+//
+// The negative lookbehind on PHONE_E164 keeps it off a "+" that CONTINUES a token rather than
+// starting a number: module+offset notation in crash dumps/stack traces (kernel32.dll+1245184)
+// and SemVer build metadata (1.0.0+20130313144700 — the SemVer spec's own example) both glue a
+// bare "+<digits>" suffix directly onto a preceding identifier. A genuine E.164 number is never
+// preceded by a letter, digit, dot, underscore or dash — it follows whitespace, line start, or
+// punctuation such as a label colon ("Tel:+972...") — so those are the only characters excluded.
+const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
 const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
 const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
 

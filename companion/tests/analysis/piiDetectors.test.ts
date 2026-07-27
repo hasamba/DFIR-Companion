@@ -117,4 +117,56 @@ describe("PHONE detector", () => {
     expect(a.apply("host 192.168.1.1 up")).toContain("192.168.1.1");
     expect(a.apply("at 2026-07-26 12:00:00")).toContain("2026-07-26");
   });
+
+  // Fix 1: PHONE_E164 must not fire on a "+" that continues a token rather than starting a
+  // number — module+offset (crash dumps / stack traces) and SemVer build metadata both use a
+  // bare "+<digits>" suffix glued directly onto a preceding identifier.
+  it("does not fire on a module+offset suffix (crash-dump / stack-trace notation)", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("kernel32.dll+1245184 offset")).toBe("kernel32.dll+1245184 offset");
+  });
+
+  it("does not fire on SemVer build metadata", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("release 1.0.0+20130313144700 metadata")).toBe(
+      "release 1.0.0+20130313144700 metadata",
+    );
+  });
+
+  it("does not fire on a tool version+timestamp build tag", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("Autoruns v14.11+20260726120000 build")).toBe(
+      "Autoruns v14.11+20260726120000 build",
+    );
+  });
+
+  // Pins the boundary of the module+offset/SemVer guard above: a "+" preceded by punctuation
+  // that is NOT letter/digit/dot/underscore/dash — e.g. a label colon — still starts a genuine
+  // E.164 number and must still be masked.
+  it("still tokenizes a + number immediately after a label colon", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    const out = a.apply("Tel:+972501234567");
+    expect(out).toBe("Tel:ANON_PHONE_1");
+    expect(a.restore(out)).toBe("Tel:+972501234567");
+  });
+
+  // Fix 2 (as specified): the existing "at 2026-07-26 12:00:00" case is rejected by digit-group
+  // WIDTH (4-2-2 / 2-2-2, not 3-3-4) regardless of whether ":" is a valid separator. A bare
+  // HH:MM:SS has that same 2-2-2 width, so it is rejected for the identical width reason — see
+  // the note in the fix report on why this case, taken alone, does not yet isolate the
+  // separator-class rule from the width rule.
+  it("does not let the NANP separator class swallow a bare HH:MM:SS timestamp", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("at 12:00:00")).toBe("at 12:00:00");
+  });
+
+  // This is the case that actually isolates the separator-class rule: "123:456:7890" has the
+  // exact 3-3-4 digit-group width NANP requires, with ":" as the separator. Confirmed by
+  // deliberately widening PHONE_NANP's class to `[-. :]` in isolation — under that mutation this
+  // string DOES match, while "at 12:00:00" (2-2-2 width) still does not. So this test, not the
+  // HH:MM:SS one, is what would catch a future widening of the separator class to include ":".
+  it("does not let the NANP separator class swallow a colon-separated 3-3-4 digit run", () => {
+    const a = createAnonymizer(policy({ PHONE: true }), NONE);
+    expect(a.apply("id 123:456:7890 recorded")).toBe("id 123:456:7890 recorded");
+  });
 });
