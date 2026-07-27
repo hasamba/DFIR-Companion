@@ -141,6 +141,24 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try {
       const caseId = typeof req.body?.caseId === "string" ? req.body.caseId : undefined;
       const force  = req.body?.force === true;
+      // Guard against clobbering an in-progress case. force previously overwrote case.json +
+      // investigation.json for an OPEN case with a running synthesis/import job, destroying the
+      // analyst's findings/timeline mid-flight and leaving orphan files (the demo only writes its
+      // own captures/imports, so extra screenshots/imports survived as orphans). Refuse when the
+      // case exists and is open, or has a non-terminal job — mirroring /restore-backup's check.
+      if (force) {
+        const existing = caseId && await store.getCaseMeta(caseId).catch(() => null);
+        if (existing) {
+          const status = existing.status ?? "open";   // absent means open
+          if (status === "open") {
+            return res.status(409).json({ error: `case "${caseId}" is open — close it before force-seeding the demo over it (or delete it)` });
+          }
+          const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
+          if (busy) {
+            return res.status(409).json({ error: `a ${busy.kind}${busy.label ? ` (${busy.label})` : ""} job is in progress for this case — cancel it or wait, then seed`, jobId: busy.id, kind: busy.kind });
+          }
+        }
+      }
       const result = await seedDemoCase(store.casesRoot, { caseId, force });
       return res.status(201).json(result);
     } catch (err) {

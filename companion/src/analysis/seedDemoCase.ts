@@ -1,7 +1,7 @@
 // Seed the rich demo case ("GlobalTech Industries — BEC & Ransomware Precursor, May 2026").
 // Shared between the CLI script (scripts/seed-demo-case.ts) and the POST /cases/seed-demo
 // server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
-import { writeFile, mkdir, appendFile, stat } from "node:fs/promises";
+import { writeFile, mkdir, appendFile, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -57,6 +57,12 @@ export async function seedDemoCase(
       (err as NodeJS.ErrnoException).code = "EEXIST";
       throw err;
     }
+    // force: clear the existing case directory before re-seeding so orphan files (extra
+    // screenshots/imports the analyst added, custom state files) don't survive into the "fresh"
+    // demo case. Previously force overwrote only the demo's own files and left everything else,
+    // so the re-seeded demo shipped with stale evidence and a metadata/imports.jsonl that no longer
+    // matched the imports/ directory (#19). The route already refuses force on an OPEN/busy case.
+    await rm(caseDir, { recursive: true, force: true });
   }
 
   for (const sub of ["screenshots", "metadata", "state", "reports", "imports"]) {
