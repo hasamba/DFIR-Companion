@@ -95,21 +95,39 @@ export async function ocrRedactImage(
  */
 export class TesseractOcrRunner implements OcrRunner {
   async recognize(imageBuffer: Buffer): Promise<OcrWord[]> {
-    // tesseract.js is CommonJS: under ESM dynamic import `recognize` is on the default
-    // export, not a top-level named binding (`mod.recognize` is undefined). Fall back to
-    // the namespace in case a future ESM build hoists it.
+    // tesseract.js is CommonJS: under ESM dynamic import `createWorker` is on the
+    // default export, not a top-level named binding. Fall back to the namespace
+    // in case a future ESM build hoists it.
     const mod = await import("tesseract.js");
-    const recognize = mod.default?.recognize ?? mod.recognize;
-    const { data } = await recognize(imageBuffer, "eng", { logger: () => {} });
-    return (data.words ?? []).map((w) => ({
-      text: w.text.trim(),
-      bbox: {
-        x: w.bbox.x0,
-        y: w.bbox.y0,
-        w: w.bbox.x1 - w.bbox.x0,
-        h: w.bbox.y1 - w.bbox.y0,
-      },
-      confidence: w.confidence,
-    }));
+    const createWorker = mod.default?.createWorker ?? mod.createWorker;
+    // Use the explicit worker lifecycle (create → recognize → terminate) instead of
+    // the top-level `recognize()` helper. The helper does NOT accept an `errorHandler`,
+    // so a WASM abort on a malformed image throws synchronously on the Worker message
+    // loop (`process.nextTick(() => { throw err; })`) — UNCAUGHT — and kills the whole
+    // DFIR-Companion process. Passing an `errorHandler` in the OPTIONS (3rd) arg — NOT
+    // the config (4th) arg, which is postMessaged to the worker and would DataCloneError
+    // on a function — keeps the failure inside the parent's message handler. The bad
+    // image's `recognize()` promise rejects, `pumpOcrQueue`'s try/catch contains it
+    // (skip + log), the `finally` terminates the worker, and the server keeps serving.
+    const worker = await createWorker("eng", 1, {
+      // Swallow the library's own throw; the recognize() call below rejects so the
+      // caller's try/catch handles it as a normal failed promise.
+      errorHandler: (_err: unknown) => { /* contained — see comment above */ },
+    });
+    try {
+      const { data } = await worker.recognize(imageBuffer);
+      return (data.words ?? []).map((w: { text: string; confidence: number; bbox: { x0: number; y0: number; x1: number; y1: number } }) => ({
+        text: w.text.trim(),
+        bbox: {
+          x: w.bbox.x0,
+          y: w.bbox.y0,
+          w: w.bbox.x1 - w.bbox.x0,
+          h: w.bbox.y1 - w.bbox.y0,
+        },
+        confidence: w.confidence,
+      }));
+    } finally {
+      await worker.terminate();
+    }
   }
 }

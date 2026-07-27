@@ -3304,6 +3304,22 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
+  // Process-level backstop: a single uncaught async throw (e.g. a native library aborting on a
+  // malformed input — tesseract.js's WASM decoder does this on a bad PNG) must NOT take the whole
+  // DFIR-Companion process down. The OCR runner has its own errorHandler so a malformed image is
+  // contained at the runner, but this backstop catches anything that slips past a library's own
+  // error path. Installed once per server boot (startServer is the single production entry point);
+  // tests import createApp() directly and never call startServer, so their own uncaught-throw
+  // assertions (e.g. the async-error-handling suite) are not interfered with.
+  if (!process.listeners("uncaughtException").some((l) => Boolean((l as { __dfirBackstop?: boolean }).__dfirBackstop))) {
+    const backstop = ((err: unknown): void => {
+      // Avoid the Node default "throw the error again" which terminates the process. Log only.
+      try { serverLogger.error(`uncaughtException: ${(err as Error)?.stack ?? String(err)}`); } catch { /* logger may not be ready */ }
+    }) as ((err: unknown) => void) & { __dfirBackstop?: boolean };
+    backstop.__dfirBackstop = true;
+    process.once("uncaughtException", backstop);
+    process.once("unhandledRejection", backstop as (reason: unknown) => void);
+  }
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
