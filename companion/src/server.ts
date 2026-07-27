@@ -41,7 +41,7 @@ import { AnonControlStore } from "./analysis/anonControl.js";
 import { CustomEntitiesStore } from "./analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import { isLocalAiProvider } from "./analysis/anonymize.js";
-import { HttpPresidioClient } from "./analysis/presidio.js";
+import { HttpPresidioClient, resolvePresidioMinScore } from "./analysis/presidio.js";
 import { PresidioPendingStore } from "./analysis/presidioPending.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
 import { extractOcrText, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
@@ -3453,9 +3453,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // URL → presidio stays undefined and every code path in the pipeline gate is skipped, so
   // existing behaviour is completely unchanged when the analyst has not opted in.
   const presidioUrl = (process.env.DFIR_PRESIDIO_URL ?? "").trim();
-  const presidioMinScore = Number(process.env.DFIR_PRESIDIO_MIN_SCORE ?? "0.6");
+  const presidioMinScore = resolvePresidioMinScore(process.env.DFIR_PRESIDIO_MIN_SCORE);
   const presidio = presidioUrl
-    ? { client: new HttpPresidioClient(presidioUrl), url: presidioUrl, minScore: Number.isFinite(presidioMinScore) ? presidioMinScore : 0.6 }
+    ? { client: new HttpPresidioClient(presidioUrl), url: presidioUrl, minScore: presidioMinScore }
     : undefined;
   if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
   const wiredPipeline = buildRuntimePipeline({

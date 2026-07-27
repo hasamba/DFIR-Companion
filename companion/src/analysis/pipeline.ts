@@ -1862,9 +1862,14 @@ export class AnalysisPipeline {
     const found = mapFindings(raw, presidio.minScore);
     if (found.length === 0) return;
 
+    // known.suppressed is DOCUMENTED as pre-lowercased (anonDiscovered.ts) and both writers
+    // enforce it today, but that invariant is easy to violate at a distance and this is the
+    // load-bearing case: a suppressed value is deliberately left UNMASKED, so Presidio sees it
+    // raw on every single call. A case-fold mismatch here would re-trigger the approval gate
+    // forever on a value the analyst already vetoed. Lower-case defensively rather than trust it.
     const alreadyKnown = new Set<string>([
       ...(known.custom ?? []).map((e) => e.value.toLowerCase()),
-      ...(known.suppressed ?? []),
+      ...(known.suppressed ?? []).map((s) => s.toLowerCase()),
     ]);
     const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
     if (fresh.length === 0) return;

@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mapFindings, PresidioApprovalRequired, HttpPresidioClient, type PresidioFinding } from "../../src/analysis/presidio.js";
+import {
+  mapFindings, PresidioApprovalRequired, HttpPresidioClient, resolvePresidioMinScore,
+  DEFAULT_PRESIDIO_MIN_SCORE, type PresidioFinding,
+} from "../../src/analysis/presidio.js";
 
 function f(entityType: string, value: string, score = 0.9): PresidioFinding {
   return { entityType, value, score };
@@ -47,6 +50,40 @@ describe("mapFindings", () => {
 
   it("drops blank values", () => {
     expect(mapFindings([f("PERSON", "   ")], 0.6)).toEqual([]);
+  });
+});
+
+describe("resolvePresidioMinScore", () => {
+  it("defaults to 0.6 when unset", () => {
+    expect(resolvePresidioMinScore(undefined)).toBe(DEFAULT_PRESIDIO_MIN_SCORE);
+  });
+
+  // The regression this guards: process.env.X ?? "0.6" only defaults on `undefined`. A compose
+  // file interpolating an unset variable (DFIR_PRESIDIO_MIN_SCORE=${UNSET}) hands the process an
+  // EMPTY string, and Number("") is 0 — finite, so a naive `Number.isFinite` guard alone lets it
+  // through as "gate on every finding of any score."
+  it("defaults to 0.6 on an empty string, not 0", () => {
+    expect(resolvePresidioMinScore("")).toBe(DEFAULT_PRESIDIO_MIN_SCORE);
+  });
+
+  it("defaults to 0.6 on a whitespace-only string", () => {
+    expect(resolvePresidioMinScore("   ")).toBe(DEFAULT_PRESIDIO_MIN_SCORE);
+  });
+
+  it("parses a valid override", () => {
+    expect(resolvePresidioMinScore("0.85")).toBe(0.85);
+  });
+
+  it("defaults to 0.6 on a non-numeric value", () => {
+    expect(resolvePresidioMinScore("not-a-number")).toBe(DEFAULT_PRESIDIO_MIN_SCORE);
+  });
+
+  it("clamps a value above 1 down to 1", () => {
+    expect(resolvePresidioMinScore("1.5")).toBe(1);
+  });
+
+  it("clamps a negative value up to 0", () => {
+    expect(resolvePresidioMinScore("-0.2")).toBe(0);
   });
 });
 

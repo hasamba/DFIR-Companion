@@ -50,8 +50,14 @@ function capture(): CaptureMetadata {
 }
 
 // host defaults to a value the anonymizer will tokenize, so the masked-text assertion has
-// something real to look for.
-async function makePipeline(client: PresidioClient, discovered: CustomEntity[] = [], host = "DC01.victim.local") {
+// something real to look for. `discoveredStoreOverride` lets a test substitute a fake store (e.g.
+// one that returns non-lowercased `suppressed` values) instead of the real, always-lowercasing one.
+async function makePipeline(
+  client: PresidioClient,
+  discovered: CustomEntity[] = [],
+  host = "DC01.victim.local",
+  discoveredStoreOverride?: DiscoveredEntitiesStore,
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-presidiopipe-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -63,8 +69,8 @@ async function makePipeline(client: PresidioClient, discovered: CustomEntity[] =
   }];
   await stateStore.save(s);
 
-  const discoveredStore = new DiscoveredEntitiesStore(cases);
-  if (discovered.length > 0) await discoveredStore.addDiscovered("c1", discovered);
+  const discoveredStore = discoveredStoreOverride ?? new DiscoveredEntitiesStore(cases);
+  if (!discoveredStoreOverride && discovered.length > 0) await discoveredStore.addDiscovered("c1", discovered);
   const presidioPendingStore = new PresidioPendingStore(cases);
 
   const pipeline = new AnalysisPipeline({
@@ -77,6 +83,18 @@ async function makePipeline(client: PresidioClient, discovered: CustomEntity[] =
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/png" }),
   });
   return { pipeline, presidioPendingStore, discoveredStore };
+}
+
+// A fake DiscoveredEntitiesStore that returns `suppressed` values EXACTLY as given — bypassing the
+// real store's sanitizeDiscovered(), which always lower-cases them. Used to prove the gate itself
+// case-folds `known.suppressed` rather than trusting the store to have done so already.
+function fakeDiscoveredStore(suppressed: string[]): DiscoveredEntitiesStore {
+  return {
+    load: async () => ({ discovered: [], suppressed }),
+    addDiscovered: async () => ({ discovered: [], suppressed }),
+    suppress: async () => ({ discovered: [], suppressed }),
+    unsuppress: async () => ({ discovered: [], suppressed }),
+  } as unknown as DiscoveredEntitiesStore;
 }
 
 describe("analyzeRestored + Presidio", () => {
@@ -94,11 +112,32 @@ describe("analyzeRestored + Presidio", () => {
   });
 
   it("proceeds once the value is already in the discovered list", async () => {
-    const { pipeline } = await makePipeline(
-      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
+    // `seen`/`presidioPendingStore` prove the gate actually RAN and cleared, not merely that the
+    // call resolved — resolves.toBeDefined() alone passes even with the whole feature deleted,
+    // since analyzeWindow resolves to state on the happy path regardless of Presidio.
+    const seen: string[] = [];
+    const { pipeline, presidioPendingStore } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }], seen),
       [{ value: "Jane Doe", category: "PERSON" }],
     );
     await expect(pipeline.analyzeWindow("c1", [capture()])).resolves.toBeDefined();
+    expect(seen).toHaveLength(1);
+    expect(await presidioPendingStore.load("c1")).toEqual([]);
+  });
+
+  it("does not gate on a suppressed value even if the store's case-folding invariant is violated", async () => {
+    // known.suppressed is DOCUMENTED as pre-lowercased and the real store enforces it, but the
+    // gate must not silently depend on that — a fake store here hands back "Jane Doe" (mixed
+    // case) as the analyst's suppression veto, deliberately bypassing sanitizeDiscovered().
+    const seen: string[] = [];
+    const { pipeline } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }], seen),
+      [],
+      "DC01.victim.local",
+      fakeDiscoveredStore(["Jane Doe"]),
+    );
+    await expect(pipeline.analyzeWindow("c1", [capture()])).resolves.toBeDefined();
+    expect(seen).toHaveLength(1);
   });
 
   it("sends Presidio MASKED text, never raw values", async () => {

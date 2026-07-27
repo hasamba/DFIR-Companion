@@ -42,6 +42,25 @@ const ENTITY_MAP: Readonly<Record<string, AnonTokenCategory>> = {
 export const PRESIDIO_SAMPLE_TEXT =
   "Jane Doe called +972501234567 from jane.doe@example.com about card 4111111111111111.";
 
+export const DEFAULT_PRESIDIO_MIN_SCORE = 0.6;
+
+/**
+ * Resolve DFIR_PRESIDIO_MIN_SCORE into a usable threshold. Trims first and falls back to the
+ * default on an EMPTY string, not just `undefined` — a compose file that interpolates an unset
+ * variable (`DFIR_PRESIDIO_MIN_SCORE=${SOME_UNSET_VAR}`) hands the process an empty string, and
+ * `Number("")` is `0`, which is finite. Treating that as "confidence threshold zero" would gate
+ * the case on every finding of any score, however low. Also clamps to [0, 1]: Presidio scores are
+ * a 0-1 confidence, so a value outside that range (typo, stray percentage) is nonsensical rather
+ * than merely permissive/strict, and is clamped rather than silently accepted.
+ */
+export function resolvePresidioMinScore(raw: string | undefined): number {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return DEFAULT_PRESIDIO_MIN_SCORE;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return DEFAULT_PRESIDIO_MIN_SCORE;
+  return Math.min(1, Math.max(0, parsed));
+}
+
 /**
  * Filter and map raw Presidio findings into anonymizer custom entities.
  * Drops: below-threshold scores, unlisted entity types, blank values, and anything that fired on
