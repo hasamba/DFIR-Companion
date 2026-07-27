@@ -2989,6 +2989,17 @@ function isEnvFlag(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? "");
 }
 
+// Parse a numeric env var, honoring an explicit "0". `Number(x) || undefined` would discard 0
+// (falsy) and silently fall back to the hardcoded default — an operator who set
+// DFIR_ENRICH_RETRIES=0 to disable 429 retry still got 2 retries. Returns undefined for
+// unset/empty/non-finite so downstream `?? default` keeps working.
+function numEnv(key: string): number | undefined {
+  const v = process.env[key];
+  if (v === undefined || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 // Build the DFIR-IRIS push client from env (DFIR_IRIS_URL + DFIR_IRIS_KEY). Returns
 // undefined when not configured, which hides the dashboard's "Push to IRIS" button.
 // TLS trust for a self-hosted IRIS honors DFIR_IRIS_CA / DFIR_IRIS_INSECURE.
@@ -3673,17 +3684,21 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     enrichProviderDelayMs: buildEnrichProviderDelayMap(),
     // #78: ± jitter on the inter-call wait, and bounded retry-with-backoff on a 429 (honouring
     // Retry-After) instead of a single rate-limit hit aborting the lookup.
-    enrichJitterMs: Number(process.env.DFIR_ENRICH_JITTER_MS) || undefined,
-    enrichRetries: Number(process.env.DFIR_ENRICH_RETRIES) || undefined,
-    enrichRetryBackoffMs: Number(process.env.DFIR_ENRICH_RETRY_BACKOFF_MS) || undefined,
-    enrichMaxIocs: Number(process.env.DFIR_ENRICH_MAX) || undefined,
+    // NOTE: parse with `numEnv` (not `Number(x) || undefined`) so an explicit "0" is honored —
+    // `Number("0") || undefined` is `undefined` (0 is falsy), which silently fell back to the
+    // hardcoded default. An operator who set DFIR_ENRICH_RETRIES=0 to disable 429 retry still
+    // got 2 retries (#5). The poller's `=== "0"` special-case is now unified here too.
+    enrichJitterMs: numEnv("DFIR_ENRICH_JITTER_MS"),
+    enrichRetries: numEnv("DFIR_ENRICH_RETRIES"),
+    enrichRetryBackoffMs: numEnv("DFIR_ENRICH_RETRY_BACKOFF_MS"),
+    enrichMaxIocs: numEnv("DFIR_ENRICH_MAX"),
     customerExposureProviders: buildCustomerExposureProviders(),
-    customerExposureDelayMs: Number(process.env.DFIR_EXPOSURE_DELAY_MS) || undefined,
+    customerExposureDelayMs: numEnv("DFIR_EXPOSURE_DELAY_MS"),
     // Reachability gate: probe a self-hosted MISP/YETI before sending IOCs, cached this long
     // (default 60s in the cache). The poller re-checks down servers on the same cadence and
     // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.
-    enrichHealthTtlMs: Number(process.env.DFIR_ENRICH_HEALTH_TTL_MS) || undefined,
-    enrichHealthPollMs: process.env.DFIR_ENRICH_HEALTH_POLL_MS === "0" ? 0 : (Number(process.env.DFIR_ENRICH_HEALTH_POLL_MS) || 60_000),
+    enrichHealthTtlMs: numEnv("DFIR_ENRICH_HEALTH_TTL_MS"),
+    enrichHealthPollMs: numEnv("DFIR_ENRICH_HEALTH_POLL_MS") ?? 60_000,
     irisClient: buildIrisClient(),
     velociraptorClient,
     velociraptorClientStore,
