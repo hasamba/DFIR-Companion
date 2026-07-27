@@ -87,6 +87,28 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Exact-match tokenizing of a KNOWN value (hostname, internal domain, analyst-added or
+// Presidio-approved custom entity) needs a word boundary so "DC01" doesn't fire inside "DC01X"
+// and "Jane" doesn't fire inside "Janes". JS `\b` CANNOT be used for that here: it is defined
+// against ASCII `\w` ([A-Za-z0-9_]), so a value whose first or last character is outside that
+// set — every Hebrew, Cyrillic, Greek, CJK or accented name, and anything starting with "+" —
+// puts `\b` between two non-word characters, where it never matches. The value was then NEVER
+// masked, silently and permanently: once approved it lives in known.custom, so the Presidio
+// gate sees it as already-known and never asks again, and the analyst is told it is tokenized
+// while it goes to the provider (and into the redacted export) in cleartext. This branch ships
+// Israeli Teudat Zehut and Israeli phone detectors, so non-Latin values are the target domain.
+//
+// The replacement is an explicit Unicode-aware boundary: refuse to match when the character
+// immediately before/after is a letter, a number or "_" in ANY script. That keeps the
+// anti-substring property for ASCII while making it work for every other script. The `u` flag
+// is required for \p{…} and is safe with escapeRegExp above: every character it escapes
+// (. * + ? ^ $ { } ( ) | [ ] \) is a SyntaxCharacter, i.e. a legal identity escape in Unicode
+// mode, so no escaped value can turn into an "Invalid regular expression" under `u`.
+const UNICODE_WORD = "\\p{L}\\p{N}_";
+function exactValueRegExp(value: string): RegExp {
+  return new RegExp(`(?<![${UNICODE_WORD}])${escapeRegExp(value)}(?![${UNICODE_WORD}])`, "giu");
+}
+
 // RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize as ANON_IP_n.
 // A public IP is frequently adversary C2 — classification here is unchanged by maskPublicIps;
 // it's the CALLER (anonIps in createAnonymizer) that decides whether a non-internal address is
@@ -374,7 +396,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     let out = t;
     for (const h of known.hosts) {
       if (h.length < 2) continue;
-      out = out.replace(new RegExp(`\\b${escapeRegExp(h)}\\b`, "gi"), (m) => assign("HOST", m));
+      out = out.replace(exactValueRegExp(h), (m) => assign("HOST", m));
     }
     return out;
   }
@@ -382,7 +404,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     let out = t;
     for (const d of known.internalDomains) {
       if (d.length < 2) continue;
-      out = out.replace(new RegExp(`\\b${escapeRegExp(d)}\\b`, "gi"), (m) => assign("DOMAIN", m));
+      out = out.replace(exactValueRegExp(d), (m) => assign("DOMAIN", m));
     }
     return out;
   }
@@ -488,7 +510,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
       // hide adversary infrastructure that policy explicitly says to keep visible, even though
       // anonIpv4()/restoreIpv6Literals() themselves correctly leave live public-IP text alone.
       if (category === "EXTIP" && !policy.maskPublicIps) continue;
-      out = out.replace(new RegExp(`\\b${escapeRegExp(value)}\\b`, "gi"), (m) => assign(category, m));
+      out = out.replace(exactValueRegExp(value), (m) => assign(category, m));
     }
     return out;
   }

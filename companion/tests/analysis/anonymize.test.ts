@@ -138,14 +138,76 @@ describe("isMaskableIpv6", () => {
 });
 
 describe("token category coverage", () => {
-  it("mints and restores a token for every declared category", () => {
+  // Parameterised over SCRIPT as well as category. The ASCII-only "marker" is why the
+  // \b-based exact-match regex shipped: JS \b is defined against ASCII \w, so a value whose
+  // first or last character is a Hebrew/Cyrillic letter (or a leading "+") sat between two
+  // non-word characters and could NEVER match — the value went to the provider in cleartext
+  // while the analyst was told it was tokenized. This branch ships Israeli detectors, so
+  // non-Latin values are the target domain and every category must cover every script.
+  const SCRIPTS = ["marker", "יוסי כהן", "Иван Петров", "+972 50 123 4567"];
+  it("mints and restores a token for every declared category, in every script", () => {
     for (const category of ALL_TOKEN_CATEGORIES) {
-      const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value: "marker", category }] };
-      const a = createAnonymizer(policy(), known);
-      const out = a.apply("left marker right");
-      expect(out, `category ${category} was not tokenized`).toContain(`ANON_${category}_1`);
-      expect(a.restore(out), `category ${category} did not restore`).toBe("left marker right");
+      for (const value of SCRIPTS) {
+        const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category }] };
+        const a = createAnonymizer(policy(), known);
+        const out = a.apply(`left ${value} right`);
+        expect(out, `category ${category} did not tokenize ${value}`).toContain(`ANON_${category}_1`);
+        expect(out, `category ${category} leaked ${value} verbatim`).not.toContain(value);
+        expect(a.restore(out), `category ${category} did not restore ${value}`).toBe(`left ${value} right`);
+      }
     }
+  });
+
+  it("still refuses to match a custom entity inside a longer word (any script)", () => {
+    const cases: Array<[string, string]> = [
+      ["Jane", "Janes"],
+      ["יוסי", "יוסיפון"],
+      ["Иван", "Иванов"],
+    ];
+    for (const [value, longer] of cases) {
+      const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category: "PERSON" }] };
+      const a = createAnonymizer(policy(), known);
+      const out = a.apply(`${longer} and ${value}`);
+      expect(out, `${value} wrongly fired inside ${longer}`).toContain(longer);
+      expect(out).toContain("ANON_PERSON_1");
+    }
+  });
+
+  it("tokenizes a non-Latin known host and internal domain", () => {
+    const known: KnownEntities = { hosts: ["שרת-קבצים"], accounts: [], internalDomains: ["חברה.local"] };
+    const a = createAnonymizer(policy({ HOST: true, DOMAIN: true }), known);
+    const out = a.apply("event on שרת-קבצים in חברה.local today");
+    expect(out, "non-Latin host was not tokenized").not.toContain("שרת-קבצים");
+    expect(out, "non-Latin domain was not tokenized").not.toContain("חברה.local");
+    expect(out).toContain("ANON_HOST_1");
+    expect(out).toContain("ANON_DOMAIN_1");
+    expect(a.restore(out)).toBe("event on שרת-קבצים in חברה.local today");
+  });
+
+  it("still refuses to match a known host inside a longer host name", () => {
+    const a = createAnonymizer(policy({ HOST: true }), { hosts: ["DC01"], accounts: [], internalDomains: [] });
+    const out = a.apply("host DC01X and DC01 here");
+    expect(out).toContain("DC01X");
+    expect(out).toContain("ANON_HOST_1");
+  });
+
+  it("survives a custom entity full of regex metacharacters (the `u` flag must not reject it)", () => {
+    // Every character escapeRegExp() escapes is a SyntaxCharacter, so it stays a legal identity
+    // escape in Unicode mode. If that ever stops being true, this throws rather than silently
+    // failing to mask.
+    const value = "a.b*c(d)[e]{f}|g^h$i+j?k\\l";
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value, category: "OTHER" }] };
+    const a = createAnonymizer(policy(), known);
+    const out = a.apply(`x ${value} y`);
+    expect(out).toBe("x ANON_OTHER_1 y");
+    expect(a.restore(out)).toBe(`x ${value} y`);
+  });
+
+  it("masks a non-Latin entity on the redacted-export policy too (maskPublicIps off)", () => {
+    // The redacted ZIP is built to LEAVE THE MACHINE, so a silent miss there is the worst case.
+    const known: KnownEntities = { hosts: [], accounts: [], internalDomains: [], custom: [{ value: "יוסי כהן", category: "PERSON" }] };
+    const a = createAnonymizer({ ...policy(), maskPublicIps: false }, known);
+    expect(a.apply("victim יוסי כהן reported")).toBe("victim ANON_PERSON_1 reported");
   });
 
   it("recognises every category token via isAnonToken", () => {
