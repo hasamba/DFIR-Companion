@@ -6,6 +6,7 @@ import { selectFreshHunts, pendingHuntTasks, mergePersistedHunts, EMPTY_PERSISTE
 import { DEFAULT_PLAYBOOK_CONTROL } from "../analysis/playbookControl.js";
 import { buildHuntingProfile } from "../analysis/huntOutcomes.js";
 import { playbookTaskEvent, type NotificationEvent } from "../analysis/notifications.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -227,7 +228,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       }
       return res.status(200).json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 

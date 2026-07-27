@@ -4,6 +4,7 @@ import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { runTagger, selectScopedEvents } from "../analysis/tagger.js";
 import { compileText } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -142,7 +143,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       });
       return res.status(200).json(outcome);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 

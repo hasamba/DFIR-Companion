@@ -12,6 +12,7 @@ import { CustomerStore } from "../analysis/customerStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "../analysis/huntPlatforms.js";
 import { visionEnv } from "../config/aiEnv.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -319,7 +320,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 }
