@@ -21,6 +21,23 @@ describe("dedupeAppend", () => {
     const out = dedupeAppend(existing, incoming);
     expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
   });
+
+  it("#26: drops a re-imported event with a new id but identical timestamp + description (content-key dedup)", () => {
+    // Re-import mints brand-new ids from the new sequence prefix; the old id-only dedup let the
+    // duplicate through, doubling the super-timeline for demoted (Info) events. The fix also
+    // dedups by timestamp + cleanDescription.
+    const existing = [ev({ id: "1e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })];
+    const incoming = [ev({ id: "2e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })]; // new id, same content
+    const out = dedupeAppend(existing, incoming);
+    expect(out.map((e) => e.id)).toEqual(["1e1"]);   // the duplicate (2e1) was dropped
+  });
+
+  it("#26: keeps a genuinely different event that shares a timestamp but has a different description", () => {
+    const existing = [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "logon A" })];
+    const incoming = [ev({ id: "e2", timestamp: "2026-06-01T00:00:00Z", description: "logon B" })];
+    const out = dedupeAppend(existing, incoming);
+    expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
+  });
 });
 
 describe("capEvents", () => {
