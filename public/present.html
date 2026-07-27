@@ -119,7 +119,7 @@
     <button id="nextBtn" title="Next (→)">Next ›</button>
   </footer>
 
-<script>
+<script nonce="__CSP_NONCE__">
 (function () {
   "use strict";
   var SEV = ["Critical", "High", "Medium", "Low", "Info"];
@@ -163,10 +163,25 @@
     if (!s) return "";
     if (embedded) return '<div class="shot"><div class="cap">📎 evidence: ' + esc(s) + " (open online to view)</div></div>";
     var url = "/cases/" + encodeURIComponent(caseId) + "/evidence/" + encodeURIComponent(s);
-    return '<div class="shot"><img src="' + esc(url) + '" alt="evidence" ' +
-      "onerror=\"this.style.display='none';this.nextElementSibling.textContent='📎 '+" + JSON.stringify(esc(s)) + "\" />" +
+    // The fallback caption rides in data-name and is wired up by wireShotFallbacks() after render:
+    // an inline onerror= is blocked by the Content-Security-Policy (script-src).
+    return '<div class="shot"><img class="shot-img" src="' + esc(url) + '" alt="evidence" data-name="' + esc(s) + '" />' +
       '<div class="cap">📎 ' + esc(s) + "</div></div>";
   }
+  // Replaces the old inline onerror= on evidence <img>s (blocked by script-src). Assigning .onerror
+  // as a property is not inline script, so the CSP allows it. An image that already failed by the
+  // time we get here fires no further event, hence the complete/naturalWidth re-check.
+  function wireShotFallbacks(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("img.shot-img"), function (img) {
+      var fallback = function () {
+        img.style.display = "none";
+        if (img.nextElementSibling) img.nextElementSibling.textContent = "📎 " + img.getAttribute("data-name");
+      };
+      img.onerror = fallback;
+      if (img.complete && img.naturalWidth === 0) fallback();
+    });
+  }
+
   function fmtTime(s, e) {
     if (!s) return "(no timestamp)";
     return esc(s) + (e && e !== s ? " → " + esc(e) : "");
@@ -242,6 +257,7 @@
       default: html = "<h2>" + esc(sl.title) + "</h2>";
     }
     card.innerHTML = html;
+    wireShotFallbacks(card);
     card.scrollTop = 0;
     var n = deck.slides.length;
     document.getElementById("pos").textContent = (idx + 1) + " / " + n;

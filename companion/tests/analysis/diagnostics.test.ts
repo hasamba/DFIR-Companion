@@ -164,7 +164,6 @@ function sampleReport(): DiagnosticsReport {
   return {
     generatedAt: "2026-06-17T00:00:00.000Z",
     uptimeMs: 3 * 60 * 60 * 1000,
-    casesRoot: "/data/cases",
     disk: {
       totalBytes: 1024 * 1024 * 1024 * 1024,
       freeBytes: 512 * 1024 * 1024 * 1024,

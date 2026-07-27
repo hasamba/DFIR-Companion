@@ -2,6 +2,7 @@ import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
 import type { CaptureStatusResult, GetCaptureStatusMessage, SetAdapterOverrideMessage } from "./types.js";
+import { browserApi, isFirefox } from "./browser.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const caseSelect = () => document.getElementById("caseId") as HTMLSelectElement;
@@ -11,7 +12,7 @@ const toolSelect = () => document.getElementById("toolOverride") as HTMLSelectEl
 const toolHint = () => document.getElementById("toolHint") as HTMLDivElement;
 
 async function activeTabId(): Promise<number | null> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
   return tab?.id ?? null;
 }
 
@@ -43,7 +44,7 @@ async function initToolOverride(): Promise<void> {
   if (!tabId) { row.style.display = "none"; return; }
   try {
     const msg: GetCaptureStatusMessage = { kind: "get_capture_status" };
-    const status = (await chrome.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
+    const status = (await browserApi.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
     populateToolOptions(sel);
     sel.value = status.overrideAdapterId;
     toolHint().textContent = describeStatus(status);
@@ -54,7 +55,7 @@ async function initToolOverride(): Promise<void> {
   sel.onchange = async () => {
     try {
       const msg: SetAdapterOverrideMessage = { kind: "set_adapter_override", overrideAdapterId: sel.value };
-      const status = (await chrome.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
+      const status = (await browserApi.tabs.sendMessage(tabId, msg)) as CaptureStatusResult;
       toolHint().textContent = describeStatus(status);
     } catch {
       toolHint().textContent = "override failed — reload the page and try again";
@@ -63,13 +64,13 @@ async function initToolOverride(): Promise<void> {
 }
 
 async function load(): Promise<Settings> {
-  const stored = await chrome.storage.local.get("settings");
+  const stored = await browserApi.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
 }
 
 async function save(settings: Settings): Promise<void> {
-  await chrome.storage.local.set({ settings });
-  await chrome.runtime.sendMessage({ kind: "settings_changed" }).catch(() => {});
+  await browserApi.storage.local.set({ settings });
+  await browserApi.runtime.sendMessage({ kind: "settings_changed" }).catch(() => {});
 }
 
 function readForm(running: boolean): Settings {
@@ -134,7 +135,7 @@ async function loadCases(companionUrl: string, selectedId: string): Promise<bool
 async function showLastCapture(): Promise<void> {
   const el = document.getElementById("lastCapture");
   if (!el) return;
-  const { lastCapture } = await chrome.storage.local.get("lastCapture");
+  const { lastCapture } = await browserApi.storage.local.get("lastCapture");
   if (lastCapture) {
     const c = lastCapture as { at: string; trigger: string; bytes: number; diag: string };
     el.textContent = `last capture (${c.trigger}, ${c.bytes}B) @ ${c.at}: ${c.diag}`;
@@ -144,11 +145,11 @@ async function showLastCapture(): Promise<void> {
 }
 
 // Show the actual keyboard shortcut bound to toggle-capture (it may be unset if it
-// conflicted at install), and wire the "rebind" link to Chrome's shortcuts page.
+// conflicted at install), and wire the "rebind" link to the browser's shortcuts page.
 async function showHotkey(): Promise<void> {
   const keysEl = document.getElementById("hotkeyKeys");
   try {
-    const cmds = await chrome.commands.getAll();
+    const cmds = await browserApi.commands.getAll();
     const toggle = cmds.find((c) => c.name === "toggle-capture");
     if (keysEl) keysEl.textContent = toggle?.shortcut || "(not set)";
   } catch {
@@ -158,7 +159,13 @@ async function showHotkey(): Promise<void> {
   if (rebind) {
     rebind.onclick = (e) => {
       e.preventDefault();
-      void chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+      // Firefox refuses tabs.create() for privileged about: URLs, so its shortcuts page can't be
+      // opened for the analyst — spell out the path instead. Chrome navigates straight there.
+      if (isFirefox()) {
+        rebind.textContent = "Add-ons (Ctrl+Shift+A) → gear → Manage Extension Shortcuts";
+        return;
+      }
+      void browserApi.tabs.create({ url: "chrome://extensions/shortcuts" });
     };
   }
 }
@@ -192,7 +199,7 @@ async function init() {
   document.getElementById("openDashboard")!.onclick = (e) => {
     e.preventDefault();
     const url = normalizeCompanionUrl($("companionUrl").value);
-    void chrome.tabs.create({ url: `${url}/dashboard` });
+    void browserApi.tabs.create({ url: `${url}/dashboard` });
   };
   document.getElementById("start")!.onclick = async () => {
     const f = readForm(true);

@@ -73,13 +73,17 @@ describe("GET /cases/:id/ocr-search", () => {
 });
 
 describe("POST /captures background OCR indexing", () => {
+  // Ingest magic-byte-checks the bytes, so these carry a real PNG signature; the trailing bytes vary
+  // per capture so none is treated as a byte-for-byte duplicate. OCR itself is stubbed.
+  const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const pngBytes = (...tail: number[]) => Buffer.from([...PNG_SIGNATURE, ...tail]).toString("base64");
   const capture = (over: Record<string, unknown> = {}) => ({
     caseId: "c1",
     timestamp: "2026-06-29T10:00:00.000Z",
     url: "https://host/console",
     tabTitle: "Console",
     triggerType: "navigation",
-    imageBase64: Buffer.from([1, 2, 3, 4]).toString("base64"),
+    imageBase64: pngBytes(1, 2, 3, 4),
     ...over,
   });
 
@@ -113,7 +117,7 @@ describe("POST /captures background OCR indexing", () => {
     const files: string[] = [];
     for (let i = 0; i < 7; i++) {
       const res = await request(app).post("/captures").send(capture({
-        imageBase64: Buffer.from([i, i + 1, i + 2, i + 3]).toString("base64"),
+        imageBase64: pngBytes(i, i + 1, i + 2, i + 3),
       }));
       expect(res.status).toBe(201);
       files.push(res.body.screenshotFile as string);

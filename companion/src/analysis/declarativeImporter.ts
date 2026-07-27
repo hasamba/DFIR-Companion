@@ -10,6 +10,7 @@ import {
 } from "./siemImport.js";
 import { parseCsv } from "./csvImport.js";
 import type { ImporterSpec } from "./importerSpec.js";
+import { checkRegexSafety } from "./regexSafety.js";
 
 type Row = Record<string, unknown>;
 
@@ -30,8 +31,13 @@ export interface ExternalImporter {
   parse(text: string, opts?: { minSeverity?: Severity }): SiemParseResult;
 }
 
-// Compile a user regex defensively: invalid → null (never throws); callers bound the tested input.
+// Compile a user regex defensively: invalid OR ReDoS-prone → null (never throws). The `slice(0, N)`
+// bound the callers apply limits input LENGTH, which does nothing about backtracking inside that
+// bound — a 1024-char filename against `((a+))+$` never returns. importerSpec vets these patterns at
+// validation time so a bad one can't be stored; this is the second line of defence for a spec that
+// reached buildImporter another way (an older file on disk, a direct call).
 function safeRegex(src: string): RegExp | null {
+  if (!checkRegexSafety(src).ok) return null;
   try { return new RegExp(src); } catch { return null; }
 }
 function getField(rec: Row, key: string): unknown {
@@ -41,8 +47,14 @@ function getField(rec: Row, key: string): unknown {
 export function buildImporter(spec: ImporterSpec): ExternalImporter {
   const fnameRe = spec.match.filenamePattern ? safeRegex(spec.match.filenamePattern) : null;
   const keyEquals = Object.entries(spec.match.keyEquals ?? {}).map(([k, p]) => [k, safeRegex(p)] as const);
+  // A discriminator that was ASKED FOR but couldn't be compiled has to fail CLOSED. Skipping the
+  // test instead would widen the importer rather than narrow it: with filenamePattern as the only
+  // discriminator (format defaults to "auto"), every remaining check passes and detect() returns
+  // true for every file — a spec scoped to one filename would claim every upload.
+  const brokenPattern = !!spec.match.filenamePattern && !fnameRe;
 
   const detect = (ctx: EngineDetectContext): boolean => {
+    if (brokenPattern) return false;
     if (fnameRe && !fnameRe.test((ctx.filename ?? "").slice(0, 1024))) return false;
 
     const fmt = spec.match.format;

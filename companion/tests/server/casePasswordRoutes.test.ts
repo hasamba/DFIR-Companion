@@ -81,6 +81,49 @@ describe("case password lifecycle", () => {
     expect(res.headers["set-cookie"][0]).toMatch(/Max-Age/i);
   });
 
+  // The unlock cookie is a bearer granting full access to the case, so its attributes are the
+  // whole of its protection: HttpOnly keeps it away from script, SameSite=Strict keeps another
+  // site from riding it, and Secure keeps it off the wire in cleartext.
+  const unlockCookie = async (headers: Record<string, string> = {}): Promise<string> => {
+    // Only on the first call in a test — POST /password isn't gate-exempt, so setting it again
+    // on the now-locked case would just 401 (and rotating the salt would void the last cookie).
+    const status = await request(app).get("/cases/c1/lock-status");
+    if (!status.body.hasPassword) {
+      await request(app).post("/cases/c1/password").send({ newPassword: "correct horse" });
+    }
+    const req = request(app).post("/cases/c1/unlock");
+    for (const [k, v] of Object.entries(headers)) req.set(k, v);
+    const res = await req.send({ password: "correct horse" });
+    expect(res.status).toBe(200);
+    return res.headers["set-cookie"][0];
+  };
+
+  it("the unlock cookie is HttpOnly, SameSite=Strict and path-scoped to the whole app", async () => {
+    const cookie = await unlockCookie();
+    expect(cookie).toMatch(/HttpOnly/i);
+    expect(cookie).toMatch(/SameSite=Strict/i);
+    expect(cookie).toMatch(/Path=\//i);
+  });
+
+  it("does NOT mark the cookie Secure over plain HTTP — it would never come back", async () => {
+    expect(await unlockCookie()).not.toMatch(/Secure/i);
+    expect(await unlockCookie({ "X-Forwarded-Proto": "http" })).not.toMatch(/Secure/i);
+  });
+
+  it("marks the cookie Secure when a reverse proxy reports HTTPS", async () => {
+    expect(await unlockCookie({ "X-Forwarded-Proto": "https" })).toMatch(/Secure/i);
+  });
+
+  // Each proxy appends to X-Forwarded-Proto, so a request through more than one arrives as a
+  // list whose FIRST entry is the browser-facing hop. Matching the whole header would drop the
+  // Secure flag on exactly the multi-proxy deployments that most need it.
+  it("marks the cookie Secure when the browser-facing hop of a proxy CHAIN is HTTPS", async () => {
+    expect(await unlockCookie({ "X-Forwarded-Proto": "https, http" })).toMatch(/Secure/i);
+    expect(await unlockCookie({ "X-Forwarded-Proto": "HTTPS,http" })).toMatch(/Secure/i);
+    // ...and not when the browser-facing hop was plain HTTP, whatever came after it.
+    expect(await unlockCookie({ "X-Forwarded-Proto": "http, https" })).not.toMatch(/Secure/i);
+  });
+
   it("removing the password re-opens the case for everyone", async () => {
     // POST /password no longer auto-unlocks the setter, and DELETE /password is itself gated
     // once a password exists — so the agent must actually unlock before it can remove it.

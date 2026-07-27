@@ -64,3 +64,42 @@ describe("createZip / readZip", () => {
     expect(() => readZip(Buffer.from("definitely not a zip"))).toThrow(/EOCD/);
   });
 });
+
+describe("readZip — zip-bomb guard (#247)", () => {
+  // A real zip-bomb-style entry: highly compressible data (zeros) that inflates far larger than
+  // its compressed size. createZip's DEFLATE compresses this down to a tiny archive, exactly the
+  // shape a crafted .dfircase archive would exploit. maxEntryBytes/maxTotalBytes override the
+  // (deliberately huge, 512MB/2GB) production defaults so this runs fast without allocating
+  // gigabytes — the mechanism under test (zlib's maxOutputLength aborting mid-inflation) doesn't
+  // care about the absolute cap size, only that inflation is capped BEFORE full materialization.
+  const bomb = (n: number) => Buffer.alloc(n, 0);
+
+  it("rejects an entry whose inflated size exceeds the per-entry cap — without fully inflating it", () => {
+    const archive = createZip([{ path: "bomb.bin", data: bomb(10 * 1024 * 1024) }]); // 10MB of zeros
+    expect(() => readZip(archive, { maxEntryBytes: 1024 * 1024, maxTotalBytes: 1024 * 1024 * 1024 }))
+      .toThrow(/possible zip bomb/i);
+  });
+
+  it("allows an entry within the cap", () => {
+    const archive = createZip([{ path: "fine.bin", data: bomb(1000) }]);
+    expect(() => readZip(archive, { maxEntryBytes: 10_000, maxTotalBytes: 10_000 })).not.toThrow();
+  });
+
+  it("rejects when several entries are each under the per-entry cap but exceed the TOTAL cap", () => {
+    const archive = createZip([
+      { path: "a.bin", data: bomb(6000) },
+      { path: "b.bin", data: bomb(6000) },
+    ]);
+    // Each entry (6000) is under maxEntryBytes (10000), but together they exceed maxTotalBytes (10000).
+    expect(() => readZip(archive, { maxEntryBytes: 10_000, maxTotalBytes: 10_000 }))
+      .toThrow(/possible zip bomb/i);
+  });
+
+  it("uses the real (512 MB / 2 GB) production defaults when no override is given", () => {
+    // Doesn't need to actually allocate 512MB — an entry well under the default cap must still
+    // round-trip cleanly with the defaults active, proving they don't accidentally reject normal
+    // archives (e.g. a real forensic case's screenshots/state).
+    const archive = createZip([{ path: "normal.bin", data: Buffer.from("just a normal file", "utf8") }]);
+    expect(() => readZip(archive)).not.toThrow();
+  });
+});

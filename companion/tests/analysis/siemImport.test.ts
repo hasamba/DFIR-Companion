@@ -670,3 +670,43 @@ describe("maxEventsDefault", () => {
     expect(maxEventsDefault()).toBe(2000);
   });
 });
+
+describe("textIocs — ReDoS guard (#249)", () => {
+  // "x.x.x.x…" with no valid TLD is the bait: every start position looks like the beginning of a
+  // domain and only fails at the very end.
+  const bait = (kb: number) => "x.".repeat(kb * 512);
+
+  it("scans a long pathological domain-like string without hanging", () => {
+    const sink = new Map();
+    const start = Date.now();
+    textIocs(bait(100), sink);
+    // Unbounded, the label loop made this quadratic and 100 KB took ~10s.
+    expect(Date.now() - start).toBeLessThan(2000);
+    expect(sink.size).toBe(0);                       // nothing here has a valid TLD
+  });
+
+  it("costs LINEAR time in the input, not quadratic", () => {
+    // The wall-clock bound above only says "fast enough on this machine today"; what actually
+    // protects the server is the SHAPE of the curve, because textIocs runs once per record and
+    // maxEvents caps only the events emitted, not the records mapped. Over a 4x input, linear costs
+    // ~4x and quadratic ~16x, so 8x separates them with room to spare for timer noise.
+    const time = (kb: number) => { const t = Date.now(); textIocs(bait(kb), new Map()); return Date.now() - t; };
+    time(10);                                        // warm up the regex engine
+    const small = Math.max(time(25), 1);
+    const large = time(100);
+    expect(large / small).toBeLessThan(8);
+  });
+
+  it("still extracts a domain that sits past where the old 10 KB input cap fell", () => {
+    const sink = new Map<string, SiemIoc>();
+    textIocs(`${"filler word ".repeat(2000)} beacon.evil.com`, sink);   // ~24 KB of prefix
+    expect([...sink.values()]).toContainEqual({ type: "domain", value: "beacon.evil.com" });
+  });
+
+  it("extracts a domain whose label count is within the DNS limit", () => {
+    const sink = new Map<string, SiemIoc>();
+    const deep = `${"a.".repeat(120)}com`;           // 121 labels — legal, if unusual
+    textIocs(deep, sink);
+    expect([...sink.values()]).toContainEqual({ type: "domain", value: deep });
+  });
+});

@@ -1,12 +1,40 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { createApp, setServerLogger } from "../../src/server.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { createApp, setServerLogger, buildRuntimePipeline } from "../../src/server.js";
 import { createConsoleLogger } from "../../src/logging/logger.js";
 import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
+
+// One Chainsaw/Sigma detection — enough for resolveImportKind to classify the file as "chainsaw"
+// (a deterministic importer, no AI call) so an import-file request reaches the evidence copy.
+const CHAINSAW_HUNT = [
+  {
+    group: "Sigma",
+    kind: "individual",
+    document: {
+      kind: "evtx",
+      path: "Sysmon.evtx",
+      data: {
+        Event: {
+          System: {
+            Provider: { "#attributes": { Name: "Microsoft-Windows-Sysmon" } },
+            EventID: 1,
+            Channel: "Microsoft-Windows-Sysmon/Operational",
+            Computer: "WIN-DC01.corp.local",
+            TimeCreated: { "#attributes": { SystemTime: "2023-01-02T10:00:00.000Z" } },
+          },
+          EventData: { UtcTime: "2023-01-02 10:00:00.000", Image: "C:\\Windows\\System32\\cmd.exe", CommandLine: "cmd.exe /c whoami" },
+        },
+      },
+    },
+    rule: { name: "Suspicious Command", level: "high", tags: ["attack.execution"] },
+    timestamp: "2023-01-02T10:00:00.000Z",
+  },
+];
 
 let store: CaseStore;
 let root: string;
@@ -72,6 +100,20 @@ describe("GET /diagnostics", () => {
       delete process.env.DFIR_AI_KEY;
     }
   });
+
+  // #250: /diagnostics is unauthenticated, so the absolute cases-root path must never reach the
+  // client — it is free reconnaissance for a file-targeting attack (symlink, env injection).
+  // Asserted against the whole payload, not a named field, so reintroducing the path under ANY
+  // key (or interpolated into the text blob) fails here.
+  it("NEVER leaks the absolute cases-root path into the diagnostics payload", async () => {
+    const app = createApp(store, {});
+    const res = await request(app).get("/diagnostics");
+    expect(res.status).toBe(200);
+    expect(res.body.report).not.toHaveProperty("casesRoot");
+    expect(JSON.stringify(res.body)).not.toContain(root);
+    expect(res.body.text).not.toContain(root);
+    expect(res.body.text).not.toContain("cases root");
+  });
 });
 
 describe("GET /diagnostics/sizes", () => {
@@ -87,6 +129,104 @@ describe("GET /diagnostics/sizes", () => {
     expect(c.bytes).toBeGreaterThanOrEqual(1234);
     expect(res.body.largestFiles.length).toBeGreaterThan(0);
     expect(res.body.truncated).toBe(false);
+    expect(res.body.lockedCases).toBe(0);
+  });
+
+  // #250: this route spans every case, so it cannot sit behind the /cases/:id lock gate. It must
+  // enforce the same rule itself — evidence FILENAMES are case content, not metadata.
+  it("withholds a locked case's filenames but still counts its bytes", async () => {
+    await store.createCase({ caseId: "open-c", name: "O", investigator: "x", aiProvider: null });
+    await store.saveImport("open-c", "0001_open_evidence.json", "x".repeat(2000));
+    await store.createCase({ caseId: "locked-c", name: "L", investigator: "x", aiProvider: null });
+    await store.saveImport("locked-c", "0001_victim_acme_breach.json", "y".repeat(3000));
+    const app = createApp(store, {});
+    await request(app).post("/cases/locked-c/password").send({ newPassword: "correct horse" });
+
+    // Fresh, cookie-less client: the case is locked for it.
+    const res = await request(app).get("/diagnostics/sizes?top=50");
+    expect(res.status).toBe(200);
+    expect(res.body.lockedCases).toBe(1);
+    // Bytes and the case id still show — both are aggregates, and GET /cases already lists ids.
+    const locked = res.body.cases.find((x: { caseId: string }) => x.caseId === "locked-c");
+    expect(locked.bytes).toBeGreaterThanOrEqual(3000);
+    // The filename must not appear anywhere in the payload.
+    expect(JSON.stringify(res.body)).not.toContain("victim_acme_breach");
+    const paths = res.body.largestFiles.map((f: { caseId: string }) => f.caseId);
+    expect(paths).toContain("open-c");
+    expect(paths).not.toContain("locked-c");
+  });
+
+  it("lists a locked case's filenames again once the caller unlocks it", async () => {
+    await store.createCase({ caseId: "locked-c", name: "L", investigator: "x", aiProvider: null });
+    await store.saveImport("locked-c", "0001_victim_acme_breach.json", "y".repeat(3000));
+    const app = createApp(store, {});
+    const agent = request.agent(app);
+    await agent.post("/cases/locked-c/password").send({ newPassword: "correct horse" });
+    await agent.post("/cases/locked-c/unlock").send({ password: "correct horse" });
+
+    const res = await agent.get("/diagnostics/sizes?top=50");
+    expect(res.status).toBe(200);
+    expect(res.body.lockedCases).toBe(0);
+    expect(JSON.stringify(res.body)).toContain("victim_acme_breach");
+  });
+});
+
+// #250: ~60 route catch blocks return err.message verbatim, and Node's fs errors embed the absolute
+// path — so removing casesRoot from /diagnostics buys nothing if the next failed read prints it back.
+// Covered once, centrally, by the res.json wrapper in createApp.
+describe("absolute paths in error responses", () => {
+  it("redacts the absolute path out of a failed server-side import-file read", async () => {
+    await store.createCase({ caseId: "c1", name: "C", investigator: "x", aiProvider: null });
+    const stateStore = new StateStore(store);
+    const pipeline = buildRuntimePipeline({
+      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+
+    // A path that does not exist, under the cases root itself — ENOENT will quote it in full.
+    const missing = join(root, "c1", "imports", "definitely_not_here.json");
+    const res = await request(app).post("/cases/c1/import-file").send({ path: missing });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/cannot read file/i);
+    // The reason for the failure survives; the filesystem layout does not.
+    expect(res.body.error).toContain("ENOENT");
+    expect(res.body.error).not.toContain(root);
+    expect(res.body.error).toContain("<path>");
+  });
+
+  // The other half of the leak: /diagnostics replays the import-failure ring, so a path that reached
+  // the ring is served to every later caller even though the failing request is long gone.
+  it("keeps the absolute path out of the diagnostics failure ring, JSON and text alike", async () => {
+    await store.createCase({ caseId: "c1", name: "C", investigator: "x", aiProvider: null });
+    const stateStore = new StateStore(store);
+    const pipeline = buildRuntimePipeline({
+      provider: undefined, synthesisProvider: undefined, stateStore, store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, { pipeline, stateStore });
+
+    // Provoke a real EEXIST out of the evidence copy: nextImportSeq counts audit-log lines, not
+    // files, so pre-creating the destination leaves the sequence at 1 and the COPYFILE_EXCL copy
+    // collides. Its message quotes BOTH absolute paths — source and the one under the cases root.
+    const src = join(await mkdtemp(join(tmpdir(), "dfir-diag-src-")), "hunt.json");
+    await writeFile(src, JSON.stringify(CHAINSAW_HUNT), "utf8");
+    await store.saveImport("c1", "0001_hunt.json", "already here");
+
+    const failed = await request(app).post("/cases/c1/import-file").send({ path: src });
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).not.toContain(root);
+
+    // Now the ring: the report AND the copy-to-clipboard blob must both be clean.
+    const diag = await request(app).get("/diagnostics");
+    expect(diag.status).toBe(200);
+    const failures = diag.body.report.importers.recentFailures;
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures[0].error).toContain("EEXIST");
+    expect(failures[0].error).toContain("<path>");
+    expect(JSON.stringify(diag.body.report)).not.toContain(root);
+    expect(diag.body.text).not.toContain(root);
   });
 });
 

@@ -67,7 +67,7 @@ export interface ImportPayload {
 }
 
 // content script → service worker: inject the MAIN-world fetch/XHR hook into this tab. The SW uses
-// chrome.scripting.executeScript (world: "MAIN"), which bypasses the page's CSP.
+// scripting.executeScript (world: "MAIN"), which bypasses the page's CSP.
 export interface EnsureHookMessage {
   kind: "ensure_hook";
 }

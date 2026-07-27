@@ -2,7 +2,7 @@ import type { Server } from "node:http";
 import { WebSocketServer } from "ws";
 import type { CaseStore } from "../storage/caseStore.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken } from "../analysis/casePassword.js";
-import { isOriginAllowed } from "../http/originGuard.js";
+import { isRequestAllowed, type GuardConfig } from "../http/originGuard.js";
 import type { LiveHub, SocketLike } from "./hub.js";
 
 /**
@@ -16,7 +16,9 @@ import type { LiveHub, SocketLike } from "./hub.js";
  * Two things make this different from an HTTP route, and both argue for checking here rather than
  * relying on anything upstream:
  *   - A WebSocket handshake is not subject to the same-origin policy. Any page can open a socket to
- *     any origin, so `Origin` is the only signal available and must be validated explicitly.
+ *     any origin, so the browser headers must be validated explicitly — via the same two-gate
+ *     {@link isRequestAllowed} the HTTP middleware uses, `Host` included. An upgrade is the richest
+ *     prize a rebound page can win here: one socket, then every future broadcast of the case.
  *   - The case-password middleware is mounted on `/cases/:id` and never sees `/ws`.
  */
 
@@ -29,10 +31,9 @@ export interface WsUpgradeRequest {
   headers: { host?: string; origin?: string; cookie?: string };
 }
 
-export interface WsUpgradeDeps {
+export interface WsUpgradeDeps extends GuardConfig {
   store: CaseStore;
   secret: Buffer;
-  allowedOrigins: string[];
 }
 
 // Mirrors the id shape CaseStore is willing to create, so a traversal-flavoured id is refused
@@ -43,9 +44,8 @@ const SAFE_CASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeDeps): Promise<WsUpgradeDecision> {
   const { headers } = req;
 
-  if (!isOriginAllowed(headers.origin, headers.host, deps.allowedOrigins)) {
-    return { ok: false, reason: `origin "${headers.origin}" is not allowed` };
-  }
+  const decision = isRequestAllowed({ origin: headers.origin, host: headers.host }, deps);
+  if (!decision.ok) return { ok: false, reason: decision.reason };
 
   let caseId: string;
   try {

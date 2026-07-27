@@ -25,9 +25,10 @@ import { decodeCapturedBodies } from "./adapters/extractUtils.js";
 import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
 import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult, CaptureStatusResult } from "./types.js";
+import { browserApi } from "./browser.js";
 
 const BTN_ID = "dfir-companion-push-btn";
-// chrome.storage.local key holding the analyst's dragged button position (null = default corner).
+// storage.local key holding the analyst's dragged button position (null = default corner).
 const POS_KEY = "pushButtonPos";
 
 let activeAdapter: Adapter | null = null;
@@ -49,12 +50,12 @@ export async function initArtifactCapture(): Promise<void> {
   // Attach listeners BEFORE activating so we never miss the hook's "ready" handshake or a popup
   // override sent immediately after injection.
   window.addEventListener("message", onPageMessage);
-  chrome.runtime.onMessage.addListener(onExtensionMessage);
+  browserApi.runtime.onMessage.addListener(onExtensionMessage);
   applyAdapter();
 
   // Only show the push button when a case is selected — so the button stays hidden when the
   // analyst is not actively investigating and hasn't connected the extension to a case.
-  const stored = await chrome.storage.local.get(["settings", POS_KEY]);
+  const stored = await browserApi.storage.local.get(["settings", POS_KEY]);
   currentCaseId = (stored.settings as { caseId?: string } | undefined)?.caseId ?? "";
   buttonPos = parseButtonPos(stored[POS_KEY]);
   if (currentCaseId && activeAdapter) ensureButton();
@@ -69,7 +70,7 @@ export async function initArtifactCapture(): Promise<void> {
   bodyObserver.observe(bodyTarget, { childList: true });
 
   // Dynamically show/hide when the analyst connects or disconnects from a case via the popup.
-  chrome.storage.onChanged.addListener((changes) => {
+  browserApi.storage.onChanged.addListener((changes) => {
     // Sync the dragged position across already-open tabs.
     if (changes[POS_KEY]) {
       buttonPos = parseButtonPos(changes[POS_KEY].newValue);
@@ -112,7 +113,7 @@ function applyAdapter(): void {
 
 // ── Manual override (popup ⇄ this content script) ────────────────────────────────────────────
 // The popup can't reach adapterForPage's result directly — it lives here, in the tab. These two
-// message kinds (sent via chrome.tabs.sendMessage, which — unlike chrome.runtime.sendMessage from
+// message kinds (sent via tabs.sendMessage, which — unlike runtime.sendMessage from
 // a content script — targets THIS listener, not the service worker's onMessage in
 // serviceWorker.ts) let the popup read and override it. See adapters/override.ts for the
 // resolution rule and popup.ts for the UI.
@@ -154,7 +155,7 @@ function captureStatus(): CaptureStatusResult {
 // prior navigation in this tab (it's idempotent).
 function requestHookInjection(): void {
   const msg: EnsureHookMessage = { kind: "ensure_hook" };
-  try { void chrome.runtime.sendMessage(msg); } catch { /* SW asleep / page CSP — scrape still works */ }
+  try { void browserApi.runtime.sendMessage(msg); } catch { /* SW asleep / page CSP — scrape still works */ }
 }
 
 function sendConfig(): void {
@@ -349,7 +350,7 @@ function attachDrag(btn: HTMLButtonElement): void {
     window.setTimeout(() => { suppressClick = false; }, 0);
     const rect = btn.getBoundingClientRect();
     buttonPos = { left: rect.left, top: rect.top };
-    try { void chrome.storage.local.set({ [POS_KEY]: buttonPos }); } catch { /* storage unavailable */ }
+    try { void browserApi.storage.local.set({ [POS_KEY]: buttonPos }); } catch { /* storage unavailable */ }
   };
   btn.addEventListener("pointerup", end);
   btn.addEventListener("pointercancel", end);
@@ -386,7 +387,7 @@ async function onClick(): Promise<void> {
       sourceUrl: artifact.sourceUrl,
       sourceLabel: artifact.label,
     };
-    const res = (await chrome.runtime.sendMessage(msg)) as PushArtifactResult | undefined;
+    const res = (await browserApi.runtime.sendMessage(msg)) as PushArtifactResult | undefined;
     if (res?.ok) {
       flash(`✓ Pushed ${res.rows ?? artifact.rows.length} rows to "${res.caseId}"`, "#1a7f37");
     } else {
