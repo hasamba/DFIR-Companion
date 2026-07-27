@@ -58,4 +58,18 @@ describe("linkEmailDelivery (#201)", () => {
     const out = linkEmailDelivery([emailEv(), contact("c1", "2024-03-18T14:30:00Z", "connection to notmosaic-metrics.network")]);
     expect(out.find((e) => e.id === "c1")!.severity).toBe("Info");
   });
+
+  it("#16: does not match evil.com inside evil.com.au (superstring TLD)", () => {
+    // The doc comment claimed "evil.com" doesn't match "evil.com.au", but the lookahead didn't
+    // exclude dots, so it DID match — a host event touching evil.com.au got a fabricated
+    // initial-access link + Medium T1566.002/T1204.002 for the evil.com email delivery.
+    const email = emailEv();
+    email.description = email.description.replace("evil.com", "evil.com");
+    const out = linkEmailDelivery([
+      email,
+      contact("c1", "2024-03-18T14:30:00Z", "connected to evil.com.au for update"),
+    ]);
+    expect(out.find((e) => e.id === "c1")!.severity).toBe("Info");
+    expect(out.find((e) => e.id === "c1")!.description).not.toMatch(/initial access/);
+  });
 });
