@@ -21,8 +21,8 @@ describe("PresidioPendingStore", () => {
   });
 
   it("round-trips findings", async () => {
-    await store.save("c1", [{ value: "Jane Doe", category: "USER" }]);
-    expect(await store.load("c1")).toEqual([{ value: "Jane Doe", category: "USER" }]);
+    await store.save("c1", [{ value: "Jane Doe", category: "PERSON" }]);
+    expect(await store.load("c1")).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
   });
 
   it("sanitizes on save, coercing an unknown category to OTHER", async () => {
