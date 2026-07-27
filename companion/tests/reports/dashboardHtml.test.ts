@@ -660,6 +660,56 @@ describe("dashboard.html — help icon", () => {
   });
 });
 
+describe("dashboard.html — Compliance Impact panel (#336)", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("renders the disclaimer and the framework editions with the mapping, not beside it", async () => {
+    const html = await load();
+    // The caveat is built from the API's own `disclaimer` and prepended to every render path —
+    // including the "nothing mapped" one, which is exactly where a reader might infer "no
+    // obligations". Losing this turns a technical mapping into an apparent compliance verdict.
+    expect(html).toMatch(/const caveat = d\.disclaimer \? `<div class="cmp-caveat">/);
+    expect(html).toMatch(/el\.innerHTML = caveat \+ `<div class="cmp-empty">/);
+    expect(html).toMatch(/Control identifiers drawn from: \$\{Object\.entries\(d\.frameworkVersions\)/);
+  });
+
+  it("shows a countdown only where the API returned a real deadline", async () => {
+    const html = await load();
+    // No deadline object -> no badge at all. Control cadences (back up, train) never carry one,
+    // and nothing is computed until the analyst sets a discovery date.
+    expect(html).toMatch(/function complianceDueBadge\(deadline\) \{\s*if \(!deadline\) return "";/);
+    expect(html).toMatch(/row\.notification\s*\?[\s\S]{0,200}complianceDueBadge\(row\.deadline\)/);
+    expect(html).toContain("no deadlines computed — no discovery date set");
+  });
+
+  it("distinguishes business-day clocks from calendar ones in the label", async () => {
+    const html = await load();
+    expect(html).toMatch(/row\.notification\.unit === "business" \? "business days" : "calendar time"/);
+    // And states the legal trigger, so nobody reads the date as starting at a forensic timestamp.
+    expect(html).toMatch(/from \$\{esc\(row\.notification\.from\)\}/);
+  });
+
+  it("sends the discovery date as an explicit UTC instant", async () => {
+    const html = await load();
+    // <input type="date"> yields YYYY-MM-DD; sending it bare would shift by a day per timezone.
+    expect(html).toMatch(/discoveredAt: v \? `\$\{v\}T00:00:00\.000Z` : null/);
+  });
+
+  it("treats every framework ticked as no filter at all", async () => {
+    const html = await load();
+    // Storing an explicit full list would silently hide any framework added to the dataset later.
+    expect(html).toMatch(/frameworks: checked\.length === boxes\.length \? null : checked/);
+  });
+
+  it("is registered as a section and reloads when case state changes", async () => {
+    const html = await load();
+    expect(html).toContain('{ id: "sec-compliance",   label: "Compliance Impact" }');
+    expect(html).toContain("loadCompliance(caseId);");
+    // Confirming a finding is what makes an obligation appear, so a state push must refresh it.
+    expect(html).toContain("scheduleComplianceReload()");
+  });
+});
+
 // The Content-Security-Policy sends `script-src 'self' 'nonce-…'` with no 'unsafe-inline'. Under
 // that policy an inline handler ATTRIBUTE is dead markup — the browser refuses to run it, and unlike
 // a <script> block a nonce cannot rescue it. Reintroducing one therefore does not fail loudly; the

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ComplianceControlStore } from "../../src/analysis/complianceControl.js";
 import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 
@@ -32,6 +33,7 @@ function makeFinding(overrides: Partial<Finding>): Finding {
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
 let stateStore: StateStore;
+let complianceControlStore: ComplianceControlStore;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-compliance-"));
@@ -47,7 +49,8 @@ beforeEach(async () => {
     ],
   });
 
-  app = createApp(cases, { stateStore });
+  complianceControlStore = new ComplianceControlStore(cases);
+  app = createApp(cases, { stateStore, complianceControlStore });
 });
 
 describe("GET /cases/:id/compliance", () => {
@@ -96,5 +99,107 @@ describe("GET /cases/:id/compliance", () => {
     const bare = createApp(cases, {});
     const res = await request(bare).get("/cases/c1/compliance");
     expect(res.status).toBe(501);
+  });
+
+  it("computes no deadlines until the analyst sets a discovery date", async () => {
+    const res = await request(app).get("/cases/c1/compliance");
+
+    expect(res.body.discoveredAt).toBeNull();
+    const rows = res.body.results[0].frameworks as Array<{ deadline?: unknown }>;
+    for (const row of rows) expect(row.deadline).toBeUndefined();
+  });
+
+  it("attaches deadlines once a discovery date is set, and only to real clocks", async () => {
+    await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ discoveredAt: "2026-03-05T00:00:00.000Z" })
+      .expect(200);
+
+    const res = await request(app).get("/cases/c1/compliance");
+    expect(res.body.discoveredAt).toBe("2026-03-05T00:00:00.000Z");
+
+    const byControl = Object.fromEntries(
+      (res.body.results[0].frameworks as Array<{ control: string; deadline?: { dueAt: string } }>)
+        .map((r) => [r.control, r]),
+    );
+    // GDPR Art. 33: +72 calendar hours.
+    expect(byControl["Art. 33"].deadline?.dueAt).toBe("2026-03-08T00:00:00.000Z");
+    // Form 8-K: four BUSINESS days from a Thursday, so the weekend pushes it to Wednesday.
+    expect(byControl["Item 1.05 of Form 8-K (17 CFR 249.308)"].deadline?.dueAt).toBe(
+      "2026-03-11T00:00:00.000Z",
+    );
+    // A control cadence is not a deadline.
+    expect(byControl["CP-9"].deadline).toBeUndefined();
+  });
+
+  it("applies the stored framework filter but still offers the full roster", async () => {
+    await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ frameworks: ["GDPR"] })
+      .expect(200);
+
+    const res = await request(app).get("/cases/c1/compliance");
+    const frameworks = (res.body.results[0].frameworks as Array<{ framework: string }>)
+      .map((r) => r.framework);
+    expect([...new Set(frameworks)]).toEqual(["GDPR"]);
+    // The filter must not hide its own options — the roster comes from the unfiltered mapping.
+    expect(res.body.availableFrameworks).toEqual(
+      expect.arrayContaining(["NIST 800-53", "PCI-DSS", "HIPAA", "GDPR", "SEC", "ISO 27001"]),
+    );
+  });
+});
+
+describe("/cases/:id/compliance/control", () => {
+  it("round-trips the discovery date and framework filter", async () => {
+    const patched = await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ discoveredAt: "2026-03-05T00:00:00.000Z", frameworks: ["GDPR", "HIPAA"] });
+    expect(patched.status).toBe(200);
+
+    const res = await request(app).get("/cases/c1/compliance/control");
+    expect(res.body).toEqual({
+      discoveredAt: "2026-03-05T00:00:00.000Z",
+      frameworks: ["GDPR", "HIPAA"],
+    });
+  });
+
+  it("clears the date with null, switching every countdown back off", async () => {
+    await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ discoveredAt: "2026-03-05T00:00:00.000Z" });
+    await request(app).patch("/cases/c1/compliance/control").send({ discoveredAt: null }).expect(200);
+
+    const res = await request(app).get("/cases/c1/compliance");
+    expect(res.body.discoveredAt).toBeNull();
+    const rows = res.body.results[0].frameworks as Array<{ deadline?: unknown }>;
+    for (const row of rows) expect(row.deadline).toBeUndefined();
+  });
+
+  it("distinguishes null (all frameworks) from [] (none)", async () => {
+    await request(app).patch("/cases/c1/compliance/control").send({ frameworks: [] }).expect(200);
+    expect((await request(app).get("/cases/c1/compliance")).body.results).toHaveLength(0);
+
+    await request(app).patch("/cases/c1/compliance/control").send({ frameworks: null }).expect(200);
+    expect((await request(app).get("/cases/c1/compliance")).body.results).toHaveLength(1);
+  });
+
+  it("400s on an unparseable date rather than storing NaN", async () => {
+    const res = await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ discoveredAt: "last tuesday" });
+    expect(res.status).toBe(400);
+  });
+
+  it("400s when frameworks is not an array of strings", async () => {
+    const res = await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ frameworks: "GDPR" });
+    expect(res.status).toBe(400);
+  });
+
+  it("501s when the compliance control store is not configured", async () => {
+    const bare = createApp(cases, { stateStore });
+    expect((await request(bare).get("/cases/c1/compliance/control")).status).toBe(501);
+    expect((await request(bare).patch("/cases/c1/compliance/control").send({})).status).toBe(501);
   });
 });

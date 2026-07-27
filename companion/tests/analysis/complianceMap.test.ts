@@ -117,7 +117,7 @@ describe("complianceMap", () => {
     const gdpr = results[0].frameworks.find((f) => f.framework === "GDPR");
     expect(gdpr?.control).toBe("Art. 33");
     expect(gdpr?.notification).toEqual({
-      within: "P72H",
+      within: "PT72H",
       unit: "calendar",
       from: "becoming aware of the personal data breach",
     });
