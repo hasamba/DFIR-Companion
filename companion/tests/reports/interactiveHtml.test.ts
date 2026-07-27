@@ -92,10 +92,10 @@ describe("renderInteractiveHtmlReport", () => {
     expect(blobSource(html)).not.toContain("<");
     // Exactly the two intended <script> elements, and the payload survives intact after parsing.
     expect(html.match(/<script\b/gi) ?? []).toHaveLength(2);
-    expect(parseBlob(html).state.forensicTimeline[0].description).toBe(payload);
+    expect(parseBlob(html).timeline[0].description).toBe(payload);
   });
 
-  it("stamps a warning banner and keeps only Critical/High events when over the size limit", () => {
+  it("caps the timeline at the row limit, keeping the most severe and staying chronological", () => {
     const state = emptyState("c1");
     for (let i = 0; i < 1500; i++) state.forensicTimeline.push(ev(`e${i}`, "Medium", "WIN-01"));
     for (let i = 1500; i < 2100; i++) state.forensicTimeline.push(ev(`e${i}`, "Low", "WIN-01"));
@@ -103,11 +103,82 @@ describe("renderInteractiveHtmlReport", () => {
     state.forensicTimeline.push(ev("c2", "High", "WIN-01"));
     const html = renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta());
     const parsed = parseBlob(html);
+
     expect(parsed.truncated).toBe(true);
     expect(parsed.totalEvents).toBe(2102);
-    expect(parsed.state.forensicTimeline.length).toBe(2);
-    expect(parsed.state.forensicTimeline.every((e: { severity: string }) => e.severity === "Critical" || e.severity === "High")).toBe(true);
+    // Capped at SIZE_LIMIT, not merely severity-filtered.
+    expect(parsed.timeline.length).toBe(2000);
+    // The Critical and High rows are never the ones dropped.
+    const ids = parsed.timeline.map((e: { id: string }) => e.id);
+    expect(ids).toContain("c1");
+    expect(ids).toContain("c2");
+    // Info/Low go first: 2102 events capped to 2000 drops 102, all from the 600 Low rows.
+    const bySeverity = (s: string) => parsed.timeline.filter((e: { severity: string }) => e.severity === s).length;
+    expect(bySeverity("Medium")).toBe(1500);
+    expect(bySeverity("Low")).toBe(498);
+    // Selection runs in severity order, but the result must come back in the original timeline
+    // order: the kept ids form a subsequence of the input ids, never a severity-grouped reshuffle.
+    const inputIds = state.forensicTimeline.map((e) => e.id);
+    expect(ids).toEqual(inputIds.filter((id) => ids.includes(id)));
     expect(html).toContain('id="size-banner"');
+  });
+
+  // The old guard filtered to Critical/High with no cap. Severity is a poor proxy for volume here
+  // (every YARA hit is stamped High), so a case dominated by High events was not bounded at all.
+  it("bounds a timeline made entirely of high-severity events", () => {
+    const state = emptyState("c1");
+    for (let i = 0; i < 5000; i++) state.forensicTimeline.push(ev(`e${i}`, "High", "WIN-01"));
+    const parsed = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+
+    expect(parsed.totalEvents).toBe(5000);
+    expect(parsed.timeline.length).toBe(2000);
+    expect(parsed.truncated).toBe(true);
+  });
+
+  // The old guard dropped every event when an oversized case had no Critical/High rows, leaving an
+  // empty table behind a banner that said events had merely been trimmed.
+  it("never empties the timeline when an oversized case has no high-severity events", () => {
+    const state = emptyState("c1");
+    for (let i = 0; i < 2500; i++) state.forensicTimeline.push(ev(`e${i}`, "Low", "WIN-01"));
+    const parsed = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+
+    expect(parsed.timeline.length).toBe(2000);
+    expect(parsed.truncated).toBe(true);
+  });
+
+  // A row count alone bounds nothing: one event can carry tens of kilobytes of description.
+  it("caps on serialized bytes when few events are individually enormous", () => {
+    const state = emptyState("c1");
+    const huge = "A".repeat(200_000);
+    for (let i = 0; i < 100; i++) {
+      state.forensicTimeline.push({
+        id: `e${i}`, timestamp: `2026-05-01T00:00:${String(i).padStart(2, "0")}Z`,
+        description: huge, severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      });
+    }
+    const html = renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta());
+    const parsed = parseBlob(html);
+
+    // Well under the 2000-row limit, so only the byte ceiling can be what stops this.
+    expect(parsed.totalEvents).toBe(100);
+    expect(parsed.timeline.length).toBeLessThan(100);
+    expect(parsed.truncated).toBe(true);
+    expect(html.length).toBeLessThan(6 * 1024 * 1024);
+  });
+
+  // A single row larger than the entire byte budget must still be shown, not silently swallowed.
+  it("keeps the first row even when it alone exceeds the byte budget", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({
+      id: "e1", timestamp: "2026-05-01T00:00:00Z", description: "B".repeat(5 * 1024 * 1024),
+      severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    });
+    state.forensicTimeline.push(ev("e2", "Low", "WIN-01"));
+    const parsed = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
+
+    expect(parsed.timeline.length).toBe(1);
+    expect(parsed.timeline[0].id).toBe("e1");
+    expect(parsed.truncated).toBe(true);
   });
 
   it("does not truncate or show a banner when events are within the limit", () => {
@@ -115,7 +186,51 @@ describe("renderInteractiveHtmlReport", () => {
     state.forensicTimeline.push(ev("e1", "Low", "WIN-01"));
     const parsed = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta()));
     expect(parsed.truncated).toBe(false);
-    expect(parsed.state.forensicTimeline.length).toBe(1);
+    expect(parsed.timeline.length).toBe(1);
+  });
+
+  // The report is built to be emailed. Anything in the blob but not on the page is disclosed
+  // silently: an analyst who reviews the rendered report before sending cannot see it.
+  it("embeds only what the page renders, never the whole InvestigationState", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push({
+      id: "e1", timestamp: "2026-05-01T00:00:00Z", description: "shown in the table",
+      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      // Heavyweight per-event fields the table has no column for.
+      message: "SECRET_SCRIPTBLOCK_TEXT",
+      commandLine: "SECRET_COMMAND_LINE",
+      veloUrl: "https://velo.internal/SECRET_FLOW",
+    } as never);
+    state.findings.push(finding("f1", "Critical", 90, "Beaconing"));
+
+    // Internal analyst working notes carried elsewhere on the state.
+    state.iocExcludeRules.push({ id: "x1", kind: "domain", value: "corp.internal", note: "SECRET_EXCLUSION_RATIONALE" } as never);
+    state.openThreads.push({ id: "t1", description: "SECRET_OPEN_THREAD", status: "open", openedAt: "", closedAt: null } as never);
+    state.keyQuestions.push("SECRET_KEY_QUESTION" as never);
+    state.lastSummary = "SECRET_SUMMARY";
+    state.attackerPath = "SECRET_ATTACKER_PATH";
+    state.narrativeTimeline = "SECRET_NARRATIVE";
+
+    const html = renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta());
+
+    for (const secret of [
+      "SECRET_SCRIPTBLOCK_TEXT", "SECRET_COMMAND_LINE", "SECRET_FLOW",
+      "SECRET_EXCLUSION_RATIONALE", "SECRET_OPEN_THREAD", "SECRET_KEY_QUESTION",
+      "SECRET_SUMMARY", "SECRET_ATTACKER_PATH", "SECRET_NARRATIVE",
+    ]) {
+      expect(html).not.toContain(secret);
+    }
+
+    // The blob carries the two rendered collections and nothing resembling the state object.
+    const parsed = parseBlob(html);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "caseId", "caseName", "companyName", "findings", "incidentId",
+      "investigator", "restrictions", "timeline", "totalEvents", "truncated", "updatedAt",
+    ]);
+    expect(parsed.state).toBeUndefined();
+    // What the page does render still round-trips.
+    expect(parsed.timeline[0].description).toBe("shown in the table");
+    expect(parsed.findings[0].title).toBe("Beaconing");
   });
 
   it("embeds finding-card rendering logic with severity badges and confidence bars", () => {

@@ -1,4 +1,4 @@
-import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
+import type { InvestigationState, ForensicEvent, Finding, FindingStatus, Severity } from "../analysis/stateTypes.js";
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
@@ -10,23 +10,68 @@ import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 // and a min-confidence slider — all client-side, with no external dependencies. The file is fully
 // portable (email it, drop it on a share, open it offline).
 //
-// SIZE GUARD: a case with thousands of forensic events would bloat the single file past the point
-// a browser tab can handle smoothly. When the in-scope forensic timeline exceeds 2000 events we
-// keep only Critical/High events (the ones that drive triage) and stamp a warning banner so the
-// analyst knows lower-severity events were omitted for responsiveness.
+// WHAT GETS EMBEDDED: only the fields this page actually draws, never the InvestigationState.
+//
+// That distinction is a confidentiality property, not a size optimisation. The state carries
+// collections this report never renders — `iocExcludeRules[].note` records an analyst's private
+// rationale for dismissing an IOC ("client's internal AD domain"), and `openThreads`,
+// `keyQuestions`, `uncertainties`, `lastSummary` and `attackerPath` are all working notes. Embedding
+// the whole object put every one of them in a file whose entire purpose is to be emailed, invisible
+// on the rendered page, so an analyst reviewing the report before sending it could not see what they
+// were about to disclose. Projecting to the two view-models below means anything not on screen is
+// not in the file. Adding a field here is therefore a deliberate act, which is the point.
+//
+// SIZE GUARD: the projection above removes the heavyweight per-event fields (`message` carries
+// untruncated ScriptBlock text), and then the timeline is capped twice over — by row count and by
+// serialized bytes, whichever binds first. Both are needed: severity is a poor proxy for volume
+// here (every YARA hit is stamped High, and Sigma/Chainsaw detections are High/Critical by
+// construction), so "keep the important ones" bounds nothing on a real case, and one event can be
+// tens of kilobytes on its own, so a row count alone bounds nothing either. Rows are dropped whole
+// and lowest-severity-first; event text is never truncated mid-string, because a mangled artifact
+// path is worse than an absent one.
 
 const SIZE_LIMIT = 2000;
+const MAX_TIMELINE_BYTES = 4 * 1024 * 1024;
+
+const SEVERITY_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+/** One forensic-timeline row: exactly the six columns the table shows, plus the search-key fields. */
+export interface TimelineRow {
+  id: string;
+  timestamp: string;
+  description: string;
+  severity: Severity;
+  mitreTechniques: string[];
+  asset?: string;
+  sources?: string[];
+  artifactName?: string;
+}
+
+/** One finding card: exactly the fields the expanded card renders. */
+export interface FindingCard {
+  id: string;
+  severity: Severity;
+  title: string;
+  description: string;
+  confidence?: number;
+  confidenceReason?: string;
+  mitreTechniques: string[];
+  relatedIocs: string[];
+  firstSeen: string;
+  status: FindingStatus;
+}
 
 export interface InteractiveCaseData {
   caseId: string;
   caseName: string;
   investigator: string;
-  createdAt: string;
   updatedAt: string;
   incidentId: string;
   companyName: string;
   restrictions: string;
-  state: InvestigationState;
+  findings: FindingCard[];
+  timeline: TimelineRow[];
+  /** True when the guard dropped rows; `timeline.length` vs `totalEvents` gives the shortfall. */
   truncated: boolean;
   totalEvents: number;
 }
@@ -60,26 +105,84 @@ function safeJsonForScript(data: unknown): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
-function applySizeGuard(state: InvestigationState): { events: ForensicEvent[]; truncated: boolean } {
-  const events = state.forensicTimeline;
-  if (events.length <= SIZE_LIMIT) return { events, truncated: false };
-  const kept = events.filter((e) => e.severity === "Critical" || e.severity === "High");
-  return { events: kept, truncated: true };
+function toTimelineRow(e: ForensicEvent): TimelineRow {
+  return {
+    id: e.id,
+    timestamp: e.timestamp,
+    description: e.description,
+    severity: e.severity,
+    mitreTechniques: e.mitreTechniques,
+    asset: e.asset,
+    sources: e.sources,
+    artifactName: e.artifactName,
+  };
+}
+
+function toFindingCard(f: Finding): FindingCard {
+  return {
+    id: f.id,
+    severity: f.severity,
+    title: f.title,
+    description: f.description,
+    confidence: f.confidence,
+    confidenceReason: f.confidenceReason,
+    mitreTechniques: f.mitreTechniques,
+    relatedIocs: f.relatedIocs,
+    firstSeen: f.firstSeen,
+    status: f.status,
+  };
+}
+
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/**
+ * Cap the timeline at whichever of the two ceilings binds first, dropping the least severe rows.
+ *
+ * Selection runs in severity order so the rows that survive are the ones that drive triage, but the
+ * result is restored to the original chronological order before it is returned — an out-of-order
+ * timeline would be actively misleading in a forensic report.
+ *
+ * The first row is admitted unconditionally. Without that, a single event larger than the whole byte
+ * budget would yield an empty timeline behind a banner claiming the report had merely been trimmed.
+ */
+function selectTimeline(events: ForensicEvent[]): { rows: TimelineRow[]; truncated: boolean } {
+  const all = events.map(toTimelineRow);
+  if (all.length <= SIZE_LIMIT && serializedBytes(all) <= MAX_TIMELINE_BYTES) {
+    return { rows: all, truncated: false };
+  }
+
+  const byPriority = all
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => SEVERITY_RANK[a.row.severity] - SEVERITY_RANK[b.row.severity] || a.index - b.index);
+
+  const kept: { row: TimelineRow; index: number }[] = [];
+  let bytes = 0;
+  for (const entry of byPriority) {
+    if (kept.length >= SIZE_LIMIT) break;
+    const size = serializedBytes(entry.row);
+    if (kept.length > 0 && bytes + size > MAX_TIMELINE_BYTES) break;
+    bytes += size;
+    kept.push(entry);
+  }
+
+  kept.sort((a, b) => a.index - b.index);
+  return { rows: kept.map((e) => e.row), truncated: kept.length < all.length };
 }
 
 function buildData(state: InvestigationState, caseMeta: CaseMeta | null, reportMeta: ReportMeta): InteractiveCaseData {
-  const { events, truncated } = applySizeGuard(state);
-  const guardedState: InvestigationState = truncated ? { ...state, forensicTimeline: events } : state;
+  const { rows, truncated } = selectTimeline(state.forensicTimeline);
   return {
     caseId: state.caseId,
     caseName: caseMeta?.name ?? "",
     investigator: caseMeta?.investigator ?? "",
-    createdAt: caseMeta?.createdAt ?? "",
     updatedAt: state.updatedAt,
     incidentId: reportMeta.incidentId,
     companyName: reportMeta.companyName,
     restrictions: reportMeta.restrictions,
-    state: guardedState,
+    findings: state.findings.map(toFindingCard),
+    timeline: rows,
     truncated,
     totalEvents: state.forensicTimeline.length,
   };
@@ -149,14 +252,16 @@ const SCRIPT = `
     return ev.artifactName || "—";
   }
 
-  var state = DATA.state;
+  var timeline = DATA.timeline;
+  var findings = DATA.findings;
 
   // ── Banner ───────────────────────────────────────────────────────────────
   var banner = document.getElementById("size-banner");
   if (DATA.truncated) {
     banner.style.display = "block";
-    banner.textContent = "Warning: " + DATA.totalEvents + " forensic events in the case exceeded the inline limit. " +
-      "Only Critical/High events (" + state.forensicTimeline.length + ") are included for responsiveness.";
+    banner.textContent = "Warning: this case has " + DATA.totalEvents + " forensic events, more than fits in a " +
+      "single portable file. The " + timeline.length + " highest-severity events are included here; the remaining " +
+      (DATA.totalEvents - timeline.length) + " are in the full case. Findings are complete and unaffected.";
   }
 
   // ── Timeline filters ─────────────────────────────────────────────────────
@@ -169,7 +274,7 @@ const SCRIPT = `
 
   var sources = {};
   var hosts = {};
-  state.forensicTimeline.forEach(function (ev) {
+  timeline.forEach(function (ev) {
     (ev.sources || []).forEach(function (s) { sources[s] = true; });
     if (ev.asset) hosts[ev.asset] = true;
   });
@@ -187,7 +292,7 @@ const SCRIPT = `
     var q = search.value.trim().toLowerCase();
     var shown = 0;
     while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
-    state.forensicTimeline.forEach(function (ev) {
+    timeline.forEach(function (ev) {
       if (sev !== "all" && ev.severity !== sev) return;
       if (src !== "all" && !(ev.sources && ev.sources.indexOf(src) !== -1)) return;
       if (host !== "all" && ev.asset !== host) return;
@@ -207,7 +312,7 @@ const SCRIPT = `
       tbody.appendChild(tr);
     });
     if (shown === 0) tbody.appendChild(el("tr", null, [el("td", { colspan: "6", text: "No events match the current filters." })]));
-    count.textContent = shown + " of " + state.forensicTimeline.length + " events shown";
+    count.textContent = shown + " of " + timeline.length + " events shown";
   }
   sevFilter.addEventListener("change", renderTimeline);
   srcFilter.addEventListener("change", renderTimeline);
@@ -225,7 +330,7 @@ const SCRIPT = `
     var min = Number(confSlider.value);
     confValue.textContent = min + "+";
     while (findingsRoot.firstChild) findingsRoot.removeChild(findingsRoot.firstChild);
-    var list = state.findings.filter(function (f) { return confidence(f) >= min; });
+    var list = findings.filter(function (f) { return confidence(f) >= min; });
     if (list.length === 0) {
       findingsRoot.appendChild(el("p", { class: "empty", text: "No findings at or above the selected confidence." }));
       return;
