@@ -230,9 +230,14 @@ const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
 const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
 const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
 
-// Exactly nine digits, not adjacent to another digit, a dot or a dash. The lookarounds keep this
-// out of longer runs (byte counts, ten-digit unix seconds) and out of dotted version strings.
-const NATID_RE = /(?<![\d.-])\d{9}(?![\d.-])/g;
+// Exactly nine digits, not adjacent to another digit, a dot, a dash, or an underscore. The
+// lookarounds keep this out of longer runs (byte counts, ten-digit unix seconds), dotted version
+// strings, AND snake_case identifiers — session_id_123456782, txn_123456782_archived and similar
+// underscore-glued session/request/ticket/backup IDs are routine in forensic text, so `_` is
+// excluded on BOTH sides for the same reason as `.`/`-`: a systematic false-positive source, not
+// a random one. The exclusion is symmetric because an identifier scheme that glues an ID onto a
+// preceding label with `_` is just as likely to glue a trailing qualifier on with `_` the same way.
+const NATID_RE = /(?<![\d._-])\d{9}(?![\d._-])/g;
 
 /** Israeli Teudat Zehut check digit: digits at odd indices are doubled, the decimal digits of
  *  each product are summed, and the total must be divisible by 10. Exported for the tests. */

@@ -203,9 +203,69 @@ describe("NATID detector", () => {
     expect(a.apply("build 4.123456782.9")).toContain("4.123456782.9");
   });
 
-  it("does not fire on ten-digit or thirteen-digit unix timestamps", () => {
+  // Real-world regression coverage: two actual current-epoch timestamps must stay untouched.
+  // NOTE: this assertion alone does NOT prove the lookaround guard is doing the rejecting — see
+  // the fix-4 report. For "1753564800" both embedded nine-digit substrings are check-digit
+  // INVALID, and for "1753564800123" the one embedded valid substring (offset 3) is never reached
+  // by a left-to-right non-overlapping scan because the invalid offset-0 substring is matched
+  // first and consumes through offset 9. So the checksum/scan mechanics alone would already leave
+  // this string untouched even with no lookaround at all. Kept as a real-world sanity check; the
+  // two tests below are the ones that actually isolate the lookaround.
+  it("does not fire on real-world ten-digit or thirteen-digit unix timestamps", () => {
     const a = createAnonymizer(policy({ NATID: true }), NONE);
-    expect(a.apply("ts 1753564800 and 1753564800123")).toContain("1753564800");
-    expect(a.apply("ts 1753564800 and 1753564800123")).toContain("1753564800123");
+    expect(a.apply("ts 1753564800 and 1753564800123")).toBe("ts 1753564800 and 1753564800123");
+  });
+
+  // Isolates the lookaround by construction: "123456782" (check-digit-valid, see israeliIdValid
+  // tests above) sits at offset 0 of a ten-digit run. A pure digit run's first regex match is
+  // always found at offset 0, so this substring IS reachable by a naive scan — unlike the
+  // real-world timestamp above. Only the trailing lookahead (blocked by the extra digit at
+  // index 9) keeps it from being tokenized. Verified by mutation in the fix-4 report: removing
+  // the lookaround from NATID_RE turns this into "ts [TOKEN]9 recorded".
+  it("does not fire on a ten-digit run whose reachable offset-0 substring is check-digit-valid", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("ts 1234567829 recorded")).toBe("ts 1234567829 recorded");
+  });
+
+  // Same construction for the thirteen-digit (millisecond) case. Offset 0 is the ONLY substring
+  // of a thirteen-digit run a left-to-right non-overlapping scan can ever reach (any other offset
+  // falls inside the span the first match already consumed), so putting the valid ID there is the
+  // only way to isolate the guard for this length at all. Verified by mutation in the fix-4
+  // report: removing the lookaround turns this into "ts [TOKEN]0000 recorded".
+  it("does not fire on a thirteen-digit run whose reachable offset-0 substring is check-digit-valid", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("ts 1234567820000 recorded")).toBe("ts 1234567820000 recorded");
+  });
+
+  // Fix (underscore lookbehind): session/request/ticket/backup IDs are routinely glued to a
+  // preceding label with an underscore in forensic text (session_id_..., txn_..., backup_...).
+  // Before this fix, "_" was not excluded by NATID_RE's lookbehind, so a check-digit-valid ID
+  // sitting right after one of these labels was wrongly tokenized.
+  it("does not fire when a leading underscore glues it to a snake_case identifier", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("session_id_123456782 recorded")).toBe("session_id_123456782 recorded");
+  });
+
+  // Symmetric fix: the trailing lookahead excludes "_" too, since the same identifier schemes
+  // just as often glue a qualifier onto the TRAILING side (txn_123456782_archived).
+  it("does not fire when a trailing underscore glues it to a snake_case qualifier", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("id 123456782_archived recorded")).toBe("id 123456782_archived recorded");
+  });
+
+  // Pins the boundary of the underscore fix: a genuine standalone ID immediately adjacent to
+  // ORDINARY punctuation (a label colon, parentheses) is still tokenized — only "_" (plus the
+  // pre-existing "\d", ".", "-") blocks the match, so a future widening of the exclusion set
+  // would be caught here.
+  it("still tokenizes a genuine ID immediately adjacent to punctuation", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    const out1 = a.apply("ID:123456782 recorded");
+    expect(out1).toBe("ID:ANON_NATID_1 recorded");
+    expect(a.restore(out1)).toBe("ID:123456782 recorded");
+
+    const b = createAnonymizer(policy({ NATID: true }), NONE);
+    const out2 = b.apply("subject (123456782) flagged");
+    expect(out2).toBe("subject (ANON_NATID_1) flagged");
+    expect(b.restore(out2)).toBe("subject (123456782) flagged");
   });
 });
