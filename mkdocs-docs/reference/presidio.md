@@ -42,15 +42,17 @@ The first time an AI call reaches a value Presidio has flagged that this case ha
 
 Either way, the panel lists each flagged value with two buttons:
 
-- **Approve** — the value joins the case's known entities. From then on it is tokenized like anything else the built-in anonymizer catches, and it is never asked about again.
-- **Not PII** — the value joins the suppression list instead. It is never tokenized and never asked about again — but note this only means an analyst judged it a false positive here, not that it's guaranteed harmless elsewhere.
+- **Hide from AI** — the value joins the case's known entities. From then on it is tokenized like anything else the built-in anonymizer catches, restored in the answer you see, and never asked about again.
+- **Leave visible — not PII** — the value joins the suppression list instead. It is never tokenized and never asked about again — but note this only means an analyst judged it a false positive here, not that it's guaranteed harmless elsewhere.
+
+    Both buttons name what happens to the *value*, deliberately. An earlier pair labelled **Approve** / **Not PII** was ambiguous in the one direction that matters: the gate is holding an AI call, so "Approve" reads naturally as "approve the send" — the exact opposite of what it does.
 
 Once every flagged value is resolved, re-run the action (or re-import the file) and it proceeds.
 
 ## Tuning
 
 - Getting flagged constantly on things that aren't PII? Raise `DFIR_PRESIDIO_MIN_SCORE`. The default of `0.6` already sits above the scores Presidio gives its weakest guesses. Only findings whose entity type is on the allow-list above ever reach you, so the floor is about *confidence*, not about which kinds of PII are considered.
-- One specific false positive, otherwise happy with the threshold? Use **Not PII** on that value rather than raising the global floor.
+- One specific false positive, otherwise happy with the threshold? Use **Leave visible — not PII** on that value rather than raising the global floor.
 
 ## Fail-closed behaviour
 

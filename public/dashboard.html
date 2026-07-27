@@ -1659,7 +1659,7 @@
     </button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI/OpenCTI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
-    <button id="presidioPendingBadge" type="button" style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to approve (mask) or mark as not PII. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
+    <button id="presidioPendingBadge" type="button" style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
@@ -10297,7 +10297,7 @@
               if (btn) btn.disabled = false;
               presidioPending = body.findings || [];
               renderPresidioPending();
-              document.getElementById("status").textContent = "second opinion held — Presidio found new value(s) to approve (see Anonymization)";
+              document.getElementById("status").textContent = "second opinion held — Presidio found new value(s) to review (see Anonymization)";
               return null;
             }
           }
@@ -11077,13 +11077,19 @@
       el.innerHTML =
         `<div style="margin-top:10px;padding:8px;border-radius:6px;background:var(--c-3a2a00);color:var(--c-ffcf66);font-size:12px">` +
         `<b>Presidio found ${presidioPending.length} new value(s) in this case.</b> ` +
-        `Approve to mask them from now on, or mark as not PII to stop being asked. ` +
+        `Decide each one: hide it from the AI from now on, or leave it visible because it isn't PII. ` +
         `The AI call was not sent — re-run it once you have resolved these.</div>` +
+        // Label the ACTION, not the verdict. "Approve" was ambiguous in the one direction that
+        // matters: the gate is holding an AI call, so "Approve" reads as "approve the send" —
+        // the exact opposite of what it does (it masks the value). "Not PII" then sounds like
+        // the same kind of affirmative. Both buttons now say what will happen to the value.
         presidioPending.map(e =>
           `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">` +
           `<code>${esc(e.value)}</code><span style="color:var(--c-9aa4b2);font-size:11px">${esc(e.category)}</span>` +
-          `<button data-presidio-approve="${escAttr(e.value)}" data-presidio-cat="${escAttr(e.category)}">Approve</button>` +
-          `<button data-presidio-suppress="${escAttr(e.value)}">Not PII</button>` +
+          `<button data-presidio-approve="${escAttr(e.value)}" data-presidio-cat="${escAttr(e.category)}" ` +
+          `title="Replace this value with a token before anything is sent to the AI. It is restored in the answer you see.">Hide from AI</button>` +
+          `<button data-presidio-suppress="${escAttr(e.value)}" ` +
+          `title="Leave this value visible to the AI. It won't be flagged again in this case.">Leave visible — not PII</button>` +
           `</div>`
         ).join("");
       el.querySelectorAll("[data-presidio-approve]").forEach(btn => btn.addEventListener("click", () => {
@@ -17620,7 +17626,7 @@
             if (body.error === "presidio_approval_required") {
               presidioPending = body.findings || [];
               renderPresidioPending();
-              document.getElementById("status").textContent = "synthesis held — Presidio found new value(s) to approve (see Anonymization)";
+              document.getElementById("status").textContent = "synthesis held — Presidio found new value(s) to review (see Anonymization)";
               return null;
             }
           }
