@@ -18740,12 +18740,22 @@
       fetch("/system/presidio-test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })
         .then(r => r.json())
         .then(body => {
-          if (body.error) { result.style.color = "#ff9f9f"; result.textContent = "✗ " + body.error; return; }
-          const findings = body.findings || [];
+          if (body.error) {
+            result.style.color = "#ff9f9f";
+            // Node's fetch reports a refused/unroutable host as the bare string "fetch failed",
+            // which reads as "Failed: fetch failed". Say what actually happened instead; any
+            // other error (HTTP status, non-JSON body) is already descriptive enough to show.
+            result.textContent = /^fetch failed$/i.test(body.error)
+              ? "✗ Failed — could not reach that URL"
+              : "✗ Failed: " + body.error;
+            return;
+          }
+          // Connected or failed, nothing else. The raw finding list this used to print was
+          // actively misleading: most of it is entity types the allow-list drops outright
+          // (URL, US_BANK_NUMBER, US_DRIVER_LICENSE), so it implied things get masked that
+          // never will, and mixed them in with the ones that do.
           result.style.color = "#5ad17a";
-          result.textContent = findings.length
-            ? "✓ found: " + findings.map(f => f.entityType + ": " + f.value + " (" + f.score.toFixed(2) + ")").join(", ")
-            : "✓ reachable — no findings on the sample text";
+          result.textContent = "✓ Connected";
         })
         .catch(e => { result.style.color = "#ff9f9f"; result.textContent = "Could not reach the server: " + e.message; });
     }

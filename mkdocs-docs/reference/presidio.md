@@ -29,7 +29,7 @@ This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`.
 | `DFIR_PRESIDIO_URL` | _(unset)_ | Base URL of the Presidio Analyzer, e.g. `http://localhost:5002`. Empty/unset = the layer is off and every code path around it is skipped. |
 | `DFIR_PRESIDIO_MIN_SCORE` | `0.6` | Confidence floor, 0–1. A blank or non-numeric value falls back to the default; anything outside `[0, 1]` is clamped rather than rejected. |
 
-Both are also editable in **Settings → AI → Presidio**, alongside a **Test connection** button: it sends a fixed, synthetic sample string (never anything from your case) through the currently-typed URL and shows the raw findings Presidio returns — entity type, matched value, and score — unfiltered by the confidence floor. That raw list is the practical way to decide where to set `DFIR_PRESIDIO_MIN_SCORE`.
+Both are also editable in **Settings → AI → Presidio**, alongside a **Test connection** button. It sends a fixed, synthetic sample string (never anything from your case) to the currently-typed URL and reports **Connected** or **Failed** with the reason — nothing more. It answers only "can the Companion reach this analyzer", which is the question you have when you're setting the URL.
 
 ## The approval flow
 
@@ -49,7 +49,7 @@ Once every flagged value is resolved, re-run the action (or re-import the file) 
 
 ## Tuning
 
-- Getting flagged constantly on things that aren't PII? Raise `DFIR_PRESIDIO_MIN_SCORE` — use the Test connection button's scores as a guide for where to set the floor for your data.
+- Getting flagged constantly on things that aren't PII? Raise `DFIR_PRESIDIO_MIN_SCORE`. The default of `0.6` already sits above the scores Presidio gives its weakest guesses. Only findings whose entity type is on the allow-list above ever reach you, so the floor is about *confidence*, not about which kinds of PII are considered.
 - One specific false positive, otherwise happy with the threshold? Use **Not PII** on that value rather than raising the global floor.
 
 ## Fail-closed behaviour
