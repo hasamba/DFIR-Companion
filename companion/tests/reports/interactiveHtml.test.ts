@@ -199,12 +199,12 @@ describe("renderInteractiveHtmlReport", () => {
       // Heavyweight per-event fields the table has no column for.
       message: "SECRET_SCRIPTBLOCK_TEXT",
       commandLine: "SECRET_COMMAND_LINE",
-      veloUrl: "https://velo.internal/SECRET_FLOW",
+      veloUrl: "https://velo.example.com/SECRET_FLOW",
     } as never);
     state.findings.push(finding("f1", "Critical", 90, "Beaconing"));
 
     // Internal analyst working notes carried elsewhere on the state.
-    state.iocExcludeRules.push({ id: "x1", kind: "domain", value: "corp.internal", note: "SECRET_EXCLUSION_RATIONALE" } as never);
+    state.iocExcludeRules.push({ id: "x1", kind: "domain", value: "corp.example.com", note: "SECRET_EXCLUSION_RATIONALE" } as never);
     state.openThreads.push({ id: "t1", description: "SECRET_OPEN_THREAD", status: "open", openedAt: "", closedAt: null } as never);
     state.keyQuestions.push("SECRET_KEY_QUESTION" as never);
     state.lastSummary = "SECRET_SUMMARY";
