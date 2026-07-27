@@ -259,6 +259,25 @@ describe("pushCaseToNotion", () => {
     expect(res.containerBlockId).not.toBe(container);
   });
 
+  it("#31: does NOT adopt a same-titled analyst toggle when the remembered container is gone (creates a fresh one instead)", async () => {
+    // An analyst has a toggle titled with the Companion container title containing their own notes.
+    // The store is lost (fresh install, store cleared). The previous code adopted that toggle by
+    // title and archived its children. The fix creates a fresh toggle instead.
+    const m = new MockNotion();
+    m.seedPage("page-1");
+    const containerTitle = "🔍 DFIR Companion — Auto-generated";
+    const analystToggle = m.seedBlock("page-1", "toggle", containerTitle);
+    m.seedBlock(analystToggle, "paragraph", "analyst's own note 1");
+    m.seedBlock(analystToggle, "paragraph", "analyst's own note 2");
+    const store = new MemStore(); // empty — remembered container is gone
+    const res = await pushCaseToNotion(m, { caseName: "c1", state: sampleState() }, { mode: "existing", pageId: "page-1" }, { exportedAt: AT, sleep: noop }, store);
+    // A fresh container was created, NOT the analyst's toggle.
+    expect(res.containerBlockId).not.toBe(analystToggle);
+    // The analyst's toggle + its children were NOT archived.
+    expect(m.blocks.get(analystToggle)!.archived).toBe(false);
+    expect(m.blocks.get(analystToggle)!.children.length).toBe(2);
+  });
+
   it("batches content into ≤100-block appends", async () => {
     const m = new MockNotion();
     const store = new MemStore();
