@@ -164,3 +164,55 @@ describe("analyzeRestored + Presidio", () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+// Three rows → three AI chunks at rowsPerBatch: 1. The payload stays far under the scan cap, so
+// the pre-scan is exactly one /analyze request.
+const THREE_ROW_CSV = [
+  "timestamp,host,message",
+  "2026-01-01T00:00:00Z,DC01.victim.local,logon by alice",
+  "2026-01-01T00:01:00Z,DC01.victim.local,logon by bob",
+  "2026-01-01T00:02:00Z,DC01.victim.local,logon by carol",
+].join("\n");
+
+function csvOpts() {
+  return { label: "evidence.csv", idPrefix: "t1", importedAt: "2026-01-01T00:00:00Z", rowsPerBatch: 1 };
+}
+
+describe("presidio import pre-scan", () => {
+  it("scans the whole payload once, not once per chunk", async () => {
+    const seen: string[] = [];
+    const { pipeline } = await makePipeline(stubClient([], seen));
+    await pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts());
+    expect(seen).toHaveLength(1);
+  });
+
+  it("scans MASKED text, so the known host never reaches Presidio", async () => {
+    const seen: string[] = [];
+    const { pipeline } = await makePipeline(stubClient([], seen));
+    await pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts());
+    expect(seen[0]).not.toContain("DC01.victim.local");
+    expect(seen[0]).toMatch(/ANON_HOST_1/);
+  });
+
+  it("rejects the whole import when the pre-scan finds a new value", async () => {
+    const { pipeline, presidioPendingStore } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
+    );
+    await expect(pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts()))
+      .rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect(await presidioPendingStore.load("c1")).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
+  });
+
+  it("splits a payload larger than the chunk size into multiple requests", async () => {
+    const seen: string[] = [];
+    const { pipeline } = await makePipeline(stubClient([], seen));
+    // Well over PRESIDIO_SCAN_CHUNK_BYTES (50_000) once the header is included.
+    const bigCsv = ["timestamp,host,message"]
+      .concat(Array.from({ length: 2000 }, (_, i) => `2026-01-01T00:00:00Z,DC01.victim.local,event ${i} padding padding`))
+      .join("\n");
+    await pipeline.analyzeCsv("c1", bigCsv, { ...csvOpts(), rowsPerBatch: 2000 });
+    expect(seen.length).toBeGreaterThan(1);
+    // Line-boundary splitting: no chunk may start mid-line.
+    for (const chunk of seen.slice(1)) expect(chunk.startsWith("2026")).toBe(true);
+  });
+});

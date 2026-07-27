@@ -6,8 +6,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
-import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type CustomEntity, type KnownEntities } from "./anonymize.js";
-import { mapFindings, PresidioApprovalRequired, type PresidioClient } from "./presidio.js";
+import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type Anonymizer, type CustomEntity, type KnownEntities } from "./anonymize.js";
+import { mapFindings, PresidioApprovalRequired, type PresidioClient, type PresidioFinding } from "./presidio.js";
 import type { PresidioPendingStore } from "./presidioPending.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
@@ -1732,6 +1732,7 @@ export class AnalysisPipeline {
     provider: AIProvider,
     req: AnalyzeRequest,
     label = "ai",
+    skipPresidioGate = false,
   ): Promise<unknown> {
     const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
     const policy = toAnonPolicy(control);
@@ -1827,7 +1828,10 @@ export class AnalysisPipeline {
     // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
     // username, email, SID or secret — only what our own detectors could not find.
     const maskedPrompt = anon.apply(req.userPrompt);
-    await this.presidioGate(caseId, maskedPrompt, known);
+    // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
+    // pass skipPresidioGate=true so the loop that calls this per-chunk doesn't re-gate (and
+    // re-approve) the same import one chunk at a time.
+    if (!skipPresidioGate) await this.presidioGate(caseId, maskedPrompt, known);
 
     const result = await provider.analyze({ ...req, userPrompt: maskedPrompt, images });
     this.logAiUsage(caseId, label, provider, result);
@@ -1880,6 +1884,103 @@ export class AnalysisPipeline {
     );
     await this.opts.presidioPendingStore?.save(caseId, fresh);
     throw new PresidioApprovalRequired(fresh);
+  }
+
+  // Presidio's /analyze cannot take an arbitrarily large body, and a big CSV would be many
+  // requests. These bound it. They are module constants rather than env vars to keep the
+  // settings surface small — the truncation is logged, so hitting the cap is visible.
+  private static readonly PRESIDIO_SCAN_CHUNK_BYTES = 50_000;
+  private static readonly PRESIDIO_SCAN_MAX_BYTES = 5_000_000;
+
+  /**
+   * Scan an entire import payload once, up front, instead of letting the chunk loop hit
+   * presidioGate repeatedly. analyzeCsv/analyzeLog call this before their batch loop starts, then
+   * pass skipPresidioGate=true into every analyzeRestored() call in that loop — so an import
+   * produces exactly ONE approval round trip, no matter how many chunks it is batched into.
+   *
+   * Fails CLOSED, same as presidioGate: an unreachable container throws rather than letting the
+   * import proceed unscanned.
+   */
+  private async presidioPreScan(caseId: string, text: string, known: KnownEntities, anon: Anonymizer): Promise<void> {
+    const presidio = this.opts.presidio;
+    if (!presidio) return;
+
+    // Mask FIRST, same as analyzeRestored — Presidio only ever sees already-scrubbed text.
+    const masked = anon.apply(text);
+    const budget = AnalysisPipeline.PRESIDIO_SCAN_MAX_BYTES;
+    const scanned = masked.length > budget ? masked.slice(0, budget) : masked;
+    if (masked.length > budget) {
+      // A silent partial scan is worse than no scan: an analyst who sees "import scanned, no PII
+      // found" must be able to trust that claim. Name the unscanned byte count so a truncated scan
+      // is never mistaken for a complete one.
+      this.log.warn(
+        `[presidio] import pre-scan truncated — ${masked.length - budget} byte(s) of this import ` +
+          `were NOT scanned for PII (cap is ${budget} bytes)`,
+        { caseId },
+      );
+    }
+
+    // Split on line boundaries so an entity is never cut in half across two /analyze requests.
+    const chunks: string[] = [];
+    let start = 0;
+    while (start < scanned.length) {
+      let end = Math.min(start + AnalysisPipeline.PRESIDIO_SCAN_CHUNK_BYTES, scanned.length);
+      if (end < scanned.length) {
+        const nl = scanned.lastIndexOf("\n", end);
+        if (nl > start) end = nl + 1;
+      }
+      chunks.push(scanned.slice(start, end));
+      start = end;
+    }
+
+    const all: PresidioFinding[] = [];
+    for (const chunk of chunks) {
+      try {
+        all.push(...(await presidio.client.analyze(chunk)));
+      } catch (err) {
+        throw new Error(
+          `Presidio is enabled but the scan at ${presidio.url} failed (not reachable, or returned ` +
+            `an unusable response): ${(err as Error).message}. Start the container or clear ` +
+            `DFIR_PRESIDIO_URL to disable the layer.`,
+        );
+      }
+    }
+
+    const found = mapFindings(all, presidio.minScore);
+    if (found.length === 0) return;
+
+    // Defensive lower-case on BOTH sides, same reasoning as presidioGate: known.suppressed is
+    // documented as pre-lowercased, but trusting that at a distance risks re-triggering approval
+    // forever on a value the analyst already vetoed.
+    const alreadyKnown = new Set<string>([
+      ...(known.custom ?? []).map((e) => e.value.toLowerCase()),
+      ...(known.suppressed ?? []).map((s) => s.toLowerCase()),
+    ]);
+    const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+    if (fresh.length === 0) return;
+
+    this.log.warn(`[presidio] import pre-scan found ${fresh.length} new PII value(s) needing approval`, { caseId });
+    await this.opts.presidioPendingStore?.save(caseId, fresh);
+    throw new PresidioApprovalRequired(fresh);
+  }
+
+  /**
+   * Build the same (known entities, anonymizer) pair analyzeRestored derives per call, so an
+   * import's pre-scan sees exactly the masked text the chunk loop would later produce. Returns
+   * null when anonymization is off case-wide (mirrors analyzeRestored's own early return for
+   * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
+   */
+  private async buildImportAnonContext(caseId: string, state: InvestigationState): Promise<{ known: KnownEntities; anon: Anonymizer } | null> {
+    const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
+    const policy = toAnonPolicy(control);
+    if (!policy.enabled) return null;
+    const known = deriveKnownEntities(state);
+    const custom = this.opts.customEntitiesStore ? await this.opts.customEntitiesStore.load(caseId) : [];
+    const disc = this.opts.discoveredStore ? await this.opts.discoveredStore.load(caseId) : { discovered: [], suppressed: [] };
+    known.custom = [...custom, ...disc.discovered];
+    known.suppressed = disc.suppressed;
+    const anon = createAnonymizer(policy, known);
+    return { known, anon };
   }
 
   // Accumulate this call's tokens/cost into the case's running AI-cost totals (Settings →
@@ -2017,6 +2118,14 @@ export class AnalysisPipeline {
       let state = await this.opts.stateStore.load(caseId);
       let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
+      // Scan the WHOLE import once, up front, instead of letting the per-chunk batches below hit
+      // presidioGate repeatedly (which would stall-approve-restart on a large CSV with names
+      // scattered through it). One approval round trip per import, not one per chunk.
+      if (this.opts.presidio) {
+        const importAnonCtx = await this.buildImportAnonContext(caseId, state);
+        if (importAnonCtx) await this.presidioPreScan(caseId, csvText, importAnonCtx.known, importAnonCtx.anon);
+      }
+
       // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
       // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
       // room for the system prompt + the state-summary that's prepended to every batch.
@@ -2034,7 +2143,8 @@ export class AnalysisPipeline {
           `Return the JSON delta.`;
 
         const delta = await this.withRetry(caseId, "csv", async () => {
-          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
+          // skipPresidioGate=true: the pre-scan above already covered this whole import.
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv", true);
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
@@ -2098,6 +2208,13 @@ export class AnalysisPipeline {
       let state = await this.opts.stateStore.load(caseId);
       let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
+      // Scan the WHOLE import once, up front — see analyzeCsv for why this must precede the
+      // per-pattern batch loop below rather than living inside it.
+      if (this.opts.presidio) {
+        const importAnonCtx = await this.buildImportAnonContext(caseId, state);
+        if (importAnonCtx) await this.presidioPreScan(caseId, logText, importAnonCtx.known, importAnonCtx.anon);
+      }
+
       // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
       // examples shouldn't form a prompt that overflows the model context.
       const renderPattern = (t: typeof templates[number]) =>
@@ -2124,7 +2241,8 @@ export class AnalysisPipeline {
           `Return the JSON delta.`;
 
         const delta = await this.withRetry(caseId, "log", async () => {
-          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
+          // skipPresidioGate=true: the pre-scan above already covered this whole import.
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log", true);
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
