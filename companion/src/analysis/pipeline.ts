@@ -1565,6 +1565,12 @@ export interface PipelineOptions {
   presidio?: { client: PresidioClient; url: string; minScore: number };
   // Holds findings awaiting analyst approval across the 409 round trip.
   presidioPendingStore?: PresidioPendingStore;
+  // TEST-ONLY override for the import pre-scan's character-count caps (see
+  // AnalysisPipeline.presidioPreScan). Production code never sets this — the real caps are the
+  // PRESIDIO_SCAN_CHUNK_CHARS / PRESIDIO_SCAN_MAX_CHARS constants. Exists so a test can force the
+  // truncation-warning path (masked text exceeding the cap) without generating megabytes of
+  // synthetic text.
+  presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
   // Shared leveled logger. Absent → a console-only logger at DFIR_LOG_LEVEL (used by CLI scripts
   // and tests). The server passes its file-backed logger so AI/OCR/anon traces land in the case log.
   logger?: Logger;
@@ -1889,8 +1895,16 @@ export class AnalysisPipeline {
   // Presidio's /analyze cannot take an arbitrarily large body, and a big CSV would be many
   // requests. These bound it. They are module constants rather than env vars to keep the
   // settings surface small — the truncation is logged, so hitting the cap is visible.
-  private static readonly PRESIDIO_SCAN_CHUNK_BYTES = 50_000;
-  private static readonly PRESIDIO_SCAN_MAX_BYTES = 5_000_000;
+  //
+  // NAMED "_CHARS", NOT "_BYTES": both are compared against JS string .length, which counts
+  // UTF-16 code units, not UTF-8 bytes. For non-ASCII PII (Hebrew, Cyrillic, accented names —
+  // all plausible in a DFIR case) that undercounts real UTF-8 size by up to ~3-4x, so the
+  // effective request-size cap is larger than a "_BYTES" name would imply. Left as a rough
+  // request-size bound rather than switched to a real byte measure (e.g. Buffer.byteLength)
+  // because the cap only needs to keep /analyze requests reasonably sized, not hit an exact
+  // number — and the split/truncate arithmetic below is unit-tested against character counts.
+  private static readonly PRESIDIO_SCAN_CHUNK_CHARS = 50_000;
+  private static readonly PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
 
   /**
    * Scan an entire import payload once, up front, instead of letting the chunk loop hit
@@ -1905,17 +1919,22 @@ export class AnalysisPipeline {
     const presidio = this.opts.presidio;
     if (!presidio) return;
 
+    // TEST-ONLY seam (see PipelineOptions.presidioScanCapsOverride) so a test can force the
+    // truncation path with a tiny budget instead of generating megabytes of synthetic text.
+    // Production never sets this; the caps default to the real, class-wide constants.
+    const chunkChars = this.opts.presidioScanCapsOverride?.chunkChars ?? AnalysisPipeline.PRESIDIO_SCAN_CHUNK_CHARS;
+    const maxChars = this.opts.presidioScanCapsOverride?.maxChars ?? AnalysisPipeline.PRESIDIO_SCAN_MAX_CHARS;
+
     // Mask FIRST, same as analyzeRestored — Presidio only ever sees already-scrubbed text.
     const masked = anon.apply(text);
-    const budget = AnalysisPipeline.PRESIDIO_SCAN_MAX_BYTES;
-    const scanned = masked.length > budget ? masked.slice(0, budget) : masked;
-    if (masked.length > budget) {
+    const scanned = masked.length > maxChars ? masked.slice(0, maxChars) : masked;
+    if (masked.length > maxChars) {
       // A silent partial scan is worse than no scan: an analyst who sees "import scanned, no PII
-      // found" must be able to trust that claim. Name the unscanned byte count so a truncated scan
-      // is never mistaken for a complete one.
+      // found" must be able to trust that claim. Name the unscanned character count so a
+      // truncated scan is never mistaken for a complete one.
       this.log.warn(
-        `[presidio] import pre-scan truncated — ${masked.length - budget} byte(s) of this import ` +
-          `were NOT scanned for PII (cap is ${budget} bytes)`,
+        `[presidio] import pre-scan truncated — ${masked.length - maxChars} character(s) of this ` +
+          `import were NOT scanned for PII (cap is ${maxChars} characters)`,
         { caseId },
       );
     }
@@ -1924,7 +1943,7 @@ export class AnalysisPipeline {
     const chunks: string[] = [];
     let start = 0;
     while (start < scanned.length) {
-      let end = Math.min(start + AnalysisPipeline.PRESIDIO_SCAN_CHUNK_BYTES, scanned.length);
+      let end = Math.min(start + chunkChars, scanned.length);
       if (end < scanned.length) {
         const nl = scanned.lastIndexOf("\n", end);
         if (nl > start) end = nl + 1;

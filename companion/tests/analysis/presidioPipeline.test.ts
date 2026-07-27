@@ -13,6 +13,7 @@ import { PresidioApprovalRequired, type PresidioClient, type PresidioFinding } f
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import type { CustomEntity } from "../../src/analysis/anonymize.js";
 import type { CaptureMetadata } from "../../src/types.js";
+import type { Logger } from "../../src/logging/logger.js";
 
 // End-to-end coverage of the Presidio gate GLUE in analyzeRestored (the chokepoint all 27 AI call
 // sites funnel through). Presidio runs AFTER the local anonymizer on already-masked text, so this
@@ -57,6 +58,10 @@ async function makePipeline(
   discovered: CustomEntity[] = [],
   host = "DC01.victim.local",
   discoveredStoreOverride?: DiscoveredEntitiesStore,
+  // Test-only extras layered onto the pipeline's options — currently used only by the
+  // truncation-warning test, which needs a tiny presidioScanCapsOverride and a logger it can
+  // inspect. Optional and additive so every existing call site is unaffected.
+  extraOptions: { presidioScanCapsOverride?: { chunkChars: number; maxChars: number }; logger?: Logger } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-presidiopipe-"));
   const cases = new CaseStore(root);
@@ -81,8 +86,25 @@ async function makePipeline(
     presidioPendingStore,
     presidio: { client, url: "http://localhost:5002", minScore: 0.6 },
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/png" }),
+    ...extraOptions,
   });
   return { pipeline, presidioPendingStore, discoveredStore };
+}
+
+// A Logger stub that captures warn() calls verbatim (message text only — no console/file I/O),
+// so a test can assert on the EXACT wording of a warning rather than just "something logged".
+function capturingLogger(): { logger: Logger; warnings: string[] } {
+  const warnings: string[] = [];
+  const logger: Logger = {
+    debug: () => {},
+    info: () => {},
+    warn: (message) => { warnings.push(message); },
+    error: () => {},
+    getLevel: () => "debug",
+    setLevel: () => {},
+    close: async () => {},
+  };
+  return { logger, warnings };
 }
 
 // A fake DiscoveredEntitiesStore that returns `suppressed` values EXACTLY as given — bypassing the
@@ -206,7 +228,7 @@ describe("presidio import pre-scan", () => {
   it("splits a payload larger than the chunk size into multiple requests", async () => {
     const seen: string[] = [];
     const { pipeline } = await makePipeline(stubClient([], seen));
-    // Well over PRESIDIO_SCAN_CHUNK_BYTES (50_000) once the header is included.
+    // Well over PRESIDIO_SCAN_CHUNK_CHARS (50_000) once the header is included.
     const bigCsv = ["timestamp,host,message"]
       .concat(Array.from({ length: 2000 }, (_, i) => `2026-01-01T00:00:00Z,DC01.victim.local,event ${i} padding padding`))
       .join("\n");
@@ -214,5 +236,47 @@ describe("presidio import pre-scan", () => {
     expect(seen.length).toBeGreaterThan(1);
     // Line-boundary splitting: no chunk may start mid-line.
     for (const chunk of seen.slice(1)) expect(chunk.startsWith("2026")).toBe(true);
+  });
+
+  // A silent partial scan is worse than no scan (#10 constraint): when the payload exceeds the
+  // total-scan cap, the truncation must announce itself with the EXACT unscanned count. Real caps
+  // are 50_000 / 5_000_000 characters — generating megabytes of synthetic text just to cross that
+  // would be wasteful, so this test injects a tiny presidioScanCapsOverride via a real
+  // AnalysisPipelineOptions field (production never sets it) instead.
+  it("logs a warning naming the exact unscanned character count when the payload exceeds the cap", async () => {
+    const { logger, warnings } = capturingLogger();
+    const seen: string[] = [];
+    const maxChars = 200;
+    const chunkChars = 80;
+    // "TESTHOST" (no dot) derives no internal domain, and never appears in the filler rows below,
+    // so anon.apply() is a no-op on this payload — masked.length is exactly csvText.length, which
+    // makes "the correct unscanned count" independently verifiable in the assertion below rather
+    // than merely re-deriving whatever the implementation computed.
+    const { pipeline } = await makePipeline(
+      stubClient([], seen),
+      [],
+      "TESTHOST",
+      undefined,
+      { presidioScanCapsOverride: { chunkChars, maxChars }, logger },
+    );
+
+    const header = "id,note";
+    const rows = Array.from({ length: 40 }, (_, i) => `${i},filler data row ${i} more padding text here`);
+    const csvText = [header, ...rows].join("\n");
+    expect(csvText.length).toBeGreaterThan(maxChars); // sanity: this payload must actually cross the cap
+
+    await pipeline.analyzeCsv("c1", csvText, {
+      label: "big.csv", idPrefix: "t2", importedAt: "2026-01-01T00:00:00Z", rowsPerBatch: 1000,
+    });
+
+    const expectedUnscanned = csvText.length - maxChars;
+    const warning = warnings.find((w) => w.includes("pre-scan truncated"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain(`${expectedUnscanned} character(s)`);
+    expect(warning).toContain(`cap is ${maxChars} characters`);
+
+    // The truncation is real, not just logged: what actually reached Presidio never exceeds the cap.
+    const totalSent = seen.reduce((n, c) => n + c.length, 0);
+    expect(totalSent).toBeLessThanOrEqual(maxChars);
   });
 });
