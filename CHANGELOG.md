@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Compliance Impact in the dashboard and the report** (#336) — the regulatory mapping added in #234 now has a UI: a dashboard panel and a report section, both carrying the not-legal-advice disclaimer and the framework editions. Set an incident-discovery date to get notification countdowns (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K Item 1.05 four business days, weekends skipped); control cadences never show one. Per-case framework filter so a healthcare org can drop PCI noise.
+
+### Changed
+- **The Executive Brief report template now includes Compliance Impact** — the C-suite deliverable is where "are we obligated to report this?" gets asked. Toggle it off per template if you don't want it.
+
+### Added
 - **Regulatory / compliance mapping for confirmed findings** (#234) — `GET /cases/:id/compliance` maps each confirmed finding's ATT&CK techniques to control failures and obligations across NIST 800-53 Rev. 5, PCI-DSS v4.0, HIPAA, GDPR, SEC, and ISO 27001:2022, with real breach-notification clocks (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K Item 1.05 four business days) and a not-legal-advice disclaimer in every response.
 
 ### Security

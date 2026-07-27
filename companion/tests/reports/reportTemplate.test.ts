@@ -94,13 +94,17 @@ describe("built-in templates", () => {
     expect(orderedEnabledSections(std)).toEqual([...ALL_SECTION_KEYS]); // all on, canonical order
   });
 
-  it("executive-brief enables only cover, summary, BIA, and conclusions", () => {
+  it("executive-brief enables cover, summary, BIA, conclusions and compliance impact", () => {
     const brief = BUILT_IN_REPORT_TEMPLATES.find((t) => t.id === "executive-brief")!;
+    // Compliance Impact is on here deliberately (#336): issue #234's motivating scenario is "the
+    // CEO asks: are we obligated to report this under GDPR/HIPAA/SEC?", and this is the C-suite
+    // deliverable that question lands on. It is the one built-in whose output this widened.
     expect(orderedEnabledSections(brief)).toEqual([
       "titlePage",
       "executiveSummary",
       "businessImpact",
       "conclusions",
+      "compliance",
     ]);
   });
 });

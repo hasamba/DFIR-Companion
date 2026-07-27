@@ -121,6 +121,7 @@ import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { CustodyStore } from "./analysis/custody.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
+import { ComplianceControlStore } from "./analysis/complianceControl.js";
 import { PlaybookStore } from "./analysis/playbookStore.js";
 import { type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
@@ -360,6 +361,10 @@ export interface AppOptions {
   // is removed from state, only the dashboard's findings list defaults to this floor.
   confidenceControlStore?: ConfidenceControlStore;
   onConfidenceControl?: (caseId: string) => void;
+  // Per-case compliance-view settings (#336): the analyst-set incident-discovery date the
+  // notification clocks run from, and which frameworks to show. Both are inputs the ATT&CK ->
+  // obligation mapping cannot derive on its own — see analysis/complianceControl.ts.
+  complianceControlStore?: ComplianceControlStore;
   // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
   // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
   // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
@@ -3398,6 +3403,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
   const confidenceControlStore = new ConfidenceControlStore(store);
+  const complianceControlStore = new ComplianceControlStore(store);
   const playbookStore = new PlaybookStore(store);
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
@@ -3430,6 +3436,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     synthMeta: synthMetaStore,
     lateralPathDismissals: lateralPathDismissStore,
     reportVersions: reportVersionStore,
+    complianceControl: complianceControlStore,
   });
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
@@ -3554,6 +3561,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     custodyStore,
     confidenceControlStore,
     onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
+    complianceControlStore,
     playbookStore,
     playbookHuntStore,
     playbookControlStore,

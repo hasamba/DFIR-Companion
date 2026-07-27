@@ -4416,6 +4416,44 @@
       #sec-d3fend .d3f-cover:hover{text-decoration:underline}
       #sec-d3fend .d3f-cover-more{color:var(--c-9aa4b2);font-size:10px;cursor:help}
     </style>
+    <section id="sec-compliance" style="grid-column: 1 / -1"><h2>Compliance Impact<span class="ev-sub">control failures &amp; regulatory obligations for this case's CONFIRMED findings — offline, no AI, not legal advice</span></h2>
+      <div id="complianceControls" class="cmp-controls">
+        <label class="cmp-ctl-label" for="complianceDiscovered">Incident discovery date</label>
+        <input id="complianceDiscovered" type="date" data-act="setComplianceDiscovered" data-act-on="change" title="The date notification clocks are counted from. Each obligation's clock actually starts on its own legal trigger (awareness, discovery, a materiality determination) — set this to the date your counsel is working from.">
+        <button id="complianceDiscoveredClear" type="button" data-act="clearComplianceDiscovered" title="Clear the date and switch every countdown off">clear</button>
+        <span id="complianceDiscoveredHint" class="cmp-ctl-hint"></span>
+      </div>
+      <div id="complianceFilter" class="cmp-filter"></div>
+      <div id="compliancePanel">—</div></section>
+    <style>
+      #sec-compliance .cmp-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+      #sec-compliance .cmp-ctl-label{color:var(--c-9aa4b2);font-size:11px}
+      #sec-compliance #complianceDiscovered{background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:4px;color:var(--c-c9d1db);font-size:11px;padding:2px 6px}
+      #sec-compliance #complianceDiscoveredClear{background:transparent;border:1px solid var(--c-232a33);border-radius:4px;color:var(--c-9aa4b2);font-size:11px;padding:1px 8px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-compliance .cmp-ctl-hint{color:var(--c-9aa4b2);font-size:11px;font-style:italic}
+      #sec-compliance .cmp-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+      #sec-compliance .cmp-fw{display:inline-flex;align-items:center;gap:4px;color:var(--c-9aa4b2);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:1px 6px;cursor:pointer}
+      #sec-compliance .cmp-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px;line-height:1.45}
+      #sec-compliance .cmp-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:10px}
+      #sec-compliance .cmp-empty{color:var(--c-9aa4b2)}
+      #sec-compliance .cmp-tech{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6aa9ff);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+      #sec-compliance .cmp-tech-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+      #sec-compliance .cmp-tech-id{color:var(--c-6aa9ff);font-weight:bold;font-size:12px;text-decoration:none}
+      #sec-compliance .cmp-tech-id:hover{text-decoration:underline}
+      #sec-compliance .cmp-tech-finding{color:var(--c-9aa4b2);font-size:11px}
+      #sec-compliance .cmp-fw-group{margin:6px 0 0}
+      #sec-compliance .cmp-fw-h{color:var(--c-d6deea);font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
+      #sec-compliance .cmp-row{padding:3px 0 3px 8px;border-left:1px solid var(--c-232a33);margin-bottom:3px}
+      #sec-compliance .cmp-ctrl{color:var(--c-ff9f43);font-weight:bold;font-size:12px}
+      #sec-compliance .cmp-title{color:var(--c-c9d1db);font-size:11px}
+      #sec-compliance .cmp-obl{color:var(--c-9aa4b2);font-size:11px;line-height:1.45;margin-top:1px}
+      #sec-compliance .cmp-clock{font-size:11px;margin-top:2px;color:var(--c-9aa4b2)}
+      #sec-compliance .cmp-due{border-radius:3px;padding:0 5px;font-size:10px;font-weight:bold;margin-right:5px}
+      #sec-compliance .cmp-due-overdue{background:var(--c-3a1a1a);border:1px solid var(--c-5a2a2a);color:var(--c-ff6b6b)}
+      #sec-compliance .cmp-due-soon{background:var(--c-3a2a00);border:1px solid var(--c-7a5d1e);color:var(--c-ffb454)}
+      #sec-compliance .cmp-due-open{background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);color:var(--c-6bcb77)}
+      #sec-compliance .cmp-editions{color:var(--c-9aa4b2);font-size:10px;margin-top:8px;font-style:italic}
+    </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
       #sec-velohunts .vhs-empty{color:var(--c-9aa4b2);font-size:12px}
@@ -10768,7 +10806,7 @@
           scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
           scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
           scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
-          scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
+          scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
           scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
           loadSuperTimeline(caseId);
         })
@@ -12818,6 +12856,130 @@
         `</div>`;
       })() : "";
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
+    }
+
+    // ── Compliance Impact (#234 / #336) — control failures & regulatory obligations ─────────────
+    // Derived server-side from the case's CONFIRMED findings; offline, no AI. Two rules this
+    // renderer exists to keep:
+    //   - the "not legal advice" disclaimer and the framework editions render WITH the mapping,
+    //     never as a tooltip or a separate page. A control-failure list without them reads as a
+    //     compliance verdict.
+    //   - a countdown appears only where the API returned a real `deadline`. Rows with no
+    //     notification clock (control cadences: back up, train, review) get none, and nothing is
+    //     computed at all until the analyst sets a discovery date, because every clock starts on a
+    //     legal determination rather than on a forensic timestamp.
+    let complianceData = null;
+    function loadCompliance(caseId) {
+      fetch(`/cases/${caseId}/compliance`).then(r => r.ok ? r.json() : null).then(d => {
+        complianceData = (d && typeof d === "object" && Array.isArray(d.results)) ? d : null;
+        renderCompliance();
+      }).catch(() => {});
+    }
+    let complianceTimer = null;
+    function scheduleComplianceReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(complianceTimer);
+      complianceTimer = setTimeout(() => loadCompliance(caseId), 800);
+    }
+    function patchComplianceControl(patch) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/compliance/control`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      }).then(r => r.ok ? r.json() : null).then(() => loadCompliance(caseId)).catch(() => {});
+    }
+    function setComplianceDiscovered(el) {
+      // <input type="date"> gives "YYYY-MM-DD"; send it as an explicit UTC instant so the stored
+      // value does not shift by a day depending on the viewer's timezone.
+      const v = (el.value || "").trim();
+      patchComplianceControl({ discoveredAt: v ? `${v}T00:00:00.000Z` : null });
+    }
+    function clearComplianceDiscovered() {
+      const input = document.getElementById("complianceDiscovered");
+      if (input) input.value = "";
+      patchComplianceControl({ discoveredAt: null });
+    }
+    function toggleComplianceFramework() {
+      const boxes = [...document.querySelectorAll("#complianceFilter input[type=checkbox]")];
+      const checked = boxes.filter(b => b.checked).map(b => b.dataset.fw);
+      // All boxes ticked === no filter at all (null), so the case does not carry a stale explicit
+      // list that would silently hide a framework added to the dataset later.
+      patchComplianceControl({ frameworks: checked.length === boxes.length ? null : checked });
+    }
+    function renderComplianceFilter(d) {
+      const el = document.getElementById("complianceFilter");
+      if (!el) return;
+      const all = d.availableFrameworks || [];
+      if (!all.length) { el.innerHTML = ""; return; }
+      const active = Array.isArray(d.frameworks) ? new Set(d.frameworks) : null;
+      el.innerHTML = `<span class="cmp-ctl-label">Frameworks</span>` + all.map(f =>
+        `<label class="cmp-fw"><input type="checkbox" data-act="toggleComplianceFramework" data-act-on="change" data-fw="${escAttr(f)}"${!active || active.has(f) ? " checked" : ""}>${esc(f)}</label>`
+      ).join("");
+    }
+    function complianceDueBadge(deadline) {
+      if (!deadline) return "";
+      const cls = deadline.status === "overdue" ? "cmp-due-overdue"
+        : deadline.status === "due-soon" ? "cmp-due-soon" : "cmp-due-open";
+      const label = deadline.status === "overdue" ? "OVERDUE"
+        : `${esc(deadline.remainingDays)}d left`;
+      return `<span class="cmp-due ${cls}">${label}</span> due ${esc(String(deadline.dueAt).slice(0, 10))}`;
+    }
+    function renderCompliance() {
+      const el = document.getElementById("compliancePanel");
+      if (!el) return;
+      const d = complianceData;
+      if (!d) { el.innerHTML = `<div class="cmp-empty">—</div>`; return; }
+
+      renderComplianceFilter(d);
+      const input = document.getElementById("complianceDiscovered");
+      if (input && d.discoveredAt) input.value = String(d.discoveredAt).slice(0, 10);
+      const hint = document.getElementById("complianceDiscoveredHint");
+      if (hint) {
+        hint.textContent = d.discoveredAt
+          ? "each clock starts on its own legal trigger — confirm the real start date with counsel"
+          : "set a date to compute notification deadlines";
+      }
+
+      // The disclaimer leads, always — before a single obligation.
+      const caveat = d.disclaimer ? `<div class="cmp-caveat">⚖️ ${esc(d.disclaimer)}</div>` : "";
+      const editions = d.frameworkVersions
+        ? `<div class="cmp-editions">Control identifiers drawn from: ${Object.entries(d.frameworkVersions).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(" · ")}</div>`
+        : "";
+
+      if (!d.results.length) {
+        el.innerHTML = caveat + `<div class="cmp-empty">No confirmed finding maps to a control failure in the bundled mapping.</div>` + editions;
+        return;
+      }
+
+      const clocks = d.results.reduce((n, r) => n + r.frameworks.filter(f => f.notification).length, 0);
+      const meta = `<div class="cmp-meta">${esc(d.results.length)} technique instance(s) with mapped obligations · ${esc(clocks)} notification obligation(s)${d.discoveredAt ? "" : " (no deadlines computed — no discovery date set)"}</div>`;
+
+      const cards = d.results.map(r => {
+        const u = attackUrl(r.technique);
+        const id = u
+          ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="cmp-tech-id">${esc(r.technique)}</a>`
+          : `<span class="cmp-tech-id">${esc(r.technique)}</span>`;
+        const groups = new Map();
+        for (const row of r.frameworks) {
+          const key = String(row.framework);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(row);
+        }
+        const body = [...groups.entries()].map(([fw, rows]) => {
+          const items = rows.map(row => {
+            const clock = row.notification
+              ? `<div class="cmp-clock">${complianceDueBadge(row.deadline)}${row.deadline ? " · " : ""}${esc(row.notification.within)} ${row.notification.unit === "business" ? "business days" : "calendar time"}, from ${esc(row.notification.from)}</div>`
+              : "";
+            return `<div class="cmp-row"><span class="cmp-ctrl">${esc(row.control)}</span> <span class="cmp-title">${esc(row.title)}</span><div class="cmp-obl">${esc(row.obligation)}</div>${clock}</div>`;
+          }).join("");
+          return `<div class="cmp-fw-group"><div class="cmp-fw-h">${esc(fw)}</div>${items}</div>`;
+        }).join("");
+        return `<div class="cmp-tech"><div class="cmp-tech-h">${id}<span class="cmp-tech-finding">finding ${esc(r.findingId)}</span></div>${body}</div>`;
+      }).join("");
+
+      el.innerHTML = caveat + meta + cards + editions;
     }
 
     // ── ATT&CK Mitigations (#178) — the concrete "what to do" layer above D3FEND ───────────────
@@ -15870,6 +16032,7 @@
       loadHostRanking(caseId);
       loadD3fend(caseId);
       loadAttackMitigations(caseId);
+      loadCompliance(caseId);
       loadGeoMap(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
@@ -15965,7 +16128,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -18329,6 +18492,10 @@
         const g = document.getElementById("sec-gaps");
         if (g) g.scrollIntoView({ behavior: "smooth" });
       },
+      // Compliance Impact (#336)
+      setComplianceDiscovered:    (el) => setComplianceDiscovered(el),
+      clearComplianceDiscovered:  (el) => clearComplianceDiscovered(),
+      toggleComplianceFramework:  (el) => toggleComplianceFramework(),
       // Forms that never navigate (were an inline onsubmit returning false)
       noSubmit:                   (el, e) => e.preventDefault(),
     };
@@ -18396,6 +18563,7 @@
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
+      { id: "sec-compliance",   label: "Compliance Impact" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-source-trust", label: "Source Trust" },
