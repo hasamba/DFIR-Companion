@@ -32,23 +32,6 @@ regexes = [
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
 ]
 
-# Superseded fixture hostnames in the interactive-report confidentiality test. The test asserts that
-# analyst-private state never reaches the embedded blob, and its first version used `velo.internal`
-# and `corp.internal` as the sample values. The working tree now uses example.com instead, so these
-# appear in NO current file — but `betterleaks git .` scans every reachable commit's patch, so the
-# original patch in 9286c2d3 keeps matching. Scoped to that one test path and that one rule, so a
-# genuinely-new internal FQDN anywhere else still fails the scan.
-#
-# Delete this block only when 9286c2d3 is no longer reachable (e.g. after a squash-merge to master).
-[[allowlists]]
-description = "Superseded internal-hostname fixtures in interactiveHtml.test.ts patch history"
-targetRules = ["internal-hostname"]
-paths = ['''companion/tests/reports/interactiveHtml\.test\.ts''']
-regexTarget = "line"
-regexes = [
-  '''(?i)\b(?:velo|corp)\.internal\b''',
-]
-
 # The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe
 # TEST-mode key with "Fake" in the name, the canonical AWS docs example key, a fake JWT, and a false
 # match on Windows Event-ID tradecraft prose. Allowlist those exact fixtures; a real leaked key still fails.
