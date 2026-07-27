@@ -1,0 +1,109 @@
+{
+  "source": "Curated ATT&CK -> control-failure + regulatory-obligation mappings",
+  "note": "Best-effort technical mapping of MITRE ATT&CK techniques to control failures and compliance obligations. This is NOT legal advice and NOT a compliance determination. Whether an obligation is actually triggered depends on what data was involved, which regulators you answer to, and a materiality/risk assessment only your legal counsel can make. Every notification clock below starts on a legal determination (awareness, discovery, materiality) that counsel makes, not on the timestamp of a forensic finding. Confirm every row with counsel or your auditor before acting on it.",
+  "generated": "2026-07-27",
+  "frameworkVersions": {
+    "NIST 800-53": "Rev. 5",
+    "PCI-DSS": "v4.0",
+    "HIPAA": "45 CFR Parts 160/164 (Security Rule + Breach Notification Rule)",
+    "GDPR": "Regulation (EU) 2016/679",
+    "SEC": "17 CFR (Reg S-K Item 106, Form 8-K Item 1.05, Reg S-P 248.30, Exchange Act Rule 17a-4)",
+    "ISO 27001": "ISO/IEC 27001:2022 Annex A"
+  },
+  "map": {
+    "T1566.001": [
+      { "framework": "NIST 800-53", "control": "AT-2", "title": "Literacy Training and Awareness", "obligation": "Workforce security-awareness training must cover recognizing and reporting spearphishing. A successful phishing-borne intrusion is evidence to review against this control." },
+      { "framework": "NIST 800-53", "control": "SI-4", "title": "System Monitoring", "obligation": "Inbound email must be monitored for malicious attachments and links, with alerting on detection." },
+      { "framework": "PCI-DSS", "control": "5.4.1", "title": "Anti-phishing mechanisms protect users against phishing attacks", "obligation": "Processes and automated mechanisms must be in place to detect and protect personnel against phishing attacks." },
+      { "framework": "PCI-DSS", "control": "12.6.3", "title": "Security awareness training is provided to all personnel", "obligation": "Personnel must receive security awareness training covering threats such as phishing, and acknowledge the security policy and procedures." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(A)", "title": "Security reminders", "obligation": "The security awareness and training program must include periodic security updates covering phishing." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Appropriate technical and organisational measures must protect the confidentiality of personal data reachable through compromised mailboxes." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a) (Reg S-P)", "title": "Safeguard rule", "obligation": "Written policies and procedures must be reasonably designed to protect customer records and information against phishing-borne unauthorized access." },
+      { "framework": "ISO 27001", "control": "A.6.3", "title": "Information security awareness, education and training", "obligation": "Personnel must receive awareness training appropriate to their role, including current threats such as phishing." }
+    ],
+    "T1059.001": [
+      { "framework": "NIST 800-53", "control": "SI-3", "title": "Malicious Code Protection", "obligation": "Malicious code protection must detect and contain script-based execution, including PowerShell used to stage or run payloads." },
+      { "framework": "NIST 800-53", "control": "AU-2", "title": "Event Logging", "obligation": "PowerShell script-block logging (EID 4104) and module/command logging (EID 4103) must be among the events selected for logging." },
+      { "framework": "PCI-DSS", "control": "7.2.2", "title": "Access to system components and data is appropriately defined and assigned", "obligation": "Access must be assigned based on least privilege, restricting who can run administrative scripting on in-scope systems." },
+      { "framework": "HIPAA", "control": "164.312(b)", "title": "Audit controls", "obligation": "Audit controls must record script-driven activity on systems containing ePHI." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Measures must detect and limit unauthorised automated processing of personal data via unapproved scripting." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a) (Reg S-P)", "title": "Safeguard rule", "obligation": "Safeguards must address script-based access to, and extraction of, customer records and information." },
+      { "framework": "ISO 27001", "control": "A.8.18", "title": "Use of privileged utility programs", "obligation": "Use of utility programs capable of overriding system controls must be restricted and tightly monitored." }
+    ],
+    "T1003.001": [
+      { "framework": "NIST 800-53", "control": "AC-3", "title": "Access Enforcement", "obligation": "Access enforcement must prevent unauthorized processes from reading LSASS memory." },
+      { "framework": "NIST 800-53", "control": "IA-5", "title": "Authenticator Management", "obligation": "Authenticators exposed by a credential dump must be treated as compromised and rotated." },
+      { "framework": "NIST 800-53", "control": "SI-4", "title": "System Monitoring", "obligation": "LSASS access by non-system processes must be detected and alerted on." },
+      { "framework": "PCI-DSS", "control": "7.2.2", "title": "Access to system components and data is appropriately defined and assigned", "obligation": "Least-privilege assignment must prevent non-administrative accounts from reaching credential material in memory." },
+      { "framework": "HIPAA", "control": "164.312(d)", "title": "Person or entity authentication", "obligation": "Authentication controls protecting ePHI are undermined by dumped credentials; verify and rotate affected accounts." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Credentials that grant access to personal data must be protected against extraction, and rotated once exposed." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a)(4) (Reg S-P)", "title": "Customer notification", "obligation": "If dumped credentials gave unauthorized access to customer information, affected individuals must be notified.", "notification": { "within": "P30D", "unit": "calendar", "from": "becoming aware that unauthorized access to or use of customer information has occurred or is reasonably likely to have occurred" } },
+      { "framework": "ISO 27001", "control": "A.5.17", "title": "Authentication information", "obligation": "Authentication information must be protected through its lifecycle, including against memory-resident extraction." }
+    ],
+    "T1486": [
+      { "framework": "NIST 800-53", "control": "CP-9", "title": "System Backup", "obligation": "Backups sufficient to recover encrypted systems must exist and be recoverable; encryption of primary data tests this control." },
+      { "framework": "NIST 800-53", "control": "IR-4", "title": "Incident Handling", "obligation": "Incident handling must be executed for the ransomware event, including isolation of affected systems." },
+      { "framework": "PCI-DSS", "control": "12.10.1", "title": "Incident response plan exists and is ready to be activated", "obligation": "The incident response plan must be activated for a ransomware event affecting the cardholder data environment." },
+      { "framework": "HIPAA", "control": "164.308(a)(7)(ii)(A)", "title": "Data backup plan", "obligation": "Retrievable exact copies of ePHI must exist to recover from encryption." },
+      { "framework": "HIPAA", "control": "164.404(b)", "title": "Breach notification to individuals", "obligation": "If the ransomware event is a breach of unsecured PHI, affected individuals must be notified.", "notification": { "within": "P60D", "unit": "calendar", "from": "discovery of the breach" } },
+      { "framework": "GDPR", "control": "Art. 33", "title": "Notification of a personal data breach to the supervisory authority", "obligation": "A ransomware event affecting personal data is a breach of availability and must be notified to the supervisory authority unless unlikely to result in risk.", "notification": { "within": "P72H", "unit": "calendar", "from": "becoming aware of the personal data breach" } },
+      { "framework": "SEC", "control": "Item 1.05 of Form 8-K (17 CFR 249.308)", "title": "Material Cybersecurity Incidents", "obligation": "A registrant must report a cybersecurity incident determined to be material on a current report.", "notification": { "within": "P4D", "unit": "business", "from": "determination that the incident is material (Form 8-K General Instruction B.1)" } },
+      { "framework": "ISO 27001", "control": "A.8.13", "title": "Information backup", "obligation": "Backup copies must be maintained and regularly tested against an agreed recovery objective." }
+    ],
+    "T1021.002": [
+      { "framework": "NIST 800-53", "control": "AC-17", "title": "Remote Access", "obligation": "Remote access, including SMB/admin-share sessions, must be authorized, monitored, and controlled." },
+      { "framework": "NIST 800-53", "control": "SC-7", "title": "Boundary Protection", "obligation": "SMB must be restricted at managed interfaces rather than reachable laterally by default." },
+      { "framework": "PCI-DSS", "control": "1.3.1", "title": "Inbound traffic to the CDE is restricted", "obligation": "Inbound traffic to the cardholder data environment must be limited to what is necessary; all other traffic denied." },
+      { "framework": "HIPAA", "control": "164.312(e)(1)", "title": "Transmission security", "obligation": "Technical measures must guard ePHI transmitted over the network, including administrative-share access." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Personal data in transit must be protected and administrative-share access restricted." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a) (Reg S-P)", "title": "Safeguard rule", "obligation": "Safeguards must address lateral access to systems holding customer records and information." },
+      { "framework": "ISO 27001", "control": "A.8.20", "title": "Networks security", "obligation": "Networks and network devices must be secured and managed to protect information in systems and applications." }
+    ],
+    "T1071.001": [
+      { "framework": "NIST 800-53", "control": "SC-7", "title": "Boundary Protection", "obligation": "Outbound web traffic must be monitored and filtered at managed interfaces to detect command-and-control channels." },
+      { "framework": "NIST 800-53", "control": "SI-4", "title": "System Monitoring", "obligation": "Anomalous HTTP beaconing to unknown destinations must be detected and alerted on." },
+      { "framework": "PCI-DSS", "control": "1.3.2", "title": "Outbound traffic from the CDE is restricted", "obligation": "Outbound traffic from the cardholder data environment must be limited to what is necessary; all other traffic denied." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(B)", "title": "Protection from malicious software", "obligation": "Procedures must guard against malicious software communicating out from systems handling ePHI." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Measures must detect unauthorised disclosure of personal data over web channels." },
+      { "framework": "SEC", "control": "Item 1.05 of Form 8-K (17 CFR 249.308)", "title": "Material Cybersecurity Incidents", "obligation": "If an established command-and-control channel makes the incident material, a current report is required.", "notification": { "within": "P4D", "unit": "business", "from": "determination that the incident is material (Form 8-K General Instruction B.1)" } },
+      { "framework": "ISO 27001", "control": "A.8.23", "title": "Web filtering", "obligation": "Access to external websites must be managed to reduce exposure to malicious content and channels." }
+    ],
+    "T1562.001": [
+      { "framework": "NIST 800-53", "control": "CM-7", "title": "Least Functionality", "obligation": "Users must be prevented from disabling or tampering with required security tooling." },
+      { "framework": "NIST 800-53", "control": "SI-4", "title": "System Monitoring", "obligation": "Impairment or stoppage of security sensors must itself raise an alert." },
+      { "framework": "PCI-DSS", "control": "5.3.5", "title": "Anti-malware mechanisms cannot be disabled or altered by users", "obligation": "Anti-malware mechanisms must not be disableable by users except when documented and authorized by management for a limited period." },
+      { "framework": "HIPAA", "control": "164.308(a)(5)(ii)(B)", "title": "Protection from malicious software", "obligation": "Malicious-software protections covering ePHI systems must remain effective and monitored." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "The ongoing integrity and resilience of processing systems, including their protective controls, must be maintained." },
+      { "framework": "SEC", "control": "17 CFR 229.106(b) (Reg S-K Item 106)", "title": "Risk management and strategy", "obligation": "Disclosed processes for assessing and managing cybersecurity risk must reflect that protective controls can be disabled by an intruder." },
+      { "framework": "ISO 27001", "control": "A.8.7", "title": "Protection against malware", "obligation": "Malware protection must be implemented and supported by appropriate user awareness, including detection of tampering." }
+    ],
+    "T1070.001": [
+      { "framework": "NIST 800-53", "control": "AU-6", "title": "Audit Record Review, Analysis, and Reporting", "obligation": "Audit records must be reviewed for gaps and tampering, with alerting on log clearing." },
+      { "framework": "NIST 800-53", "control": "AU-9", "title": "Protection of Audit Information", "obligation": "Audit information and logging tools must be protected from unauthorized modification and deletion." },
+      { "framework": "PCI-DSS", "control": "10.3.2", "title": "Audit log files are protected to prevent modifications by individuals", "obligation": "Audit log files must be protected against modification; cleared logs indicate this control failed." },
+      { "framework": "HIPAA", "control": "164.312(b)", "title": "Audit controls", "obligation": "Records of activity on ePHI systems must be preserved; cleared logs undermine required audit controls." },
+      { "framework": "GDPR", "control": "Art. 30", "title": "Records of processing activities", "obligation": "Destruction of logs may impair the records and evidence needed to demonstrate lawful processing." },
+      { "framework": "SEC", "control": "17 CFR 240.17a-4(f)", "title": "Preservation of records (electronic recordkeeping)", "obligation": "For broker-dealers, destruction of required electronic records may implicate books-and-records preservation obligations." },
+      { "framework": "ISO 27001", "control": "A.8.15", "title": "Logging", "obligation": "Logs must be produced, retained, and protected against tampering and unauthorised deletion." }
+    ],
+    "T1048.002": [
+      { "framework": "NIST 800-53", "control": "AC-4", "title": "Information Flow Enforcement", "obligation": "Information flows over DNS must be controlled and monitored to detect exfiltration." },
+      { "framework": "NIST 800-53", "control": "SI-4", "title": "System Monitoring", "obligation": "Anomalous DNS traffic consistent with tunneling must be detected and alerted on." },
+      { "framework": "PCI-DSS", "control": "1.3.2", "title": "Outbound traffic from the CDE is restricted", "obligation": "Outbound DNS from the cardholder data environment must be restricted to authorized resolvers." },
+      { "framework": "HIPAA", "control": "164.404(b)", "title": "Breach notification to individuals", "obligation": "If exfiltrated data includes unsecured PHI, affected individuals must be notified.", "notification": { "within": "P60D", "unit": "calendar", "from": "discovery of the breach" } },
+      { "framework": "GDPR", "control": "Art. 33", "title": "Notification of a personal data breach to the supervisory authority", "obligation": "Exfiltration of personal data must be notified to the supervisory authority unless unlikely to result in risk.", "notification": { "within": "P72H", "unit": "calendar", "from": "becoming aware of the personal data breach" } },
+      { "framework": "GDPR", "control": "Art. 34", "title": "Communication of a personal data breach to the data subject", "obligation": "Where the breach is likely to result in a high risk to individuals, they must be informed without undue delay." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a)(4) (Reg S-P)", "title": "Customer notification", "obligation": "If exfiltrated data includes customer information, affected individuals must be notified.", "notification": { "within": "P30D", "unit": "calendar", "from": "becoming aware that unauthorized access to or use of customer information has occurred or is reasonably likely to have occurred" } },
+      { "framework": "ISO 27001", "control": "A.8.12", "title": "Data leakage prevention", "obligation": "Data leakage prevention measures must be applied to systems and networks that process sensitive information." }
+    ],
+    "T1053.005": [
+      { "framework": "NIST 800-53", "control": "CM-7", "title": "Least Functionality", "obligation": "Creation of scheduled tasks must be restricted to authorized roles, with alerting on suspicious registrations." },
+      { "framework": "NIST 800-53", "control": "AU-2", "title": "Event Logging", "obligation": "Scheduled-task creation, modification, and execution (EID 4698/4702) must be among the events selected for logging." },
+      { "framework": "PCI-DSS", "control": "7.2.2", "title": "Access to system components and data is appropriately defined and assigned", "obligation": "Privileges to create scheduled tasks must be limited to authorized administrators." },
+      { "framework": "HIPAA", "control": "164.312(b)", "title": "Audit controls", "obligation": "Audit controls must record scheduled-task activity used to persist on ePHI systems." },
+      { "framework": "GDPR", "control": "Art. 32", "title": "Security of processing", "obligation": "Measures must detect unauthorised persistence granting continued access to personal data." },
+      { "framework": "SEC", "control": "17 CFR 248.30(a) (Reg S-P)", "title": "Safeguard rule", "obligation": "Safeguards must address attacker persistence on systems holding customer records and information." },
+      { "framework": "ISO 27001", "control": "A.8.16", "title": "Monitoring activities", "obligation": "Networks, systems, and applications must be monitored for anomalous behaviour such as unexpected scheduled tasks." }
+    ]
+  }
+}
