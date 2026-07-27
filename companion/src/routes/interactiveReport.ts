@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { renderInteractiveHtmlReport } from "../reports/interactiveHtml.js";
 import { emptyReportMeta } from "../reports/reportMeta.js";
+import { withNonce } from "../http/securityHeaders.js";
 import type { RouteContext } from "./context.js";
 
 // Interactive self-contained HTML report (#233). Serves the case as a single portable HTML file
@@ -20,7 +21,10 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
       const html = renderInteractiveHtmlReport(state, caseMeta, reportMeta);
       res.type("text/html; charset=utf-8");
       res.setHeader("Cache-Control", "private, no-cache");
-      return res.send(html);
+      // Stamp this response's CSP nonce into the two inline <script> blocks. Without it the
+      // policy from createSecurityHeaders() (script-src 'self' 'nonce-...', no 'unsafe-inline')
+      // blocks both, and the page renders as a header above two permanently empty sections.
+      return res.send(withNonce(html, String(res.locals.cspNonce ?? "")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         return res.status(404).json({ error: "case not found" });

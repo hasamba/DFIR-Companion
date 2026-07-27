@@ -356,7 +356,10 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/visible = sortTimelineEvents\(visible\);\s*\n\s*renderTimelineHeatmap\(visible\)/);
     // Click-to-zoom reuses the same filterFrom/filterTo path as the search-bar date filters.
     expect(html).toMatch(/zoomToTimeWindow[\s\S]{0,400}filterFrom = fromIso/);
-    expect(html).toMatch(/zoomToTimeWindow\('\$\{from\}','\$\{to\}'\)/);
+    // Each bar carries its own bucket window for the zoom. This used to be an inline
+    // onclick="zoomToTimeWindow('${from}','${to}')"; inline handlers are now blocked by the CSP
+    // (script-src), so the window rides in data-* and the click is dispatched from the ACTIONS table.
+    expect(html).toMatch(/data-act="zoomToTimeWindow" data-from="\$\{from\}" data-to="\$\{to\}"/);
     // Bars colored by the bucket's worst severity, reusing the existing severity color palette.
     expect(html).toContain("KC_SEV_COLOR[b.maxSeverity]");
     // Mobile: collapses to a thin sparkline instead of the full-height bars.
@@ -654,5 +657,38 @@ describe("dashboard.html — help icon", () => {
     expect(html).toMatch(/id="helpBtn"[\s\S]{0,1200}?<button id="settingsBtn"/);
     expect(html).toContain("#helpBtn { background: none;");
     expect(html).toContain("#helpBtn:hover");
+  });
+});
+
+// The Content-Security-Policy sends `script-src 'self' 'nonce-…'` with no 'unsafe-inline'. Under
+// that policy an inline handler ATTRIBUTE is dead markup — the browser refuses to run it, and unlike
+// a <script> block a nonce cannot rescue it. Reintroducing one therefore does not fail loudly; the
+// control just silently stops working. These assertions are the guard against that.
+describe("dashboard.html — CSP: no inline event handlers", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("carries no inline on*= handler attributes at all", async () => {
+    const html = await load();
+    const found = [...html.matchAll(/\son[a-z]+\s*=\s*"/g)].map((m) => m[0].trim());
+    expect(found).toEqual([]);
+  });
+
+  it("routes every control through data-act, with a matching ACTIONS entry for each", async () => {
+    const html = await load();
+    const used = new Set([...html.matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]));
+    const block = html.split("const ACTIONS = {")[1].split("\n    };")[0];
+    const defined = new Set([...block.matchAll(/^\s{6}([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
+
+    expect(used.size).toBeGreaterThan(50);                      // the conversion really happened
+    expect([...used].filter((a) => !defined.has(a))).toEqual([]); // no control routes nowhere
+    expect([...defined].filter((a) => !used.has(a))).toEqual([]); // no dead entries left behind
+  });
+
+  it("gives every inline <script> block a nonce placeholder for the server to stamp", async () => {
+    const html = await load();
+    // Every <script> that is not a src= include must be nonced, or the CSP drops it.
+    const inlineOpeners = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)].map((m) => m[0]);
+    expect(inlineOpeners.length).toBeGreaterThan(0);
+    for (const tag of inlineOpeners) expect(tag).toContain('nonce="__CSP_NONCE__"');
   });
 });

@@ -9,6 +9,7 @@
 import { readTableMatrix } from "./artifactCapture.js";
 import { matrixToRows } from "./adapters/domTable.js";
 import type { ContextPushResultMessage, ContextTableResult } from "./types.js";
+import { browserApi } from "./browser.js";
 
 const TOAST_ID = "dfir-companion-toast";
 // Explicitly `number`, not ReturnType<typeof window.setTimeout>: `window` is typed
@@ -24,7 +25,7 @@ export function initContextMenuCapture(): void {
     lastRightClickTarget = e.target instanceof Element ? e.target : null;
   }, true);
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  browserApi.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const kind = (msg as { kind?: string })?.kind;
     if (kind === "get_context_table") {
       sendResponse(findContextTable() satisfies ContextTableResult);

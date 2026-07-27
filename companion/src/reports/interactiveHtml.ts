@@ -2,6 +2,7 @@ import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.j
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
+import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 
 // A self-contained, interactive HTML report (#233). Unlike the canonical print-oriented HTML
 // report (html.ts), this is a single-page app: all case data is embedded as a JSON blob inside a
@@ -38,13 +39,25 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Serialize the case data as a JSON string that is safe to embed inside a <script> tag. The only
-// sequence that can prematurely close a <script> element is `</script>` (case-insensitive), so we
-// split any occurrence across the boundary. DFIR field text (filenames, IOC values, AI/analyst
-// prose) is untrusted, so this guard must run regardless of content.
+// Serialize the case data as a JSON string that is safe to embed inside a <script> tag.
+//
+// Escaping the literal `</script>` is NOT sufficient, which is worth spelling out because it is the
+// obvious-looking guard and it is wrong. The HTML script-data tokenizer ends the element on
+// `</script` followed by whitespace, `/`, or `>`, so `</script >` and `</script/>` both close it
+// while matching no `</script>` pattern. Separately, `<!--` followed by `<script` flips the
+// tokenizer into script-data-double-escaped state, where the real closing tag is swallowed and the
+// attacker chooses where the element actually ends.
+//
+// Escaping every `<` to its \\u003c form collapses all three cases into one rule: no literal `<`
+// survives, so no tokenizer transition can fire. That is a plain JSON string escape, so the parsed
+// value is byte-identical to the input and nothing downstream un-escapes it. This mirrors what
+// routes/aiSynthesis.ts already does for its embedded deck JSON.
+//
+// DFIR field text (filenames, IOC values, phishing-body excerpts, AI/analyst prose) is untrusted,
+// so this guard must run regardless of content. It matters most in the saved/emailed copy of the
+// report, which carries no CSP at all.
 function safeJsonForScript(data: unknown): string {
-  const json = JSON.stringify(data);
-  return json.replace(/<\/script>/gi, "<\\/script>");
+  return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
 function applySizeGuard(state: InvestigationState): { events: ForensicEvent[]; truncated: boolean } {
@@ -295,8 +308,11 @@ export function renderInteractiveHtmlReport(
     `<p id="timeline-count" class="count"></p>`,
     `<table><thead><tr><th>Severity</th><th>Time</th><th>Host</th><th>Source</th><th>Description</th><th>MITRE</th></tr></thead><tbody id="timeline-body"></tbody></table>`,
     "</main>",
-    `<script>window.__DFIR_CASE__ = ${safeJsonForScript(data)};</script>`,
-    `<script>${SCRIPT}</script>`,
+    // Both blocks carry the CSP nonce placeholder. The route swaps in the per-response value via
+    // withNonce() when serving over HTTP, where script-src forbids un-nonced inline script; a
+    // downloaded copy is opened from file:// with no CSP, where the leftover attribute is inert.
+    `<script nonce="${CSP_NONCE_PLACEHOLDER}">window.__DFIR_CASE__ = ${safeJsonForScript(data)};</script>`,
+    `<script nonce="${CSP_NONCE_PLACEHOLDER}">${SCRIPT}</script>`,
     "</body>",
     "</html>",
     "",

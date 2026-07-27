@@ -164,8 +164,13 @@ export function parseWhitelistText(text: string): WhitelistRuleInput[] {
     .filter((r): r is WhitelistRuleInput => r !== null);
 }
 
+// This export is served as a text/csv attachment, so it gets opened in Excel/Sheets. A cell starting
+// with = + - @ (or tab/CR) is evaluated there as a formula — =cmd|'/c calc'!A1 and friends — and the
+// values here come from imported artifacts, i.e. attacker-influenced. A leading apostrophe forces
+// the cell to be read as text. Same guard as reports/csv.ts.
 function csvField(v: string): string {
-  return /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const guarded = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
 }
 
 export function toWhitelistCsv(rules: readonly IocWhitelistRule[]): string {
