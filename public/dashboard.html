@@ -2325,19 +2325,6 @@
           <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
-        <div class="settings-group-head">Presidio (optional external PII detector)</div>
-        <div class="sfield-row">
-          <div class="sfield">
-            <label>Presidio analyzer URL<span class="sfield-hint">DFIR_PRESIDIO_URL — Optional. A Presidio Analyzer container you run yourself. It scans text that has ALREADY been masked, to catch names and IDs the built-in patterns cannot. Leave blank to disable.</span></label>
-            <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
-          </div>
-          <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
-        </div>
-        <div id="presidioLocalWarning" style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--c-3a2a00);color:var(--c-ffcf66);font-size:12px"></div>
-        <div class="sfield" style="margin:0 0 8px">
-          <button type="button" id="presidioTestBtn">Test connection</button>
-          <span id="presidioTestResult" style="margin-left:8px;font-size:12px;color:var(--c-9aa4b2)"></span>
-        </div>
         <div class="sfield-row">
           <div class="sfield"><label>Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
           <div class="sfield"><label>Screenshot OCR search<span class="sfield-hint">DFIR_OCR_SEARCH — local Tesseract OCR indexing of every capture, searchable from the filter bar; local-only, no AI. Set <code>off</code> to disable if performance is a concern</span></label><input id="env-DFIR_OCR_SEARCH" placeholder="on" /></div>
@@ -2460,6 +2447,19 @@
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
+        <div class="settings-group-head">Presidio (optional external PII detector)</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Presidio analyzer URL<span class="sfield-hint">DFIR_PRESIDIO_URL — Optional. A Presidio Analyzer container you run yourself. It scans text that has ALREADY been masked, to catch names and IDs the built-in patterns cannot. Leave blank to disable.</span></label>
+            <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
+          </div>
+          <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
+        </div>
+        <div id="presidioLocalWarning" style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--c-3a2a00);color:var(--c-ffcf66);font-size:12px"></div>
+        <div class="sfield" style="margin:0 0 8px">
+          <button type="button" id="presidioTestBtn">Test connection</button>
+          <span id="presidioTestResult" style="margin-left:8px;font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
         <div class="sfield-row">
           <div class="sfield">
             <label>Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
