@@ -212,4 +212,32 @@ describe("ReportWriter", () => {
     expect(geo.markers[0].falsePositive).toBe(true);
     expect(geo.markers[0].color).toBe("gray");
   });
+
+  it("redactedReportContents blanks people-bearing report-meta fields (distribution, investigators, reviewer, incidentManager — bug #18)", async () => {
+    const { ReportMetaStore } = await import("../../src/reports/reportMeta.js");
+    const reportMeta = new ReportMetaStore(caseStore);
+    await reportMeta.save("c1", {
+      organization: "GlobalTech Industries",
+      investigators: ["Demo Analyst", "Senior DFIR Analyst"],
+      reviewer: "IR Team Lead",
+      incidentManager: "Chris Reynolds",
+      distribution: [
+        { name: "Chris Reynolds", role: "CISO, GlobalTech Industries", method: "Encrypted email" },
+        { name: "Sarah Kim", role: "VP Engineering", method: "Encrypted email" },
+      ],
+    });
+    const writer = new ReportWriter(caseStore, stateStore, { reportMeta });
+    const redacted = await writer.redactedReportContents("c1", (s) => s); // identity redact — field-blanking is structural
+    // The people-bearing fields must NOT appear in the rendered redacted report.
+    const md = redacted.markdown;
+    expect(md).not.toContain("Chris Reynolds");
+    expect(md).not.toContain("Sarah Kim");
+    expect(md).not.toContain("Demo Analyst");
+    expect(md).not.toContain("IR Team Lead");
+    expect(md).not.toContain("CISO");
+    // The on-disk report-meta.json is untouched (the real report keeps them).
+    const onDisk = await reportMeta.load("c1");
+    expect(onDisk.investigators).toEqual(["Demo Analyst", "Senior DFIR Analyst"]);
+    expect(onDisk.distribution.length).toBe(2);
+  });
 });
