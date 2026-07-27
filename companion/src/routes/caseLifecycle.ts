@@ -1030,6 +1030,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       }
       const rejected = validateEnvUpdates(updates as Record<string, string>);
       if (rejected.length > 0) {
+        // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
+        // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.
+        errLine(`POST /settings/env rejected ${rejected.length} key(s) not on the writable allowlist: ${rejected.join(", ")}`);
         return res.status(400).json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
       }
       await updateEnvFile(updates as Record<string, string>);
