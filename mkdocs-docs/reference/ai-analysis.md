@@ -129,18 +129,33 @@ By default, the Companion **tokenizes identifying information** before sending a
 
 | Data type | Becomes |
 |-----------|---------|
-| IP addresses | `ANON_IP_1`, `ANON_IP_2`, … |
+| IP addresses (internal — RFC1918, loopback, link-local, CGNAT) | `ANON_IP_1`, `ANON_IP_2`, … |
+| IP addresses (public) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible |
 | Hostnames | `ANON_HOST_1`, … |
 | Usernames | `ANON_USER_1`, … |
 | Domain names | `ANON_DOMAIN_1`, … |
 | File paths | `ANON_PATH_1`, … |
 | Hashes | `ANON_HASH_1`, … |
+| Credit card numbers | `ANON_CARD_1`, … |
+| Phone numbers | `ANON_PHONE_1`, … |
+| National ID numbers (currently: Israeli Teudat Zehut) | `ANON_NATID_1`, … |
 | PowerShell encoded commands | decoded, then the decoded blob is anonymized |
 | Windows SIDs | tokenized (well-known SIDs like SYSTEM are preserved) |
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
 
-Toggle: **Settings → AI → Anonymization**, or the per-case AI control panel.
+**Every IP address is now tokenized before it reaches an external AI provider** — including public ones, which the model previously saw in cleartext. A public address becomes `ANON_EXTIP_n` rather than `ANON_IP_n`, so the model can still reason about it being external without being shown it, and it is restored to the real value in the answer you read, same as any other token.
+
+!!! note "The redacted export keeps public IPs visible — on purpose"
+    The **redacted case package** (a ZIP built for sharing outside the tool) does *not* mask public IPs. A report handed to a client or another team is expected to name adversary infrastructure, so that export path tokenizes everything internal (hosts, users, internal IPs, domains, paths) but leaves public addresses as attacker infrastructure that stays actionable for the recipient.
+
+!!! warning "Screenshot redaction is one-way — a public IP seen only in an image will not become an IOC"
+    Text sent to the AI can always be un-masked, because the anonymizer keeps the real value behind the token. A screenshot is different: OCR finds sensitive text in the image and paints a black box over it *before the image is uploaded*, and there is no token to restore it from afterward. If a public IP (or any other masked value) appears **only** in a screenshot and nowhere in text evidence, it will be redacted from the image and will never be extracted as an indicator. Make sure anything IOC-worthy also lands in a log, CSV, or other text import.
+
+!!! note "National ID numbers: expect the occasional false positive"
+    The Israeli Teudat Zehut check digit rules out roughly 9 in 10 arbitrary nine-digit numbers, but the tenth passes by chance. In a case with no Israeli PII, this will occasionally tokenize an unrelated file offset, sequence number, or ID. Untick the **ID numbers** category for the case, or add the specific value to the anonymization suppression list, if it becomes a nuisance.
+
+Toggle: **Settings → AI → Anonymization**, or the per-case AI control panel. For names — the one category no regular expression can catch — see [Presidio & PII Masking](presidio.md), an optional add-on layer.
 
 ---
 
