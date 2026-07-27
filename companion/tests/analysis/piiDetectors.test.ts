@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAnonymizer, luhnValid, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
+import { createAnonymizer, luhnValid, israeliIdValid, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
 
 const NONE: KnownEntities = { hosts: [], accounts: [], internalDomains: [] };
 
@@ -168,5 +168,44 @@ describe("PHONE detector", () => {
   it("does not let the NANP separator class swallow a colon-separated 3-3-4 digit run", () => {
     const a = createAnonymizer(policy({ PHONE: true }), NONE);
     expect(a.apply("id 123:456:7890 recorded")).toBe("id 123:456:7890 recorded");
+  });
+});
+
+describe("israeliIdValid", () => {
+  // Structurally valid but not issued — these are check-digit exercises, not real identities.
+  it("accepts check-digit-valid nine-digit numbers", () => {
+    expect(israeliIdValid("123456782")).toBe(true);
+    expect(israeliIdValid("000000018")).toBe(true);
+  });
+  it("rejects check-digit-invalid numbers", () => {
+    expect(israeliIdValid("123456789")).toBe(false);
+    expect(israeliIdValid("000000019")).toBe(false);
+  });
+});
+
+describe("NATID detector", () => {
+  it("tokenizes a check-digit-valid ID", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    const out = a.apply("subject id 123456782 on file");
+    expect(out).not.toContain("123456782");
+    expect(out).toMatch(/ANON_NATID_1/);
+    expect(a.restore(out)).toBe("subject id 123456782 on file");
+  });
+
+  it("leaves check-digit-invalid nine-digit numbers alone", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("offset 123456789 bytes")).toContain("123456789");
+  });
+
+  it("does not fire inside longer digit runs or dotted numbers", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("size 1234567823 bytes")).toContain("1234567823");
+    expect(a.apply("build 4.123456782.9")).toContain("4.123456782.9");
+  });
+
+  it("does not fire on ten-digit or thirteen-digit unix timestamps", () => {
+    const a = createAnonymizer(policy({ NATID: true }), NONE);
+    expect(a.apply("ts 1753564800 and 1753564800123")).toContain("1753564800");
+    expect(a.apply("ts 1753564800 and 1753564800123")).toContain("1753564800123");
   });
 });

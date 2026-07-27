@@ -230,6 +230,26 @@ const PHONE_E164 = /(?<![A-Za-z0-9._-])\+\d{7,15}\b/g;
 const PHONE_IL = /\b0(?:5\d|[2-46-9])-?\d{7}\b/g;
 const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
 
+// Exactly nine digits, not adjacent to another digit, a dot or a dash. The lookarounds keep this
+// out of longer runs (byte counts, ten-digit unix seconds) and out of dotted version strings.
+const NATID_RE = /(?<![\d.-])\d{9}(?![\d.-])/g;
+
+/** Israeli Teudat Zehut check digit: digits at odd indices are doubled, the decimal digits of
+ *  each product are summed, and the total must be divisible by 10. Exported for the tests. */
+export function israeliIdValid(id: string): boolean {
+  if (!/^\d{9}$/.test(id)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let d = id.charCodeAt(i) - 48;
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
 /** Luhn checksum. Exported for the detector table tests. */
 export function luhnValid(digits: string): boolean {
   let sum = 0;
@@ -442,6 +462,15 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return out;
   }
 
+  // KNOWN LIMITATION: roughly one in ten arbitrary nine-digit numbers passes the check digit, and
+  // a Teudat Zehut has no other structure to filter on. In a case with no Israeli PII this WILL
+  // tokenize the occasional file offset or sequence number. Two escape hatches exist: untick the
+  // NATID category for the case, or add the specific value to the suppressed list, which is
+  // honoured at the assign() chokepoint.
+  function anonNatIds(t: string): string {
+    return t.replace(NATID_RE, (m) => (israeliIdValid(m) ? assign("NATID", m) : m));
+  }
+
   function anonCustom(t: string): string {
     const custom = known.custom ?? [];
     if (custom.length === 0) return t;
@@ -485,6 +514,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     }
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
+    if (policy.categories.NATID) t = anonNatIds(t);
     return t;
   }
 
