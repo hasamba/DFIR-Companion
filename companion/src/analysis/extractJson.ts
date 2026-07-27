@@ -51,8 +51,51 @@ function neededClosers(s: string): string {
 // deterministic high-severity backfill fills any finding the truncation dropped).
 export function repairTruncatedJson(s: string): string {
   const lastBrace = s.lastIndexOf("}");
-  if (lastBrace === -1) return s;
+  if (lastBrace === -1) {
+    // Truncation landed inside the FIRST (and only) object — no complete '}' exists yet. The
+    // usual case is the model hit max_tokens mid-description on the first finding. The previous
+    // behavior returned the input unchanged, leaving an unterminated string; neededClosers() can
+    // only emit structural closers (it never closes an open string), so JSON.parse failed on
+    // "Unterminated string" and the whole response was thrown away. Recover a partial-but-valid
+    // object: cut back to the last complete key-value boundary (a comma at the object's top
+    // level, tracked via string state), close any open string, drop a dangling comma, then append
+    // the structural closers. A partial findings array (even []) is still useful — the
+    // deterministic high-severity backfill fills the truncated finding.
+    return repairInsideFirstObject(s);
+  }
   const prefix = s.slice(0, lastBrace + 1).replace(/,\s*$/, "");
+  return prefix + neededClosers(prefix);
+}
+
+// Cut back to the last top-level comma (or the opening brace if none), close an open string,
+// drop a dangling comma, and append structural closers. Used only when lastBrace === -1.
+function repairInsideFirstObject(s: string): string {
+  // Find the last top-level comma (depth 0 inside the root object, not inside a nested array
+  // or string) — that's the boundary after the last COMPLETE key-value pair.
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let lastTopComma = -1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "[") depth++;
+    else if (c === "}" || c === "]") depth--;
+    else if (c === "," && depth === 1) lastTopComma = i; // depth 1 = root object's direct children
+  }
+  // Cut back to just after the last complete key-value (drop the dangling incomplete one).
+  let prefix = lastTopComma >= 0 ? s.slice(0, lastTopComma) : s;
+  // Close an open string (neededClosers won't, so do it here before structural closers).
+  if (inStr) prefix += '"';
+  // Drop a dangling comma / whitespace so the object doesn't end with a separator.
+  prefix = prefix.replace(/,\s*$/, "");
   return prefix + neededClosers(prefix);
 }
 
@@ -118,7 +161,20 @@ export function parseJsonLoose(raw: string): unknown {
     try {
       return JSON.parse(trimmed);
     } catch {
-      // fall through to fence/prose extraction below
+      // The strict parse failed. Before falling through to fence/prose extraction (which
+      // matches the FIRST ```json fence ANYWHERE and would slice the response down to a tiny
+      // inner snippet when a string value legitimately contains a fenced block), retry with
+      // control-char escaping on the WHOLE document. Models routinely emit a literal newline
+      // inside a long description instead of \n; JSON.parse rejects the whole response for it,
+      // and the fence extractor would grab an inner ```json snippet instead of the outer object.
+      // escapeControlCharsInStrings is string-literal-aware (tracks inStr/esc), so it's safe to
+      // run on the whole document — it only escapes raw control chars INSIDE string literals,
+      // preserving legal whitespace between tokens. (bug #2)
+      try {
+        return JSON.parse(escapeControlCharsInStrings(trimmed));
+      } catch {
+        // fall through to fence/prose extraction below
+      }
     }
   }
   const cleaned = extractJsonText(raw);
