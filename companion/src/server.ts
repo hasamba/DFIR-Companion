@@ -31,6 +31,7 @@ import { registerCustodyRoutes } from "./routes/custody.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
+import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
@@ -927,6 +928,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCustodyRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
+  // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
+  // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so
+  // registering the interactive report after it makes the route permanently unreachable.
+  registerInteractiveReportRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
