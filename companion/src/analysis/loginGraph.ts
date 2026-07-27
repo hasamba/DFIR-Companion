@@ -135,8 +135,13 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
 
     const key = `${acct.id}|${host.id}|${p.typeName}|${p.outcome}`;
     // Clamp: anomalous importer data can carry endTimestamp < timestamp; lastSeen must never precede firstSeen.
+    // Compare epoch ms, NOT lexicographic ISO strings — a higher-precision endTimestamp that is
+    // chronologically LATER (e.g. ...09:20:00.500Z) sorts BEFORE the shorter ...09:20:00Z because
+    // '.' (0x2E) < 'Z' (0x5A), so a string `>` would discard the genuinely-later time (#14).
     const end = e.endTimestamp ?? e.timestamp;
-    const last = end > e.timestamp ? end : e.timestamp;
+    const endMs = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
+    const tsMs = Date.parse(e.timestamp);
+    const last = !Number.isNaN(endMs) && endMs > tsMs ? end : e.timestamp;
     const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
     const edge = edges.get(key);
     if (!edge) {
@@ -145,11 +150,17 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
         count: n, firstSeen: e.timestamp, lastSeen: last, risk: risky ? "medium" : "none",
       });
     } else {
+      // Same epoch-based comparison for firstSeen/lastSeen merge (avoids the same string-sort bug).
+      const eFirstMs = Date.parse(edge.firstSeen);
+      const eLastMs = Date.parse(edge.lastSeen);
+      const firstSeen = !Number.isNaN(eFirstMs) && tsMs < eFirstMs ? e.timestamp : edge.firstSeen;
+      const lastMs = Date.parse(last);
+      const lastSeen = !Number.isNaN(lastMs) && !Number.isNaN(eLastMs) && lastMs > eLastMs ? last : edge.lastSeen;
       edges.set(key, {
         ...edge,
         count: edge.count + n,
-        firstSeen: e.timestamp < edge.firstSeen ? e.timestamp : edge.firstSeen,
-        lastSeen: last > edge.lastSeen ? last : edge.lastSeen,
+        firstSeen,
+        lastSeen,
         risk: risky ? "medium" : edge.risk,
       });
     }

@@ -335,4 +335,18 @@ describe("gapEnvOptions", () => {
     delete process.env.DFIR_GAP_MAX_FINDINGS;
     delete process.env.DFIR_GAP_OUTLIER_SPAN;
   });
+
+  it("#15: a gap's startTimestamp falls back to e.timestamp when endTimestamp is unparseable (not garbage)", () => {
+    // The bounding event carries a non-empty-but-unparseable endTimestamp ("invalid-date"). The
+    // numeric endMs helper correctly fell back to e.timestamp for the DURATION, but the display
+    // string used `e.endTimestamp || e.timestamp` (truthiness) and kept "invalid-date" — rendering
+    // a garbage ISO on the gap card and a non-ISO firstSeen on the derived Finding.
+    const before = series("a", "EventLog", "2026-05-20T08:00:00Z", 60, 10); // dense, qualifies
+    // Replace the LAST before-event's endTimestamp with an unparseable value.
+    before[before.length - 1].endTimestamp = "invalid-date";
+    const after = series("b", "EventLog", "2026-05-20T10:09:00Z", 60, 5);
+    const gaps = detectTimelineGaps([...before, ...after]);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].startTimestamp).toBe("2026-05-20T08:09:00.000Z"); // fell back, not "invalid-date"
+  });
 });

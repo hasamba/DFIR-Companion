@@ -68,19 +68,28 @@ function eventEndMs(e: ForensicEvent): number {
   return Number.isNaN(end) ? Date.parse(e.timestamp) : end;
 }
 
+// The display-string companion to eventEndMs: fall back to e.timestamp when endTimestamp is
+// absent OR unparseable. The plain `e.endTimestamp || e.timestamp` truthiness check kept an
+// unparseable-but-non-empty endTimestamp (e.g. "invalid-date") as the display value while the
+// numeric helper correctly fell back — so the gap/phase card rendered a garbage ISO string (#15).
+function eventEndTsStr(e: ForensicEvent): string {
+  const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
+  return Number.isNaN(end) ? e.timestamp : e.endTimestamp!;
+}
+
 function summarizePhase(index: number, events: ForensicEvent[]): AttackPhase {
   const tactic = dominantTactic(events);
   const techniques = new Set<string>();
   let count = 0;
   let maxSeverity: Severity = "Info";
-  let endTs = events[0].endTimestamp || events[0].timestamp;
+  let endTs = eventEndTsStr(events[0]);
   let endMs = eventEndMs(events[0]);
   for (const e of events) {
     for (const t of e.mitreTechniques) techniques.add(t);
     count += e.count && e.count > 1 ? e.count : 1;
     maxSeverity = worse(maxSeverity, e.severity);
     const ms = eventEndMs(e);
-    if (ms > endMs) { endMs = ms; endTs = e.endTimestamp || e.timestamp; }
+    if (ms > endMs) { endMs = ms; endTs = eventEndTsStr(e); }
   }
   return {
     id: `phase-${index + 1}`,
