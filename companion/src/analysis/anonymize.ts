@@ -100,7 +100,20 @@ function escapeRegExp(s: string): string {
 //
 // The replacement is an explicit Unicode-aware boundary: refuse to match when the character
 // immediately before/after is a letter, a number or "_" in ANY script. That keeps the
-// anti-substring property for ASCII while making it work for every other script. The `u` flag
+// anti-substring property for ASCII while making it work for every other script.
+//
+// This is deliberately NOT `\b`-equivalent in both directions, and the difference is worth
+// knowing. `\b` is a TRANSITION test, so for a value whose own edge is a non-word character it
+// inverts: `\b-corp\b` DID fire inside "ACME-corp", and `\b\.local\b` DID fire inside
+// "corp.local", because the neighbouring "E"/"p" supplied the transition. These lookarounds ask
+// only "is the neighbour a word character", so neither fires now. That is the correct reading of
+// the anti-substring rule — a value should not match glued inside a longer word — and it is
+// unreachable from the case-derived lists, whose values are whole hostnames and domains. It IS
+// reachable from ANALYST-TYPED custom entities: someone entering ".corp.local" as a suffix
+// expecting it to catch "dc01.corp.local" gets no match. Enter the whole value ("dc01.corp.local")
+// or rely on known.internalDomains, which already handles the parent-domain case.
+//
+// The `u` flag
 // is required for \p{…} and is safe with escapeRegExp above: every character it escapes
 // (. * + ? ^ $ { } ( ) | [ ] \) is a SyntaxCharacter, i.e. a legal identity escape in Unicode
 // mode, so no escaped value can turn into an "Invalid regular expression" under `u`.

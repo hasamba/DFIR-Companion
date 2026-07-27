@@ -133,7 +133,8 @@ By default, the Companion **tokenizes identifying information** before sending a
 | IPv4 addresses (public, routable) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible, and the known limitation for what "public" excludes |
 | IPv6 addresses (internal, or public within `2000::/3` / IPv4-mapped) | `ANON_IP_n` / `ANON_EXTIP_n` — see the IPv6 note below for what's out of scope |
 | Hostnames | `ANON_HOST_1`, … |
-| Usernames | `ANON_USER_1`, … |
+| Usernames (`DOMAIN\user`, UPNs on an internal domain) | `ANON_USER_1`, … — **ASCII names only**, see below |
+| Email addresses | `ANON_EMAIL_1`, … — **ASCII local parts only**, see below |
 | Domain names | `ANON_DOMAIN_1`, … |
 | User profile paths (`C:\Users\<name>`, `/home/<name>`) | the username segment becomes `ANON_USER_n`; the rest of the path is left readable |
 | Credit card numbers | `ANON_CARD_1`, … |
@@ -145,6 +146,18 @@ By default, the Companion **tokenizes identifying information** before sending a
 **Hashes are deliberately NOT tokenized.** They are IOCs — a hash is what makes a finding actionable for the recipient, and it identifies a file, not a victim. The anonymizer has no generic high-entropy rule for exactly this reason: it would clobber them.
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
+
+!!! warning "Known limitation: the account and email detectors are ASCII-only"
+    The `DOMAIN\user` and email patterns match `[A-Za-z0-9._%+-]` — **ASCII characters only**. A name written in any other script is not auto-detected, and this is not only about Hebrew or Cyrillic: **any accented Latin name is affected too**.
+
+    - `mail יוסי@example.co.il` → the domain is tokenized, but the local part `יוסי` is sent as-is.
+    - `mail josé@example.co.il` → same; `jose@example.co.il` (unaccented) is tokenized in full.
+    - `logon CORP\יוסי` → not detected at all.
+    - `logon CORP\josé` → **worse: partially matched.** The pattern stops at the unaccented prefix, so this is sent as `ANON_USER_1é` — a dangling accented character next to the token. Treat a trailing stray character after an `ANON_USER_n` token as this bug, not as model output.
+
+    Two things do work regardless of script: **user profile paths** (`C:\Users\יוסי\…` → `C:\Users\ANON_USER_1\…`), because that pattern matches the name segment by exclusion rather than by an allow-list; and **any value on the case's known-entity or custom-entity lists**, which is matched exactly and is script-independent.
+
+    So the escape hatches are intact and are the supported route for a non-Latin name: enable [Presidio](presidio.md), whose whole purpose is catching names the regex layer misses, and approve the value — or add it directly as a **custom entity** in the Anonymization panel. Unlike the IP gaps below, nothing here silently records the value as "handled": it is never written to the known list by these detectors, so Presidio keeps flagging it on every call until you resolve it.
 
 **Every real, routable IP address is now tokenized before it reaches an external AI provider — public ones included**, which the model previously saw in cleartext. A public address becomes `ANON_EXTIP_n` rather than `ANON_IP_n`, so the model can still reason about it being external without being shown it, and it is restored to the real value in the answer you read, same as any other token. Two narrow, deliberate exceptions are worth knowing about — see below.
 

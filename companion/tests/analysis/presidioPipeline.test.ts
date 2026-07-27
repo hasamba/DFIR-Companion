@@ -220,8 +220,11 @@ describe("presidio import pre-scan", () => {
 
   // The pre-scan used to receive only the CSV/log payload, but every batch prompt is
   // `buildStateSummary(state) + chunk` and every batch passes skipPresidioGate=true — so the
-  // summary (findings, case summary, attacker path, all RESTORED to real values) went to the
-  // provider having never been seen by Presidio. A fail-OPEN in a fail-closed layer.
+  // summary went to the provider having never been seen by Presidio: a fail-OPEN in a fail-closed
+  // layer. buildStateSummary (src/analysis/summary.ts) renders finding titles and descriptions,
+  // open threads, the last 12 forensic events and every known IOC value — all RESTORED to real
+  // values. It does NOT include state.summary or the attacker path, which is why the canary below
+  // lives in a finding title rather than in state.summary.
   it("scans the state summary too, not just the payload", async () => {
     const seen: string[] = [];
     const { pipeline, stateStore } = await makePipeline(stubClient([], seen));
