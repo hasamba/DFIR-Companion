@@ -185,6 +185,13 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   // Approve: the value joins the case's discovered list, so from now on it is tokenized like any
   // other known entity and never prompts again. Distinct from suppress (below) — this path ADDS
   // the value to `discovered`, never to `suppressed`.
+  //
+  // The log line deliberately omits the value itself, same as suppress below — but for the
+  // OPPOSITE reason: a suppressed value might still be real PII (the analyst merely judged it a
+  // false positive), while an APPROVED value is confirmed PII by definition (approving it is the
+  // act of saying "mask this from now on"). These per-case logs live in the case directory and
+  // travel with the evidence as part of the audit trail, so writing the confirmed name into them
+  // would defeat the whole point of the masking feature.
   app.post("/cases/:id/presidio-pending/approve", async (req: Request, res: Response) => {
     if (!isValidCaseId(req.params.id)) return res.status(400).json({ error: "invalid case id" });
     try {
@@ -196,9 +203,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         (e) => e.value.toLowerCase() !== entities[0].value.toLowerCase(),
       );
       await presidioPending.save(caseId, rest);
-      logLine(`[presidio] approved "${entities[0].value}" (${entities[0].category}) for case ${caseId}`);
+      logLine(`[presidio] approved a ${entities[0].category} finding for case ${caseId}`);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "anonymization", action: "presidio-approve", detail: `Approved Presidio finding for masking: ${entities[0].category}`,
+        category: "anonymization", action: "presidio-approve", detail: `Approved a Presidio ${entities[0].category} finding for masking`,
       });
       return res.json({ pending: rest });
     } catch (err) {
