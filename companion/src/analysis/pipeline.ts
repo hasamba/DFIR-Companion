@@ -1907,10 +1907,25 @@ export class AnalysisPipeline {
   private static readonly PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
 
   /**
-   * Scan an entire import payload once, up front, instead of letting the chunk loop hit
+   * Scan an entire import prompt once, up front, instead of letting the chunk loop hit
    * presidioGate repeatedly. analyzeCsv/analyzeLog call this before their batch loop starts, then
    * pass skipPresidioGate=true into every analyzeRestored() call in that loop — so an import
    * produces exactly ONE approval round trip, no matter how many chunks it is batched into.
+   *
+   * Callers pass BOTH halves of what a batch prompt carries — the state summary and the payload —
+   * not just the payload. Scanning the payload alone was a fail-open: the summary (finding titles
+   * and descriptions, open threads, recent forensic events and known IOC values, all RESTORED to
+   * real values) is prepended to every batch prompt and every batch skips the gate, so it went to
+   * the provider unscanned.
+   *
+   * KNOWN, DELIBERATE RESIDUAL GAP: `state` mutates as batches merge, so batch N's prompt carries
+   * a summary REVISED by batches 1..N-1 — text that did not exist when this ran. One up-front
+   * scan cannot cover those revisions, and re-gating per batch is exactly the stall-approve-restart
+   * loop this method exists to avoid. The revisions are model output derived from payload text
+   * that WAS scanned, and the next non-import AI call (ask/synthesis/explain/screenshot) gates on
+   * its own prompt, which includes the then-current summary — so anything genuinely new surfaces
+   * there instead. Widening this would mean gating per batch; that is a product decision, not an
+   * oversight here.
    *
    * Fails CLOSED, same as presidioGate: an unreachable container throws rather than letting the
    * import proceed unscanned.
@@ -2140,9 +2155,16 @@ export class AnalysisPipeline {
       // Scan the WHOLE import once, up front, instead of letting the per-chunk batches below hit
       // presidioGate repeatedly (which would stall-approve-restart on a large CSV with names
       // scattered through it). One approval round trip per import, not one per chunk.
+      //
+      // The scan covers the STATE SUMMARY as well as the payload, because every batch prompt
+      // below is `buildStateSummary(state) + csvChunk`, and every batch passes
+      // skipPresidioGate=true. Scanning csvText alone left the summary — finding titles and
+      // descriptions, open threads, the last 12 forensic events and every known IOC value, all
+      // RESTORED to real values — reaching the provider having never been seen by Presidio: a
+      // fail-OPEN in a layer whose contract is fail-closed.
       if (this.opts.presidio) {
         const importAnonCtx = await this.buildImportAnonContext(caseId, state);
-        if (importAnonCtx) await this.presidioPreScan(caseId, csvText, importAnonCtx.known, importAnonCtx.anon);
+        if (importAnonCtx) await this.presidioPreScan(caseId, `${buildStateSummary(state)}\n${csvText}`, importAnonCtx.known, importAnonCtx.anon);
       }
 
       // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
@@ -2228,10 +2250,11 @@ export class AnalysisPipeline {
       let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
       // Scan the WHOLE import once, up front — see analyzeCsv for why this must precede the
-      // per-pattern batch loop below rather than living inside it.
+      // per-pattern batch loop below rather than living inside it, and why the state summary is
+      // scanned alongside the payload (every batch prompt below prepends it and skips the gate).
       if (this.opts.presidio) {
         const importAnonCtx = await this.buildImportAnonContext(caseId, state);
-        if (importAnonCtx) await this.presidioPreScan(caseId, logText, importAnonCtx.known, importAnonCtx.anon);
+        if (importAnonCtx) await this.presidioPreScan(caseId, `${buildStateSummary(state)}\n${logText}`, importAnonCtx.known, importAnonCtx.anon);
       }
 
       // Batch by BOTH the pattern cap and a token budget — a few patterns with very long

@@ -73,7 +73,9 @@ describe("pipeline anonymization — custom entities", () => {
     await customEntitiesStore.save("c1", [{ value: "203.0.113.50", category: "IP" }]);
     const pipeline = new AnalysisPipeline({ provider, stateStore, anonStore, customEntitiesStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
     await pipeline.synthesize("c1", { force: true });
-    // A public IP is NOT tokenized by the internal-IP detector — so if it's gone, the custom-entity wiring worked.
+    // On the AI wire maskPublicIps is on, so the IP detector alone would already tokenize this as
+    // ANON_EXTIP_n. The custom entry pins it to the IP category instead, and anonCustom runs first
+    // — so the ANON_IP_ token (not ANON_EXTIP_) is what proves the custom-entity wiring worked.
     expect(provider.lastReq!.userPrompt).not.toContain("203.0.113.50");
     expect(provider.lastReq!.userPrompt).toMatch(/ANON_IP_/);
   });

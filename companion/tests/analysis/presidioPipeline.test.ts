@@ -9,6 +9,7 @@ import { AnonControlStore } from "../../src/analysis/anonControl.js";
 import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { buildStateSummary } from "../../src/analysis/summary.js";
 import { PresidioApprovalRequired, type PresidioClient, type PresidioFinding } from "../../src/analysis/presidio.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import type { CustomEntity } from "../../src/analysis/anonymize.js";
@@ -88,7 +89,7 @@ async function makePipeline(
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/png" }),
     ...extraOptions,
   });
-  return { pipeline, presidioPendingStore, discoveredStore };
+  return { pipeline, presidioPendingStore, discoveredStore, stateStore };
 }
 
 // A Logger stub that captures warn() calls verbatim (message text only — no console/file I/O),
@@ -216,6 +217,42 @@ describe("presidio import pre-scan", () => {
     expect(seen[0]).toMatch(/ANON_HOST_1/);
   });
 
+  // The pre-scan used to receive only the CSV/log payload, but every batch prompt is
+  // `buildStateSummary(state) + chunk` and every batch passes skipPresidioGate=true — so the
+  // summary (findings, case summary, attacker path, all RESTORED to real values) went to the
+  // provider having never been seen by Presidio. A fail-OPEN in a fail-closed layer.
+  it("scans the state summary too, not just the payload", async () => {
+    const seen: string[] = [];
+    const { pipeline, stateStore } = await makePipeline(stubClient([], seen));
+    const s = await stateStore.load("c1");
+    s.findings = [{
+      id: "f1", title: "SUMMARY_CANARY_VALUE exfiltrated data", description: "seen in the case",
+      severity: "High", confidence: "High", mitreTechniques: [], evidence: [], sourceScreenshots: [],
+    }];
+    await stateStore.save(s);
+
+    await pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts());
+    expect(seen).toHaveLength(1);
+    expect(seen[0], "the state summary never reached Presidio").toContain("SUMMARY_CANARY_VALUE");
+  });
+
+  it("scans the state summary on log imports too", async () => {
+    const seen: string[] = [];
+    const { pipeline, stateStore } = await makePipeline(stubClient([], seen));
+    const s = await stateStore.load("c1");
+    s.findings = [{
+      id: "f1", title: "SUMMARY_CANARY_VALUE exfiltrated data", description: "seen in the case",
+      severity: "High", confidence: "High", mitreTechniques: [], evidence: [], sourceScreenshots: [],
+    }];
+    await stateStore.save(s);
+
+    await pipeline.analyzeLog("c1", "Jan 1 00:00:00 sshd[1]: accepted publickey for svc", {
+      label: "auth.log", idPrefix: "t3", importedAt: "2026-01-01T00:00:00Z",
+    });
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    expect(seen[0], "the state summary never reached Presidio").toContain("SUMMARY_CANARY_VALUE");
+  });
+
   it("rejects the whole import when the pre-scan finds a new value", async () => {
     const { pipeline, presidioPendingStore } = await makePipeline(
       stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
@@ -248,14 +285,15 @@ describe("presidio import pre-scan", () => {
     const seen: string[] = [];
     const maxChars = 200;
     const chunkChars = 80;
-    // "TESTHOST" (no dot) derives no internal domain, and never appears in the filler rows below,
-    // so anon.apply() is a no-op on this payload — masked.length is exactly csvText.length, which
-    // makes "the correct unscanned count" independently verifiable in the assertion below rather
-    // than merely re-deriving whatever the implementation computed.
-    const { pipeline } = await makePipeline(
+    // An EMPTY host means the fixture event has no asset, so deriveKnownEntities finds nothing and
+    // anon.apply() is a no-op on both halves of the scanned text — the filler rows below contain no
+    // IP, account, email, card, phone or valid national ID either. masked.length is therefore
+    // exactly the un-masked length, which makes "the correct unscanned count" independently
+    // verifiable in the assertion below rather than merely re-deriving what the implementation did.
+    const { pipeline, stateStore } = await makePipeline(
       stubClient([], seen),
       [],
-      "TESTHOST",
+      "",
       undefined,
       { presidioScanCapsOverride: { chunkChars, maxChars }, logger },
     );
@@ -265,11 +303,15 @@ describe("presidio import pre-scan", () => {
     const csvText = [header, ...rows].join("\n");
     expect(csvText.length).toBeGreaterThan(maxChars); // sanity: this payload must actually cross the cap
 
+    // The pre-scan covers the state summary as well as the payload (it is prepended to every batch
+    // prompt), so the expected length is both halves, joined exactly as the pipeline joins them.
+    const prefix = `${buildStateSummary(await stateStore.load("c1"))}\n`;
+
     await pipeline.analyzeCsv("c1", csvText, {
       label: "big.csv", idPrefix: "t2", importedAt: "2026-01-01T00:00:00Z", rowsPerBatch: 1000,
     });
 
-    const expectedUnscanned = csvText.length - maxChars;
+    const expectedUnscanned = prefix.length + csvText.length - maxChars;
     const warning = warnings.find((w) => w.includes("pre-scan truncated"));
     expect(warning).toBeDefined();
     expect(warning).toContain(`${expectedUnscanned} character(s)`);
