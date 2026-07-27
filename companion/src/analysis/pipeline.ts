@@ -6,7 +6,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
-import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type CustomEntity } from "./anonymize.js";
+import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type CustomEntity, type KnownEntities } from "./anonymize.js";
+import { mapFindings, PresidioApprovalRequired, type PresidioClient } from "./presidio.js";
+import type { PresidioPendingStore } from "./presidioPending.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
@@ -1557,6 +1559,12 @@ export interface PipelineOptions {
   // call: words the anonymizer would tokenize are covered with opaque rectangles. The original
   // evidence file is never touched — only the in-memory buffer sent to the model is redacted.
   ocrRunner?: OcrRunner;
+  // Optional Presidio layer. Runs AFTER the local anonymizer on already-masked text, so it only
+  // ever sees scrubbed data and reports only what the regex layer missed. Absent → skipped
+  // entirely. `url` is carried for the error message only.
+  presidio?: { client: PresidioClient; url: string; minScore: number };
+  // Holds findings awaiting analyst approval across the 409 round trip.
+  presidioPendingStore?: PresidioPendingStore;
   // Shared leveled logger. Absent → a console-only logger at DFIR_LOG_LEVEL (used by CLI scripts
   // and tests). The server passes its file-backed logger so AI/OCR/anon traces land in the case log.
   logger?: Logger;
@@ -1608,6 +1616,9 @@ function mergePinnedQuestions(pinned: InvestigationQuestion[], current: Investig
 const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout"]);
 
 function isRetryableError(err: unknown): boolean {
+  // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
+  // the 409 the analyst is waiting on, so surface it on the first throw.
+  if (err instanceof PresidioApprovalRequired) return false;
   return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
 }
 
@@ -1813,10 +1824,57 @@ export class AnalysisPipeline {
       }
     }
 
-    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
+    // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
+    // username, email, SID or secret — only what our own detectors could not find.
+    const maskedPrompt = anon.apply(req.userPrompt);
+    await this.presidioGate(caseId, maskedPrompt, known);
+
+    const result = await provider.analyze({ ...req, userPrompt: maskedPrompt, images });
     this.logAiUsage(caseId, label, provider, result);
     await this.recordAiCost(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
+  }
+
+  /**
+   * Scan already-masked text with Presidio and stop the call if it surfaces a value this case has
+   * not seen before. Approved values live in the discovered list, so on the retry they are already
+   * in `known.custom` and anon.apply() masks them — no second pass is needed here.
+   *
+   * Fails CLOSED. An analyst who enabled Presidio believes names are being masked; silently
+   * proceeding when the container is down or answers with garbage would leave that belief wrong
+   * and unfalsifiable.
+   */
+  private async presidioGate(caseId: string, maskedText: string, known: KnownEntities): Promise<void> {
+    const presidio = this.opts.presidio;
+    if (!presidio) return;
+
+    let raw;
+    try {
+      raw = await presidio.client.analyze(maskedText);
+    } catch (err) {
+      throw new Error(
+        `Presidio is enabled but the scan at ${presidio.url} failed (not reachable, or returned an ` +
+          `unusable response): ${(err as Error).message}. Start the container or clear ` +
+          `DFIR_PRESIDIO_URL to disable the layer.`,
+      );
+    }
+
+    const found = mapFindings(raw, presidio.minScore);
+    if (found.length === 0) return;
+
+    const alreadyKnown = new Set<string>([
+      ...(known.custom ?? []).map((e) => e.value.toLowerCase()),
+      ...(known.suppressed ?? []),
+    ]);
+    const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+    if (fresh.length === 0) return;
+
+    this.log.warn(
+      `[presidio] ${fresh.length} new PII value(s) need approval before this case can call the AI`,
+      { caseId },
+    );
+    await this.opts.presidioPendingStore?.save(caseId, fresh);
+    throw new PresidioApprovalRequired(fresh);
   }
 
   // Accumulate this call's tokens/cost into the case's running AI-cost totals (Settings →
