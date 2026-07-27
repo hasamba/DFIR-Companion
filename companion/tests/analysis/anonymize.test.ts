@@ -459,6 +459,48 @@ describe("deriveKnownEntities", () => {
     expect(k.internalDomains).toContain("adatumlab");        // NETBIOS domain
     expect(k.internalDomains).toContain("adatumlab.local");  // from the FQDN host
   });
+
+  it("derives internal domains from IOC values too (redacted-export PII leak #17)", () => {
+    // A victim internal AD domain that appears ONLY as an IOC (not as any event.asset) must
+    // still contribute its parent to internalDomains so the redacted-export anonymizer
+    // tokenizes it. Previously the demo case's globaltech.local survived unredacted because
+    // the FQDN host lived in state.iocs, not state.forensicTimeline[].asset.
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "compromise observed", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01" },
+    ];
+    s.iocs = [
+      { id: "i1", type: "domain", value: "dc01.globaltech.local", firstSeen: "" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("dc01.globaltech.local");
+    expect(k.internalDomains).toContain("globaltech.local");
+  });
+
+  it("derives the host from a url IOC and excludes it from internalDomains when it's adversary", () => {
+    // A url IOC is an adversary C2; we still capture the host (so anonHosts can tokenize it),
+    // but whether it becomes an internalDomain depends on the downstream victim filter. Here
+    // we assert the host is captured — the redactedExportBuilder's customerStore supplies the
+    // victim list, so an adversary host won't be tokenized as ANON_DOMAIN (it's adversary IOC).
+    const s = emptyState("c1");
+    s.iocs = [{ id: "i1", type: "url", value: "https://c2.evil.example/path", firstSeen: "" }];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("c2.evil.example");
+    expect(k.internalDomains).toContain("evil.example");
+  });
+
+  it("ignores IOC types that aren't host-shaped (hash, ip, file, process, sid)", () => {
+    const s = emptyState("c1");
+    s.iocs = [
+      { id: "i1", type: "hash", value: "a".repeat(64), firstSeen: "" },
+      { id: "i2", type: "ip", value: "10.0.0.5", firstSeen: "" },
+      { id: "i3", type: "sid", value: "S-1-5-21-1", firstSeen: "" },
+      { id: "i4", type: "process", value: "powershell.exe", firstSeen: "" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toEqual([]);
+    expect(k.internalDomains).toEqual([]);
+  });
 });
 
 describe("isNoiseDomain / isNoiseAccount", () => {

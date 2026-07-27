@@ -675,6 +675,33 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
       else if (acct.includes("@")) internalDomains.add(acct.split("@")[1]);
     }
   }
+  // Also scan IOCs for victim FQDNs. The redacted-export anonymizer is built from this set; a
+  // victim internal AD domain that appears ONLY as an IOC value (e.g. dc01.globaltech.local as
+  // IOC ioc013) never contributed its parent (globaltech.local) to internalDomains, so the
+  // anonymizer's anonDomains had no entry and left it unredacted in the export. Domain + url +
+  // other IOCs are the reliable source: an analyst tags a victim FQDN as an IOC when it's
+  // central to the attack (a domain controller, a file server), even when it's not the event's
+  // `asset`. Adversary IOCs are NOT victim domains and are filtered out at the redactedExport
+  // layer (the customer store feeds in the analyst-confirmed victim list). Here we only ADD
+  // candidate victim hosts/domains; the anonymizer's anonDomains still matches them as
+  // internalDomains, and the downstream redactedExportBuilder composes with customerStore.
+  for (const ioc of state.iocs) {
+    if (ioc.type !== "domain" && ioc.type !== "url" && ioc.type !== "other") continue;
+    const raw = ioc.value.trim().toLowerCase();
+    if (!raw) continue;
+    let host = raw;
+    if (ioc.type === "url") {
+      try { host = new URL(raw).hostname; } catch { host = raw; }
+    }
+    if (!host || !host.includes(".")) continue;
+    if (isNoiseDomain(host)) continue;
+    hosts.add(host);
+    const i = host.indexOf(".");
+    if (i > 0) {
+      const parent = host.slice(i + 1);
+      if (!isNoiseDomain(parent)) internalDomains.add(parent);
+    }
+  }
   for (const h of hosts) {
     const i = h.indexOf(".");
     if (i > 0) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
