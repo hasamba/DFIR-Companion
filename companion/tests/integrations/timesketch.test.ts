@@ -194,6 +194,22 @@ describe("pushCaseToTimesketch", () => {
     expect(m.uploads).toHaveLength(0);
     expect(res.warnings.some((w) => w.includes("no events with a parseable timestamp"))).toBe(true);
   });
+
+  it("does NOT delete an existing same-named timeline when there are no events to upload (data-loss guard)", async () => {
+    // A zero-event push (all timestamps unparseable, or the source timeline is empty) must be
+    // a no-op on the existing timeline, not a delete-without-replace. Previously the delete ran
+    // unconditionally before the upload guard, destroying prior data on a no-op re-push.
+    const m = new MockTimesketch();
+    m.sketches.push({ id: 42, name: "Case Beta" });
+    m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" }); // prior data
+    const state = { ...emptyState("Case Beta"), forensicTimeline: [event({ timestamp: "bad", description: "x" })] };
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Beta", state });
+    expect(res.events).toBe(0);
+    expect(m.uploads).toHaveLength(0);
+    expect(m.deletedTimelines).not.toContain(7);          // prior timeline NOT deleted
+    expect(m.timelines.some((t) => t.id === 7)).toBe(true); // still present
+    expect(res.replacedTimeline).toBe(false);
+  });
 });
 
 describe("pushSuperTimelineToTimesketch", () => {
