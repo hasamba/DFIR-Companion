@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Regulatory / compliance mapping for confirmed findings** (#234) — `GET /cases/:id/compliance` maps each confirmed finding's ATT&CK techniques to control failures and obligations across NIST 800-53 Rev. 5, PCI-DSS v4.0, HIPAA, GDPR, SEC, and ISO 27001:2022, with real breach-notification clocks (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K Item 1.05 four business days) and a not-legal-advice disclaimer in every response.
+
 ### Security
 - **A website you merely visit could read your case data via DNS rebinding** (#280) — the API now refuses any request arriving under a hostname it does not recognise, closing the attack for every method including the no-`Origin` GETs an origin check cannot see. Loopback and bare IP addresses are trusted automatically, so localhost, Docker, and LAN access are unaffected.
 
