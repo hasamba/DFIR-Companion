@@ -1516,7 +1516,9 @@
     .sec-selall button { font-size: 11px; padding: 2px 8px; background: var(--c-2a2f3a); border: none; border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; }
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
-    .settings-msg { font-size: 11px; margin-left: 4px; }
+    /* Takes the footer's remaining width and wraps (scrolling past ~4 lines) — a save error can name
+       several .env keys, and as a single non-wrapping line it was clipped to the first few words. */
+    .settings-msg { font-size: 11px; margin-left: 4px; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.6em; overflow-y: auto; }
     /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default.
        Sticky while open so it stays visible (e.g. over the Super-Timeline it also scopes) as the
        dashboard is scrolled; [hidden] still fully removes it when the toolbar icon closes it. */
@@ -2361,7 +2363,7 @@
           <div class="sfield"><label>Content tagger scope<span class="sfield-hint">TAGGER_SCOPE (forensic/super/both)</span></label><input id="env-TAGGER_SCOPE" placeholder="both" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off) — <b>read-only here</b>: a security toggle the dashboard must not be able to flip. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" readonly /></div>
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
         <div class="sfield-row">
@@ -2373,7 +2375,7 @@
           <div class="sfield"><label>OCR redaction debug dir<span class="sfield-hint">DFIR_OCR_DEBUG_DIR — also write each redacted screenshot copy here so you can eyeball the black boxes</span></label><input id="env-DFIR_OCR_DEBUG_DIR" placeholder="(off)" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
+          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT — <b>read-only here</b>: repointing it at runtime would redirect every case. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" readonly /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
         </div>
         <div class="sfield-row">
@@ -2390,11 +2392,11 @@
           <div class="sfield"><label>Disk-space warning threshold (%)<span class="sfield-hint">DFIR_DISK_WARN_PCT — "danger" usage % that triggers the orange disk-space banner; warning is 15 pp below, critical 10 pp above. Leave blank for defaults (70/85/95%). Set to 0 to disable the check</span></label><input id="env-DFIR_DISK_WARN_PCT" placeholder="85" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" /></div>
+          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" readonly /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
-          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port</span></label><input id="env-DFIR_PORT" placeholder="4773" /></div>
+          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing. <b>Read-only here</b>: widening the bind address from a web page is exactly what the allowlist prevents. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" readonly /></div>
+          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_PORT" placeholder="4773" readonly /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Custom importers dir<span class="sfield-hint">DFIR_IMPORTERS_DIR — folder of *.json declarative importer specs; blank = importers/ beside cases root</span></label><input id="env-DFIR_IMPORTERS_DIR" placeholder="(importers/ beside cases root)" /></div>
@@ -19088,16 +19090,28 @@
       applySectionsVis();
 
       // 3. Env vars → POST /settings/env
+      // ONLY the fields the analyst actually changed. Posting all ~250 of them (the original
+      // behaviour) meant one edit dragged every other key into the request, and the server's
+      // allowlist rejects a batch atomically — so changing a single Timesketch URL failed with a
+      // wall of unrelated key names, and no Settings save could ever succeed. Read-only fields are
+      // skipped outright: the server refuses them by design, they're rendered for reference only.
       const updates = {};
       document.querySelectorAll("[id^='env-']").forEach(el => {
         const key = el.id.replace(/^env-/, "");
+        if (el.readOnly || el.disabled) return;
+        let val;
         if (el.type === "password") {
-          if (el.value.trim()) updates[key] = el.value.trim();
+          // Secrets load blank behind a "(already set)" placeholder, so only a typed value is a change.
+          val = el.value.trim();
+          if (!val) return;
         } else if (el.tagName === "SELECT") {
-          if (el.value) updates[key] = el.value;
+          // A blank select is "leave whatever .env has" — it must not blank an existing key.
+          if (!el.value) return;
+          val = el.value;
         } else {
-          updates[key] = el.value.trim();
+          val = el.value.trim();
         }
+        if (val !== (loadedEnvValues[key] ?? "")) updates[key] = val;
       });
       const msg = document.getElementById("settingsSaveMsg");
       msg.textContent = "";
@@ -19114,7 +19128,7 @@
             // corrected MISP URL could sit on disk while the running server kept pushing to the old
             // one (#178). Now every integration group the save touched is applied live: /settings/reload
             // loads it into the environment AND rebuilds the clients it feeds, reporting them back.
-            const changed = Object.keys(updates).filter(k => updates[k] !== (loadedEnvValues[k] ?? ""));
+            const changed = Object.keys(updates);
             const rebuilt = await applySavedEnvGroups(changed);
             // The saved values are the new baseline, so saving twice without reopening the modal
             // doesn't rebuild the same clients again.
@@ -19123,14 +19137,11 @@
               msg.textContent = "✓ Saved and applied live: " + rebuilt.join(", ") +
                 " — AI model changes still need a server restart";
               msg.style.color = "#5fd470";
-            } else if (changed.length > 0) {
+            } else {
               // Changed something with no live client behind it (AI models, tool paths) — the honest
               // answer is still "restart", so don't claim more than the server actually did.
               msg.textContent = "✓ Saved — restart the server to apply server-side changes";
               msg.style.color = "#ffd93b";
-            } else {
-              msg.textContent = "✓ Saved";
-              msg.style.color = "#5fd470";
             }
           } else {
             const j = await r.json().catch(() => ({}));
@@ -19144,10 +19155,12 @@
           ok = false;
         }
       } else {
-        msg.textContent = "✓ Saved";
+        msg.textContent = "✓ No .env changes to save";
         msg.style.color = "#5fd470";
       }
-      setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+      // Only the success note self-clears. An error used to vanish after 5s too, which meant a long
+      // rejection message scrolled off before it could be read — errors now stay until the next save.
+      if (ok) setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
       return ok;
     }
 
