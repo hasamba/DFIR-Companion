@@ -6,7 +6,10 @@ import type { AnonPolicy, KnownEntities } from "../../src/analysis/anonymize.js"
 
 const POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
+  // Every category ON. CARD/PHONE/NATID were missing here — no test file was type-checked, so
+  // Record<AnonCategory, boolean> never caught it and those three detectors were silently OFF in
+  // every screenshot-redaction test. See tsconfig.test.json.
+  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
   redactSecrets: true,
   maskPublicIps: true, // AI-wire screenshot pass — matches the AI-wire policy this always runs under
 };

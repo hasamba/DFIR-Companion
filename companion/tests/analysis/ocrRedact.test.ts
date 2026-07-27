@@ -23,7 +23,9 @@ function mockRunner(words: OcrWord[]): OcrRunner {
 
 const ENABLED_POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
+  // Every category ON — CARD/PHONE/NATID used to be missing, silently disabling those detectors
+  // in every OCR-redaction test. See tsconfig.test.json.
+  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
   redactSecrets: false,
   maskPublicIps: true, // AI-wire OCR pass — matches the AI-wire policy this pass always runs under
 };

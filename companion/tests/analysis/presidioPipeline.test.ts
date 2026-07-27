@@ -24,6 +24,7 @@ import type { Logger } from "../../src/logging/logger.js";
 
 class StubProvider implements AIProvider {
   readonly name = "stub";
+  readonly model = "stub-model";
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     return {
       rawText: JSON.stringify({
@@ -227,7 +228,8 @@ describe("presidio import pre-scan", () => {
     const s = await stateStore.load("c1");
     s.findings = [{
       id: "f1", title: "SUMMARY_CANARY_VALUE exfiltrated data", description: "seen in the case",
-      severity: "High", confidence: "High", mitreTechniques: [], evidence: [], sourceScreenshots: [],
+      severity: "High", status: "open", relatedIocs: [], mitreTechniques: [], sourceScreenshots: [],
+      firstSeen: "2026-01-01T00:00:00Z", lastUpdated: "2026-01-01T00:00:00Z",
     }];
     await stateStore.save(s);
 
@@ -242,7 +244,8 @@ describe("presidio import pre-scan", () => {
     const s = await stateStore.load("c1");
     s.findings = [{
       id: "f1", title: "SUMMARY_CANARY_VALUE exfiltrated data", description: "seen in the case",
-      severity: "High", confidence: "High", mitreTechniques: [], evidence: [], sourceScreenshots: [],
+      severity: "High", status: "open", relatedIocs: [], mitreTechniques: [], sourceScreenshots: [],
+      firstSeen: "2026-01-01T00:00:00Z", lastUpdated: "2026-01-01T00:00:00Z",
     }];
     await stateStore.save(s);
 
