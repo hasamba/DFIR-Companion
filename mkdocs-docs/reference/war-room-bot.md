@@ -31,12 +31,18 @@ Once a channel is bound, every command can omit the case id. Name a case explici
 
 ## Two ways to receive commands
 
-**Telegram can poll — start here if you can.** The Companion calls Telegram and asks for new commands, so nothing about your machine needs to be reachable. No tunnel, no `DFIR_ALLOWED_HOSTS`, no webhook registration to redo. Skip to [Telegram (polling)](#telegram-polling).
+**Outbound — no tunnel needed.** The Companion opens the connection to the platform and commands arrive down it, so nothing about your machine is reachable from the internet and there's no address to register or keep current. Available for Slack ([Socket Mode](#slack-socket-mode)) and Telegram ([polling](#telegram-polling)). **Prefer this.**
 
-**Slack and Teams must be delivered to** — and so must Telegram, if you'd rather use a webhook. The platform pushes each command to the Companion, which means it needs a public address. On a workstation install, that means a tunnel.
+**Inbound webhooks.** The platform pushes each command to the Companion, which needs a public address — a tunnel or reverse proxy — plus its hostname in `DFIR_ALLOWED_HOSTS`. Required for Teams, optional for Slack and Telegram.
+
+| Platform | Outbound (no tunnel) | Inbound webhook |
+|---|---|---|
+| Slack | ✅ Socket Mode | ✅ Request URL |
+| Telegram | ✅ Long polling | ✅ `setWebhook` |
+| MS Teams | — | ✅ only option |
 
 !!! note "This is the opposite direction from notifications"
-    Outbound Telegram/Slack notifications work with no tunnel, because the Companion calls *them*. Webhook commands arrive the other way, so they need an address the platform can reach. Polling puts Telegram back in the outbound direction.
+    Outbound Telegram/Slack notifications work with no tunnel, because the Companion calls *them*. Webhook commands arrive the other way, so they need an address the platform can reach. Socket Mode and polling put commands back in the outbound direction too.
 
 ---
 
@@ -65,7 +71,41 @@ Hostname only — no `https://`, no path. Restart after changing it.
 
 ---
 
-## Slack
+## Slack (Socket Mode)
+
+No tunnel, no Request URL. The Companion opens an outbound WebSocket to Slack and commands arrive down it.
+
+1. [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → From scratch, pick your workspace.
+2. **Socket Mode** → toggle **Enable Socket Mode** on. Slack offers to create an app-level token — do that, give it the **`connections:write`** scope, and copy it (it starts `xapp-`).
+3. **Slash Commands** → **Create New Command** → Command `/dfir`. With Socket Mode on, Slack does not ask for a Request URL.
+4. **Install to Workspace**.
+5. Add to `.env`:
+
+```
+DFIR_SLACK_SOCKET_MODE=on
+DFIR_SLACK_APP_TOKEN=xapp-1-...
+```
+
+Restart. The log confirms it:
+
+```
+[slack] socket mode: connecting (no inbound URL needed)
+[slack] socket mode: connected
+```
+
+Slack rotates these connections periodically and warns first; the Companion reconnects on its own and logs it as routine. If the connection drops it retries with a widening backoff.
+
+!!! note "The signing secret isn't used here"
+    There is no HTTP request to sign — the app-level token authenticates the connection. `DFIR_SLACK_SIGNING_SECRET` is a webhook-mode setting.
+
+!!! warning "It must be an app-level token"
+    `xapp-…` from **Basic Information → App-Level Tokens**, with `connections:write`. A bot token (`xoxb-…`) will be rejected with `invalid_auth`, which the log calls out.
+
+---
+
+## Slack (webhook)
+
+Use this only if the Companion is already reachable at a stable address.
 
 1. [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → From scratch, pick your workspace.
 2. **Slash Commands** → **Create New Command**:
@@ -228,9 +268,22 @@ If you see that, the whole chain works: tunnel → hostname guard → secret ver
 
 ## When it doesn't work
 
-### Polling mode
+### Outbound modes (Socket Mode / polling)
 
-Everything is in the Companion's own log, since there's no network path to misconfigure. Look for:
+Everything is in the Companion's own log, since there's no network path to misconfigure.
+
+**Slack Socket Mode:**
+
+| Log line | Cause |
+|---|---|
+| `socket mode: connected` | Working — if commands still don't arrive, the slash command isn't installed, or you're in a workspace the app isn't in |
+| *(nothing at all)* | `DFIR_SLACK_SOCKET_MODE` isn't `on`, or the Companion wasn't restarted |
+| `socket mode requested but DFIR_SLACK_APP_TOKEN is not set` | Exactly that |
+| `invalid_auth — DFIR_SLACK_APP_TOKEN must be an app-level token` | You used a bot token (`xoxb-`); it needs `xapp-` with `connections:write` |
+| `socket mode: reconnecting (refresh_requested)` | Routine — Slack rotates connections |
+| `socket mode: …; retrying in Ns` | Network trouble; it recovers on its own |
+
+**Telegram polling:**
 
 | Log line | Cause |
 |---|---|

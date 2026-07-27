@@ -35,7 +35,7 @@ import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
-import { registerSlashCommandRoutes, startTelegramPolling } from "./routes/slashCommand.js";
+import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
 import { registerCoachRoutes } from "./routes/coach.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -600,6 +600,9 @@ export interface AppOptions {
   // (#235). Gated on this flag rather than read straight from env, so createApp-only unit tests
   // never start a network loop — same reasoning as the drop-folder watcher below.
   telegramPolling?: boolean;
+  // Receive Slack commands over an outbound WebSocket instead of a Request URL (#235). Same
+  // reasoning as telegramPolling above: gated on the flag so tests never open a socket.
+  slackSocketMode?: boolean;
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
   dashboardBaseUrl?: string;
@@ -957,9 +960,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCoachRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
   registerSlashCommandRoutes(app, ctx);
-  // Telegram long polling (#235): opt-in, and gated on the flag so createApp-only unit tests never
-  // reach the network. Exposed on app.locals so a host can stop it on shutdown.
+  // Outbound-only command transports (#235) — neither needs an inbound URL. Opt-in, and gated on
+  // the flags so createApp-only unit tests never reach the network. Exposed on app.locals so a host
+  // can stop them on shutdown.
   if (options.telegramPolling) app.locals.telegramPoller = startTelegramPolling(ctx);
+  if (options.slackSocketMode) app.locals.slackSocketMode = startSlackSocketMode(ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
@@ -3687,6 +3692,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     notificationStore,
     slashCommandChannelStore,
     telegramPolling: (process.env.DFIR_TELEGRAM_POLL ?? "").trim().toLowerCase() === "on",
+    slackSocketMode: (process.env.DFIR_SLACK_SOCKET_MODE ?? "").trim().toLowerCase() === "on",
     notifier,
     notifyEmailEnabled: true,
     dashboardBaseUrl,

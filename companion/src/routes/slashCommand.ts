@@ -26,6 +26,7 @@ import {
 } from "../analysis/slashCommandAuth.js";
 import { getAiLimiter } from "../http/rateLimiter.js";
 import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../analysis/telegramPoller.js";
+import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSocketMode.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
@@ -201,6 +202,7 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
     return undefined;
   }
   const apiBase = (process.env.DFIR_TELEGRAM_API_BASE ?? "").trim() || undefined;
+  const limiter = getAiLimiter();
 
   const poller = new TelegramPoller({
     botToken,
@@ -211,6 +213,17 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
       const chatId = String(message.chat?.id ?? "");
       const text = String(message.text ?? message.caption ?? "");
       if (!chatId || !text.trim()) return; // a join notice, a photo with no caption — nothing to run
+
+      // Same per-channel cap as the webhook route. Polled commands are authenticated by
+      // construction, but a runaway script in one chat can still burn the AI budget.
+      if (!limiter.tryAcquire(`telegram:${chatId}`)) {
+        await sendTelegramMessage({
+          botToken, apiBase, chatId,
+          text: "Rate limit exceeded — try again in a minute.",
+          log: ctx.serverLogger,
+        });
+        return;
+      }
 
       const result = await dispatchSlashCommand({
         platform: "telegram",
@@ -234,6 +247,59 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
   });
   poller.start();
   return poller;
+}
+
+/**
+ * Start Slack Socket Mode, so Slack commands work with no inbound URL — the Slack counterpart to
+ * Telegram polling. The Companion opens an outbound WebSocket and commands arrive down it, so
+ * there is no Request URL to register and no tunnel hostname to keep in DFIR_ALLOWED_HOSTS.
+ *
+ * Returns the connection so the caller can stop it, or undefined when it isn't configured. Socket
+ * Mode and a Request URL are alternatives, not complements: an app configured for Socket Mode
+ * stops delivering over HTTP, and DFIR_SLACK_SIGNING_SECRET is unused here — the app-level token
+ * is what authenticates the connection.
+ */
+export function startSlackSocketMode(ctx: RouteContext): SlackSocketMode | undefined {
+  const { options } = ctx;
+  const channelStore = options.slashCommandChannelStore;
+  const appToken = (process.env.DFIR_SLACK_APP_TOKEN ?? "").trim();
+  if (!channelStore) return undefined;
+  if (!appToken) {
+    ctx.serverLogger.warn("[slack] socket mode requested but DFIR_SLACK_APP_TOKEN is not set — not starting");
+    return undefined;
+  }
+  const limiter = getAiLimiter();
+
+  const socket = new SlackSocketMode({
+    appToken,
+    apiBase: (process.env.DFIR_SLACK_API_BASE ?? "").trim() || undefined,
+    log: ctx.serverLogger,
+    onCommand: async (payload: SlackCommandPayload) => {
+      const channelId = String(payload.channel_id ?? "");
+      // Same per-channel cap as the webhook route: the request is authenticated by construction
+      // here, but a runaway script in one war room can still burn the AI budget.
+      if (!limiter.tryAcquire(`slack:${channelId}`)) {
+        return { response_type: "ephemeral", text: "Rate limit exceeded — try again in a minute." };
+      }
+      const result = await dispatchSlashCommand({
+        platform: "slack",
+        channelId,
+        userId: String(payload.user_id ?? ""),
+        responseUrl: String(payload.response_url ?? ""),
+        text: String(payload.text ?? ""),
+        actionAllowlist: parseHostList(process.env.DFIR_SLACK_ACTION_USERS),
+        channelStore,
+        ctx,
+      });
+      if (result.background) void result.background();
+      return {
+        response_type: result.ephemeral ? "ephemeral" : "in_channel",
+        text: renderText(result.reply),
+      };
+    },
+  });
+  socket.start();
+  return socket;
 }
 
 /** Dispatch a webhook-delivered command and write the answer in the platform's envelope. Any

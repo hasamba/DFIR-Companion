@@ -226,10 +226,12 @@ Inbound slash commands from Slack / Teams / Telegram — see [War-Room Slash-Com
 
 | Variable | Meaning |
 |---|---|
-| `DFIR_TELEGRAM_POLL` | `=on` to receive Telegram commands by long polling. **No tunnel, no inbound URL** — the preferred setup on a workstation. Needs only `DFIR_TELEGRAM_BOT_TOKEN` |
+| `DFIR_SLACK_SOCKET_MODE` | `=on` to receive Slack commands over an outbound WebSocket. **No tunnel, no Request URL.** Needs `DFIR_SLACK_APP_TOKEN` |
+| `DFIR_SLACK_APP_TOKEN` | App-level token, `xapp-…`, scope `connections:write`. Not a bot token |
+| `DFIR_TELEGRAM_POLL` | `=on` to receive Telegram commands by long polling. **No tunnel, no inbound URL.** Needs only `DFIR_TELEGRAM_BOT_TOKEN` |
 | `DFIR_TELEGRAM_BOT_TOKEN` | @BotFather token. Required for polling; in webhook mode it delivers `ask`/`hunt`/`synthesize` results |
-| `DFIR_ALLOWED_HOSTS` | Hostnames the Companion answers to. **Required in webhook mode** — the tunnel/proxy hostname must be listed, or requests are refused with 403. Not used by polling |
-| `DFIR_SLACK_SIGNING_SECRET` | Slack app signing secret; enables `/integrations/slack/command` |
+| `DFIR_ALLOWED_HOSTS` | Hostnames the Companion answers to. **Required in webhook mode** — the tunnel/proxy hostname must be listed, or requests are refused with 403. Not used by Socket Mode or polling |
+| `DFIR_SLACK_SIGNING_SECRET` | Slack app signing secret; enables `/integrations/slack/command`. Webhook mode only |
 | `DFIR_TEAMS_TOKEN` | Shared bearer token; enables `/integrations/teams/command` |
 | `DFIR_TELEGRAM_SECRET_TOKEN` | `setWebhook` secret; enables `/integrations/telegram/command`. Webhook mode only |
 | `DFIR_SLACK_ACTION_USERS`<br>`DFIR_TEAMS_ACTION_USERS`<br>`DFIR_TELEGRAM_ACTION_USERS` | Comma-separated user ids allowed to run `ask`/`hunt`/`synthesize`/`bind`. Unset = open to the whole channel; once set, everyone else is confined to the channel's bound case |
