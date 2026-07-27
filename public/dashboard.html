@@ -11053,6 +11053,10 @@
       loadAnonEntities(caseId)
         .then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; })
         .catch(() => { anonAuto = {}; anonCustom = []; anonSuppressed = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
+      // Re-fetch rather than trust whatever loadPresidioPending last populated at case-connect —
+      // state can change elsewhere (another dashboard tab, an import landing) between connect and
+      // this modal being opened, and a stale pending list here would show the wrong count/values.
+      loadPresidioPending(caseId);
       document.getElementById("anonOverlay").classList.add("open");
     }
     function saveAnon() {

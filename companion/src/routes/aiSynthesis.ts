@@ -334,7 +334,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(record);
     } catch (err) {
-      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err);
+      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /unknown second-opinion delta/.test(msg) ? 404 : /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -354,7 +354,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(record);
     } catch (err) {
-      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err);
+      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -390,7 +390,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg.startsWith("event not found") || msg.startsWith("Case not found")) return res.status(404).json({ error: msg });
       errLine(`[explain] case=${req.params.id} event=${req.params.eid}: ${msg}`);
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -408,7 +408,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -434,7 +434,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg === "no starred events") return res.status(400).json({ error: msg });
       errLine(`[starred-report] case=${req.params.id}: ${msg}`);
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -509,7 +509,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg === "no events match the current filters") return res.status(400).json({ error: msg });
       errLine(`[view-summary] case=${req.params.id}: ${msg}`);
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -525,7 +525,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -542,7 +542,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -562,7 +562,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -766,7 +766,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       logLine(`[adversary] suggested ${suggestions.length} hunt(s) for technique ${techniqueId} (${req.params.id})`);
       return res.status(200).json({ suggestions });
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -785,7 +785,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json({ suggestions });
     } catch (err) {
-      return sendPipelineError(res, err);
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
