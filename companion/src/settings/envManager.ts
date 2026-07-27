@@ -40,7 +40,7 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_AI_AUTO_SYNTHESIZE", "DFIR_AI_AUTO_SYNTHESIZE_MS", "DFIR_AI_SYNTH_THINKING_TOKENS",
   "DFIR_AI_DEBUG_USAGE", "DFIR_AI_VELO_", "DFIR_AI_SECOND_OPINION_",
   "DFIR_AI_CLAUDE_CODE_BIN", "DFIR_AI_CODEX_BIN", "DFIR_VISION_IMAGE_DETAIL",
-  "DFIR_AI_", "DFIR_VISION_",
+  "DFIR_AI_", "DFIR_VISION_", "DFIR_PRESIDIO_",
 ];
 
 /** Validate that every key in `updates` is on the writable allowlist and not explicitly denied.
