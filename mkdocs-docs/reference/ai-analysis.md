@@ -129,8 +129,9 @@ By default, the Companion **tokenizes identifying information** before sending a
 
 | Data type | Becomes |
 |-----------|---------|
-| IP addresses (internal — RFC1918, loopback, link-local, CGNAT) | `ANON_IP_1`, `ANON_IP_2`, … |
-| IP addresses (public) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible |
+| IPv4 addresses (internal — RFC1918, loopback, link-local, CGNAT) | `ANON_IP_1`, `ANON_IP_2`, … |
+| IPv4 addresses (public, routable) | `ANON_EXTIP_1`, … — masked on the AI wire; see below for the one place they're kept visible, and the known limitation for what "public" excludes |
+| IPv6 addresses (internal, or public within `2000::/3` / IPv4-mapped) | `ANON_IP_n` / `ANON_EXTIP_n` — see the IPv6 note below for what's out of scope |
 | Hostnames | `ANON_HOST_1`, … |
 | Usernames | `ANON_USER_1`, … |
 | Domain names | `ANON_DOMAIN_1`, … |
@@ -144,7 +145,14 @@ By default, the Companion **tokenizes identifying information** before sending a
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
 
-**Every IP address is now tokenized before it reaches an external AI provider** — including public ones, which the model previously saw in cleartext. A public address becomes `ANON_EXTIP_n` rather than `ANON_IP_n`, so the model can still reason about it being external without being shown it, and it is restored to the real value in the answer you read, same as any other token.
+**Every real, routable IP address is now tokenized before it reaches an external AI provider — public ones included**, which the model previously saw in cleartext. A public address becomes `ANON_EXTIP_n` rather than `ANON_IP_n`, so the model can still reason about it being external without being shown it, and it is restored to the real value in the answer you read, same as any other token. Two narrow, deliberate exceptions are worth knowing about — see below.
+
+!!! note "Known limitation: two narrow, deliberate gaps in IP masking"
+    **IPv4:** every address is classified and either internal (`ANON_IP_n`) or a genuinely routable public address (`ANON_EXTIP_n`) — *except* `0.0.0.0/8`, multicast (`224.0.0.0/4`), reserved (`240.0.0.0/4`), and the broadcast address `255.255.255.255`, which are left visible unchanged. These ranges are structurally never adversary infrastructure (nothing is assigned or routable there), so masking them would only obscure a four-part software version string like `1.0.0.0` that happens to match the same pattern — a real, common false-positive source in forensic text.
+
+    **IPv6** is narrower: only the globally-routable `2000::/3` range (where adversary infrastructure and documentation examples like `2001:db8::/32` actually live) and IPv4-mapped addresses (`::ffff:x.x.x.x`) are treated as maskable public addresses, on top of the usual internal ranges (loopback, unique-local `fc00::/7`, link-local `fe80::/10`). An IPv6 literal that is neither internal nor inside `2000::/3` — i.e. unallocated or reserved space — is left **completely untouched**: not tokenized, not reserved from other detectors, exactly as it appeared in the source text. This is a deliberate trade-off, not a bug: IPv6 addresses are frequently mimicked by ordinary code (`[Convert]::FromBase64String(`, `std::cout`, `WIN11::admin` all look like IPv6 literals to a naive pattern), so masking anything that merely matches the shape would blind every other detector across whatever text it swallowed. In practice this means a routable-but-unallocated or experimental IPv6 address would reach the model unmasked.
+
+    The escape hatch for either gap is the same, and it's different from the usual suppression list (which *un*-masks a value — the opposite of what's needed here): add the specific address as a **custom entity** — category `IP` or `EXTIP` — in the Anonymization panel, which tokenizes it by exact match regardless of what the IP detectors decided.
 
 !!! note "The redacted export keeps public IPs visible — on purpose"
     The **redacted case package** (a ZIP built for sharing outside the tool) does *not* mask public IPs. A report handed to a client or another team is expected to name adversary infrastructure, so that export path tokenizes everything internal (hosts, users, internal IPs, domains, paths) but leaves public addresses as attacker infrastructure that stays actionable for the recipient.
