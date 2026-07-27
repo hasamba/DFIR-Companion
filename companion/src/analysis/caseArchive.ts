@@ -1,6 +1,6 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
@@ -197,7 +197,24 @@ export async function archiveCase(
 
   const scan = deps.scanFiles ?? defaultScanFiles;
   const read = deps.readFile ?? (async (p: string) => readFile(p));
-  const write = deps.writeFile ?? (async (p: string, d: Buffer) => writeFile(p, d));
+  // The default write is ATOMIC (write to a unique temp file then rename over the target), so a
+  // crash (power loss, OOM kill, disk full mid-write) never leaves a partially-written ZIP as the
+  // only copy of a case. Plain fs.writeFile opens with O_TRUNC and streams in chunks; a crash
+  // mid-stream leaves a truncated, unopenable archive. This is the same protection atomicWrite
+  // gives state files, adapted for a binary Buffer (atomicWrite's string path would utf8-corrupt
+  // bytes). Every other write in the data-integrity core (StateStore, BackupManager, CaseStore)
+  // already routes through atomicWrite; archiveCase was the outlier — its own JSDoc claimed
+  // atomicity the previous default did NOT provide.
+  const write = deps.writeFile ?? (async (p: string, d: Buffer) => {
+    const tmp = `${p}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(tmp, d);
+      await rename(tmp, p);
+    } catch (err) {
+      try { await unlink(tmp); } catch { /* temp may not exist; ignore */ }
+      throw err;
+    }
+  });
 
   const relPaths = await scan(caseDir);
 

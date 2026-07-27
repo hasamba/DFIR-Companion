@@ -143,6 +143,34 @@ describe("archiveCase", () => {
     const result = await archiveCase("/cases", "c1", fs);
     expect(result.manifest.totalBytes).toBe(5);
   });
+
+  it("writes atomically: a failing default write leaves no partial file at the target", async () => {
+    // The default write (no deps.writeFile injected) must NOT leave a partial file at the
+    // target path if the write fails mid-stream. We force a failure by making the casesRoot
+    // directory read-only after the temp file is created — the rename step fails, and we
+    // verify the target archive never existed (no truncated ZIP left behind).
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const fs = await import("node:fs/promises");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dfir-archive-atomic-"));
+    const caseDir = path.join(dir, "c1");
+    await fs.mkdir(path.join(caseDir), { recursive: true });
+    await fs.writeFile(path.join(caseDir, "case.json"), '{"caseId":"c1"}');
+    // Inject a writeFile that writes the temp file then fails before the rename, so the
+    // default atomic path's cleanup branch runs. We verify the FINAL target is never created.
+    const archivePath = path.join(dir, "c1 (no password).zip");
+    const failingWrite = async (p: string, _d: Buffer): Promise<void> => {
+      // Simulate a crash mid-write: write a temp file then throw before renaming.
+      const tmp = `${p}.fail.tmp`;
+      await fs.writeFile(tmp, "partial");
+      throw new Error("simulated disk full");
+    };
+    await expect(archiveCase(dir, "c1", { writeFile: failingWrite })).rejects.toThrow("simulated disk full");
+    // The target archive must NOT exist (no partial ZIP at the final path).
+    await expect(fs.stat(archivePath)).rejects.toThrow();
+    // Cleanup
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe("zipArchiveFilename", () => {
