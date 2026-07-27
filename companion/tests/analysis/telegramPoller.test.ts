@@ -92,6 +92,23 @@ describe("TelegramPoller", () => {
     expect(log.lines.some((l) => l.includes("handler exploded"))).toBe(true);
   });
 
+  // The caller passes `apiBase: undefined` whenever DFIR_TELEGRAM_API_BASE is unset. Spreading
+  // options over a defaults object let that undefined win, and every poll died on
+  // "Cannot read properties of undefined (reading 'replace')" — invisible to any test that simply
+  // omits the key, which is what all the others here do.
+  it("falls back to the public Bot API when apiBase is explicitly undefined", async () => {
+    const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
+    const poller = new TelegramPoller({
+      botToken: "T", apiBase: undefined, pollTimeoutSeconds: undefined,
+      fetchFn: fn, log: fakeLog(), onUpdate: async () => {},
+    });
+    poller.start();
+    await vi.waitFor(() => expect(urls.length).toBeGreaterThanOrEqual(1));
+    await poller.stop();
+    expect(urls[0]).toContain("https://api.telegram.org/botT/getUpdates");
+    expect(urls[0]).toContain("timeout=50");
+  });
+
   it("requests only message updates, with a long-poll timeout", async () => {
     const { fn, urls } = fetchServing([{ body: { ok: true, result: [] } }]);
     const poller = new TelegramPoller({ botToken: "T", fetchFn: fn, log: fakeLog(), onUpdate: async () => {} });

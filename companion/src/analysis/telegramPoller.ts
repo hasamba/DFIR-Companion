@@ -60,7 +60,15 @@ export class TelegramPoller {
   private backoffMs = MIN_BACKOFF_MS;
 
   constructor(options: TelegramPollerOptions) {
-    this.opts = { apiBase: "https://api.telegram.org", pollTimeoutSeconds: 50, ...options };
+    // Defaults go AFTER the spread and resolve with ??. Spreading options over a defaults object
+    // instead lets an explicitly-passed `apiBase: undefined` overwrite the default with undefined —
+    // which is exactly what the caller does when the env override is unset, and it broke every poll
+    // with "Cannot read properties of undefined". Tests that simply omit the key never see it.
+    this.opts = {
+      ...options,
+      apiBase: options.apiBase ?? "https://api.telegram.org",
+      pollTimeoutSeconds: options.pollTimeoutSeconds ?? 50,
+    };
     this.fetchFn = options.fetchFn ?? fetch;
     this.sleepFn = options.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms).unref?.()));
   }
