@@ -17,6 +17,7 @@ import { mentionEvent } from "../analysis/notifications.js";
 import { sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { STARRED_LABEL } from "../analysis/superTimeline.js";
 import type { ForensicEvent, Finding } from "../analysis/stateTypes.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -335,7 +336,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         }));
       return res.status(200).json({ candidates: [...deterministic, ...aiCandidates] });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 

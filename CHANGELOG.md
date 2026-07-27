@@ -12,9 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Three new local PII detectors** — credit card numbers (issuer-prefix + Luhn check), phone numbers (E.164/Israeli/NANP, narrow patterns to avoid PIDs/ports), and Israeli Teudat Zehut national ID numbers (check-digit validated), joining the existing anonymization categories.
+- **Optional Presidio layer** — point `DFIR_PRESIDIO_URL` at a self-run [Presidio Analyzer](mkdocs-docs/reference/presidio.md) container to catch what regex can't, principally people's names, in already-masked text. Fails closed if configured but unreachable; new PII surfaces through an analyst approval gate (409 for interactive calls, a persisted pending-approval store for imports) before it ever reaches the model.
 - **Compliance Impact in the dashboard and the report** (#336) — the regulatory mapping added in #234 now has a UI: a dashboard panel and a report section, both carrying the not-legal-advice disclaimer and the framework editions. Set an incident-discovery date to get notification countdowns (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K Item 1.05 four business days, weekends skipped); control cadences never show one. Per-case framework filter so a healthcare org can drop PCI noise.
 
 ### Changed
+- **Public IP addresses are now tokenized on the AI wire** (`ANON_EXTIP_n`), not just internal ones — restored to the real value in the model's answer. The redacted case export is unchanged and still keeps public IPs visible, so a shared report still names attacker infrastructure. Note: a public IP visible only in a screenshot is blacked out by OCR redaction and cannot be un-masked, so it will not be extracted as an indicator.
 - **The Executive Brief report template now includes Compliance Impact** — the C-suite deliverable is where "are we obligated to report this?" gets asked. Toggle it off per template if you don't want it.
 
 ### Added

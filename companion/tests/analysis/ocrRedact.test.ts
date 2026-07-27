@@ -23,8 +23,11 @@ function mockRunner(words: OcrWord[]): OcrRunner {
 
 const ENABLED_POLICY: AnonPolicy = {
   enabled: true,
-  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
+  // Every category ON — CARD/PHONE/NATID used to be missing, silently disabling those detectors
+  // in every OCR-redaction test. See tsconfig.test.json.
+  categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
   redactSecrets: false,
+  maskPublicIps: true, // AI-wire OCR pass — matches the AI-wire policy this pass always runs under
 };
 
 const DISABLED_POLICY: AnonPolicy = { ...ENABLED_POLICY, enabled: false };
@@ -67,6 +70,31 @@ describe("ocrRedactImage", () => {
     expect(result.buffer.length).toBeGreaterThan(0);
     expect(result.changed).toBe(true);
     expect(result.redactions.map((w) => w.text)).toEqual(["VICTIM-PC"]);
+  });
+
+  it("boxes a public IP as EXTIP when maskPublicIps is on (screenshot IOC-loss path)", async () => {
+    // Covers the AI-wire OCR path this task changed: a public/adversary IP visible in a
+    // screenshot must still be boxed out (one-way — pipeline.ts then warns it can't be recovered
+    // as an IOC from this capture), not left visible just because it isn't victim-internal.
+    const img = await whiteImage();
+    const words: OcrWord[] = [
+      { text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
+    ];
+    const result = await ocrRedactImage(img, ENABLED_POLICY, KNOWN, mockRunner(words));
+    expect(result.changed).toBe(true);
+    expect(result.redactions.map((w) => w.text)).toEqual(["45.61.136.10"]);
+    expect(result.discovered).toContainEqual({ value: "45.61.136.10", category: "EXTIP" });
+  });
+
+  it("leaves a public IP visible when maskPublicIps is off (redacted export policy)", async () => {
+    const img = await whiteImage();
+    const words: OcrWord[] = [
+      { text: "45.61.136.10", bbox: { x: 10, y: 10, w: 80, h: 20 }, confidence: 90 },
+    ];
+    const exportPolicy: AnonPolicy = { ...ENABLED_POLICY, maskPublicIps: false };
+    const result = await ocrRedactImage(img, exportPolicy, KNOWN, mockRunner(words));
+    expect(result.changed).toBe(false);
+    expect(result.redactions).toEqual([]);
   });
 
   it("skips words below the confidence threshold", async () => {

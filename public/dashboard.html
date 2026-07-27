@@ -1659,6 +1659,7 @@
     </button>
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI/OpenCTI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
+    <button id="presidioPendingBadge" type="button" style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <button id="secondOpinion" style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
@@ -1767,6 +1768,7 @@
         <div class="asset-subhead" style="margin:12px 0 2px">Auto-detected entities (read-only — grows with the investigation)</div>
         <div style="font-size:11px;color:var(--c-9aa4b2);margin:0 0 4px">Entities found in the case — including ones the companion read out of <strong>screenshots</strong> — appear here grouped by type and are anonymized on every run. Click <strong>✕</strong> to remove a wrong one (e.g. a mis-matched path): it stops being anonymized and won't come back (<strong>↺</strong> restores it). The category patterns above also redact by shape everywhere, so redaction can happen before anything is listed here.</div>
         <div id="anonAuto" style="font-size:12px;background:var(--c-0e1116);border-radius:6px;padding:6px"></div>
+        <div id="presidioPending"></div>
         <div class="asset-subhead" style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
         <div id="anonCustom" style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -2488,6 +2490,19 @@
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
+        <div class="settings-group-head">Presidio (optional external PII detector)</div>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label>Presidio analyzer URL<span class="sfield-hint">DFIR_PRESIDIO_URL — Optional. A Presidio Analyzer container you run yourself. It scans text that has ALREADY been masked, to catch names and IDs the built-in patterns cannot. Leave blank to disable.</span></label>
+            <input id="env-DFIR_PRESIDIO_URL" placeholder="http://localhost:5002" />
+          </div>
+          <div class="sfield"><label>Presidio confidence floor<span class="sfield-hint">DFIR_PRESIDIO_MIN_SCORE</span></label><input id="env-DFIR_PRESIDIO_MIN_SCORE" placeholder="0.6" /></div>
+        </div>
+        <div id="presidioLocalWarning" style="display:none;margin:2px 0 8px;padding:8px;border-radius:6px;background:var(--c-3a2a00);color:var(--c-ffcf66);font-size:12px"></div>
+        <div class="sfield" style="margin:0 0 8px">
+          <button type="button" id="presidioTestBtn">Test connection</button>
+          <span id="presidioTestResult" style="margin-left:8px;font-size:12px;color:var(--c-9aa4b2)"></span>
+        </div>
         <div class="sfield-row">
           <div class="sfield">
             <label>Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
@@ -10275,8 +10290,21 @@
       const deep = !!document.getElementById("deepReasoning")?.checked;
       document.getElementById("status").textContent = (deep ? "running second opinion with deep reasoning " : "running second opinion ") + "(refreshing the primary, then a different model)…";
       fetch(`/cases/${caseId}/second-opinion`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deepReasoning: deep }) })
-        .then(r => r.json())
+        .then(async r => {
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({}));
+            if (body.error === "presidio_approval_required") {
+              if (btn) btn.disabled = false;
+              presidioPending = body.findings || [];
+              renderPresidioPending();
+              document.getElementById("status").textContent = "second opinion held — Presidio found new value(s) to review (see Anonymization)";
+              return null;
+            }
+          }
+          return r.json();
+        })
         .then(rec => {
+          if (!rec) return;   // handled above (409 presidio hold)
           if (btn) btn.disabled = false;
           if (rec && rec.error) { document.getElementById("status").textContent = "second opinion failed: " + rec.error; return; }
           const n = Array.isArray(rec.deltas) ? rec.deltas.length : 0;
@@ -10605,8 +10633,21 @@
       const box = document.getElementById("askAnswer");
       box.innerHTML = "<div style='color:var(--c-9aa4b2)'>thinking…</div>";
       fetch(`/cases/${caseId}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: q }) })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(async r => {
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({}));
+            if (body.error === "presidio_approval_required") {
+              presidioPending = body.findings || [];
+              renderPresidioPending();
+              box.innerHTML = "<div style='color:var(--c-ffcf66)'>Presidio found new value(s) awaiting approval — resolve them in Anonymization, then ask again.</div>";
+              return null;
+            }
+          }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
         .then(a => {
+          if (!a) return;   // handled above (409 presidio hold)
           const events = citeEvents(a.relatedEventIds);
           box.innerHTML =
             `<div class="info-card">` +
@@ -10935,13 +10976,14 @@
 
     // ── Anonymization — tokenize sensitive victim data before the AI; restore on display ──
     const ANON_CATEGORIES = [
-      ["IP", "Internal IPs"], ["USER", "Usernames"], ["HOST", "Hostnames"],
+      ["IP", "IP addresses"], ["USER", "Usernames"], ["HOST", "Hostnames"],
       ["DOMAIN", "Internal domains"], ["EMAIL", "Emails"], ["PATH", "User paths"],
       ["CMD", "Encoded commands"], ["REG", "SIDs"],
+      ["CARD", "Credit cards"], ["PHONE", "Phone numbers"], ["NATID", "ID numbers"],
     ];
-    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EMAIL", "PATH", "CMD", "REG", "OTHER"];
+    const ANON_ENTITY_CATEGORIES = ["HOST", "USER", "DOMAIN", "IP", "EXTIP", "EMAIL", "PATH", "CMD", "REG", "CARD", "PHONE", "NATID", "PERSON", "OTHER"];
     let anonControl = null;          // { enabled, categories, redactSecrets, screenshotWarning }
-    let anonAuto = { hosts: [], accounts: [], internalDomains: [] };
+    let anonAuto = { hosts: [], accounts: [], internalDomains: [], ips: [], extIps: [], emails: [], paths: [], other: [] };
     let anonCustom = [];             // working copy: [{ value, category }]
     let anonSuppressed = [];         // values removed from auto-discovery (server-persisted)
 
@@ -10977,7 +11019,7 @@
       // Groups (incl. entities discovered from screenshots), only those with entries.
       const groups = [
         ["Hosts", a.hosts], ["Accounts", a.accounts], ["Internal domains", a.internalDomains],
-        ["IPs", a.ips], ["Emails", a.emails], ["Paths", a.paths], ["Other", a.other],
+        ["IPs", a.ips], ["External IPs", a.extIps], ["Emails", a.emails], ["Paths", a.paths], ["Other", a.other],
       ].filter(([, arr]) => (arr || []).length);
       const chip = v => `<span class="anon-chip">${esc(v)} <button class="anon-auto-rm" data-value="${escAttr(v)}" title="Remove — stop anonymizing this value">✕</button></span>`;
       const grp = (label, arr) => `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.map(chip).join(" ")}</div></div>`;
@@ -11007,6 +11049,73 @@
         .then(() => loadAnonEntities(caseId)).then(() => renderAutoEntities())
         .catch(() => { document.getElementById("anonMsg").textContent = "could not restore entity — restart the server if this persists"; });
     }
+
+    // ── Presidio approval panel (analyst-run PII-detector container found unseen values) ────────
+    // The gate is the PERSISTED store, not the 409 — an import runs fire-and-forget (202 + a
+    // background pipeline job) so there is no synchronous response to carry a 409 when the gate
+    // fires mid-import; it only ever surfaces as an ai_status "error" over the WebSocket. So this
+    // list is loaded on case connect AND whenever ai_status goes to "error" (see applyAiStatus),
+    // with the 409 fast-path (see doAsk/synthesize/runSecondOpinion) as an optimisation on top —
+    // never the only way the panel appears.
+    let presidioPending = [];
+    function loadPresidioPending(caseId) {
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/presidio-pending`)
+        .then(r => r.ok ? r.json() : { pending: [] })
+        .then(d => { presidioPending = d.pending || []; renderPresidioPending(); })
+        .catch(() => {});
+    }
+    function renderPresidioPending() {
+      const badge = document.getElementById("presidioPendingBadge");
+      if (badge) {
+        if (presidioPending.length > 0) { badge.style.display = ""; badge.textContent = "⚠ Presidio: " + presidioPending.length; }
+        else badge.style.display = "none";
+      }
+      const el = document.getElementById("presidioPending");
+      if (!el) return;
+      if (presidioPending.length === 0) { el.innerHTML = ""; return; }
+      el.innerHTML =
+        `<div style="margin-top:10px;padding:8px;border-radius:6px;background:var(--c-3a2a00);color:var(--c-ffcf66);font-size:12px">` +
+        `<b>Presidio found ${presidioPending.length} new value(s) in this case.</b> ` +
+        `Decide each one: hide it from the AI from now on, or leave it visible because it isn't PII. ` +
+        `The AI call was not sent — re-run it once you have resolved these.</div>` +
+        // Label the ACTION, not the verdict. "Approve" was ambiguous in the one direction that
+        // matters: the gate is holding an AI call, so "Approve" reads as "approve the send" —
+        // the exact opposite of what it does (it masks the value). "Not PII" then sounds like
+        // the same kind of affirmative. Both buttons now say what will happen to the value.
+        presidioPending.map(e =>
+          `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">` +
+          `<code>${esc(e.value)}</code><span style="color:var(--c-9aa4b2);font-size:11px">${esc(e.category)}</span>` +
+          `<button data-presidio-approve="${escAttr(e.value)}" data-presidio-cat="${escAttr(e.category)}" ` +
+          `title="Replace this value with a token before anything is sent to the AI. It is restored in the answer you see.">Hide from AI</button>` +
+          `<button data-presidio-suppress="${escAttr(e.value)}" ` +
+          `title="Leave this value visible to the AI. It won't be flagged again in this case.">Leave visible — not PII</button>` +
+          `</div>`
+        ).join("");
+      el.querySelectorAll("[data-presidio-approve]").forEach(btn => btn.addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        fetch(`/cases/${caseId}/presidio-pending/approve`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ value: btn.getAttribute("data-presidio-approve"), category: btn.getAttribute("data-presidio-cat") }),
+        })
+          .then(r => r.ok ? r.json() : { pending: presidioPending })
+          .then(d => { presidioPending = d.pending || []; renderPresidioPending(); loadAnonEntities(caseId).then(renderAutoEntities).catch(() => {}); })
+          .catch(() => {});
+      }));
+      el.querySelectorAll("[data-presidio-suppress]").forEach(btn => btn.addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        fetch(`/cases/${caseId}/presidio-pending/suppress`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ value: btn.getAttribute("data-presidio-suppress") }),
+        })
+          .then(r => r.ok ? r.json() : { pending: presidioPending })
+          .then(d => { presidioPending = d.pending || []; renderPresidioPending(); })
+          .catch(() => {});
+      }));
+    }
+    document.getElementById("presidioPendingBadge")?.addEventListener("click", openAnonModal);
     function renderCustomEntities() {
       document.getElementById("anonCustom").innerHTML = anonCustom.length
         ? anonCustom.map((e, i) => `<div class="anon-cust-row"><span class="anon-chip">${esc(e.value)}</span><span style="color:var(--c-9aa4b2);font-size:11px">${esc(e.category)}</span><button data-i="${i}" class="anon-cust-rm" title="remove">✕</button></div>`).join("")
@@ -11039,6 +11148,10 @@
       loadAnonEntities(caseId)
         .then(() => { renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = ""; })
         .catch(() => { anonAuto = {}; anonCustom = []; anonSuppressed = []; renderAutoEntities(); renderCustomEntities(); document.getElementById("anonMsg").textContent = "failed to load entities — restart the server if this persists"; });
+      // Re-fetch rather than trust whatever loadPresidioPending last populated at case-connect —
+      // state can change elsewhere (another dashboard tab, an import landing) between connect and
+      // this modal being opened, and a stale pending list here would show the wrong count/values.
+      loadPresidioPending(caseId);
       document.getElementById("anonOverlay").classList.add("open");
     }
     function saveAnon() {
@@ -11149,6 +11262,11 @@
         hideImportProgress();
         setAi("error", "error — " + (evt.detail || "see server log"));
         clearTransientStatus();
+        // Imports are fire-and-forget (202 immediately, pipeline runs in the background) — when the
+        // Presidio approval gate stops one, there is no synchronous response to carry a 409, so this
+        // is how that case surfaces at all. Re-check the persisted pending list rather than assume
+        // the error text; it's cheap and this is the ONLY path a stopped import gets noticed on.
+        loadPresidioPending(activeCaseId);
       }
     }
 
@@ -16012,6 +16130,7 @@
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
       loadAnonToggle(caseId);
+      loadPresidioPending(caseId);
       loadFalsePositives(caseId);
       loadLearnedPatterns(caseId);
       loadSourceTrust(caseId);
@@ -17501,8 +17620,21 @@
       const deep = !!document.getElementById("deepReasoning")?.checked;
       document.getElementById("status").textContent = deep ? "synthesizing (deep reasoning)…" : "synthesizing…";
       fetch(`/cases/${caseId}/synthesize`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deepReasoning: deep }) })
-        .then(r => { if (r.status === 423) return r.json().then(p => { throw Object.assign(new Error(p.error || "Case is closed"), { locked: true }); }); return r.json(); })
+        .then(async r => {
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({}));
+            if (body.error === "presidio_approval_required") {
+              presidioPending = body.findings || [];
+              renderPresidioPending();
+              document.getElementById("status").textContent = "synthesis held — Presidio found new value(s) to review (see Anonymization)";
+              return null;
+            }
+          }
+          if (r.status === 423) return r.json().then(p => { throw Object.assign(new Error(p.error || "Case is closed"), { locked: true }); });
+          return r.json();
+        })
         .then(p => {
+          if (!p) return;   // handled above (409 presidio hold)
           if (p.error) { document.getElementById("status").textContent = "synthesis failed: " + p.error; return; }
           document.getElementById("status").textContent =
             `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` + (p.attackerPath ? ", attack path" : "") + (p.narrativeTimeline ? ", narrative" : "");
@@ -19040,8 +19172,63 @@
           }
           loadedEnvValues[key] = el.value;
         }
+        renderPresidioLocalWarning();
       } catch {}
     }
+
+    // Presidio receives case text — masked, but still the timeline. Warn when the typed URL isn't
+    // local (the container the analyst runs isn't necessarily on this machine), mirroring the
+    // screenshot-provider local/external warning in openAnonModal.
+    function renderPresidioLocalWarning() {
+      const url = (document.getElementById("env-DFIR_PRESIDIO_URL")?.value || "").trim().toLowerCase();
+      const warn = document.getElementById("presidioLocalWarning");
+      if (!warn) return;
+      const isLocal = !url || /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(url);
+      warn.style.display = isLocal ? "none" : "block";
+      warn.textContent =
+        "⚠ This Presidio URL is not local. Presidio receives your case text — masked, but still " +
+        "your timeline. Pointing it at a remote host sends that text off this machine.";
+    }
+
+    // Test connection: sends the FIXED synthetic sample text (never anything from the case) through
+    // whatever URL is currently typed — not necessarily saved yet — so the analyst can tune the
+    // confidence floor before committing to Settings.
+    function testPresidioConnection() {
+      const url = (document.getElementById("env-DFIR_PRESIDIO_URL")?.value || "").trim();
+      const result = document.getElementById("presidioTestResult");
+      if (!result) return;
+      if (!url) { result.style.color = "#ffb05a"; result.textContent = "Enter a URL first."; return; }
+      result.style.color = "#9aa4b2";
+      result.textContent = "Testing…";
+      fetch("/system/presidio-test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })
+        .then(r => r.json())
+        .then(body => {
+          if (body.error) {
+            result.style.color = "#ff9f9f";
+            // Node's fetch reports a refused/unroutable host as the bare string "fetch failed",
+            // which reads as "Failed: fetch failed". Say what actually happened instead; any
+            // other error (HTTP status, non-JSON body) is already descriptive enough to show.
+            result.textContent = /^fetch failed$/i.test(body.error)
+              ? "✗ Failed — could not reach that URL"
+              : "✗ Failed: " + body.error;
+            return;
+          }
+          // Connected or failed, nothing else. The raw finding list this used to print was
+          // actively misleading: most of it is entity types the allow-list drops outright
+          // (URL, US_BANK_NUMBER, US_DRIVER_LICENSE), so it implied things get masked that
+          // never will, and mixed them in with the ones that do.
+          //
+          // The trailing clause is not padding. This button tests the URL as TYPED — it does
+          // not save it, and the server only reads DFIR_PRESIDIO_URL at startup. A bare
+          // "Connected" reads as "configured", so it is possible to test successfully, close
+          // Settings, and have the layer silently inactive because it was never saved.
+          result.style.color = "#5ad17a";
+          result.textContent = "✓ Connected — now Save, then restart the server to activate it";
+        })
+        .catch(e => { result.style.color = "#ff9f9f"; result.textContent = "Could not reach the server: " + e.message; });
+    }
+    document.getElementById("env-DFIR_PRESIDIO_URL")?.addEventListener("input", renderPresidioLocalWarning);
+    document.getElementById("presidioTestBtn")?.addEventListener("click", testPresidioConnection);
 
     // Integration groups POST /settings/reload accepts (the server's own allowlist). A saved key
     // belongs to the group whose prefix it starts with; the LONGEST match wins so a nested family

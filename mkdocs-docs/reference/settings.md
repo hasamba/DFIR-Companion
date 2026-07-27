@@ -31,7 +31,8 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
 - Timeout, max tokens, context window size
 - Chain-of-Thought (synthesis thinking tokens)
-- Anonymisation on/off and category settings
+- **Anonymisation** on/off and per-category toggles — IPs (internal *and* public), hostnames, usernames, domains, emails, paths, encoded commands, SIDs, credit cards, phone numbers, national ID numbers; see [AI Analysis → What the AI Sees](ai-analysis.md#what-the-ai-sees-anonymization) for exactly what each one catches, the redacted-export exception for public IPs, and known limitations (the narrow IPv4/IPv6 masking gaps, screenshot IP loss, national-ID false positives)
+- **Presidio** (optional external PII detector) — analyzer URL, confidence floor, and a **Test connection** button; see [Presidio & PII Masking](presidio.md)
 - Preflight diagnostics disable
 - **Re-run the setup wizard**
 - **Live AI test** — confirms the current key works right now

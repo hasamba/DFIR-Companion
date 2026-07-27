@@ -7,6 +7,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { PresidioApprovalRequired, type PresidioClient } from "../../src/analysis/presidio.js";
+import { AnonControlStore } from "../../src/analysis/anonControl.js";
 
 // Observation calls carry the OBSERVE system prompt ("ONE SLICE"); the final call carries the
 // synthesis prompt. Splitting on that marker is the same trick tests/server/secondOpinion.test.ts
@@ -213,5 +215,100 @@ describe("deepPass resilience", () => {
       .deepPass("c1", { minSeverity: "High" });
 
     expect(result.batchesFailed).toBe(0);
+  });
+});
+
+describe("deepPass + Presidio approval gate", () => {
+  // Regression coverage for the carry-forward from Task 7: the per-batch catch in the deep-pass
+  // observe loop (and its condense-round twin) is a generic "this batch didn't parse, keep going"
+  // handler — see "skips a batch whose response never parses" above. PresidioApprovalRequired is
+  // NOT a parse failure, it's the analyst-approval gate, and swallowing it into batchesFailed would
+  // hand back a degraded-coverage result instead of the 409 the route layer needs to show the
+  // approval panel.
+  //
+  // IMPORTANT: deepPass's FINAL step is itself a forced synthesize() call, which also runs through
+  // analyzeRestored/presidioGate. A Presidio stub that flags EVERY call would still make the whole
+  // run reject even with the old (broken) per-batch catch — via that final synthesis call, not via
+  // the fix under test — which would pass for the wrong reason. So each test below fires the gate on
+  // exactly ONE specific call (tracked by a counter) and returns NO findings on every other call, so
+  // the ONLY way the run can end in rejection is the per-batch catch actually propagating it.
+  function makeGatedPipeline(provider: AIProvider, client: PresidioClient): AnalysisPipeline {
+    return new AnalysisPipeline({
+      provider,
+      stateStore,
+      // Presidio only ever runs when anonymization itself is on — analyzeRestored short-circuits
+      // (skipping the mask + presidioGate call entirely) when anonStore is unwired, since a missing
+      // control resolves to disabled (see toAnonPolicy(null) in anonControl.ts). Without this, the
+      // gate would never fire and these tests would pass VACUOUSLY regardless of the fix under test.
+      anonStore: new AnonControlStore(caseStore),
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      presidio: { client, url: "http://localhost:5002", minScore: 0.6 },
+    });
+  }
+
+  // A Presidio client that flags a new PII value on exactly the given 1-based call number and is
+  // silent (no findings) on every other call — including the final forced-synthesis call.
+  function gateOnCall(callNumber: number): { client: PresidioClient; calls: () => number } {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      client: {
+        analyze: async () => {
+          calls++;
+          return calls === callNumber ? [{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }] : [];
+        },
+      },
+    };
+  }
+
+  it("propagates from the FIRST observe batch instead of looping through the rest", async () => {
+    await seed(seedEvents(250));                       // 3 batches at cap 100
+    const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
+    const { client, calls } = gateOnCall(1);            // flags only the very first analyzeRestored call
+    const pipeline = makeGatedPipeline(provider, client);
+
+    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    // Without the fix, batch 1's catch swallows the error (batchesFailed++) and the loop continues:
+    // batches 2 and 3 would each call the (ungated) client and reach provider.analyze, and the run
+    // would fall through to a real (degraded) final synthesis — client call 4, also ungated, so it
+    // would RESOLVE. With the fix, the rethrow on batch 1 aborts the whole run immediately.
+    expect(provider.observeRequests).toHaveLength(0);
+    expect(provider.synthRequests).toHaveLength(0);
+    expect(calls()).toBe(1);                            // proves the run stopped at the first call
+  });
+
+  it("propagates from a MIDDLE observe batch, not just a first-batch special case", async () => {
+    await seed(seedEvents(250));                        // 3 batches at cap 100
+    const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
+    const { client, calls } = gateOnCall(2);             // flags only batch 2's call
+    const pipeline = makeGatedPipeline(provider, client);
+
+    await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    // Batch 1 succeeded (ungated) and reached provider.analyze; batch 2 threw and — with the fix —
+    // stopped the run before batch 3 or the final synthesis were ever attempted.
+    expect(provider.observeRequests).toHaveLength(1);
+    expect(provider.synthRequests).toHaveLength(0);
+    expect(calls()).toBe(2);
+  });
+
+  it("propagates from the condense-round loop, not just the observe loop", async () => {
+    // Force at least one condense round: budgetTokens <= 0 makes digestFitsBudget always false, so
+    // planCondenseRounds always has work to do regardless of how few observations there are.
+    process.env.DFIR_AI_CONTEXT_TOKENS = "1";
+    try {
+      await seed(seedEvents(10));                        // 1 observe batch (cap far exceeds 10)
+      const provider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
+      const { client, calls } = gateOnCall(2);            // call 1 = observe (ungated); call 2 = condense
+      const pipeline = makeGatedPipeline(provider, client);
+
+      await expect(pipeline.deepPass("c1", { minSeverity: "High" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+      // The observe batch succeeded and reached provider.analyze; the condense round threw and — with
+      // the fix — stopped the run before any further condense rounds or the final synthesis ran.
+      expect(provider.observeRequests).toHaveLength(1);
+      expect(provider.synthRequests).toHaveLength(0);
+      expect(calls()).toBe(2);
+    } finally {
+      delete process.env.DFIR_AI_CONTEXT_TOKENS;
+    }
   });
 });

@@ -6,7 +6,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
-import { createAnonymizer, deriveKnownEntities, type CustomEntity } from "./anonymize.js";
+import { createAnonymizer, deriveKnownEntities, isMaskableIpv4, isInternalIp, type Anonymizer, type CustomEntity, type KnownEntities } from "./anonymize.js";
+import { mapFindings, PresidioApprovalRequired, type PresidioClient, type PresidioFinding } from "./presidio.js";
+import type { PresidioPendingStore } from "./presidioPending.js";
 import { toAnonPolicy, type AnonControlStore } from "./anonControl.js";
 import type { CustomEntitiesStore } from "./anonEntities.js";
 import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
@@ -1557,6 +1559,18 @@ export interface PipelineOptions {
   // call: words the anonymizer would tokenize are covered with opaque rectangles. The original
   // evidence file is never touched — only the in-memory buffer sent to the model is redacted.
   ocrRunner?: OcrRunner;
+  // Optional Presidio layer. Runs AFTER the local anonymizer on already-masked text, so it only
+  // ever sees scrubbed data and reports only what the regex layer missed. Absent → skipped
+  // entirely. `url` is carried for the error message only.
+  presidio?: { client: PresidioClient; url: string; minScore: number };
+  // Holds findings awaiting analyst approval across the 409 round trip.
+  presidioPendingStore?: PresidioPendingStore;
+  // TEST-ONLY override for the import pre-scan's character-count caps (see
+  // AnalysisPipeline.presidioPreScan). Production code never sets this — the real caps are the
+  // PRESIDIO_SCAN_CHUNK_CHARS / PRESIDIO_SCAN_MAX_CHARS constants. Exists so a test can force the
+  // truncation-warning path (masked text exceeding the cap) without generating megabytes of
+  // synthetic text.
+  presidioScanCapsOverride?: { chunkChars: number; maxChars: number };
   // Shared leveled logger. Absent → a console-only logger at DFIR_LOG_LEVEL (used by CLI scripts
   // and tests). The server passes its file-backed logger so AI/OCR/anon traces land in the case log.
   logger?: Logger;
@@ -1608,6 +1622,9 @@ function mergePinnedQuestions(pinned: InvestigationQuestion[], current: Investig
 const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout"]);
 
 function isRetryableError(err: unknown): boolean {
+  // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
+  // the 409 the analyst is waiting on, so surface it on the first throw.
+  if (err instanceof PresidioApprovalRequired) return false;
   return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
 }
 
@@ -1721,6 +1738,7 @@ export class AnalysisPipeline {
     provider: AIProvider,
     req: AnalyzeRequest,
     label = "ai",
+    skipPresidioGate = false,
   ): Promise<unknown> {
     const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
     const policy = toAnonPolicy(control);
@@ -1758,6 +1776,7 @@ export class AnalysisPipeline {
       const count = images.length;
       let totalRedactions = 0;
       let redactedImages = 0;
+      let publicIpsBoxed = 0;
       images = await Promise.all(
         images.map(async (img, i) => {
           try {
@@ -1767,6 +1786,9 @@ export class AnalysisPipeline {
             if (res.changed) {
               redactedImages++;
               totalRedactions += res.redactions.length;
+              publicIpsBoxed += res.redactions.filter(
+                (w) => isMaskableIpv4(w.text.trim()) && !isInternalIp(w.text.trim()),
+              ).length;
               if (dumpDir) await dumpRedactedImage(dumpDir, caseId, i, img.mimeType, res.buffer);
             }
             const matched = res.redactions.map((w) => w.text).join(", ");
@@ -1790,6 +1812,13 @@ export class AnalysisPipeline {
           `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
         { caseId },
       );
+      if (publicIpsBoxed > 0) {
+        this.log.warn(
+          `[OCR] ${publicIpsBoxed} public IP(s) were blacked out of the screenshot(s). Image ` +
+            `redaction is one-way, so these will NOT be extracted as IOCs from this capture.`,
+          { caseId },
+        );
+      }
       // Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled
       // by the store). Best-effort — a write failure must not fail the analysis.
       if (this.opts.discoveredStore && discoveredFromOcr.length > 0) {
@@ -1802,10 +1831,190 @@ export class AnalysisPipeline {
       }
     }
 
-    const result = await provider.analyze({ ...req, userPrompt: anon.apply(req.userPrompt), images });
+    // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
+    // username, email, SID or secret — only what our own detectors could not find.
+    const maskedPrompt = anon.apply(req.userPrompt);
+    // Import call sites (analyzeCsv/analyzeLog) pre-scan the WHOLE payload once, up front, and
+    // pass skipPresidioGate=true so the loop that calls this per-chunk doesn't re-gate (and
+    // re-approve) the same import one chunk at a time.
+    if (!skipPresidioGate) await this.presidioGate(caseId, maskedPrompt, known);
+
+    const result = await provider.analyze({ ...req, userPrompt: maskedPrompt, images });
     this.logAiUsage(caseId, label, provider, result);
     await this.recordAiCost(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
+  }
+
+  /**
+   * Scan already-masked text with Presidio and stop the call if it surfaces a value this case has
+   * not seen before. Approved values live in the discovered list, so on the retry they are already
+   * in `known.custom` and anon.apply() masks them — no second pass is needed here.
+   *
+   * Fails CLOSED. An analyst who enabled Presidio believes names are being masked; silently
+   * proceeding when the container is down or answers with garbage would leave that belief wrong
+   * and unfalsifiable.
+   */
+  private async presidioGate(caseId: string, maskedText: string, known: KnownEntities): Promise<void> {
+    const presidio = this.opts.presidio;
+    if (!presidio) return;
+
+    let raw;
+    try {
+      raw = await presidio.client.analyze(maskedText);
+    } catch (err) {
+      throw new Error(
+        `Presidio is enabled but the scan at ${presidio.url} failed (not reachable, or returned an ` +
+          `unusable response): ${(err as Error).message}. Start the container or clear ` +
+          `DFIR_PRESIDIO_URL to disable the layer.`,
+      );
+    }
+
+    const found = mapFindings(raw, presidio.minScore);
+    if (found.length === 0) return;
+
+    // known.suppressed is DOCUMENTED as pre-lowercased (anonDiscovered.ts) and both writers
+    // enforce it today, but that invariant is easy to violate at a distance and this is the
+    // load-bearing case: a suppressed value is deliberately left UNMASKED, so Presidio sees it
+    // raw on every single call. A case-fold mismatch here would re-trigger the approval gate
+    // forever on a value the analyst already vetoed. Lower-case defensively rather than trust it.
+    const alreadyKnown = new Set<string>([
+      ...(known.custom ?? []).map((e) => e.value.toLowerCase()),
+      ...(known.suppressed ?? []).map((s) => s.toLowerCase()),
+    ]);
+    const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+    if (fresh.length === 0) return;
+
+    this.log.warn(
+      `[presidio] ${fresh.length} new PII value(s) need approval before this case can call the AI`,
+      { caseId },
+    );
+    await this.opts.presidioPendingStore?.save(caseId, fresh);
+    throw new PresidioApprovalRequired(fresh);
+  }
+
+  // Presidio's /analyze cannot take an arbitrarily large body, and a big CSV would be many
+  // requests. These bound it. They are module constants rather than env vars to keep the
+  // settings surface small — the truncation is logged, so hitting the cap is visible.
+  //
+  // NAMED "_CHARS", NOT "_BYTES": both are compared against JS string .length, which counts
+  // UTF-16 code units, not UTF-8 bytes. For non-ASCII PII (Hebrew, Cyrillic, accented names —
+  // all plausible in a DFIR case) that undercounts real UTF-8 size by up to ~3-4x, so the
+  // effective request-size cap is larger than a "_BYTES" name would imply. Left as a rough
+  // request-size bound rather than switched to a real byte measure (e.g. Buffer.byteLength)
+  // because the cap only needs to keep /analyze requests reasonably sized, not hit an exact
+  // number — and the split/truncate arithmetic below is unit-tested against character counts.
+  private static readonly PRESIDIO_SCAN_CHUNK_CHARS = 50_000;
+  private static readonly PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
+
+  /**
+   * Scan an entire import prompt once, up front, instead of letting the chunk loop hit
+   * presidioGate repeatedly. analyzeCsv/analyzeLog call this before their batch loop starts, then
+   * pass skipPresidioGate=true into every analyzeRestored() call in that loop — so an import
+   * produces exactly ONE approval round trip, no matter how many chunks it is batched into.
+   *
+   * Callers pass BOTH halves of what a batch prompt carries — the state summary and the payload —
+   * not just the payload. Scanning the payload alone was a fail-open: the summary (finding titles
+   * and descriptions, open threads, recent forensic events and known IOC values, all RESTORED to
+   * real values) is prepended to every batch prompt and every batch skips the gate, so it went to
+   * the provider unscanned.
+   *
+   * KNOWN, DELIBERATE RESIDUAL GAP: `state` mutates as batches merge, so batch N's prompt carries
+   * a summary REVISED by batches 1..N-1 — text that did not exist when this ran. One up-front
+   * scan cannot cover those revisions, and re-gating per batch is exactly the stall-approve-restart
+   * loop this method exists to avoid. The revisions are model output derived from payload text
+   * that WAS scanned, and the next non-import AI call (ask/synthesis/explain/screenshot) gates on
+   * its own prompt, which includes the then-current summary — so anything genuinely new surfaces
+   * there instead. Widening this would mean gating per batch; that is a product decision, not an
+   * oversight here.
+   *
+   * Fails CLOSED, same as presidioGate: an unreachable container throws rather than letting the
+   * import proceed unscanned.
+   */
+  private async presidioPreScan(caseId: string, text: string, known: KnownEntities, anon: Anonymizer): Promise<void> {
+    const presidio = this.opts.presidio;
+    if (!presidio) return;
+
+    // TEST-ONLY seam (see PipelineOptions.presidioScanCapsOverride) so a test can force the
+    // truncation path with a tiny budget instead of generating megabytes of synthetic text.
+    // Production never sets this; the caps default to the real, class-wide constants.
+    const chunkChars = this.opts.presidioScanCapsOverride?.chunkChars ?? AnalysisPipeline.PRESIDIO_SCAN_CHUNK_CHARS;
+    const maxChars = this.opts.presidioScanCapsOverride?.maxChars ?? AnalysisPipeline.PRESIDIO_SCAN_MAX_CHARS;
+
+    // Mask FIRST, same as analyzeRestored — Presidio only ever sees already-scrubbed text.
+    const masked = anon.apply(text);
+    const scanned = masked.length > maxChars ? masked.slice(0, maxChars) : masked;
+    if (masked.length > maxChars) {
+      // A silent partial scan is worse than no scan: an analyst who sees "import scanned, no PII
+      // found" must be able to trust that claim. Name the unscanned character count so a
+      // truncated scan is never mistaken for a complete one.
+      this.log.warn(
+        `[presidio] import pre-scan truncated — ${masked.length - maxChars} character(s) of this ` +
+          `import were NOT scanned for PII (cap is ${maxChars} characters)`,
+        { caseId },
+      );
+    }
+
+    // Split on line boundaries so an entity is never cut in half across two /analyze requests.
+    const chunks: string[] = [];
+    let start = 0;
+    while (start < scanned.length) {
+      let end = Math.min(start + chunkChars, scanned.length);
+      if (end < scanned.length) {
+        const nl = scanned.lastIndexOf("\n", end);
+        if (nl > start) end = nl + 1;
+      }
+      chunks.push(scanned.slice(start, end));
+      start = end;
+    }
+
+    const all: PresidioFinding[] = [];
+    for (const chunk of chunks) {
+      try {
+        all.push(...(await presidio.client.analyze(chunk)));
+      } catch (err) {
+        throw new Error(
+          `Presidio is enabled but the scan at ${presidio.url} failed (not reachable, or returned ` +
+            `an unusable response): ${(err as Error).message}. Start the container or clear ` +
+            `DFIR_PRESIDIO_URL to disable the layer.`,
+        );
+      }
+    }
+
+    const found = mapFindings(all, presidio.minScore);
+    if (found.length === 0) return;
+
+    // Defensive lower-case on BOTH sides, same reasoning as presidioGate: known.suppressed is
+    // documented as pre-lowercased, but trusting that at a distance risks re-triggering approval
+    // forever on a value the analyst already vetoed.
+    const alreadyKnown = new Set<string>([
+      ...(known.custom ?? []).map((e) => e.value.toLowerCase()),
+      ...(known.suppressed ?? []).map((s) => s.toLowerCase()),
+    ]);
+    const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
+    if (fresh.length === 0) return;
+
+    this.log.warn(`[presidio] import pre-scan found ${fresh.length} new PII value(s) needing approval`, { caseId });
+    await this.opts.presidioPendingStore?.save(caseId, fresh);
+    throw new PresidioApprovalRequired(fresh);
+  }
+
+  /**
+   * Build the same (known entities, anonymizer) pair analyzeRestored derives per call, so an
+   * import's pre-scan sees exactly the masked text the chunk loop would later produce. Returns
+   * null when anonymization is off case-wide (mirrors analyzeRestored's own early return for
+   * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
+   */
+  private async buildImportAnonContext(caseId: string, state: InvestigationState): Promise<{ known: KnownEntities; anon: Anonymizer } | null> {
+    const control = this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null;
+    const policy = toAnonPolicy(control);
+    if (!policy.enabled) return null;
+    const known = deriveKnownEntities(state);
+    const custom = this.opts.customEntitiesStore ? await this.opts.customEntitiesStore.load(caseId) : [];
+    const disc = this.opts.discoveredStore ? await this.opts.discoveredStore.load(caseId) : { discovered: [], suppressed: [] };
+    known.custom = [...custom, ...disc.discovered];
+    known.suppressed = disc.suppressed;
+    const anon = createAnonymizer(policy, known);
+    return { known, anon };
   }
 
   // Accumulate this call's tokens/cost into the case's running AI-cost totals (Settings →
@@ -1943,6 +2152,21 @@ export class AnalysisPipeline {
       let state = await this.opts.stateStore.load(caseId);
       let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
+      // Scan the WHOLE import once, up front, instead of letting the per-chunk batches below hit
+      // presidioGate repeatedly (which would stall-approve-restart on a large CSV with names
+      // scattered through it). One approval round trip per import, not one per chunk.
+      //
+      // The scan covers the STATE SUMMARY as well as the payload, because every batch prompt
+      // below is `buildStateSummary(state) + csvChunk`, and every batch passes
+      // skipPresidioGate=true. Scanning csvText alone left the summary — finding titles and
+      // descriptions, open threads, the last 12 forensic events and every known IOC value, all
+      // RESTORED to real values — reaching the provider having never been seen by Presidio: a
+      // fail-OPEN in a layer whose contract is fail-closed.
+      if (this.opts.presidio) {
+        const importAnonCtx = await this.buildImportAnonContext(caseId, state);
+        if (importAnonCtx) await this.presidioPreScan(caseId, `${buildStateSummary(state)}\n${csvText}`, importAnonCtx.known, importAnonCtx.anon);
+      }
+
       // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
       // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
       // room for the system prompt + the state-summary that's prepended to every batch.
@@ -1960,7 +2184,8 @@ export class AnalysisPipeline {
           `Return the JSON delta.`;
 
         const delta = await this.withRetry(caseId, "csv", async () => {
-          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv");
+          // skipPresidioGate=true: the pre-scan above already covered this whole import.
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getCsvPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "csv", true);
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
@@ -2024,6 +2249,14 @@ export class AnalysisPipeline {
       let state = await this.opts.stateStore.load(caseId);
       let evSeq = 0; // running counter → globally unique forensic-event ids for this import
 
+      // Scan the WHOLE import once, up front — see analyzeCsv for why this must precede the
+      // per-pattern batch loop below rather than living inside it, and why the state summary is
+      // scanned alongside the payload (every batch prompt below prepends it and skips the gate).
+      if (this.opts.presidio) {
+        const importAnonCtx = await this.buildImportAnonContext(caseId, state);
+        if (importAnonCtx) await this.presidioPreScan(caseId, `${buildStateSummary(state)}\n${logText}`, importAnonCtx.known, importAnonCtx.anon);
+      }
+
       // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
       // examples shouldn't form a prompt that overflows the model context.
       const renderPattern = (t: typeof templates[number]) =>
@@ -2050,7 +2283,8 @@ export class AnalysisPipeline {
           `Return the JSON delta.`;
 
         const delta = await this.withRetry(caseId, "log", async () => {
-          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log");
+          // skipPresidioGate=true: the pre-scan above already covered this whole import.
+          const parsed = await this.analyzeRestored(caseId, state, provider, { systemPrompt: getLogPrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) }, "log", true);
           return stripAiExtractedFrom(deltaSchema.parse(parsed));
         }, retries, backoffMs);
 
@@ -4868,6 +5102,9 @@ export class AnalysisPipeline {
         ), retries, backoffMs);
         observations.push(...sanitizeObservations(raw, validEventIds));
       } catch (err) {
+        // The approval gate is not a batch failure to swallow and carry on past — it must reach the
+        // route layer as a 409 so the analyst gets the approval panel, not a silently degraded run.
+        if (err instanceof PresidioApprovalRequired) throw err;
         if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
         batchesFailed++;
         this.log.warn(
@@ -4896,6 +5133,9 @@ export class AnalysisPipeline {
           ), retries, backoffMs);
           condensed.push(...sanitizeObservations(raw, validEventIds));
         } catch (err) {
+          // Same gate as the observe loop above — propagate rather than paper over it as an
+          // uncondensed group.
+          if (err instanceof PresidioApprovalRequired) throw err;
           if (opts.signal?.aborted) { aborted = true; break; }
           // A group that will not condense keeps its ORIGINAL observations rather than vanishing —
           // dropping evidence to a formatting failure would be the worst possible trade here.

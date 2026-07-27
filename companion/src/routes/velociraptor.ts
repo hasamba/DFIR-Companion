@@ -10,6 +10,7 @@ import type { HuntOutcomeSource } from "../analysis/huntOutcomes.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import { resolveTimeScope, buildTimeScopePlan, type TimeScope } from "../analysis/veloTimeScope.js";
 import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -262,7 +263,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       logLine(`[velociraptor] suggested ${suggestions.length} fleet-hunt(s) for ${req.params.id}`);
       return res.status(200).json({ suggestions });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 

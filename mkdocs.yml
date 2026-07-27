@@ -62,6 +62,7 @@ nav:
     - Evidence Capture: reference/evidence-capture.md
     - Importing Evidence: reference/importing.md
     - AI Analysis: reference/ai-analysis.md
+    - Presidio & PII Masking: reference/presidio.md
     - Dashboard Panels: reference/dashboard.md
     - IOC Enrichment: reference/ioc-enrichment.md
     - Threat Hunting: reference/threat-hunting.md

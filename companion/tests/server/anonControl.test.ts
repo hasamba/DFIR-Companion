@@ -59,11 +59,15 @@ describe("/cases/:id/anon-entities", () => {
     await disc.addDiscovered("c1", [
       { value: "WIN11\\vagrant", category: "USER" },
       { value: "10.0.0.5", category: "IP" },
+      { value: "45.61.136.10", category: "EXTIP" },
     ]);
     const res = await request(app).get("/cases/c1/anon-entities");
     expect(res.status).toBe(200);
     expect(res.body.auto.accounts).toContain("WIN11\\vagrant");
     expect(res.body.auto.ips).toContain("10.0.0.5");
+    // Public IPs auto-discovered from screenshots must be surfaced (and reachable by /suppress),
+    // not silently dropped from the response the entities UI reads.
+    expect(res.body.auto.extIps).toContain("45.61.136.10");
   });
 
   it("suppress removes an entity (vetoes it) and unsuppress restores it; GET reflects the list", async () => {

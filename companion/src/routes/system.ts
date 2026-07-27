@@ -22,6 +22,7 @@ import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import { HUNT_PLATFORMS } from "../analysis/huntPlatforms.js";
 import { ProviderError } from "../providers/provider.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { HttpPresidioClient, PRESIDIO_SAMPLE_TEXT } from "../analysis/presidio.js";
 import type { RouteContext } from "./context.js";
 
 // Recursively collect files (path relative to `baseDir`, size in bytes) under `dir` for the
@@ -326,6 +327,20 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       const kind = err instanceof ProviderError ? err.kind : "other";
       serverLogger.info(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
       return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
+    }
+  });
+
+  // Settings "Test connection": run the fixed sample string through the Presidio URL the analyst
+  // has typed (not the saved one) so they can tune the confidence floor before saving. The sample
+  // is synthetic — nothing from the case is sent.
+  app.post("/system/presidio-test", async (req: Request, res: Response) => {
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!url) return res.status(400).json({ error: "url is required" });
+    try {
+      const findings = await new HttpPresidioClient(url, 5_000).analyze(PRESIDIO_SAMPLE_TEXT);
+      return res.json({ sample: PRESIDIO_SAMPLE_TEXT, findings });
+    } catch (err) {
+      return res.json({ sample: PRESIDIO_SAMPLE_TEXT, error: (err as Error).message });
     }
   });
 

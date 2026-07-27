@@ -44,6 +44,8 @@ import { AnonControlStore } from "./analysis/anonControl.js";
 import { CustomEntitiesStore } from "./analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
 import { isLocalAiProvider } from "./analysis/anonymize.js";
+import { HttpPresidioClient, resolvePresidioMinScore } from "./analysis/presidio.js";
+import { PresidioPendingStore } from "./analysis/presidioPending.js";
 import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
 import { extractOcrText, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
 import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "./analysis/falsePositive.js";
@@ -3210,6 +3212,10 @@ export interface RuntimePipelineParams {
   onSynth?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["onSynth"];
   // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
   ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
+  // Optional Presidio layer (Task 7). Absent → the option stays undefined and the gate is a no-op
+  // for every one of the 27 AI call sites that funnel through analyzeRestored.
+  presidio?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidio"];
+  presidioPendingStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidioPendingStore"];
   // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
   logger?: Logger;
   // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
@@ -3255,6 +3261,8 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
     superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined),  // explainEvent falls back here for raw super-only events
     ocrRunner: params.ocrRunner,
+    presidio: params.presidio,
+    presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),
     logger: params.logger,
     kevStore: params.kevStore,
     iocAliasStore: new IocAliasStore(params.store),  // #82: keep analyst IOC merges applied across re-synthesis
@@ -3484,8 +3492,19 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
   const visionIsLocalForPipeline = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
   const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
+  // Optional Presidio layer (Task 7): a locally-run container that scans the ALREADY-MASKED
+  // prompt for PII our own regex/exact-match anonymizer missed (principally names). Empty/unset
+  // URL → presidio stays undefined and every code path in the pipeline gate is skipped, so
+  // existing behaviour is completely unchanged when the analyst has not opted in.
+  const presidioUrl = (process.env.DFIR_PRESIDIO_URL ?? "").trim();
+  const presidioMinScore = resolvePresidioMinScore(process.env.DFIR_PRESIDIO_MIN_SCORE);
+  const presidio = presidioUrl
+    ? { client: new HttpPresidioClient(presidioUrl), url: presidioUrl, minScore: presidioMinScore }
+    : undefined;
+  if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
+    presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.

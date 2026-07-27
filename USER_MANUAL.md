@@ -565,12 +565,16 @@ Configure via the Setup Wizard or in `.env`. All AI calls are made server-side �
 By default, the Companion **tokenizes identifying information** before sending anything to an external AI provider:
 - IP addresses → `ANON_IP_1`, `ANON_IP_2`, …
 - Hostnames → `ANON_HOST_1`, …
-- Usernames → `ANON_USER_1`, …
+- Usernames (`DOMAIN\user`, UPNs on an internal domain) → `ANON_USER_1`, … — **ASCII names only** (see below)
+- Email addresses → `ANON_EMAIL_1`, … — **ASCII local parts only** (see below)
 - Domain names → `ANON_DOMAIN_1`, …
-- File paths → `ANON_PATH_1`, …
-- Hashes → `ANON_HASH_1`, …
-- PowerShell encoded commands → decoded, then the decoded blob is anonymized
+- User profile paths (`C:\Users\<name>`, `/home/<name>`) → the username segment becomes `ANON_USER_1`, …; the rest of the path stays readable
+- PowerShell encoded commands → the base64 blob becomes `ANON_CMD_1`, …; the verb and flag stay visible
 - Windows SIDs → tokenized (well-known SIDs like SYSTEM are preserved)
+
+Hashes are deliberately **not** tokenized — they are IOCs that identify a file, not a victim.
+
+**The account and email detectors are ASCII-only.** A name in any other script — including any accented Latin name, e.g. `josé` — is not auto-detected: `CORP\יוסי` is missed entirely, and `CORP\josé` is worse, matching only the unaccented prefix and going out as `ANON_USER_1é`. User profile paths (`C:\Users\יוסי\…`) and anything on the case's known/custom entity lists work in every script. For a non-Latin name, use Presidio or add the value as a custom entity — nothing marks it "handled" behind your back, so Presidio keeps flagging it until you resolve it.
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
 

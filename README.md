@@ -305,7 +305,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Synthesis coverage audit** — the synth-meta card shows how many in-window events a run considered vs. omitted, and why
 - **Second LLM opinion** — on-demand QA: different model re-synthesizes case, reconciles disagreements (per-item accept/reject); durable across re-synthesis
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
-- **AI-input anonymization** — reversibly tokenizes IPs/users/hosts/domains/emails/paths, PowerShell encoded-command blobs, and victim SIDs; one-way-redacts secrets (adversary IOCs preserved)
+- **AI-input anonymization** — reversibly tokenizes IPs (internal *and* public)/users/hosts/domains/emails/paths, credit cards, phone numbers, national ID numbers, PowerShell encoded-command blobs, and victim SIDs; one-way-redacts secrets. The redacted case export is the one exception that keeps public IPs visible, so a shared report still names attacker infrastructure. Optional add-on: **[Presidio](mkdocs-docs/reference/presidio.md)**, a locally-run PII-detection container that catches what regex can't — principally people's names — with an analyst approval gate before a flagged value ever reaches the model
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
@@ -644,6 +644,8 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 | `DFIR_AI_AUTO_SYNTHESIZE_MS` | `8000` | Debounce window before auto-synthesis fires (ms) |
 | `DFIR_FLUSH_INTERVAL_MS` | `300000` | Safety-net flush of leftover capture buffers (ms); `0` disables |
 | `DFIR_ANONYMIZE` | `on` | Tokenize victim IPs/hosts/users/paths before AI calls: `on` \| `off` |
+| `DFIR_PRESIDIO_URL` | _(unset)_ | Optional: base URL of a self-run [Presidio](mkdocs-docs/reference/presidio.md) Analyzer container (e.g. `http://localhost:5002`) that scans already-masked text for names and other PII regex can't catch. Unset = feature off. |
+| `DFIR_PRESIDIO_MIN_SCORE` | `0.6` | Confidence floor (0–1) for Presidio findings; blank/non-numeric falls back to the default, out-of-range values are clamped |
 
 > The screenshot/vision vars above (`DFIR_VISION_PROVIDER` / `DFIR_VISION_MODEL` / `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL` / `DFIR_VISION_IMAGE_DETAIL`) were renamed from the `DFIR_AI_*` prefix; the legacy `DFIR_AI_PROVIDER` / `DFIR_AI_MODEL` / `DFIR_AI_KEY` / `DFIR_AI_BASE_URL` / `DFIR_AI_IMAGE_DETAIL` names still work as a deprecated fallback (the new name wins when both are set).
 

@@ -37,6 +37,7 @@ import { toolForExtension, suggestedToolForExtension, type ToolConfig } from "..
 import { summarizeUndoStack, applyUndo, applyRedo } from "../analysis/importUndo.js";
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -332,7 +333,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -510,7 +511,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -558,7 +559,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -607,7 +608,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -663,7 +664,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -722,7 +723,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -781,7 +782,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -838,7 +839,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -893,7 +894,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -948,7 +949,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1002,7 +1003,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1059,7 +1060,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1113,7 +1114,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1166,7 +1167,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1219,7 +1220,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1273,7 +1274,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1326,7 +1327,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1381,7 +1382,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1434,7 +1435,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1478,7 +1479,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1527,7 +1528,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1576,7 +1577,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1625,7 +1626,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1674,7 +1675,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         .catch((err) => options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }));
       return;
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1685,7 +1686,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     try {
       return res.status(200).json(await options.importMetaStore.load(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1702,7 +1703,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const dropPath = status.dropPath || dropDirOf(req.params.id);
       return res.status(200).json({ enabled: ctx.dropWatchEnabled(), pollSeconds: dropPollMs / 1000, dropPath, status });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1717,7 +1718,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const stack = await options.importUndoStore.load(req.params.id);
       return res.status(200).json(summarizeUndoStack(stack, options.importUndoStore.depth()));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1746,7 +1747,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       if (next) options.onState?.(next);
       return res.status(200).json(summary);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -1771,7 +1772,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       if (next) options.onState?.(next);
       return res.status(200).json(summary);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 }

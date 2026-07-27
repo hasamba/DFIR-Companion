@@ -76,6 +76,16 @@ describe("validateEnvUpdates", () => {
     expect(rejected).toEqual([]);
   });
 
+  // The Settings panel's Presidio URL / confidence-floor fields (task 9) POST through this same
+  // validator — without DFIR_PRESIDIO_ on the allowlist, saving them would 400 with "rejected keys".
+  it("accepts the DFIR_PRESIDIO_ prefix (analyzer URL + confidence floor)", () => {
+    const rejected = validateEnvUpdates({
+      DFIR_PRESIDIO_URL: "http://localhost:5002",
+      DFIR_PRESIDIO_MIN_SCORE: "0.6",
+    });
+    expect(rejected).toEqual([]);
+  });
+
   it("rejects security-sensitive keys that could redirect case data or disable protections", () => {
     const rejected = validateEnvUpdates({
       DFIR_CASES_ROOT: "/etc",

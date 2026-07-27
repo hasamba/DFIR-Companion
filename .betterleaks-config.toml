@@ -30,6 +30,12 @@ regexes = [
   '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
+  # Presidio test fixtures. `presidio.local` is a deliberately unreachable URL in the client's
+  # error-path tests (nothing must resolve it), and `DC01.victim.local` is the synthetic victim
+  # host the ordering tests assert never reaches Presidio in the clear — i.e. the string is the
+  # assertion. Both exist only in companion/tests/analysis/presidio*.test.ts.
+  '''(?i)\bpresidio\.local\b''',
+  '''(?i)\bDC01\.victim\.local\b''',
 ]
 
 # The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe
