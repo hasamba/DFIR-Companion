@@ -1,22 +1,23 @@
-import type { Finding, InvestigationState, IOC, Severity } from "./stateTypes.js";
+import type { Finding, InvestigationState, Severity } from "./stateTypes.js";
 
-// Two-way war-room slash-command bot (#235). IR happens in a Slack/Teams war room; this module
-// is the PURE core — the command parser + the read-only command formatters that turn case state
-// into a slash-command response card. The route (routes/slashCommand.ts) owns the inbound
-// webhook handler (HMAC auth + rate limiting), the async response_url posting, and per-channel
-// case binding; this module is deterministic and unit-tested with no I/O.
+// Two-way war-room slash-command bot (#235). IR happens in a Slack/Teams/Telegram war room; this
+// module is the PURE core — the command parser, the caseId resolver, the read-only command
+// formatters that turn case state into a slash-command response card, and the access-control
+// predicates. The route (routes/slashCommand.ts) owns the inbound webhook handler (auth + rate
+// limiting), the async result delivery, and per-channel case binding; this module is deterministic
+// and unit-tested with no I/O.
 //
 // Slash commands supported (the issue's full set):
-//   /dfir ask <caseId> <question>          → async (AI call) — the route handles this; here it's a parse result
-//   /dfir findings <caseId>                → top 5 findings (severity + confidence + MITRE)
-//   /dfir finding <caseId> <id>            → a single finding card
-//   /dfir iocs <caseId> [flagged|malicious]→ top IOCs with verdicts
-//   /dfir hunt <caseId> <technique>        → async (deploy) — the route handles this
-//   /dfir status <caseId>                  → case stats (events, findings, last synthesis, open hypotheses)
-//   /dfir synthesize <caseId>              → async (re-synthesis) — the route handles this
+//   /dfir ask [caseId] <question>          → async (AI call) — the route handles this
+//   /dfir findings [caseId]                → top 5 findings (severity + confidence + MITRE)
+//   /dfir finding [caseId] <id>            → a single finding card
+//   /dfir iocs [caseId] [flagged|malicious]→ top IOCs with verdicts
+//   /dfir hunt [caseId] <technique>        → async (hand-off to the dashboard's hunt panel)
+//   /dfir status [caseId]                  → case stats (events, findings, IOCs, questions)
+//   /dfir synthesize [caseId]              → async (re-synthesis)
 //   /dfir bind <caseId>                    → bind this channel to a default case
 //   /dfir unbind                           → clear the channel binding
-//   /dfir help                              → usage
+//   /dfir help                             → usage
 
 export type SlashCommandName =
   | "ask"
@@ -32,10 +33,11 @@ export type SlashCommandName =
 
 export interface ParsedSlashCommand {
   name: SlashCommandName;
-  caseId?: string;       // absent when the command doesn't take one (help, unbind) or when the
-                         // channel is expected to supply a bound default (the route fills it)
-  arg?: string;          // the question / technique / finding id / ioc filter
-  iocFilter?: "flagged" | "malicious";
+  // Everything after the command word, already split. The caseId CANNOT be picked out here: with a
+  // bound channel `/dfir ask what was the initial access vector?` has no caseId at all, and "what"
+  // is a syntactically valid caseId — only the route knows which case ids exist. resolveCommand()
+  // makes that call once the route has looked the first token up.
+  tokens: string[];
   raw: string;
 }
 
@@ -52,56 +54,97 @@ export const SLASH_COMMAND_NAMES: readonly SlashCommandName[] = [
   "help",
 ];
 
-// Parse a slash-command text string into a structured command. Tolerant of extra whitespace and
-// of a leading "/dfir" (Slack sends the bare args; Teams sometimes includes the trigger word).
-// Returns { name: "help", raw } for an empty/unrecognized input so the route always has something
-// to respond with.
+// Parse a slash-command text string into a command name + its argument tokens. Tolerant of extra
+// whitespace, of a leading "/" (Telegram sends the slash; Slack strips it), of the "/dfir" trigger
+// word (some clients echo it back), and of Telegram's "@BotName" suffix on the command word
+// (`/findings@DfirBot c1`, `/dfir@DfirBot findings c1`). Returns { name: "help" } for an
+// empty/unrecognized input so the route always has something to respond with.
 export function parseSlashCommand(text: string): ParsedSlashCommand {
   const raw = (text ?? "").trim();
-  if (!raw) return { name: "help", raw: "" };
-  // Strip a leading "/dfir" if present (some clients echo the trigger word back).
-  const stripped = raw.startsWith("/dfir ") ? raw.slice("/dfir ".length) : raw;
-  const parts = stripped.split(/\s+/);
-  const name = parts[0]?.toLowerCase() as SlashCommandName;
-  if (!SLASH_COMMAND_NAMES.includes(name)) return { name: "help", raw };
-  const rest = parts.slice(1);
+  if (!raw) return { name: "help", tokens: [], raw: "" };
+  const parts = (raw.startsWith("/") ? raw.slice(1) : raw).split(/\s+/).filter(Boolean);
+  // Telegram appends "@BotName" to the command word when several bots share a group chat.
+  if (parts[0]) parts[0] = parts[0].split("@")[0];
+  // Drop the trigger word when the client echoes it ("/dfir findings c1").
+  if (parts[0]?.toLowerCase() === "dfir") parts.shift();
 
-  switch (name) {
-    case "help":
-    case "unbind":
-      return { name, raw };
-    case "bind":
-      return { name, caseId: rest[0], raw };
-    case "status":
-    case "synthesize":
-      return { name, caseId: rest[0], raw };
-    case "findings":
-      return { name, caseId: rest[0], raw };
-    case "iocs": {
-      const caseId = rest[0];
-      const filter = rest[1];
-      return {
-        name,
-        caseId,
-        iocFilter: filter === "flagged" || filter === "malicious" ? filter : undefined,
-        raw,
-      };
-    }
-    case "finding":
-    case "hunt":
-    case "ask": {
-      const caseId = rest[0];
-      const arg = rest.slice(1).join(" ");
-      return { name, caseId, arg, raw };
-    }
-    default:
-      return { name: "help", raw };
+  const name = parts[0]?.toLowerCase() as SlashCommandName;
+  if (!SLASH_COMMAND_NAMES.includes(name)) return { name: "help", tokens: [], raw };
+  return { name, tokens: parts.slice(1), raw };
+}
+
+// ── caseId resolution ───────────────────────────────────────────────────────────────────
+
+export interface ChannelBinding {
+  caseId: string;
+  boundAt: string;
+}
+
+export interface ResolvedSlashCommand {
+  name: SlashCommandName;
+  caseId: string;                            // "" when the command takes none / none could be found
+  arg: string;                               // the question / technique / finding id
+  iocFilter?: "flagged" | "malicious";
+  usedBinding: boolean;                      // true when the caseId came from the channel binding
+  raw: string;
+}
+
+/**
+ * Turn a parsed command into a resolved one: decide whether the first token is the caseId or part
+ * of the argument, and fall back to the channel's bound case when it isn't.
+ *
+ * `firstTokenIsKnownCase` is the route's answer to "does a case with this id actually exist?" —
+ * the one fact this module cannot know. Without it the parser has to guess positionally, and it
+ * guesses wrong for every command that takes an argument: with a bound channel `/dfir iocs
+ * malicious` silently queried a case called "malicious", and `/dfir ask what happened` a case
+ * called "what". Both ids pass isValidCaseId, so nothing errored — the analyst just got an answer
+ * about the wrong (empty) case.
+ *
+ * `bind` is deliberately exempt: its argument names the case to bind TO, so falling back to the
+ * current binding would silently re-bind the channel to the case it is already bound to.
+ */
+export function resolveCommand(
+  cmd: ParsedSlashCommand,
+  binding: ChannelBinding | undefined,
+  firstTokenIsKnownCase: boolean,
+): ResolvedSlashCommand {
+  const { name, tokens, raw } = cmd;
+  const base = { name, arg: "", usedBinding: false, raw };
+
+  if (name === "help" || name === "unbind") return { ...base, caseId: "" };
+  if (name === "bind") return { ...base, caseId: (tokens[0] ?? "").trim() };
+
+  let caseId: string;
+  let rest: string[];
+  let usedBinding = false;
+  if (tokens.length > 0 && firstTokenIsKnownCase) {
+    caseId = tokens[0];
+    rest = tokens.slice(1);
+  } else if (binding?.caseId) {
+    caseId = binding.caseId;
+    rest = tokens;
+    usedBinding = true;
+  } else {
+    // No binding and the first token isn't a case we know: keep treating it as the caseId so the
+    // error message names what the analyst actually typed.
+    caseId = (tokens[0] ?? "").trim();
+    rest = tokens.slice(1);
   }
+
+  const filter = rest[0];
+  return {
+    name,
+    caseId,
+    arg: rest.join(" "),
+    iocFilter: name === "iocs" && (filter === "flagged" || filter === "malicious") ? filter : undefined,
+    usedBinding,
+    raw,
+  };
 }
 
 // ── Read-only command formatters ────────────────────────────────────────────────────────
-// Each returns a { title, lines } card the route formats per-channel (Slack Block Kit / Teams
-// MessageCard) and posts to response_url. Pure functions of InvestigationState.
+// Each returns a { title, lines } card the route wraps in the platform's response envelope.
+// Pure functions of InvestigationState.
 
 export interface SlashCommandResponse {
   title: string;
@@ -131,8 +174,12 @@ export function formatFindingsCommand(state: InvestigationState, limit = 5): Sla
 }
 
 export function formatFindingCommand(state: InvestigationState, findingId: string): SlashCommandResponse {
-  const f = state.findings.find((x) => x.id === findingId || x.semanticKey === findingId);
-  if (!f) return { title: `Finding ${findingId} not found`, lines: [`Case ${state.caseId} has no finding with id/semanticKey "${findingId}".`] };
+  const wanted = findingId.trim();
+  if (!wanted) {
+    return { title: "Which finding?", lines: ["Usage: /dfir finding <id> — run /dfir findings to list them."] };
+  }
+  const f = state.findings.find((x) => x.id === wanted || x.semanticKey === wanted);
+  if (!f) return { title: `Finding ${wanted} not found`, lines: [`Case ${state.caseId} has no finding with id/semanticKey "${wanted}".`] };
   const lines = [
     `Severity: ${f.severity}${f.confidence !== undefined ? ` (confidence ${f.confidence}%)` : ""}`,
     `Status: ${f.status}`,
@@ -189,10 +236,10 @@ export function formatHelpCommand(): SlashCommandResponse {
     lines: [
       "/dfir status [caseId] — case stats",
       "/dfir findings [caseId] — top 5 findings",
-      "/dfir finding <caseId|bound> <id> — a single finding card",
+      "/dfir finding [caseId] <id> — a single finding card",
       "/dfir iocs [caseId] [flagged|malicious] — top IOCs",
-      "/dfir ask <caseId|bound> <question> — ask the AI (async)",
-      "/dfir hunt <caseId|bound> <technique> — deploy a VQL hunt (async)",
+      "/dfir ask [caseId] <question> — ask the AI (async)",
+      "/dfir hunt [caseId] <technique> — note a technique to hunt; deploy it from the dashboard",
       "/dfir synthesize [caseId] — trigger re-synthesis (async)",
       "/dfir bind <caseId> — bind this channel to a default case",
       "/dfir unbind — clear the channel binding",
@@ -201,47 +248,67 @@ export function formatHelpCommand(): SlashCommandResponse {
   };
 }
 
-// Per-channel case binding store: a channel can bind to a default case so subsequent commands
-// omit the caseId. Stored in the notification config dir (a global, channel-level concern, not
-// per-case) — the route module owns the persistence; this is just the shape.
-export interface ChannelBinding {
-  caseId: string;
-  boundAt: string;
-}
+// ── Access control ──────────────────────────────────────────────────────────────────────
+// Two separate axes that the first cut of this bot conflated:
+//
+//   PRIVILEGED — needs the operator's user-id allowlist. Spending AI budget (ask), triggering a
+//   re-synthesis, filing a hunt, and REPOINTING THE CHANNEL AT A DIFFERENT CASE (bind). bind is in
+//   here because it decides which case everyone else in the room can read.
+//
+//   ASYNC — takes longer than the 3s a chat platform waits, so the route ACKs and delivers the
+//   result out of band. Nothing to do with permissions.
 
-// Resolve the caseId for a parsed command: prefer the explicit caseId, fall back to the channel's
-// bound default. Returns "" when neither is present (the route responds with a usage hint).
-export function resolveCaseId(cmd: ParsedSlashCommand, binding: ChannelBinding | undefined): string {
-  if (cmd.caseId && cmd.caseId.trim()) return cmd.caseId.trim();
-  return binding?.caseId ?? "";
-}
-
-// Access control: a command kind is allowed for a user when the user is in the action allowlist
-// (for action commands: hunt, synthesize, ask) OR when no allowlist is configured (open access,
-// the default). Read-only commands (findings, finding, iocs, status, help, bind, unbind) are
-// always allowed.
 export const READ_ONLY_COMMANDS: readonly SlashCommandName[] = [
   "findings",
   "finding",
   "iocs",
   "status",
   "help",
-  "bind",
   "unbind",
 ];
 
-export const ACTION_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "synthesize"];
+export const PRIVILEGED_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "synthesize", "bind"];
 
-export function isActionCommand(name: SlashCommandName): boolean {
-  return ACTION_COMMANDS.includes(name);
+export const ASYNC_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "synthesize"];
+
+export function isPrivilegedCommand(name: SlashCommandName): boolean {
+  return PRIVILEGED_COMMANDS.includes(name);
 }
 
+export function isAsyncCommand(name: SlashCommandName): boolean {
+  return ASYNC_COMMANDS.includes(name);
+}
+
+/** Is `userId` allowed to run this command? Privileged commands require the allowlist; when no
+ *  allowlist is configured access is open (the default for a localhost tool). */
 export function isAllowed(
   name: SlashCommandName,
   userId: string,
   actionAllowlist: readonly string[] | undefined,
 ): boolean {
-  if (!isActionCommand(name)) return true;
+  if (!isPrivilegedCommand(name)) return true;
   if (!actionAllowlist || actionAllowlist.length === 0) return true; // open access when unconfigured
   return actionAllowlist.includes(userId);
+}
+
+/**
+ * Is `userId` allowed to read THIS case from THIS channel? Read-only commands take an explicit
+ * caseId, so without this an ordinary chat member could read any case on the server just by naming
+ * it. Policy: an operator who has configured an allowlist gets those responders full reach, and
+ * confines everyone else to the case the channel is bound to. With no allowlist configured the
+ * bot stays open, matching the rest of this localhost-first tool.
+ *
+ * Note this is about which case a chat member may READ. Password-protected cases are refused over
+ * chat outright (the route checks) — a chat message carries no unlock.
+ */
+export function isCaseAccessAllowed(input: {
+  userId: string;
+  caseId: string;
+  boundCaseId: string | undefined;
+  actionAllowlist: readonly string[] | undefined;
+}): boolean {
+  const { userId, caseId, boundCaseId, actionAllowlist } = input;
+  if (!actionAllowlist || actionAllowlist.length === 0) return true;
+  if (actionAllowlist.includes(userId)) return true;
+  return !!boundCaseId && caseId === boundCaseId;
 }

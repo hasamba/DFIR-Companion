@@ -51,7 +51,10 @@ export class SlashCommandChannelStore {
   }
 }
 
+/** The chat platforms the war-room bot speaks to. */
+export type ChatPlatform = "slack" | "teams" | "telegram";
+
 // Build the binding key from the inbound payload's platform + channel id.
-export function bindingKey(platform: "slack" | "teams", channelId: string): string {
+export function bindingKey(platform: ChatPlatform, channelId: string): string {
   return `${platform}:${channelId}`;
 }

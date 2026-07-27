@@ -1,42 +1,73 @@
 import express, { type Express, type Request, type Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
+import { redactPaths } from "../analysis/redactPaths.js";
 import {
   parseSlashCommand,
+  resolveCommand,
   formatFindingsCommand,
   formatFindingCommand,
   formatIocsCommand,
   formatStatusCommand,
   formatHelpCommand,
-  resolveCaseId,
   isAllowed,
-  isActionCommand,
+  isCaseAccessAllowed,
+  isAsyncCommand,
   READ_ONLY_COMMANDS,
+  type ResolvedSlashCommand,
   type SlashCommandResponse,
 } from "../analysis/slashCommand.js";
-import { SlashCommandChannelStore, bindingKey } from "../analysis/slashCommandStore.js";
-import { verifySlackSignature, verifyTeamsToken } from "../analysis/slashCommandAuth.js";
+import { SlashCommandChannelStore, bindingKey, type ChatPlatform } from "../analysis/slashCommandStore.js";
+import {
+  verifySlackSignature,
+  verifyTeamsToken,
+  verifyTelegramSecret,
+  isAllowedResponseUrl,
+  parseHostList,
+} from "../analysis/slashCommandAuth.js";
 import { getAiLimiter } from "../http/rateLimiter.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
 /**
- * Two-way war-room slash-command bot (#235). Receives Slack/Teams slash commands, authenticates
- * them (Slack HMAC signing secret / Teams bearer token), rate-limits per channel, and dispatches:
- *   - read-only commands (findings, finding, iocs, status, help, bind, unbind) respond synchronously.
- *   - action commands (ask, synthesize) ACK immediately with "working…" and post the result to the
- *     request's response_url when ready (Slack/Teams expect a response within 3s; AI calls take
- *     longer). `hunt` is supported as a route ACK + activity-log entry; full hunt deployment goes
- *     through the dashboard (the velociraptor hunt-deploy surface is too rich for a slash command).
+ * Two-way war-room slash-command bot (#235). Receives Slack / Teams / Telegram slash commands,
+ * authenticates them, rate-limits per channel, and dispatches:
+ *   - read-only commands (findings, finding, iocs, status, help, unbind) respond synchronously.
+ *   - async commands (ask, hunt, synthesize) ACK immediately with "working…" and deliver the
+ *     result out of band when ready (chat platforms want a response within ~3s; AI calls take
+ *     longer). `hunt` records the technique and points at the dashboard — the Velociraptor
+ *     hunt-deploy surface (per-client targeting, artifact selection) is too rich for a slash
+ *     command.
  *
  * Per-channel case binding: `/dfir bind <caseId>` lets a channel omit the caseId from subsequent
- * commands. Access control: action commands are restricted to a configured user-id allowlist
- * (DFIR_SLACK_ACTION_USERS / DFIR_TEAMS_ACTION_USERS, comma-separated); read-only commands are
- * always allowed. When no allowlist is configured, access is open (the default for a localhost
- * tool).
+ * commands.
+ *
+ * ── Access control ──────────────────────────────────────────────────────────────────────
+ * Privileged commands (ask, hunt, synthesize, and bind — it decides which case the whole room can
+ * read) are restricted to a configured user-id allowlist: DFIR_SLACK_ACTION_USERS /
+ * DFIR_TEAMS_ACTION_USERS / DFIR_TELEGRAM_ACTION_USERS, comma-separated. Once an allowlist IS
+ * configured, everyone else is also confined to the channel's bound case, so an ordinary chat
+ * member cannot read an unrelated case just by naming it. With no allowlist the bot is open,
+ * matching the rest of this localhost-first tool.
+ *
+ * Password-protected cases are refused over chat entirely: the case-password gate lives on
+ * `/cases/:id` and a chat message carries no unlock cookie, so serving a locked case's state from
+ * here would be a way around it.
+ *
+ * ── Status codes ────────────────────────────────────────────────────────────────────────
+ * Only pre-authentication failures use error statuses (401 unauthenticated, 429 rate-limited) —
+ * those replies are for an impostor, not a person. Everything after a request authenticates
+ * answers 200 with the message in the platform's own envelope, because all three platforms
+ * discard the body of a non-2xx reply and show the user a generic failure instead. Telegram in
+ * particular RETRIES a non-2xx webhook delivery, which would re-run the command.
  *
  * Routes:
  *   - POST /integrations/slack/command
  *   - POST /integrations/teams/command
+ *   - POST /integrations/telegram/command
+ *
+ * Note these endpoints are reached from the internet (via a tunnel or reverse proxy), so the
+ * hostname they arrive under must be named in DFIR_ALLOWED_HOSTS — the DNS-rebinding host guard
+ * (#280) rejects unknown Host headers before any route runs. See companion/.env.example.
  */
 export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
@@ -44,7 +75,8 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   if (!channelStore) return; // not configured — no bot
 
   // Slack sends application/x-www-form-urlencoded; capture the raw body for HMAC verification via
-  // the parser's `verify` hook (called before parsing with the raw buffer).
+  // the parser's `verify` hook (called before parsing, with the raw buffer). Teams and Telegram
+  // send JSON, which the app-wide express.json() already handles.
   app.use(
     "/integrations/slack/command",
     express.urlencoded({
@@ -57,43 +89,33 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   );
 
   const limiter = getAiLimiter();
-  const actionUsers = (): string[] =>
-    (process.env.DFIR_SLACK_ACTION_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const envList = (name: string): string[] => parseHostList(process.env[name]);
 
   // ── Slack ───────────────────────────────────────────────────────────────────────────────
   app.post("/integrations/slack/command", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     const channelId = String(body.channel_id ?? "");
-    const userId = String(body.user_id ?? "");
-    const responseUrl = String(body.response_url ?? "");
-    const text = String(body.text ?? "");
-    const rawBody = (req as Request & { rawBody?: string }).rawBody ?? "";
 
-    // Rate limit per channel (keyed by "slack:<channelId>") so a runaway script in one war room
-    // can't burn the server's AI budget.
-    const limitKey = `slack:${channelId}`;
-    if (!limiter.tryAcquire(limitKey)) {
-      return res.status(429).json({ response_type: "ephemeral", text: "Rate limit exceeded — try again in a minute." });
-    }
-
-    const signingSecret = (process.env.DFIR_SLACK_SIGNING_SECRET ?? "").trim();
+    // Authenticate BEFORE spending the channel's rate-limit budget: the key comes from the request
+    // body, so limiting first would let an unauthenticated caller burn a real war room's quota.
     const sig = verifySlackSignature({
-      signingSecret,
+      signingSecret: (process.env.DFIR_SLACK_SIGNING_SECRET ?? "").trim(),
       timestamp: String(req.headers["x-slack-request-timestamp"] ?? ""),
-      rawBody,
+      rawBody: (req as Request & { rawBody?: string }).rawBody ?? "",
       signature: String(req.headers["x-slack-signature"] ?? ""),
     });
-    if (!sig.ok) {
-      return res.status(401).json({ error: sig.error ?? "unauthorized" });
+    if (!sig.ok) return void res.status(401).json({ error: sig.error ?? "unauthorized" });
+    if (!limiter.tryAcquire(`slack:${channelId}`)) {
+      return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    await dispatchCommand(req, res, {
+    await dispatchCommand(res, {
       platform: "slack",
       channelId,
-      userId,
-      responseUrl,
-      text,
-      actionAllowlist: actionUsers(),
+      userId: String(body.user_id ?? ""),
+      responseUrl: String(body.response_url ?? ""),
+      text: String(body.text ?? ""),
+      actionAllowlist: envList("DFIR_SLACK_ACTION_USERS"),
       channelStore,
       ctx,
     });
@@ -105,30 +127,54 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   app.post("/integrations/teams/command", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     const channelId = String(body.channel?.id ?? body.channelId ?? "");
-    const userId = String(body.from?.id ?? body.userId ?? "");
-    const responseUrl = String(body.responseUrl ?? "");
-    const text = String(body.text ?? body.command ?? "");
 
-    const limitKey = `teams:${channelId}`;
-    if (!limiter.tryAcquire(limitKey)) {
-      return res.status(429).json({ response_type: "ephemeral", text: "Rate limit exceeded — try again in a minute." });
+    const tok = verifyTeamsToken(
+      String(req.headers["authorization"] ?? "") || undefined,
+      (process.env.DFIR_TEAMS_TOKEN ?? "").trim(),
+    );
+    if (!tok.ok) return void res.status(401).json({ error: tok.error ?? "unauthorized" });
+    if (!limiter.tryAcquire(`teams:${channelId}`)) {
+      return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    const expectedToken = (process.env.DFIR_TEAMS_TOKEN ?? "").trim();
-    const presented = String(req.headers["authorization"] ?? "").replace(/^Bearer\s+/i, "");
-    const tok = verifyTeamsToken(presented || undefined, expectedToken);
-    if (!tok.ok) {
-      return res.status(401).json({ error: tok.error ?? "unauthorized" });
-    }
-
-    const teamsActionUsers = (process.env.DFIR_TEAMS_ACTION_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    await dispatchCommand(req, res, {
+    await dispatchCommand(res, {
       platform: "teams",
       channelId,
-      userId,
-      responseUrl,
-      text,
-      actionAllowlist: teamsActionUsers,
+      userId: String(body.from?.id ?? body.userId ?? ""),
+      responseUrl: String(body.responseUrl ?? ""),
+      text: String(body.text ?? body.command ?? ""),
+      actionAllowlist: envList("DFIR_TEAMS_ACTION_USERS"),
+      channelStore,
+      ctx,
+    });
+  });
+
+  // ── Telegram ────────────────────────────────────────────────────────────────────────────
+  // Telegram POSTs an Update object and authenticates with the secret_token given to setWebhook,
+  // echoed back in X-Telegram-Bot-Api-Secret-Token. There is no response_url: the synchronous
+  // reply carries a `method` field that Telegram executes, and async results go to the Bot API
+  // directly (see deliverAsyncResult).
+  app.post("/integrations/telegram/command", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const message = body.message ?? body.edited_message ?? body.channel_post ?? {};
+    const channelId = String(message.chat?.id ?? "");
+
+    const tok = verifyTelegramSecret(
+      String(req.headers["x-telegram-bot-api-secret-token"] ?? "") || undefined,
+      (process.env.DFIR_TELEGRAM_SECRET_TOKEN ?? "").trim(),
+    );
+    if (!tok.ok) return void res.status(401).json({ error: tok.error ?? "unauthorized" });
+    if (!limiter.tryAcquire(`telegram:${channelId}`)) {
+      return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
+    }
+
+    await dispatchCommand(res, {
+      platform: "telegram",
+      channelId,
+      userId: String(message.from?.id ?? ""),
+      responseUrl: "", // Telegram delivers through the Bot API, not a per-request URL
+      text: String(message.text ?? message.caption ?? ""),
+      actionAllowlist: envList("DFIR_TELEGRAM_ACTION_USERS"),
       channelStore,
       ctx,
     });
@@ -136,7 +182,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
 }
 
 interface DispatchInput {
-  platform: "slack" | "teams";
+  platform: ChatPlatform;
   channelId: string;
   userId: string;
   responseUrl: string;
@@ -146,185 +192,284 @@ interface DispatchInput {
   ctx: RouteContext;
 }
 
-async function dispatchCommand(_req: Request, res: Response, input: DispatchInput): Promise<void> {
-  const { platform, channelId, userId, responseUrl, text, actionAllowlist, channelStore, ctx } = input;
-  const { options } = ctx;
-  const cmd = parseSlashCommand(text);
+async function dispatchCommand(res: Response, input: DispatchInput): Promise<void> {
+  const { platform, channelId, userId, text, actionAllowlist, channelStore, ctx } = input;
+  const { options, store } = ctx;
+  const reply = (r: SlashCommandResponse | string, ephemeral = true): void => {
+    res.status(200).json(chatResponse(input, typeof r === "string" ? { title: r, lines: [] } : r, ephemeral));
+  };
+  const audit = (caseId: string, entry: Parameters<typeof logActivity>[3]): void => {
+    void logActivity(options.activityLogStore, options.onActivity, caseId, { actor: `${platform}:${userId}`, ...entry });
+  };
+
+  const parsed = parseSlashCommand(text);
   const bindKey = bindingKey(platform, channelId);
   const binding = await channelStore.get(bindKey).catch(() => undefined);
 
-  // bind/unbind are handled inline (no caseId needed for unbind; bind takes the caseId arg).
+  // Is the first token the name of a real case, or the first word of the argument? Only the store
+  // knows — see resolveCommand's docblock for why guessing positionally is wrong.
+  const firstToken = parsed.tokens[0];
+  const firstTokenIsKnownCase =
+    !!firstToken && isValidCaseId(firstToken) && (await store.caseExists(firstToken).catch(() => false));
+  const cmd = resolveCommand(parsed, binding, firstTokenIsKnownCase);
+
+  if (cmd.name === "help") return reply(formatHelpCommand());
+
   if (cmd.name === "unbind") {
+    const previous = binding?.caseId;
     await channelStore.unbind(bindKey).catch(() => false);
-    res.status(200).json({ response_type: "ephemeral", text: "Channel case binding cleared." });
-    return;
-  }
-  if (cmd.name === "help") {
-    const r = formatHelpCommand();
-    res.status(200).json(toSlackResponse(r, true));
-    return;
+    if (previous) {
+      audit(previous, {
+        category: "collaboration",
+        action: "slash-command-unbind",
+        detail: `${platform} channel ${channelId} unbound from case ${previous}`,
+      });
+    }
+    return reply(previous ? `Channel case binding cleared (was ${previous}).` : "This channel was not bound to a case.");
   }
 
-  // Access control: action commands require the user to be in the allowlist.
+  // Permission gate before anything touches case data. Audited against the resolved case when that
+  // case really exists, so a denial is visible in the case's own activity log.
   if (!isAllowed(cmd.name, userId, actionAllowlist)) {
-    res.status(403).json({ response_type: "ephemeral", text: `User ${userId} is not permitted to run /dfir ${cmd.name}.` });
-    return;
+    await auditDenial(input, cmd, `not permitted to run /dfir ${cmd.name}`);
+    return reply(`User ${userId || "(unknown)"} is not permitted to run /dfir ${cmd.name}.`);
   }
 
   if (cmd.name === "bind") {
-    const caseId = cmd.caseId?.trim() ?? "";
-    if (!caseId || !isValidCaseId(caseId)) {
-      res.status(400).json({ response_type: "ephemeral", text: "Usage: /dfir bind <caseId>" });
-      return;
-    }
-    await channelStore.bind(bindKey, caseId);
-    res.status(200).json({ response_type: "ephemeral", text: `Channel bound to case ${caseId}.` });
-    return;
+    if (!cmd.caseId || !isValidCaseId(cmd.caseId)) return reply("Usage: /dfir bind <caseId>");
+    const bindGuard = await guardCase(ctx, cmd.caseId);
+    if (bindGuard) return reply(bindGuard);
+    // An unreadable bindings file (hand-edited into invalid JSON) must answer the analyst, not
+    // reject into the terminal error handler with a bare 500 the chat client won't render.
+    const bound = await channelStore.bind(bindKey, cmd.caseId).then(() => true).catch(() => false);
+    if (!bound) return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
+    audit(cmd.caseId, {
+      category: "collaboration",
+      action: "slash-command-bind",
+      detail: `${platform} channel ${channelId} bound to case ${cmd.caseId} by user ${userId}`,
+    });
+    return reply(`Channel bound to case ${cmd.caseId}.`);
   }
 
-  // Resolve the caseId (explicit arg → channel binding → empty).
-  const caseId = resolveCaseId(cmd, binding);
-  if (!caseId || !isValidCaseId(caseId)) {
-    const hint = binding ? `This channel is bound to case "${binding.caseId}".` : "Bind this channel first with `/dfir bind <caseId>`.";
-    res.status(400).json({ response_type: "ephemeral", text: `A valid caseId is required. ${hint}` });
-    return;
+  if (!cmd.caseId || !isValidCaseId(cmd.caseId)) {
+    const hint = binding
+      ? `This channel is bound to case "${binding.caseId}".`
+      : "Bind this channel first with `/dfir bind <caseId>`.";
+    return reply(`A valid caseId is required. ${hint}`);
   }
-  if (!options.stateStore) {
-    res.status(501).json({ response_type: "ephemeral", text: "State store not configured." });
-    return;
+  if (!isCaseAccessAllowed({ userId, caseId: cmd.caseId, boundCaseId: binding?.caseId, actionAllowlist })) {
+    await auditDenial(input, cmd, `not permitted to reach case ${cmd.caseId} from this channel`);
+    return reply(
+      `User ${userId || "(unknown)"} may only use this channel's bound case` +
+        `${binding ? ` (${binding.caseId})` : " — this channel has no binding"}.`,
+    );
   }
+  const guard = await guardCase(ctx, cmd.caseId);
+  if (guard) return reply(guard);
+  if (!options.stateStore) return reply("State store not configured.");
 
   // Read-only commands respond synchronously.
   if (READ_ONLY_COMMANDS.includes(cmd.name)) {
+    let r: SlashCommandResponse;
     try {
-      const state = await options.stateStore.load(caseId);
-      let r: SlashCommandResponse;
+      const state = await options.stateStore.load(cmd.caseId);
       switch (cmd.name) {
-        case "findings":
-          r = formatFindingsCommand(state);
-          break;
-        case "finding":
-          r = formatFindingCommand(state, cmd.arg ?? "");
-          break;
-        case "iocs":
-          r = formatIocsCommand(state, cmd.iocFilter);
-          break;
-        case "status":
-          r = formatStatusCommand(state);
-          break;
-        default:
-          r = formatHelpCommand();
+        case "findings": r = formatFindingsCommand(state); break;
+        case "finding":  r = formatFindingCommand(state, cmd.arg); break;
+        case "iocs":     r = formatIocsCommand(state, cmd.iocFilter); break;
+        case "status":   r = formatStatusCommand(state); break;
+        default:         r = formatHelpCommand();
       }
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "collaboration",
-        action: "slash-command",
-        detail: `/dfir ${cmd.name} (user ${userId}, ${platform} channel ${channelId})`,
-      });
-      res.status(200).json(toSlackResponse(r, false));
-      return;
     } catch (err) {
-      res.status(500).json({ response_type: "ephemeral", text: `Error loading case ${caseId}: ${(err as Error).message}` });
-      return;
+      // Path-redacted: the app-wide res.json redaction only rewrites an `error` field, and this
+      // message goes out as chat `text` — an fs error carries the full cases-root path.
+      return reply(`Error loading case ${cmd.caseId}: ${redactPaths((err as Error).message, [store.casesRoot])}`);
     }
+    audit(cmd.caseId, {
+      category: "collaboration",
+      action: "slash-command",
+      detail: `/dfir ${cmd.name} (user ${userId}, ${platform} channel ${channelId})`,
+    });
+    return reply(r, false);
   }
 
-  // Action commands: ACK immediately, then run async and post the result to response_url.
-  if (isActionCommand(cmd.name)) {
-    if (!responseUrl) {
-      res.status(202).json({ response_type: "ephemeral", text: `Working on /dfir ${cmd.name}… (no response_url — result will appear in the activity log.)` });
-      return;
-    }
-    res.status(202).json({ response_type: "ephemeral", text: `Working on /dfir ${cmd.name} for case ${caseId}…` });
-    void runActionCommand(cmd.name, caseId, cmd.arg ?? "", responseUrl, input).catch((err) => {
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+  // Async commands: ACK immediately, then run and deliver the result out of band.
+  if (isAsyncCommand(cmd.name)) {
+    reply(`Working on /dfir ${cmd.name} for case ${cmd.caseId}…`);
+    void runActionCommand(cmd, input).catch((err) => {
+      audit(cmd.caseId, {
         category: "collaboration",
         action: "slash-command-error",
         detail: `/dfir ${cmd.name} failed: ${(err as Error).message}`,
+        outcome: "error",
       });
     });
     return;
   }
 
-  // Unreachable (parseSlashCommand only returns known names), but keep a safe fallback.
-  res.status(200).json(toSlackResponse(formatHelpCommand(), true));
+  reply(formatHelpCommand());
 }
 
-async function runActionCommand(
-  name: string,
-  caseId: string,
-  arg: string,
-  responseUrl: string,
-  input: DispatchInput,
-): Promise<void> {
-  const { options } = input.ctx;
-  if (name === "synthesize") {
-    input.ctx.resynthesizeInBackground(caseId);
-    logActivity(options.activityLogStore, options.onActivity, caseId, {
+/** Refuse a case the bot must not serve: one that doesn't exist, or one behind a password (chat
+ *  carries no unlock — see the module docblock). Returns the message to send, or "" when fine. */
+async function guardCase(ctx: RouteContext, caseId: string): Promise<string> {
+  let meta;
+  try {
+    meta = await ctx.store.getCaseMeta(caseId);
+  } catch {
+    // Fail closed, exactly like the case-lock gate does on an unexpected metadata read failure.
+    return `Case ${caseId} could not be read.`;
+  }
+  if (!meta) return `No such case: ${caseId}.`;
+  if (meta.password) return `Case ${caseId} is password-protected and is not available over chat — use the dashboard.`;
+  return "";
+}
+
+async function auditDenial(input: DispatchInput, cmd: ResolvedSlashCommand, reason: string): Promise<void> {
+  const { ctx, platform, channelId, userId } = input;
+  // Only write into a case's log when that case actually exists — a denial naming a bogus id must
+  // not create a case directory.
+  if (!cmd.caseId || !isValidCaseId(cmd.caseId)) return;
+  if (!(await ctx.store.caseExists(cmd.caseId).catch(() => false))) return;
+  await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, cmd.caseId, {
+    actor: `${platform}:${userId}`,
+    category: "collaboration",
+    action: "slash-command-denied",
+    detail: `/dfir ${cmd.name} from ${platform} channel ${channelId}: ${reason}`,
+    outcome: "error",
+  });
+}
+
+async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput): Promise<void> {
+  const { ctx, platform, userId } = input;
+  const { options } = ctx;
+  const audit = (entry: Parameters<typeof logActivity>[3]): void => {
+    void logActivity(options.activityLogStore, options.onActivity, cmd.caseId, { actor: `${platform}:${userId}`, ...entry });
+  };
+  const send = (r: SlashCommandResponse, ephemeral = true): Promise<void> => deliverAsyncResult(input, r, ephemeral);
+
+  if (cmd.name === "synthesize") {
+    ctx.resynthesizeInBackground(cmd.caseId);
+    audit({
       category: "ai",
       action: "slash-command-synthesize",
-      detail: `/dfir synthesize triggered by user ${input.userId}`,
+      detail: `/dfir synthesize triggered by user ${userId}`,
     });
-    await postToResponseUrl(responseUrl, { response_type: "ephemeral", text: `Re-synthesis started for case ${caseId}. The diff summary will appear in the dashboard and activity log when done.` });
+    await send({
+      title: `Re-synthesis started for case ${cmd.caseId}.`,
+      lines: ["The diff summary will appear in the dashboard and activity log when it finishes."],
+    });
     return;
   }
-  if (name === "ask") {
-    if (!arg.trim()) {
-      await postToResponseUrl(responseUrl, { response_type: "ephemeral", text: "Usage: /dfir ask <question>" });
-      return;
-    }
-    if (!options.pipeline) {
-      await postToResponseUrl(responseUrl, { response_type: "ephemeral", text: "AI pipeline not configured." });
-      return;
-    }
+
+  if (cmd.name === "ask") {
+    if (!cmd.arg.trim()) return void (await send({ title: "Usage: /dfir ask <question>", lines: [] }));
+    if (!options.pipeline) return void (await send({ title: "AI pipeline not configured.", lines: [] }));
     try {
-      const answer = await options.pipeline.ask(caseId, arg);
-      const lines = [answer.answer || "(no answer)", ...(answer.pointer ? [`Next: ${answer.pointer}`] : [])];
-      await postToResponseUrl(responseUrl, toSlackResponse({ title: `Q: ${arg}`, lines }, false));
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      const answer = await options.pipeline.ask(cmd.caseId, cmd.arg);
+      await send(
+        {
+          title: `Q: ${cmd.arg}`,
+          lines: [answer.answer || "(no answer)", ...(answer.pointer ? [`Next: ${answer.pointer}`] : [])],
+        },
+        false,
+      );
+      audit({
         category: "ai",
         action: "slash-command-ask",
-        detail: `/dfir ask "${arg.slice(0, 120)}" → ${answer.status}`,
+        detail: `/dfir ask "${cmd.arg.slice(0, 120)}" → ${answer.status}`,
       });
     } catch (err) {
-      await postToResponseUrl(responseUrl, { response_type: "ephemeral", text: `AI ask failed: ${(err as Error).message}` });
+      await send({ title: `AI ask failed: ${redactPaths((err as Error).message, [ctx.store.casesRoot])}`, lines: [] });
+      audit({
+        category: "ai",
+        action: "slash-command-ask",
+        detail: `/dfir ask "${cmd.arg.slice(0, 120)}" failed: ${(err as Error).message}`,
+        outcome: "error",
+      });
     }
     return;
   }
-  if (name === "hunt") {
-    // Hunt deployment via the bot is ACK-only — the velociraptor hunt-deploy surface (per-client
-    // targeting, artifact selection, bundle resolution) is too rich for a slash command. The
-    // dashboard's hunt panel is the deploy surface; the bot surfaces the technique to hunt.
-    await postToResponseUrl(responseUrl, {
-      response_type: "ephemeral",
-      text: `Hunt technique "${arg || "(none specified)"}" noted for case ${caseId}. Deploy the hunt from the dashboard's Velociraptor hunt panel.`,
+
+  if (cmd.name === "hunt") {
+    await send({
+      title: `Hunt technique "${cmd.arg || "(none specified)"}" noted for case ${cmd.caseId}.`,
+      lines: ["Deploy the hunt from the dashboard's Velociraptor hunt panel."],
     });
-    logActivity(options.activityLogStore, options.onActivity, caseId, {
+    audit({
       category: "hunt",
       action: "slash-command-hunt",
-      detail: `/dfir hunt ${arg} (user ${input.userId}) — deploy via dashboard`,
+      detail: `/dfir hunt ${cmd.arg} (user ${userId}) — deploy via dashboard`,
     });
-    return;
   }
 }
 
-function toSlackResponse(r: SlashCommandResponse, ephemeral: boolean): { response_type: string; text: string } {
+// ── Platform envelopes + delivery ───────────────────────────────────────────────────────
+
+function renderText(r: SlashCommandResponse): string {
   const body = r.lines.filter(Boolean).map((l) => `• ${l}`).join("\n");
-  return {
-    response_type: ephemeral ? "ephemeral" : "in_channel",
-    text: `${r.title}${body ? `\n${body}` : ""}`,
-  };
+  return `${r.title}${body ? `\n${body}` : ""}`;
 }
 
-async function postToResponseUrl(url: string, payload: unknown): Promise<void> {
-  if (!url) return;
+/** Wrap a card in the response envelope the platform expects for a synchronous reply. */
+function chatResponse(input: DispatchInput, r: SlashCommandResponse, ephemeral: boolean): unknown {
+  const text = renderText(r);
+  switch (input.platform) {
+    case "slack":
+      return { response_type: ephemeral ? "ephemeral" : "in_channel", text };
+    case "teams":
+      return { type: "message", text };
+    case "telegram":
+      // Telegram executes a Bot API method named in the webhook reply body — that is how you answer
+      // an update without a second HTTP call.
+      return { method: "sendMessage", chat_id: input.channelId, text };
+  }
+}
+
+/** Deliver a result that wasn't ready in time for the synchronous reply. */
+async function deliverAsyncResult(input: DispatchInput, r: SlashCommandResponse, ephemeral: boolean): Promise<void> {
+  const { ctx, platform } = input;
+  if (platform === "telegram") {
+    const token = (process.env.DFIR_TELEGRAM_BOT_TOKEN ?? "").trim();
+    if (!token) {
+      ctx.serverLogger.warn("[slash] telegram result dropped: DFIR_TELEGRAM_BOT_TOKEN is not set");
+      return;
+    }
+    const base = (process.env.DFIR_TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, "");
+    await postJson(input, `${base}/bot${token}/sendMessage`, { chat_id: input.channelId, text: renderText(r) });
+    return;
+  }
+
+  const url = input.responseUrl;
+  if (!url) {
+    ctx.serverLogger.warn(`[slash] ${platform} result dropped: the request carried no response_url`);
+    return;
+  }
+  const extraHosts = parseHostList(
+    platform === "slack" ? process.env.DFIR_SLACK_RESPONSE_HOSTS : process.env.DFIR_TEAMS_RESPONSE_HOSTS,
+  );
+  // The response_url is caller-supplied, so it is pinned to the hosts the platform delivers on
+  // before we make a server-side request to it.
+  if (!isAllowedResponseUrl(platform, url, extraHosts)) {
+    ctx.serverLogger.warn(
+      `[slash] refused to deliver to response_url "${url}" — not an allowed ${platform} host` +
+        ` (extend with DFIR_${platform.toUpperCase()}_RESPONSE_HOSTS)`,
+    );
+    return;
+  }
+  await postJson(input, url, chatResponse(input, r, ephemeral));
+}
+
+async function postJson(input: DispatchInput, url: string, payload: unknown): Promise<void> {
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch {
-    // best-effort — a failure to post the async result is logged via the action-command catch.
+    if (!res.ok) input.ctx.serverLogger.warn(`[slash] result delivery to ${input.platform} returned ${res.status}`);
+  } catch (err) {
+    input.ctx.serverLogger.warn(`[slash] result delivery to ${input.platform} failed: ${(err as Error).message}`);
   }
 }

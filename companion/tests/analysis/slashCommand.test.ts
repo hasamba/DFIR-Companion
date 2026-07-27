@@ -1,19 +1,29 @@
 import { describe, it, expect } from "vitest";
+import { createHmac } from "node:crypto";
 import {
   parseSlashCommand,
+  resolveCommand,
   formatFindingsCommand,
   formatFindingCommand,
   formatIocsCommand,
   formatStatusCommand,
   formatHelpCommand,
-  resolveCaseId,
   isAllowed,
-  isActionCommand,
+  isCaseAccessAllowed,
+  isPrivilegedCommand,
+  isAsyncCommand,
   READ_ONLY_COMMANDS,
-  ACTION_COMMANDS,
-  type ParsedSlashCommand,
+  PRIVILEGED_COMMANDS,
+  ASYNC_COMMANDS,
+  type ChannelBinding,
 } from "../../src/analysis/slashCommand.js";
-import { verifySlackSignature, verifyTeamsToken } from "../../src/analysis/slashCommandAuth.js";
+import {
+  verifySlackSignature,
+  verifyTeamsToken,
+  verifyTelegramSecret,
+  isAllowedResponseUrl,
+  parseHostList,
+} from "../../src/analysis/slashCommandAuth.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { Finding, IOC, IocEnrichment, InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -27,48 +37,98 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/dfir frobnicate x").name).toBe("help");
   });
 
-  it("parses /dfir findings <caseId>", () => {
-    const c = parseSlashCommand("/dfir findings case-42");
-    expect(c.name).toBe("findings");
-    expect(c.caseId).toBe("case-42");
+  it("splits the command word from its argument tokens", () => {
+    expect(parseSlashCommand("/dfir findings case-42")).toEqual(
+      expect.objectContaining({ name: "findings", tokens: ["case-42"] }),
+    );
+    expect(parseSlashCommand("/dfir finding case-42 f3")).toEqual(
+      expect.objectContaining({ name: "finding", tokens: ["case-42", "f3"] }),
+    );
+    expect(parseSlashCommand("/dfir ask case-1 what was the initial access vector?").tokens).toEqual([
+      "case-1", "what", "was", "the", "initial", "access", "vector?",
+    ]);
   });
 
-  it("parses /dfir finding <caseId> <id>", () => {
-    const c = parseSlashCommand("/dfir finding case-42 f3");
-    expect(c.name).toBe("finding");
-    expect(c.caseId).toBe("case-42");
-    expect(c.arg).toBe("f3");
+  it("tolerates a bare command, a leading slash, and the echoed trigger word", () => {
+    for (const text of ["findings c1", "/findings c1", "dfir findings c1", "/dfir findings c1"]) {
+      expect(parseSlashCommand(text), text).toEqual(expect.objectContaining({ name: "findings", tokens: ["c1"] }));
+    }
   });
 
-  it("parses /dfir iocs <caseId> [filter]", () => {
-    expect(parseSlashCommand("/dfir iocs case-1 malicious")).toEqual(expect.objectContaining({ name: "iocs", caseId: "case-1", iocFilter: "malicious" }));
-    expect(parseSlashCommand("/dfir iocs case-1 flagged")).toEqual(expect.objectContaining({ name: "iocs", caseId: "case-1", iocFilter: "flagged" }));
-    expect(parseSlashCommand("/dfir iocs case-1").iocFilter).toBeUndefined();
+  it("strips Telegram's @BotName suffix from the command word", () => {
+    expect(parseSlashCommand("/findings@DfirCompanionBot c1")).toEqual(
+      expect.objectContaining({ name: "findings", tokens: ["c1"] }),
+    );
+    expect(parseSlashCommand("/dfir@DfirCompanionBot findings c1")).toEqual(
+      expect.objectContaining({ name: "findings", tokens: ["c1"] }),
+    );
   });
 
-  it("parses /dfir ask <caseId> <question> (multi-word question)", () => {
-    const c = parseSlashCommand("/dfir ask case-1 what was the initial access vector?");
-    expect(c.name).toBe("ask");
-    expect(c.caseId).toBe("case-1");
-    expect(c.arg).toBe("what was the initial access vector?");
+  it("recognizes every command name", () => {
+    for (const name of ["ask", "findings", "finding", "iocs", "hunt", "status", "synthesize", "bind", "unbind", "help"]) {
+      expect(parseSlashCommand(`/dfir ${name} c1`).name, name).toBe(name);
+    }
+  });
+});
+
+describe("resolveCommand", () => {
+  const bound: ChannelBinding = { caseId: "case-42", boundAt: "2026-07-25T00:00:00Z" };
+  const parse = parseSlashCommand;
+
+  it("uses the first token as the caseId when it names a real case", () => {
+    const r = resolveCommand(parse("/dfir ask case-1 what happened?"), bound, true);
+    expect(r.caseId).toBe("case-1");
+    expect(r.arg).toBe("what happened?");
+    expect(r.usedBinding).toBe(false);
   });
 
-  it("parses /dfir hunt <caseId> <technique>", () => {
-    const c = parseSlashCommand("/dfir hunt case-1 T1059.001");
-    expect(c.name).toBe("hunt");
-    expect(c.arg).toBe("T1059.001");
+  // The bug this function exists for: positional parsing ate the first word of every argument.
+  // `/dfir ask what happened?` used to resolve to a case called "what" — which passes
+  // isValidCaseId, so nothing errored and the analyst got an answer about the wrong case.
+  it("falls back to the channel binding when the first token is NOT a case", () => {
+    const r = resolveCommand(parse("/dfir ask what was the initial access vector?"), bound, false);
+    expect(r.caseId).toBe("case-42");
+    expect(r.arg).toBe("what was the initial access vector?");
+    expect(r.usedBinding).toBe(true);
   });
 
-  it("parses status, synthesize (caseId only), bind, unbind, help", () => {
-    expect(parseSlashCommand("/dfir status c1")).toEqual(expect.objectContaining({ name: "status", caseId: "c1" }));
-    expect(parseSlashCommand("/dfir synthesize c1")).toEqual(expect.objectContaining({ name: "synthesize", caseId: "c1" }));
-    expect(parseSlashCommand("/dfir bind c1")).toEqual(expect.objectContaining({ name: "bind", caseId: "c1" }));
-    expect(parseSlashCommand("/dfir unbind").name).toBe("unbind");
-    expect(parseSlashCommand("/dfir help").name).toBe("help");
+  it("reads an ioc filter as a filter, not as a caseId, on a bound channel", () => {
+    const r = resolveCommand(parse("/dfir iocs malicious"), bound, false);
+    expect(r.caseId).toBe("case-42");
+    expect(r.iocFilter).toBe("malicious");
   });
 
-  it("tolerates a bare command without the /dfir prefix", () => {
-    expect(parseSlashCommand("findings c1")).toEqual(expect.objectContaining({ name: "findings", caseId: "c1" }));
+  it("keeps the ioc filter after an explicit caseId", () => {
+    const r = resolveCommand(parse("/dfir iocs case-1 flagged"), bound, true);
+    expect(r.caseId).toBe("case-1");
+    expect(r.iocFilter).toBe("flagged");
+  });
+
+  it("ignores a non-filter word instead of treating it as a filter", () => {
+    expect(resolveCommand(parse("/dfir iocs"), bound, false).iocFilter).toBeUndefined();
+    expect(resolveCommand(parse("/dfir iocs case-1"), bound, true).iocFilter).toBeUndefined();
+  });
+
+  it("passes a finding id through as the argument on a bound channel", () => {
+    const r = resolveCommand(parse("/dfir finding f1"), bound, false);
+    expect(r.caseId).toBe("case-42");
+    expect(r.arg).toBe("f1");
+  });
+
+  it("keeps the typed token as the caseId when there is no binding, so the error names it", () => {
+    const r = resolveCommand(parse("/dfir status nosuchcase"), undefined, false);
+    expect(r.caseId).toBe("nosuchcase");
+    expect(r.usedBinding).toBe(false);
+  });
+
+  it("never falls back to the binding for bind — that would re-bind to the current case", () => {
+    expect(resolveCommand(parse("/dfir bind case-7"), bound, false).caseId).toBe("case-7");
+    expect(resolveCommand(parse("/dfir bind"), bound, false).caseId).toBe("");
+  });
+
+  it("resolves no caseId for help and unbind", () => {
+    expect(resolveCommand(parse("/dfir help"), bound, false).caseId).toBe("");
+    expect(resolveCommand(parse("/dfir unbind"), bound, false).caseId).toBe("");
   });
 });
 
@@ -127,13 +187,15 @@ describe("command formatters", () => {
   });
 
   it("formatFindingCommand reports a clear not-found for an unknown id", () => {
-    const r = formatFindingCommand(state, "f99");
-    expect(r.title).toMatch(/not found/);
+    expect(formatFindingCommand(state, "f99").title).toMatch(/not found/);
+  });
+
+  it("formatFindingCommand asks for an id instead of reporting \"not found\" for a blank one", () => {
+    expect(formatFindingCommand(state, "").title).toMatch(/which finding/i);
   });
 
   it("formatIocsCommand with no filter lists all IOCs", () => {
-    const r = formatIocsCommand(state, undefined);
-    expect(r.lines.length).toBe(3);
+    expect(formatIocsCommand(state, undefined).lines.length).toBe(3);
   });
 
   it("formatIocsCommand malicious filter returns only malicious IOCs", () => {
@@ -143,8 +205,7 @@ describe("command formatters", () => {
   });
 
   it("formatIocsCommand flagged filter returns malicious + suspicious", () => {
-    const r = formatIocsCommand(state, "flagged");
-    expect(r.lines.length).toBe(2);
+    expect(formatIocsCommand(state, "flagged").lines.length).toBe(2);
   });
 
   it("formatStatusCommand reports event/finding/IOC counts", () => {
@@ -154,27 +215,11 @@ describe("command formatters", () => {
     expect(r.lines.some((l) => l.includes("IOCs: 3"))).toBe(true);
   });
 
-  it("formatHelpCommand lists every command", () => {
+  it("formatHelpCommand lists every command and does not promise hunt deployment", () => {
     const r = formatHelpCommand();
     expect(r.lines.length).toBeGreaterThanOrEqual(9);
     expect(r.lines.some((l) => l.includes("/dfir bind"))).toBe(true);
-  });
-});
-
-describe("resolveCaseId", () => {
-  it("prefers the explicit caseId over the channel binding", () => {
-    const cmd: ParsedSlashCommand = { name: "findings", caseId: "explicit", raw: "" };
-    expect(resolveCaseId(cmd, { caseId: "bound", boundAt: "" })).toBe("explicit");
-  });
-
-  it("falls back to the channel binding when no explicit caseId is given", () => {
-    const cmd: ParsedSlashCommand = { name: "status", caseId: undefined, raw: "" };
-    expect(resolveCaseId(cmd, { caseId: "bound", boundAt: "" })).toBe("bound");
-  });
-
-  it("returns empty when neither is present", () => {
-    const cmd: ParsedSlashCommand = { name: "status", caseId: undefined, raw: "" };
-    expect(resolveCaseId(cmd, undefined)).toBe("");
+    expect(r.lines.find((l) => l.startsWith("/dfir hunt"))).toMatch(/dashboard/);
   });
 });
 
@@ -187,45 +232,69 @@ describe("access control", () => {
     }
   });
 
-  it("action commands are denied to a user not in the allowlist", () => {
-    for (const name of ACTION_COMMANDS) {
-      expect(isAllowed(name, "outsider", ["admin"])).toBe(false);
+  it("privileged commands are denied to a user not in the allowlist", () => {
+    for (const name of PRIVILEGED_COMMANDS) {
+      expect(isAllowed(name, "outsider", ["admin"]), name).toBe(false);
     }
   });
 
-  it("action commands are allowed to a user in the allowlist", () => {
-    for (const name of ACTION_COMMANDS) {
-      expect(isAllowed(name, "admin", ["admin"])).toBe(true);
+  it("privileged commands are allowed to a user in the allowlist", () => {
+    for (const name of PRIVILEGED_COMMANDS) {
+      expect(isAllowed(name, "admin", ["admin"]), name).toBe(true);
     }
   });
 
-  it("action commands are open (allowed) when no allowlist is configured", () => {
-    for (const name of ACTION_COMMANDS) {
-      expect(isAllowed(name, "anyone", undefined)).toBe(true);
-      expect(isAllowed(name, "anyone", [])).toBe(true);
+  it("privileged commands are open when no allowlist is configured", () => {
+    for (const name of PRIVILEGED_COMMANDS) {
+      expect(isAllowed(name, "anyone", undefined), name).toBe(true);
+      expect(isAllowed(name, "anyone", []), name).toBe(true);
     }
   });
 
-  it("isActionCommand correctly classifies the three action commands", () => {
-    expect(isActionCommand("ask")).toBe(true);
-    expect(isActionCommand("hunt")).toBe(true);
-    expect(isActionCommand("synthesize")).toBe(true);
-    expect(isActionCommand("findings")).toBe(false);
-    expect(isActionCommand("status")).toBe(false);
+  // bind chooses which case the whole room can then read, so it is a privileged act — not the
+  // read-only one the first cut of this bot treated it as.
+  it("classifies bind as privileged but not async", () => {
+    expect(isPrivilegedCommand("bind")).toBe(true);
+    expect(isAsyncCommand("bind")).toBe(false);
+    expect(READ_ONLY_COMMANDS).not.toContain("bind");
+  });
+
+  it("classifies the async commands", () => {
+    expect(ASYNC_COMMANDS).toEqual(["ask", "hunt", "synthesize"]);
+    for (const name of ASYNC_COMMANDS) expect(isAsyncCommand(name), name).toBe(true);
+    expect(isAsyncCommand("findings")).toBe(false);
+    expect(isAsyncCommand("status")).toBe(false);
+  });
+});
+
+describe("isCaseAccessAllowed", () => {
+  it("is open when no allowlist is configured", () => {
+    expect(isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: "other", actionAllowlist: [] })).toBe(true);
+    expect(isCaseAccessAllowed({ userId: "u", caseId: "any", boundCaseId: undefined, actionAllowlist: undefined })).toBe(true);
+  });
+
+  it("lets an allowlisted responder reach any case", () => {
+    expect(isCaseAccessAllowed({ userId: "admin", caseId: "unrelated", boundCaseId: "c1", actionAllowlist: ["admin"] })).toBe(true);
+  });
+
+  // Without this, any chat member could read any case on the server just by naming it.
+  it("confines everyone else to the channel's bound case", () => {
+    const allowlist = ["admin"];
+    expect(isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: "c1", actionAllowlist: allowlist })).toBe(true);
+    expect(isCaseAccessAllowed({ userId: "u", caseId: "secret", boundCaseId: "c1", actionAllowlist: allowlist })).toBe(false);
+    expect(isCaseAccessAllowed({ userId: "u", caseId: "c1", boundCaseId: undefined, actionAllowlist: allowlist })).toBe(false);
   });
 });
 
 describe("verifySlackSignature", () => {
   const secret = "shhhh";
-  // The base string Slack signs is `v0:<timestamp>:<rawBody>`, HMAC-SHA256, hex, prefixed with "v0=".
-  // Compute a valid signature for a known body so we can verify the verifier accepts it.
+  // The base string Slack signs is `v0:<timestamp>:<rawBody>`, HMAC-SHA256, hex, prefixed "v0=".
   const ts = "1700000000";
   const rawBody = "token=abc&team_id=T1&channel_id=C1&user_id=U1&text=findings%20case-1&response_url=https%3A%2F%2Fhooks.slack.com%2Fx";
-  const validSig = "v0=" + hmacSha256Hex(secret, `v0:${ts}:${rawBody}`);
+  const validSig = "v0=" + createHmac("sha256", secret).update(`v0:${ts}:${rawBody}`).digest("hex");
 
   it("accepts a valid signature within the replay window", () => {
-    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) });
-    expect(r.ok).toBe(true);
+    expect(verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) }).ok).toBe(true);
   });
 
   it("rejects a tampered body (signature mismatch)", () => {
@@ -235,22 +304,25 @@ describe("verifySlackSignature", () => {
   });
 
   it("rejects a stale timestamp (outside the 5-minute replay window)", () => {
-    const stale = Number(ts) + 600; // 10 min later
-    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => stale });
+    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) + 600 });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/replay/);
   });
 
   it("rejects when no signing secret is configured", () => {
-    const r = verifySlackSignature({ signingSecret: "", timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) });
+    expect(verifySlackSignature({ signingSecret: "", timestamp: ts, rawBody, signature: validSig, now: () => Number(ts) }).ok).toBe(false);
+  });
+
+  it("rejects a signature of the wrong length without throwing", () => {
+    const r = verifySlackSignature({ signingSecret: secret, timestamp: ts, rawBody, signature: "v0=short", now: () => Number(ts) });
     expect(r.ok).toBe(false);
   });
 });
 
 describe("verifyTeamsToken", () => {
   it("accepts a matching bearer token", () => {
-    const r = verifyTeamsToken("Bearer my-token", "my-token");
-    expect(r.ok).toBe(true);
+    expect(verifyTeamsToken("Bearer my-token", "my-token").ok).toBe(true);
+    expect(verifyTeamsToken("my-token", "my-token").ok).toBe(true);
   });
 
   it("rejects a wrong token", () => {
@@ -260,19 +332,63 @@ describe("verifyTeamsToken", () => {
   });
 
   it("rejects when no token is configured", () => {
-    const r = verifyTeamsToken("Bearer x", "");
-    expect(r.ok).toBe(false);
+    expect(verifyTeamsToken("Bearer x", "").ok).toBe(false);
   });
 
   it("rejects a missing Authorization header", () => {
-    const r = verifyTeamsToken(undefined, "my-token");
-    expect(r.ok).toBe(false);
+    expect(verifyTeamsToken(undefined, "my-token").ok).toBe(false);
   });
 });
 
-function hmacSha256Hex(secret: string, data: string): string {
-  // Use the same machinery the verifier does — node:crypto — so the test signature is correct.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createHmac } = require("node:crypto") as typeof import("node:crypto");
-  return createHmac("sha256", secret).update(data).digest("hex");
-}
+describe("verifyTelegramSecret", () => {
+  it("accepts the secret Telegram echoes back from setWebhook", () => {
+    expect(verifyTelegramSecret("s3cret", "s3cret").ok).toBe(true);
+  });
+
+  it("rejects a wrong secret", () => {
+    expect(verifyTelegramSecret("nope", "s3cret").ok).toBe(false);
+  });
+
+  it("rejects a missing header", () => {
+    expect(verifyTelegramSecret(undefined, "s3cret").ok).toBe(false);
+  });
+
+  // Anyone who learns the webhook URL could otherwise post updates.
+  it("refuses to run open when no secret is configured", () => {
+    const r = verifyTelegramSecret("anything", "");
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no Telegram webhook secret/);
+  });
+});
+
+describe("isAllowedResponseUrl", () => {
+  it("accepts Slack's own delivery host", () => {
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com/commands/T1/123/abc")).toBe(true);
+  });
+
+  it("accepts Teams delivery hosts, including subdomains", () => {
+    expect(isAllowedResponseUrl("teams", "https://outlook.webhook.office.com/webhookb2/x")).toBe(true);
+    expect(isAllowedResponseUrl("teams", "https://prod-1.westus.logic.azure.com/workflows/x")).toBe(true);
+  });
+
+  it("rejects an arbitrary host — the response_url is caller-supplied", () => {
+    expect(isAllowedResponseUrl("slack", "https://evil.example.com/collect")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "http://169.254.169.254/latest/meta-data/")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "https://hooks.slack.com.evil.example.com/x")).toBe(false);
+  });
+
+  it("rejects plaintext http and unparseable input", () => {
+    expect(isAllowedResponseUrl("slack", "http://hooks.slack.com/x")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "not a url")).toBe(false);
+    expect(isAllowedResponseUrl("slack", "")).toBe(false);
+  });
+
+  it("honors an operator-configured extra host (self-hosted Mattermost)", () => {
+    expect(isAllowedResponseUrl("slack", "https://chat.corp.example/hooks/x", ["chat.corp.example"])).toBe(true);
+  });
+
+  it("parseHostList trims and drops empties", () => {
+    expect(parseHostList(" a.example , ,b.example ")).toEqual(["a.example", "b.example"]);
+    expect(parseHostList(undefined)).toEqual([]);
+  });
+});
