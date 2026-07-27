@@ -935,16 +935,43 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
 
-  // Rate-limit AI-cost-bearing routes (import triggers synthesis, synthesize is explicit) to
-  // prevent an attacker who knows a caseId from burning the operator's AI budget. 20 requests
-  // per minute per case — generous for a single analyst, blocks a script hammering the endpoint.
+  // Rate-limit AI-cost-bearing routes to prevent an attacker who knows a caseId from burning
+  // the operator's AI budget. 20 requests per minute per case — generous for a single analyst,
+  // blocks a script hammering the endpoint.
+  //
+  // Mounting per-exact-path (NOT as a prefix `app.use("/cases/:id/import", ...)`) — a prefix
+  // mount would also swallow the non-AI undo/redo/undo-stack routes under /import, throttling
+  // a pure read and locking the analyst out of their own import history (#23).
+  //
+  // Covers EVERY route that issues an LLM call (extract/synth/explain/ask/second-opinion/exec-
+  // summary/starred-report/view-summary/remediation-plan/hypothesis-review/narrative/memory/
+  // next-steps + the import triggers). The limiter key is the caseId, so a single attacker
+  // can't rotate endpoints to evade the cap (#25). The deep-pass/preview GET and the read-only
+  // GETs (synth-meta, ai-cost, hypotheses, ai-control, confidence-control, adversary-hints,
+  // starred-report) are NOT limited — they cost zero AI tokens.
   const aiLimiter = getAiLimiter();
-  app.use("/cases/:id/import", aiLimiter.middleware((req) => req.params.id));
-  app.use("/cases/:id/import-file", aiLimiter.middleware((req) => req.params.id));
-  app.use("/cases/:id/import-csv", aiLimiter.middleware((req) => req.params.id));
-  app.use("/cases/:id/import-log", aiLimiter.middleware((req) => req.params.id));
-  app.use("/cases/:id/synthesize", aiLimiter.middleware((req) => req.params.id));
-  app.use("/cases/:id/deep-pass", aiLimiter.middleware((req) => req.params.id));
+  const aiLimited = aiLimiter.middleware((req) => req.params.id);
+  // Static AI-cost POST routes (relative to /cases/:id).
+  const AI_LIMIT_PATHS = new Set([
+    "/import", "/import-file", "/import-csv", "/import-log",   // import triggers synthesis
+    "/synthesize", "/deep-pass",                                // explicit synthesis
+    "/second-opinion", "/second-opinion/apply", "/second-opinion/apply-all",  // 2nd LLM opinion
+    "/ask",                                                      // Ask-the-case GraphRAG
+    "/executive-summary", "/starred-report", "/view-summary", "/remediation-plan",  // report AI
+    "/hypothesis-review", "/narrative",                          // narrative + hypothesis AI
+    "/memory/next-steps",                                       // memory-forensics next-step AI
+  ]);
+  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== "POST") return next();
+    // Strip the /cases/:id/ prefix to compare against the static set.
+    const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
+    // /events/:eid/explain has a dynamic segment — match it explicitly.
+    const isExplain = /^\/events\/[^/]+\/explain$/.test(rel);
+    if (AI_LIMIT_PATHS.has(rel) || isExplain) {
+      return aiLimited(req, res, next);
+    }
+    next();
+  });
 
   registerImportRoutes(app, ctx);
   registerVelociraptorRoutes(app, ctx);
