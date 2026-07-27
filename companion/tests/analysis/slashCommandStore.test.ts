@@ -56,6 +56,16 @@ describe("SlashCommandChannelStore", () => {
     expect(await store.loadAll()).toEqual({}); // ...but a schema mismatch degrades to empty
   });
 
+  // On a fresh install the notifications/ dir beside cases/ does not exist yet, so the very first
+  // `/dfir bind` is what has to create it. Every other test here starts from an mkdtemp'd dir,
+  // which hid this.
+  it("creates the parent directory on first write", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-slashbind-fresh-"));
+    const nested = new SlashCommandChannelStore(join(dir, "notifications", "slash-command-bindings.json"));
+    await expect(nested.bind("slack:C1", "case-1")).resolves.toMatchObject({ caseId: "case-1" });
+    expect(await nested.get("slack:C1")).toMatchObject({ caseId: "case-1" });
+  });
+
   it("writes readable JSON (an operator may need to edit it by hand)", async () => {
     await store.bind("slack:C1", "case-1");
     expect(JSON.parse(await readFile(file, "utf8"))).toHaveProperty("slack:C1.caseId", "case-1");

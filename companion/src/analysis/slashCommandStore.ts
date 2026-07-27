@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
 
@@ -34,10 +35,19 @@ export class SlashCommandChannelStore {
     return (await this.loadAll())[key];
   }
 
+  // Create the parent directory before writing, exactly as NotificationConfigStore does: this file
+  // lives in the notifications/ dir beside cases/, which does not exist until something writes
+  // there — so on a fresh install the very first `/dfir bind` is the thing that creates it.
+  private async write(map: ChannelBindingMap): Promise<void> {
+    const dir = dirname(this.file);
+    if (dir) await mkdir(dir, { recursive: true });
+    await atomicWrite(this.file, JSON.stringify(map, null, 2));
+  }
+
   async bind(key: string, caseId: string, at: string = new Date().toISOString()): Promise<{ caseId: string; boundAt: string }> {
     const all = await this.loadAll();
     const next = { ...all, [key]: { caseId, boundAt: at } };
-    await atomicWrite(this.file, JSON.stringify(next, null, 2));
+    await this.write(next);
     return next[key];
   }
 
@@ -46,7 +56,7 @@ export class SlashCommandChannelStore {
     if (!(key in all)) return false;
     const next = { ...all };
     delete next[key];
-    await atomicWrite(this.file, JSON.stringify(next, null, 2));
+    await this.write(next);
     return true;
   }
 }
