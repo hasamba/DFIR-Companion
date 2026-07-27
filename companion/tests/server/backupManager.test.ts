@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
@@ -52,6 +52,43 @@ describe("resolveBackupConfig", () => {
 });
 
 // ── BackupManager with real temp dirs ────────────────────────────────────────
+
+/**
+ * A minimal in-memory stand-in for the fs calls BackupManager makes, for the one test whose cost
+ * is dominated by disk churn rather than by what it asserts. Deliberately faithful on the two
+ * behaviours the manager actually depends on: readFile raises ENOENT for a missing snapshot file
+ * (createBackup skips those), and readdir lists only the immediate children of a directory.
+ */
+function memoryFs(): Required<BackupManagerDeps> {
+  const files = new Map<string, string>();
+  const enoent = (path: string): NodeJS.ErrnoException =>
+    Object.assign(new Error(`ENOENT: no such file or directory, open '${path}'`), { code: "ENOENT" });
+  return {
+    mkdir: async () => undefined,
+    atomicWrite: async (path, content) => { files.set(path, content); },
+    readFile: async (path) => {
+      const content = files.get(path);
+      if (content === undefined) throw enoent(path);
+      return content;
+    },
+    readdir: async (dir) => {
+      const prefix = dir.endsWith(sep) ? dir : dir + sep;
+      const names = new Set<string>();
+      for (const path of files.keys()) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        if (!rest.includes(sep)) names.add(rest);   // immediate children only
+      }
+      return [...names];
+    },
+    stat: async (path) => {
+      const content = files.get(path);
+      if (content === undefined) throw enoent(path);
+      return { size: Buffer.byteLength(content, "utf8"), mtimeMs: 0 };
+    },
+    unlink: async (path) => { files.delete(path); },
+  };
+}
 
 async function makeManager(config: Partial<BackupConfig> = {}): Promise<{ mgr: BackupManager; store: CaseStore; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
@@ -201,8 +238,14 @@ describe("BackupManager.pruneBackups", () => {
     const cfg = resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "0", DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN: "0" });
     const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
     const store = new CaseStore(root);
-    const mgr = new BackupManager(store, cfg);
-    const caseId = await makeCase(store);
+    // In-memory fs for this one case. What is under test is the PRUNE ARITHMETIC over 105
+    // backups — that an unlimited request still caps at RETAIN_FALLBACK_CAP — and none of that
+    // is about disk semantics (the real-fs path is covered by every other test in this file).
+    // Done against the real filesystem it costs ~4s of write+readdir+stat churn on an idle
+    // machine, which left no headroom inside the 15s budget once other suites competed for the
+    // disk, and the test timed out. The deps seam exists exactly for this.
+    const mgr = new BackupManager(store, cfg, memoryFs());
+    const caseId = "unlimited-retain-case";
 
     for (let i = 0; i < RETAIN_FALLBACK_CAP + 5; i++) {
       const hh = String(Math.floor(i / 60)).padStart(2, "0");
