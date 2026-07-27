@@ -141,6 +141,30 @@ export function isMaskableIpv4(ip: string): boolean {
   return true;
 }
 
+// NAT64 well-known prefix 64:ff9b::/96 (RFC 6052 §2.1). embeddedIpv4() deliberately does not
+// cover this: it recognizes only the all-zero mapped (::ffff:0:0/96) and compatible (::/96)
+// prefixes, so "64:ff9b::c000:201" parses as a perfectly well-formed literal whose first group
+// is 0x0064 — outside 2000::/3 — and both isMaskableIpv6() and isInternalIpv6() said "no",
+// leaving the address completely untouched. 64:ff9b::/96 is a real, allocated, routable prefix
+// that appears wherever an IPv6-only network reaches IPv4, so "mask every IP on the wire" has to
+// cover it.
+//
+// The embedded IPv4 is the last 32 bits, i.e. groups[6] and groups[7] — verified against
+// expandIpv6Groups(), which zero-fills "::" in the middle: "64:ff9b::c000:201" expands to
+// [0x0064, 0xff9b, 0, 0, 0, 0, 0xc000, 0x0201] → 192.0.2.1.
+//
+// Only the WELL-KNOWN /96 prefix is decoded. RFC 6052 also permits network-specific prefixes at
+// /32…/64, where the embedded IPv4 straddles the u-octet at bits 64-71 and its position depends
+// on a prefix length that is not recoverable from the address text, and RFC 8215 reserves
+// 64:ff9b:1::/48 for local use with the same ambiguity. Guessing there would mint garbage
+// tokens; those addresses fall through to the normal 2000::/3 test (which rejects them), same
+// as before.
+function nat64EmbeddedIpv4(groups: number[]): string | null {
+  if (groups[0] !== 0x0064 || groups[1] !== 0xff9b) return null;
+  if (groups[2] !== 0 || groups[3] !== 0 || groups[4] !== 0 || groups[5] !== 0) return null;
+  return [(groups[6] >> 8) & 0xff, groups[6] & 0xff, (groups[7] >> 8) & 0xff, groups[7] & 0xff].join(".");
+}
+
 // IPv6: loopback, unique-local (fc00::/7), link-local (fe80::/10), IPv4-mapped/compatible
 // (::ffff:x.x.x.x or its hex-canonicalized form). As with isInternalIp(), classification here is
 // unchanged by maskPublicIps — the caller decides whether a non-internal address becomes
@@ -157,6 +181,11 @@ export function isInternalIpv6(ip: string): boolean {
   if (/^fe[89ab][0-9a-f]?:/i.test(lower)) return true;               // link-local fe80::/10
   const mapped = embeddedIpv4(lower);
   if (mapped && isInternalIp(mapped)) return true;
+  // Mirror the NAT64 branch in isMaskableIpv6() so an INTERNAL destination behind the well-known
+  // prefix fails CLOSED (ANON_IP_n) rather than being judged as external.
+  const groups = expandIpv6Groups(lower);
+  const nat64 = groups ? nat64EmbeddedIpv4(groups) : null;
+  if (nat64 && isInternalIp(nat64)) return true;
   return false;
 }
 
@@ -186,6 +215,8 @@ export function isMaskableIpv6(ip: string): boolean {
   if (mapped) return isMaskableIpv4(mapped);
   const groups = expandIpv6Groups(lower);
   if (!groups) return false;                            // not a well-formed IPv6 literal
+  const nat64 = nat64EmbeddedIpv4(groups);
+  if (nat64) return isMaskableIpv4(nat64);              // NAT64 64:ff9b::/96 — judge by the embedded IPv4
   return groups[0] >= 0x2000 && groups[0] <= 0x3fff;    // 2000::/3 global unicast
 }
 

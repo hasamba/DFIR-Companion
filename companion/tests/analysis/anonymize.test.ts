@@ -135,6 +135,48 @@ describe("isMaskableIpv6", () => {
     expect(isMaskableIpv6("::ffff:0.1.2.3")).toBe(false);  // 0/8 — isMaskableIpv4 rejects it
     expect(isMaskableIpv6("::ffff:224.0.0.251")).toBe(false); // multicast
   });
+
+  // 64:ff9b::/96 has first group 0x0064, so the plain 2000::/3 test rejected it, and
+  // embeddedIpv4() only knows the all-zero mapped/compatible prefixes — the address was left
+  // completely untouched. It is a real allocated prefix (RFC 6052), seen wherever an IPv6-only
+  // network reaches IPv4.
+  it("judges a NAT64 64:ff9b::/96 address by its embedded IPv4", () => {
+    expect(isMaskableIpv6("64:ff9b::c000:201")).toBe(true);    // 192.0.2.1, public
+    expect(isMaskableIpv6("64:ff9b::808:808")).toBe(true);     // 8.8.8.8
+    expect(isMaskableIpv6("64:ff9b::e000:fb")).toBe(false);    // 224.0.0.251 multicast
+    expect(isMaskableIpv6("64:ff9b::1:203")).toBe(false);      // 0.1.2.3 — 0/8
+    // Network-specific / RFC 8215 prefixes stay out of scope: the embedded IPv4's position is
+    // not recoverable from the text, so they fall through to the 2000::/3 test as before.
+    expect(isMaskableIpv6("64:ff9b:1::c000:201")).toBe(false);
+  });
+});
+
+describe("isInternalIpv6 — NAT64", () => {
+  it("fails CLOSED when the NAT64 destination is an internal address", () => {
+    expect(isInternalIpv6("64:ff9b::a00:5")).toBe(true);       // 10.0.0.5
+    expect(isInternalIpv6("64:ff9b::c0a8:114")).toBe(true);    // 192.168.1.20
+    expect(isInternalIpv6("64:ff9b::c000:201")).toBe(false);   // 192.0.2.1 is public
+  });
+});
+
+describe("anonymizer — NAT64 addresses", () => {
+  it("tokenizes an external NAT64 destination as EXTIP and an internal one as IP", () => {
+    const a = createAnonymizer(policy({ IP: true }), NONE);
+    const out = a.apply("egress 64:ff9b::a00:5 then 64:ff9b::c000:201");
+    expect(out, "internal NAT64 destination leaked").not.toContain("64:ff9b::a00:5");
+    expect(out, "external NAT64 destination leaked").not.toContain("64:ff9b::c000:201");
+    expect(out).toMatch(/ANON_IP_1/);
+    expect(out).toMatch(/ANON_EXTIP_1/);
+    expect(a.restore(out)).toBe("egress 64:ff9b::a00:5 then 64:ff9b::c000:201");
+  });
+
+  it("keeps an external NAT64 destination visible on the redacted-export policy", () => {
+    const a = createAnonymizer({ ...policy({ IP: true }), maskPublicIps: false }, NONE);
+    const out = a.apply("egress 64:ff9b::a00:5 then 64:ff9b::c000:201");
+    expect(out).toContain("64:ff9b::c000:201");   // adversary infrastructure stays actionable
+    expect(out).not.toContain("64:ff9b::a00:5");  // the victim address still goes
+    expect(out).toMatch(/ANON_IP_1/);
+  });
 });
 
 describe("token category coverage", () => {
