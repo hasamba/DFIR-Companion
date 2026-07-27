@@ -78,6 +78,47 @@ describe("buildCustomerExposureTargets", () => {
 
     expect(built.emails).toEqual(["alice@example.com"]);
   });
+
+  it("OPSEC: never sends a bare public-suffix TLD to a breach-check provider (#30)", () => {
+    // A 2-label host like "evil.com" derives domain = "com" — that must NOT reach HIBP/LeakCheck.
+    const state = emptyState("c1");
+    state.forensicTimeline = [{
+      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "inbound attack from evil.com",
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      asset: "evil.com",
+    }];
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+    expect(built.domains).not.toContain("com");
+    expect(built.domains).not.toContain("org");
+    expect(built.domains).toEqual([]);
+  });
+
+  it("OPSEC: excludes an adversary domain that appears as a URL IOC, not just exact IOC values (#30)", () => {
+    // A URL IOC value is a full URL (https://c2.evil.com/beacon); the derived parent domain
+    // evil.com never exact-matches the IOC value, so the old filter leaked it to HIBP.
+    const state = emptyState("c1");
+    state.forensicTimeline = [{
+      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "host connected to c2.evil.com",
+      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      asset: "c2.evil.com",
+    }];
+    state.iocs = [{
+      id: "i1", type: "url", value: "https://c2.evil.com/beacon", firstSeen: "2026-06-01T00:00:00Z",
+    }];
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+    expect(built.domains).not.toContain("evil.com");
+    expect(built.domains).toEqual([]);
+  });
+
+  it("OPSEC: keeps a genuine victim subdomain whose parent is NOT an IOC", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline = [{
+      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "logon", severity: "Medium",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "fs01.victim.org",
+    }];
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+    expect(built.domains).toEqual(["victim.org"]);
+  });
 });
 
 describe("hasExposureFinding", () => {
