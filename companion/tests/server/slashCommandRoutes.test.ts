@@ -25,6 +25,7 @@ let activityLogStore: ActivityLogStore;
 let bindings: SlashCommandChannelStore;
 let app: ReturnType<typeof createApp>;
 let asked: Array<{ caseId: string; question: string }>;
+let delivered: Array<{ url: string; body: unknown }>;
 
 const fakePipeline = {
   ask: async (caseId: string, question: string) => {
@@ -43,6 +44,17 @@ beforeEach(async () => {
   activityLogStore = new ActivityLogStore(store);
   bindings = new SlashCommandChannelStore(join(bindDir, "slash-command-bindings.json"));
   asked = [];
+  delivered = [];
+
+  // Stub fetch for EVERY test, not just the delivery ones. An async command's result is posted to
+  // the request's response_url, so an unstubbed test that runs `ask` makes a real request to
+  // hooks.slack.com — network traffic from a unit test, flaky offline, and attributed to whichever
+  // test happens to be running when the warning lands. Individual tests override this to assert on
+  // the payload; this default just makes sure nothing escapes.
+  vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
+    delivered.push({ url, body: JSON.parse(init.body) });
+    return new Response("ok", { status: 200 });
+  });
 
   vi.stubEnv("DFIR_SLACK_SIGNING_SECRET", SLACK_SECRET);
   vi.stubEnv("DFIR_TEAMS_TOKEN", TEAMS_TOKEN);
@@ -318,49 +330,33 @@ describe("platform response envelopes", () => {
 // ── async delivery ──────────────────────────────────────────────────────────────────────
 
 describe("async command delivery", () => {
-  it("ACKs ask immediately and posts the answer to the Slack response_url", async () => {
-    const posts: Array<{ url: string; body: unknown }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
-      posts.push({ url, body: JSON.parse(init.body) });
-      return new Response("ok", { status: 200 });
-    });
+  const text = (i: number) => (delivered[i].body as { text: string }).text;
 
+  it("ACKs ask immediately and posts the answer to the Slack response_url", async () => {
     const ack = await slack("ask c1 what happened?");
     expect(ack.status).toBe(200);
     expect(ack.body.text).toMatch(/Working on \/dfir ask for case c1/);
 
-    await vi.waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].url).toBe("https://hooks.slack.com/commands/T1/1/x");
-    expect((posts[0].body as { text: string }).text).toMatch(/answer for c1/);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(delivered[0].url).toBe("https://hooks.slack.com/commands/T1/1/x");
+    expect(text(0)).toMatch(/answer for c1/);
   });
 
   // The response_url is caller-supplied; delivering to it unchecked is a server-side request to
   // wherever the caller points.
   it("refuses to deliver to a response_url outside the platform's hosts", async () => {
-    const posts: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      posts.push(url);
-      return new Response("ok", { status: 200 });
-    });
-
     await slack("ask c1 what happened?", { response_url: "https://evil.example.com/collect" });
     await vi.waitFor(() => expect(asked).toHaveLength(1));
-    expect(posts).toEqual([]);
+    expect(delivered).toEqual([]);
   });
 
   it("delivers a Telegram result through the Bot API", async () => {
-    const posts: Array<{ url: string; body: { chat_id: string; text: string } }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: { body: string }) => {
-      posts.push({ url, body: JSON.parse(init.body) });
-      return new Response("ok", { status: 200 });
-    });
     vi.stubEnv("DFIR_TELEGRAM_BOT_TOKEN", "12345:ABC");
-
     await telegram("/ask c1 what happened?");
-    await vi.waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].url).toBe("https://api.telegram.org/bot12345:ABC/sendMessage");
-    expect(posts[0].body.chat_id).toBe("-100123");
-    expect(posts[0].body.text).toMatch(/answer for c1/);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(delivered[0].url).toBe("https://api.telegram.org/bot12345:ABC/sendMessage");
+    expect(delivered[0].body).toMatchObject({ chat_id: "-100123" });
+    expect(text(0)).toMatch(/answer for c1/);
   });
 
   it("drops a Telegram result rather than crashing when no bot token is configured", async () => {
@@ -368,18 +364,14 @@ describe("async command delivery", () => {
     const ack = await telegram("/ask c1 what happened?");
     expect(ack.status).toBe(200);
     await vi.waitFor(() => expect(asked).toHaveLength(1));
+    expect(delivered).toEqual([]);
   });
 
   it("hunt ACKs and hands off to the dashboard rather than claiming a deploy", async () => {
-    const posts: Array<{ text: string }> = [];
-    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
-      posts.push(JSON.parse(init.body));
-      return new Response("ok", { status: 200 });
-    });
     await slack("hunt c1 T1059.001");
-    await vi.waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].text).toMatch(/T1059\.001/);
-    expect(posts[0].text).toMatch(/dashboard/);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(text(0)).toMatch(/T1059\.001/);
+    expect(text(0)).toMatch(/dashboard/);
   });
 });
 
