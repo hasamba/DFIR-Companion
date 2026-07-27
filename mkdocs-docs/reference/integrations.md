@@ -83,3 +83,9 @@ Push the Response Playbook as tasks to a ClickUp list.
 - **Re-push:** updates existing tasks (by saved task ID) instead of duplicating
 
 Toolbar → Export → Push playbook to ClickUp.
+
+---
+
+## War-Room Slash-Command Bot
+
+Two-way Slack / Teams / Telegram: run `/dfir findings`, `/dfir iocs malicious` or `/dfir ask <question>` from the incident channel. Needs an inbound URL (a tunnel) rather than just outbound access — see [War-Room Slash-Command Bot](war-room-bot.md).

@@ -68,6 +68,7 @@ nav:
     - Threat Hunting: reference/threat-hunting.md
     - Reports & Exports: reference/reports.md
     - Integrations: reference/integrations.md
+    - War-Room Slash-Command Bot: reference/war-room-bot.md
     - Live Monitoring & Push Ingest: reference/live-monitoring.md
     - Settings Reference: reference/settings.md
     - Advanced Features: reference/advanced.md

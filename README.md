@@ -406,6 +406,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
+- **War-room slash-command bot** — two-way Slack/Teams/Telegram: `/dfir findings`, `/dfir iocs malicious`, `/dfir ask …` from the incident channel; bind a channel to a case, allowlist who can spend AI budget (#235)
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case. A section disabled here skips its AI generation (executive summary, narrative) to save tokens (#168)
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
 - **Presentation / timeline-replay mode** — read-only, step-through slide deck (`/cases/:id/present`) for handoff briefings & executive walkthroughs: big cards, keyboard nav, auto-advance, severity filter, report-template branding; export a self-contained offline HTML deck (#177)
@@ -894,6 +895,74 @@ The token is stored in `notifications/config.json` (beside `cases/`) and is **ne
 | `DFIR_PUBLIC_URL` | `http://<host>:<port>` | Public base URL used to deep-link a notification back to the case (set when reached via a hostname/proxy) |
 | `DFIR_NOTIFY_CA` | — | PEM CA bundle for a self-hosted webhook host (e.g. Mattermost) |
 | `DFIR_NOTIFY_INSECURE` | — | `=1` to skip TLS verification for the webhook host (lab only) |
+
+### War-room slash-command bot (optional)
+
+Notifications push *out*; this is the way back *in*. Run the case from the incident channel instead
+of switching to the dashboard for every question:
+
+```
+/dfir bind IR-2026-014          bind this channel to a case — every later command can omit the id
+/dfir status                    events, findings, IOCs, open questions
+/dfir findings                  top 5 by severity
+/dfir finding f3                one finding card
+/dfir iocs malicious            IOCs filtered by verdict (flagged | malicious)
+/dfir ask what was the initial access vector?     grounded AI answer (posted when ready)
+/dfir synthesize                trigger a re-synthesis
+/dfir hunt T1059.001            note a technique to hunt (deploy it from the dashboard)
+/dfir unbind                    clear the binding
+```
+
+Each platform turns on when you set its secret:
+
+**No tunnel needed** — the companion opens the connection outbound:
+
+| Platform | How commands arrive | Enable with |
+|---|---|---|
+| Slack | **Socket Mode — outbound WebSocket** | `DFIR_SLACK_SOCKET_MODE=on` + `DFIR_SLACK_APP_TOKEN` (`xapp-…`, `connections:write`) |
+| Telegram | **Long polling** | `DFIR_TELEGRAM_POLL=on` + `DFIR_TELEGRAM_BOT_TOKEN` |
+
+Or as inbound webhooks, which need a public address:
+
+| Platform | Endpoint | Enable with |
+|---|---|---|
+| Slack | `POST /integrations/slack/command` | `DFIR_SLACK_SIGNING_SECRET` (Basic Information → Signing Secret) |
+| MS Teams | `POST /integrations/teams/command` | `DFIR_TEAMS_TOKEN` (shared secret in the `Authorization` header) |
+| Telegram | `POST /integrations/telegram/command` | `DFIR_TELEGRAM_SECRET_TOKEN` (the `secret_token` you pass to `setWebhook`) |
+
+**Telegram needs no tunnel.** Create the bot with [@BotFather](https://t.me/BotFather), set two
+variables, restart, and message it:
+
+```bash
+DFIR_TELEGRAM_POLL=on
+DFIR_TELEGRAM_BOT_TOKEN=123456789:AAF...
+```
+
+The companion calls Telegram and asks for new commands, so nothing about the machine is reachable
+from the internet — the same outbound direction the notifier already uses. A bot can't do both:
+clear any existing webhook with `.../deleteWebhook` first.
+
+**Slack Socket Mode** is the same idea: enable Socket Mode on the app, mint an app-level token
+(`xapp-…`, scope `connections:write`), and the companion dials out to Slack — no Request URL.
+
+> **Webhook mode reaches this companion from the internet** via your tunnel or reverse proxy — and
+> that hostname **must** be in `DFIR_ALLOWED_HOSTS`, or the DNS-rebinding guard turns the request
+> away before the bot sees it. **MS Teams has no outbound option**, so it always needs this.
+
+> **OPSEC** — anyone who can post in the channel can pull case content. Password-protected cases are
+> refused over chat entirely (a chat message carries no unlock). Set `DFIR_*_ACTION_USERS` to keep
+> AI spend, re-synthesis and re-binding to named responders; doing so also confines everyone else to
+> the channel's bound case.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_SLACK_ACTION_USERS` | _(unset = open)_ | Comma-separated Slack user ids allowed to run `ask`/`hunt`/`synthesize`/`bind` |
+| `DFIR_TEAMS_ACTION_USERS` | _(unset = open)_ | Same, for Teams |
+| `DFIR_TELEGRAM_ACTION_USERS` | _(unset = open)_ | Same, for Telegram (numeric user ids) |
+| `DFIR_SLACK_RESPONSE_HOSTS` | `hooks.slack.com` | Extra hosts an async result may be delivered to (self-hosted Slack-compatible server) |
+| `DFIR_TEAMS_RESPONSE_HOSTS` | `*.webhook.office.com`, `*.logic.azure.com`, `*.office.com` | Same, for Teams |
+| `DFIR_TELEGRAM_BOT_TOKEN` | — | @BotFather token, used to deliver async results |
+| `DFIR_TELEGRAM_API_BASE` | `https://api.telegram.org` | Bot API base URL override |
 
 ### Analysis tuning
 

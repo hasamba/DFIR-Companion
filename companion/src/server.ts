@@ -35,6 +35,7 @@ import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
 import { registerCoachRoutes } from "./routes/coach.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
@@ -214,6 +215,7 @@ import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagn
 import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { NotificationConfigStore } from "./analysis/notificationStore.js";
+import { SlashCommandChannelStore } from "./analysis/slashCommandStore.js";
 import { seedDemoCase } from "./analysis/seedDemoCase.js";
 import {
   findingEventsFromDiff, milestoneEvent,
@@ -593,6 +595,16 @@ export interface AppOptions {
   // `notifyEmailEnabled` tells the dashboard whether an SMTP transport is wired (so it can hint).
   // `dashboardBaseUrl` deep-links notifications back to the case.
   notificationStore?: NotificationConfigStore;
+  // Per-channel case-binding store for the war-room slash-command bot (#235), in a global JSON
+  // file beside the notification config. Absent → the bot's routes are not registered at all.
+  slashCommandChannelStore?: SlashCommandChannelStore;
+  // Poll Telegram for commands instead of receiving them on a webhook, so no inbound URL is needed
+  // (#235). Gated on this flag rather than read straight from env, so createApp-only unit tests
+  // never start a network loop — same reasoning as the drop-folder watcher below.
+  telegramPolling?: boolean;
+  // Receive Slack commands over an outbound WebSocket instead of a Request URL (#235). Same
+  // reasoning as telegramPolling above: gated on the flag so tests never open a socket.
+  slackSocketMode?: boolean;
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
   dashboardBaseUrl?: string;
@@ -949,6 +961,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCaseLifecycleRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
+  registerSlashCommandRoutes(app, ctx);
+  // Outbound-only command transports (#235) — neither needs an inbound URL. Opt-in, and gated on
+  // the flags so createApp-only unit tests never reach the network. Exposed on app.locals so a host
+  // can stop them on shutdown.
+  if (options.telegramPolling) app.locals.telegramPoller = startTelegramPolling(ctx);
+  if (options.slackSocketMode) app.locals.slackSocketMode = startSlackSocketMode(ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
@@ -3364,6 +3382,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
   // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
   const notificationStore = new NotificationConfigStore(join(dirname(casesRoot), "notifications", "config.json"));
+  // Per-channel case bindings for the war-room slash-command bot (#235) — a global file beside the
+  // notification config (a channel-level concern, not per-case).
+  const slashCommandChannelStore = new SlashCommandChannelStore(
+    join(dirname(casesRoot), "notifications", "slash-command-bindings.json"),
+  );
   const notifier = createNotifier({
     store: notificationStore,
     fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
@@ -3686,6 +3709,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     servicenowExportStore: new ServiceNowExportStore(store),
     servicenowOptions: servicenowOptions(),
     notificationStore,
+    slashCommandChannelStore,
+    telegramPolling: (process.env.DFIR_TELEGRAM_POLL ?? "").trim().toLowerCase() === "on",
+    slackSocketMode: (process.env.DFIR_SLACK_SOCKET_MODE ?? "").trim().toLowerCase() === "on",
     notifier,
     notifyEmailEnabled: true,
     dashboardBaseUrl,
