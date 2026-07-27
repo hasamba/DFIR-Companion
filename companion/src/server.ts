@@ -2960,6 +2960,15 @@ const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>>
   SERVICENOW: () => process.env.DFIR_SERVICENOW_URL,
   NOTION: "https://api.notion.com",
   CLICKUP: "https://api.clickup.com/api/v2",
+  // NOTIFY webhooks are arbitrary external URLs (hooks.slack.com, outlook.office.com, a self-
+  // hosted Mattermost) only known at send time from NotificationConfigStore — there's no single
+  // env var to read at boot. DFIR_NOTIFY_INSECURE=1 used to silently bypass the non-loopback TLS-
+  // MITM guard for ALL of them (the guard defaulted to loopback when hostUrl was undefined). The
+  // minimal correct fix without a per-send-fetch refactor: when insecure is set, default hostUrl
+  // to a NON-loopback sentinel so the guard fires (and throws → caught → falls back to the
+  // verified global fetch) unless the operator also sets DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true.
+  // When insecure is NOT set, no custom fetch is built at all, so the sentinel is never consulted.
+  NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://hooks.slack.com" : undefined),
 };
 function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
   const hostSource = TLS_HOST_URL[name];
