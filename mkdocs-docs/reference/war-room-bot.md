@@ -187,15 +187,48 @@ If you see that, the whole chain works: tunnel → hostname guard → secret ver
 
 ## When it doesn't work
 
+Every setup failure looks the same from the chat window — nothing happens. Don't debug through the chat client; send the request yourself and read the status code:
+
+```bash
+curl -s -X POST https://<your-tunnel>/integrations/telegram/command -H "content-type: application/json" -d "{}"
+```
+
+That one call walks you down the chain, because each layer fails before the next one runs:
+
+| Response | Cause |
+|---|---|
+| `host "…" is not served by the DFIR companion` | Hostname missing from `DFIR_ALLOWED_HOSTS`, or the server was started before you set it |
+| `Cannot POST /integrations/telegram/command` | The route doesn't exist — this build predates the bot, or you're on the wrong branch |
+| `no Telegram webhook secret configured` | `DFIR_TELEGRAM_SECRET_TOKEN` is unset in the running process |
+| `missing X-Telegram-Bot-Api-Secret-Token header` | The route is live and authenticating — this is the healthy answer to an empty request |
+
+Fix them in that order. Clearing one only reveals the next, so a change that "does nothing" often did work.
+
+For Slack and Teams substitute their endpoint paths; the first two rows behave identically.
+
+!!! warning "Environment variables are read once, at startup"
+    Editing `.env` while the Companion is running changes nothing. Restart it. When in doubt, pass the variable inline — `DFIR_ALLOWED_HOSTS=… npm run dev` — which sidesteps any question of which `.env` is being read or whether a line got mangled.
+
+!!! note "The outbound Telegram notifier is a different thing"
+    If you already have Telegram alerts working, that's the notification channel, configured in the dashboard and stored in `notifications/config.json`. It shares nothing with the bot — it sets none of these variables and needs no tunnel, because it calls Telegram rather than being called.
+
+Once the request is reaching the bot, the rest are ordinary replies:
+
 | What you see | Cause |
 |---|---|
-| Platform reports **403**, nothing in the channel | Tunnel hostname missing from `DFIR_ALLOWED_HOSTS` |
-| Platform reports **401** | Wrong or unset signing secret / bearer token / Telegram secret token |
 | *"A valid caseId is required"* | Channel isn't bound — run `/dfir bind <caseId>` |
 | *"No such case: X"* | Case id typo, or the case doesn't exist on this instance |
 | *"…is password-protected and is not available over chat"* | Working as intended — use the dashboard |
 | *"may only use this channel's bound case"* | An allowlist is set and you aren't on it; you can only read the bound case |
 | *"Working on /dfir ask…"* then nothing | No AI provider configured, or the result couldn't be delivered — check the server log |
 | Rate-limited after ~20 commands a minute | Per-channel cap; wait a minute |
+
+Telegram also keeps its own record of what it saw, which is the fastest way to tell whether delivery is even being attempted:
+
+```bash
+curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo
+```
+
+`last_error_message` carries the HTTP status the Companion returned, and `pending_update_count` tells you how many commands are queued waiting for you to fix it.
 
 Full variable list: [Settings Reference → War-Room Bot](settings.md#war-room-bot).
