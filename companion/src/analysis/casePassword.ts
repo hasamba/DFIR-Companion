@@ -111,7 +111,18 @@ export function parseCookieHeader(header: string | undefined): Record<string, st
     if (eq === -1) continue;
     const name = part.slice(0, eq).trim();
     const value = part.slice(eq + 1).trim();
-    if (name) out[name] = decodeURIComponent(value);
+    if (!name) continue;
+    // A malformed percent-escape (e.g. %ZZ) throws URIError from decodeURIComponent. Previously
+    // that propagated out of the case-lock gate (parseCookieHeader sat outside its try/catch)
+    // and the /lock-status route, surfacing as a 500 + raw 'URIError: URI malformed' leak — and
+    // it fired on ANY cookie name (a malformed cookie from any other origin blocked all access
+    // to a password-protected case). Treat a malformed cookie as no cookie: skip it (the gate
+    // then falls back to its normal no-unlock-cookie path — 401 locked — instead of crashing).
+    try {
+      out[name] = decodeURIComponent(value);
+    } catch {
+      // URIError: malformed URI sequence — skip this cookie, keep the rest.
+    }
   }
   return out;
 }
