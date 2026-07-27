@@ -121,6 +121,30 @@ describe("resolveCommand", () => {
     expect(r.usedBinding).toBe(false);
   });
 
+  // status/findings/synthesize take no argument, so an unknown token is a caseId the analyst
+  // meant — answering about the bound case instead would quietly hide their typo.
+  it("does NOT fall back to the binding for an unknown caseId on an argument-less command", () => {
+    for (const cmd of ["status", "findings", "synthesize"]) {
+      const r = resolveCommand(parse(`/dfir ${cmd} nosuchcase`), bound, false);
+      expect(r.caseId, cmd).toBe("nosuchcase");
+      expect(r.usedBinding, cmd).toBe(false);
+    }
+  });
+
+  // iocs takes one argument from a closed vocabulary, so it is equally unambiguous.
+  it("treats a non-filter iocs token as a caseId rather than falling back", () => {
+    const r = resolveCommand(parse("/dfir iocs nosuchcase"), bound, false);
+    expect(r.caseId).toBe("nosuchcase");
+    expect(r.iocFilter).toBeUndefined();
+  });
+
+  it("only ask/hunt/finding need the does-this-case-exist tiebreak", () => {
+    // These three have free-text arguments, so an unknown token really is argument text.
+    expect(resolveCommand(parse("/dfir ask nosuchcase happened"), bound, false).caseId).toBe("case-42");
+    expect(resolveCommand(parse("/dfir hunt T1059.001"), bound, false).caseId).toBe("case-42");
+    expect(resolveCommand(parse("/dfir finding f1"), bound, false).caseId).toBe("case-42");
+  });
+
   it("never falls back to the binding for bind — that would re-bind to the current case", () => {
     expect(resolveCommand(parse("/dfir bind case-7"), bound, false).caseId).toBe("case-7");
     expect(resolveCommand(parse("/dfir bind"), bound, false).caseId).toBe("");

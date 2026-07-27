@@ -89,6 +89,13 @@ export interface ResolvedSlashCommand {
   raw: string;
 }
 
+// Commands whose argument is free text, so a leading token could plausibly be either the caseId or
+// the first word of the argument. Everything else takes no argument at all (status, findings,
+// synthesize) or one drawn from a closed vocabulary (iocs), and can be disambiguated outright.
+const FREEFORM_ARG_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "finding"];
+
+const IOC_FILTERS = new Set(["flagged", "malicious"]);
+
 /**
  * Turn a parsed command into a resolved one: decide whether the first token is the caseId or part
  * of the argument, and fall back to the channel's bound case when it isn't.
@@ -100,8 +107,14 @@ export interface ResolvedSlashCommand {
  * called "what". Both ids pass isValidCaseId, so nothing errored — the analyst just got an answer
  * about the wrong (empty) case.
  *
- * `bind` is deliberately exempt: its argument names the case to bind TO, so falling back to the
- * current binding would silently re-bind the channel to the case it is already bound to.
+ * That existence check is only needed where the ambiguity is REAL. `/dfir status typo-case` has no
+ * argument for the token to belong to, so it is a caseId whether or not that case exists — falling
+ * back to the binding there would answer about the bound case and quietly hide the typo. Same for
+ * `/dfir iocs <x>`, where a filter can only be "flagged" or "malicious". Only ask/hunt/finding
+ * genuinely need the tiebreak.
+ *
+ * `bind` is exempt from the fallback entirely: its argument names the case to bind TO, so falling
+ * back to the current binding would silently re-bind the channel to the case it is already on.
  */
 export function resolveCommand(
   cmd: ParsedSlashCommand,
@@ -114,11 +127,19 @@ export function resolveCommand(
   if (name === "help" || name === "unbind") return { ...base, caseId: "" };
   if (name === "bind") return { ...base, caseId: (tokens[0] ?? "").trim() };
 
+  // Does the first token name the case, whether or not that case turns out to exist?
+  const first = tokens[0];
+  const firstIsCaseId =
+    first !== undefined &&
+    (FREEFORM_ARG_COMMANDS.includes(name)
+      ? firstTokenIsKnownCase           // ambiguous — only a real case id wins
+      : name !== "iocs" || !IOC_FILTERS.has(first)); // unambiguous — anything but a filter word
+
   let caseId: string;
   let rest: string[];
   let usedBinding = false;
-  if (tokens.length > 0 && firstTokenIsKnownCase) {
-    caseId = tokens[0];
+  if (firstIsCaseId) {
+    caseId = (first ?? "").trim();
     rest = tokens.slice(1);
   } else if (binding?.caseId) {
     caseId = binding.caseId;
@@ -127,7 +148,7 @@ export function resolveCommand(
   } else {
     // No binding and the first token isn't a case we know: keep treating it as the caseId so the
     // error message names what the analyst actually typed.
-    caseId = (tokens[0] ?? "").trim();
+    caseId = (first ?? "").trim();
     rest = tokens.slice(1);
   }
 
