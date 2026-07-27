@@ -60,4 +60,53 @@ describe("LiveHub", () => {
     expect(JSON.parse(b.sent[0]).caseId).toBe("c1");
     expect(closed.sent).toHaveLength(0);
   });
+
+  it("broadcastTo contains a send() that throws (half-open peer) instead of crashing", () => {
+    const hub = new LiveHub();
+    const dead = fakeSocket();
+    dead.send = () => { throw new Error("not open"); };
+    const alive = fakeSocket();
+    let terminated = false;
+    dead.terminate = () => { terminated = true; };
+    hub.subscribe("c1", dead);
+    hub.subscribe("c1", alive);
+    expect(() => hub.broadcastTo("c1", { type: "state" })).not.toThrow();
+    expect(alive.sent).toHaveLength(1);
+    expect(terminated).toBe(true);
+  });
+
+  it("sweepReaper terminates sockets that never ponged since the last sweep", () => {
+    const hub = new LiveHub();
+    let terminated = false;
+    let pinged = false;
+    const s = fakeSocket();
+    s.isAlive = true;
+    s.ping = () => { pinged = true; };
+    s.terminate = () => { terminated = true; };
+    hub.subscribe("c1", s);
+    // First sweep: flip isAlive=false and ping.
+    hub.sweepReaper();
+    expect(pinged).toBe(true);
+    expect(terminated).toBe(false);
+    // Second sweep (no pong happened in between): isAlive still false → terminate + drop.
+    hub.sweepReaper();
+    expect(terminated).toBe(true);
+    // The dead socket is dropped from the hub; a subsequent broadcast is a no-op.
+    expect(() => hub.broadcastTo("c1", { type: "state" })).not.toThrow();
+    expect(s.sent).toHaveLength(0);
+  });
+
+  it("sweepReaper keeps a socket that ponged between sweeps", () => {
+    const hub = new LiveHub();
+    let terminated = false;
+    const s = fakeSocket();
+    s.isAlive = true;
+    s.ping = () => {};
+    s.terminate = () => { terminated = true; };
+    hub.subscribe("c1", s);
+    hub.sweepReaper();      // isAlive=false, ping sent
+    s.isAlive = true;       // pong handler fired
+    hub.sweepReaper();      // still alive → ping again, no terminate
+    expect(terminated).toBe(false);
+  });
 });
