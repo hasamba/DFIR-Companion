@@ -92,6 +92,8 @@ describe("validateEnvUpdates", () => {
       DFIR_ENV_FILE: "/tmp/evil.env",
       DFIR_ANONYMIZE: "off",
       DFIR_ALLOWED_ORIGINS: "https://evil.com",
+      DFIR_ALLOWED_HOSTS: "evil.com",
+      DFIR_ALLOWED_HOST_SUFFIXES: ".evil.com",
       DFIR_HOST: "0.0.0.0",
       DFIR_PORT: "80",
       DFIR_DEMO_MODE: "true",
@@ -99,9 +101,12 @@ describe("validateEnvUpdates", () => {
     });
     expect(rejected).toEqual(expect.arrayContaining([
       "DFIR_CASES_ROOT", "DFIR_ENV_FILE", "DFIR_ANONYMIZE", "DFIR_ALLOWED_ORIGINS",
+      // The host allow-lists decide which names reach the API at all — writable would mean the
+      // rebinding gate (#280) could be widened from the dashboard.
+      "DFIR_ALLOWED_HOSTS", "DFIR_ALLOWED_HOST_SUFFIXES",
       "DFIR_HOST", "DFIR_PORT", "DFIR_DEMO_MODE", "DFIR_LOG_DIR",
     ]));
-    expect(rejected).toHaveLength(8);
+    expect(rejected).toHaveLength(10);
   });
 
   it("rejects unknown keys not on any writable prefix", () => {

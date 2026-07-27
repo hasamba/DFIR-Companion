@@ -72,17 +72,30 @@ async function runDropSweep(caseId: string, dropDir: string, seedSecretLinks: (d
     // A normal, legitimately-dropped file alongside it — proves the guard doesn't over-block.
     await writeFile(join(caseDropDir, "evidence.json"), VELO_EVIDENCE, "utf8");
 
+    // The poller needs two 2s cycles (seen, then imported), so several seconds pass here even on
+    // an idle machine. Wait against a wall-clock DEADLINE rather than a fixed iteration count: a
+    // loaded machine should get the same amount of time, not the same number of 50ms tries.
+    const deadline = Date.now() + 20_000;
+    const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 50));
+
     let jobs: { kind: string; label?: string }[] = [];
-    for (let i = 0; i < 200 && !jobs.some((j) => j.kind === "import"); i++) {
-      await new Promise((r) => setTimeout(r, 50));
+    while (Date.now() < deadline && !jobs.some((j) => j.kind === "import")) {
+      await settle();
       jobs = jobManager.list(caseId);
     }
     expect(jobs.some((j) => j.kind === "import")).toBe(true);
-    // Give the sweep a moment past job completion to finish writing state/moving files.
-    await new Promise((r) => setTimeout(r, 200));
 
-    const state = await stateStore.load(caseId);
-    const haystack = JSON.stringify(state);
+    // Then wait for the CONDITION the assertions actually need — the legitimate detection having
+    // landed in state — rather than sleeping a fixed 200ms past job creation and hoping the write
+    // finished. The job appearing is not the same event as the state being written, so under load
+    // that sleep could expire early and the failure surfaced as a baffling content assertion
+    // ("Bad" missing) rather than as the timing problem it was.
+    let haystack = "";
+    while (Date.now() < deadline) {
+      haystack = JSON.stringify(await stateStore.load(caseId));
+      if (haystack.includes("Bad")) break;
+      await settle();
+    }
     return { caseDropDir, haystack };
   } finally {
     if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
@@ -101,7 +114,7 @@ describe("drop-folder auto-importer — symlink/hardlink rejection (#243)", () =
     // it was dropped — never moved to _processed/ or _failed/.
     const remaining = await readdir(caseDropDir);
     expect(remaining).toContain("innocuous.json");
-  }, 15000);
+  }, 30_000);
 
   it("never reads a hardlink's target content into the case, but still imports a normal file", async () => {
     const { caseDropDir, haystack } = await runDropSweep("c2", "drop", async (dropDir, secretFile) => {
@@ -111,5 +124,5 @@ describe("drop-folder auto-importer — symlink/hardlink rejection (#243)", () =
     expect(haystack).toContain("Bad");
     const remaining = await readdir(caseDropDir);
     expect(remaining).toContain("innocuous2.json");
-  }, 15000);
+  }, 30_000);
 });

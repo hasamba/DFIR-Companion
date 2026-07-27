@@ -17,6 +17,10 @@ const DENIED_ENV_KEYS = new Set([
   "DFIR_DEMO_MODE",
   "DFIR_ANONYMIZE",
   "DFIR_ALLOWED_ORIGINS",
+  // Same class of control as DFIR_ALLOWED_ORIGINS: these decide which hostnames the companion
+  // answers to, so a writable one would let the dashboard re-open the DNS-rebinding hole (#280).
+  "DFIR_ALLOWED_HOSTS",
+  "DFIR_ALLOWED_HOST_SUFFIXES",
   "DFIR_LOG_DIR",
 ]);
 
@@ -41,6 +45,15 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_AI_DEBUG_USAGE", "DFIR_AI_VELO_", "DFIR_AI_SECOND_OPINION_",
   "DFIR_AI_CLAUDE_CODE_BIN", "DFIR_AI_CODEX_BIN", "DFIR_VISION_IMAGE_DETAIL",
   "DFIR_AI_", "DFIR_VISION_", "DFIR_PRESIDIO_",
+  // Tuning knobs the Settings modal has always rendered as editable fields but the original
+  // allowlist (#240) never covered, so a save carrying them was rejected wholesale. All of them are
+  // limits, delays, and display options — none redirects case data, relaxes a security control, or
+  // changes where the server listens (those stay in DENIED_ENV_KEYS).
+  "TAGGER_", "DFIR_ENRICH_", "DFIR_EXPOSURE_", "DFIR_GEOMAP_", "DFIR_MOBILE_", "DFIR_PRESENT_",
+  "DFIR_VELO_HUNT_", "DFIR_VELO_MONITOR_", "DFIR_LOOKALIKE_", "DFIR_D3FEND_",
+  "DFIR_DEDUP", "DFIR_FLUSH_INTERVAL_MS", "DFIR_ATOMIC_WRITE_RETRIES", "DFIR_DISK_WARN_PCT",
+  "DFIR_IMPORTERS_DIR", "DFIR_MAX_PINNED_FINDINGS", "DFIR_LOG_MAX_TEMPLATES",
+  "DFIR_PUBLIC_URL", "DFIR_UPDATE_REPO", "DFIR_DIAG_MAX_FILES", "DFIR_JOBS_MAX",
 ];
 
 /** Validate that every key in `updates` is on the writable allowlist and not explicitly denied.

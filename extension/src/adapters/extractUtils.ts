@@ -117,6 +117,18 @@ function tryParseJson(s: string): unknown | undefined {
   try { return JSON.parse(s); } catch { return undefined; }
 }
 
+// Column names arrive from a page-forgeable DFIR_CAPTURE_MSG, so they're untrusted. A key (or dotted
+// path segment) equal to one of these would, via bracket assignment, reach the global prototype and
+// pollute it (CWE-1321) — __proto__ invokes the prototype setter, constructor/prototype walk toward it.
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+// Assign an OWN, enumerable data property WITHOUT triggering a setter or walking the prototype chain
+// (plain `obj[key] = val` invokes Object.prototype's __proto__ setter when key is "__proto__"). For a
+// benign key the observable result is identical to a normal assignment.
+function safeSet(obj: Record<string, unknown>, key: string, val: unknown): void {
+  Object.defineProperty(obj, key, { value: val, writable: true, enumerable: true, configurable: true });
+}
+
 /**
  * Velociraptor / table-style envelope: { columns: string[], rows: [...] }. Each row's cells arrive
  * as a raw array, a { cell: [...] } wrapper, OR — the Velociraptor GUI's GetTable format —
@@ -133,7 +145,7 @@ export function zipColumnsRows(body: unknown): unknown[] | null {
     const cells = rowCells(row);
     if (!cells) return isObject(row) ? row : { value: row };
     const obj: Record<string, unknown> = {};
-    cols.forEach((c, i) => { obj[c] = cells[i]; });
+    cols.forEach((c, i) => { safeSet(obj, c, cells[i]); }); // never let a "__proto__" column set the row's prototype
     return obj;
   });
 }
@@ -163,6 +175,9 @@ export function unflattenDotted(row: Record<string, unknown>): Record<string, un
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(row)) {
     const parts = key.split(".");
+    // A key naming __proto__/constructor/prototype in any segment must never be walked — that would
+    // let a bracket assignment reach Object.prototype. Keep it as an inert flat own property instead.
+    if (parts.some((p) => DANGEROUS_KEYS.has(p))) { safeSet(out, key, val); continue; }
     let cur = out;
     let ok = true;
     for (let i = 0; i < parts.length - 1; i++) {

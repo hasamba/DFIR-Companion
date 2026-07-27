@@ -12,7 +12,8 @@
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape-dagre.js"></script>
   <script type="module" src="/js/graph-view.js"></script>
-  <script>
+  <script type="module" src="/js/command-palette.js"></script>
+  <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
     (function () {
@@ -662,6 +663,28 @@
     .mention-chip { background: var(--c-11202e); color: var(--c-6aa9ff); border: 1px solid var(--c-2d4a6a);
       border-radius: 8px; padding: 0 5px; font-weight: 600; white-space: nowrap; }
     .comment-del { background: transparent; border: 0; color: var(--c-ff7a7a); cursor: pointer; font-size: 11px; padding: 0 4px; }
+    /* Command palette (issue #238) — the Ctrl+K launcher, driven by /js/command-palette.js.
+       Anchored near the top rather than vertically centred like .comment-modal: the result list
+       grows and shrinks on every keystroke, and a centred box would slide up and down under the
+       cursor while the analyst is still typing. z-index sits above .comment-overlay (50) and
+       .wiz-overlay (60) so the palette is never opened behind another modal. */
+    .cmdp-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 70; }
+    .cmdp-overlay.open { display: block; }
+    .cmdp-modal { position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);
+      width: min(620px, 94vw); background: var(--c-161a22); border: 1px solid var(--c-2a2f3a);
+      border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.5); overflow: hidden; }
+    .cmdp-modal input { width: 100%; box-sizing: border-box; background: transparent; border: 0;
+      border-bottom: 1px solid var(--c-2a2f3a); color: var(--c-cbd3df); font-size: 15px;
+      padding: 12px 14px; outline: none; }
+    .cmdp-list { max-height: 52vh; overflow-y: auto; }
+    .cmdp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 8px 14px; cursor: pointer; font-size: 13px; color: var(--c-cbd3df); }
+    .cmdp-row:hover { background: var(--c-1c2230); }
+    .cmdp-row.sel { background: var(--c-11202e); }
+    .cmdp-row.sel .cmdp-label { color: var(--c-6aa9ff); }
+    .cmdp-cat { color: var(--c-9aa4b2); font-size: 11px; white-space: nowrap; }
+    .cmdp-empty { padding: 14px; color: var(--c-9aa4b2); font-size: 13px; }
+    .cmdp-hint { border-top: 1px solid var(--c-2a2f3a); padding: 6px 14px; color: var(--c-9aa4b2); font-size: 11px; }
     #commentText { width: 100%; box-sizing: border-box; background: var(--c-0f1115); color: var(--c-e6e6e6);
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
     /* First-run AI setup wizard (#181) — a friendly onboarding overlay shown once when no AI provider
@@ -1493,7 +1516,9 @@
     .sec-selall button { font-size: 11px; padding: 2px 8px; background: var(--c-2a2f3a); border: none; border-radius: 4px; color: var(--c-9aa4b2); cursor: pointer; }
     .sec-selall button:hover { background: var(--c-353b47); color: var(--c-cbd3df); }
     .settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--c-2a2f3a); padding-top: 12px; flex-shrink: 0; }
-    .settings-msg { font-size: 11px; margin-left: 4px; }
+    /* Takes the footer's remaining width and wraps (scrolling past ~4 lines) — a save error can name
+       several .env keys, and as a single non-wrapping line it was clipped to the first few words. */
+    .settings-msg { font-size: 11px; margin-left: 4px; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.6em; overflow-y: auto; }
     /* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default.
        Sticky while open so it stays visible (e.g. over the Super-Timeline it also scopes) as the
        dashboard is scrolled; [hidden] still fully removes it when the toolbar icon closes it. */
@@ -2218,8 +2243,10 @@
     <div class="comment-modal">
       <h3>⌨ Keyboard shortcuts</h3>
       <p style="color:var(--c-9aa4b2); font-size:12px; margin:0 0 10px">
-        Active on the Forensic Timeline whenever you're not typing in a field. Toggle in Settings → General.</p>
+        Ctrl+K works anywhere, always. The rest are active on the Forensic Timeline whenever you're
+        not typing in a field, and can be switched off in Settings → General.</p>
       <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace; white-space:nowrap;">Ctrl+K / ⌘K</td><td style="padding:4px 0;">Command palette — fuzzy-search every action (<code>&gt;exports</code> filters by category)</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace; white-space:nowrap;">j / k</td><td style="padding:4px 0;">Next / previous event</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">f</td><td style="padding:4px 0;">Flag (star) the focused event</td></tr>
         <tr><td style="padding:4px 8px 4px 0; color:var(--c-6aa9ff); font-family:monospace;">i</td><td style="padding:4px 0;">Add the focused event's IP/host as an IOC</td></tr>
@@ -2232,6 +2259,22 @@
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="kbdHelpClose">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Command palette (issue #238) ──────────────────────────────────────────
+       Markup only; all behaviour lives in /js/command-palette.js, which fills #cmdpList from the
+       registry the inline script publishes as window.DfirPaletteConfig (see buildPaletteActions).
+       role=listbox/option is what lets a screen reader follow the ↑/↓ selection, since the focus
+       stays in the input the whole time. -->
+  <div id="cmdpOverlay" class="cmdp-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdp-modal">
+      <input id="cmdpInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Type a command…  (&gt; filters by category)"
+             aria-label="Search commands" aria-controls="cmdpList" />
+      <div id="cmdpList" class="cmdp-list" role="listbox" aria-label="Commands"></div>
+      <div id="cmdpEmpty" class="cmdp-empty" style="display:none">No matching command.</div>
+      <div class="cmdp-hint">↑ ↓ to move · Enter to run · Esc to close</div>
     </div>
   </div>
 
@@ -2322,7 +2365,7 @@
           <div class="sfield"><label>Content tagger scope<span class="sfield-hint">TAGGER_SCOPE (forensic/super/both)</span></label><input id="env-TAGGER_SCOPE" placeholder="both" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off)</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" /></div>
+          <div class="sfield"><label>Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off) — <b>read-only here</b>: a security toggle the dashboard must not be able to flip. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" readonly /></div>
           <div class="sfield"><label>Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
         <div class="sfield-row">
@@ -2334,7 +2377,7 @@
           <div class="sfield"><label>OCR redaction debug dir<span class="sfield-hint">DFIR_OCR_DEBUG_DIR — also write each redacted screenshot copy here so you can eyeball the black boxes</span></label><input id="env-DFIR_OCR_DEBUG_DIR" placeholder="(off)" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" /></div>
+          <div class="sfield"><label>Cases root<span class="sfield-hint">DFIR_CASES_ROOT — <b>read-only here</b>: repointing it at runtime would redirect every case. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" readonly /></div>
           <div class="sfield"><label>Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
         </div>
         <div class="sfield-row">
@@ -2351,11 +2394,11 @@
           <div class="sfield"><label>Disk-space warning threshold (%)<span class="sfield-hint">DFIR_DISK_WARN_PCT — "danger" usage % that triggers the orange disk-space banner; warning is 15 pp below, critical 10 pp above. Leave blank for defaults (70/85/95%). Set to 0 to disable the check</span></label><input id="env-DFIR_DISK_WARN_PCT" placeholder="85" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" /></div>
+          <div class="sfield"><label>Log directory<span class="sfield-hint">DFIR_LOG_DIR — folder for the global session log; blank = <code>logs/</code> beside the cases root. Per-case logs always stay in the case folder. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_LOG_DIR" placeholder="(logs/ beside cases root)" readonly /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" /></div>
-          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port</span></label><input id="env-DFIR_PORT" placeholder="4773" /></div>
+          <div class="sfield"><label>Bind host<span class="sfield-hint">DFIR_HOST — keep 127.0.0.1 (localhost only) unless you know what you're doing. <b>Read-only here</b>: widening the bind address from a web page is exactly what the allowlist prevents. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_HOST" placeholder="127.0.0.1" readonly /></div>
+          <div class="sfield"><label>Port<span class="sfield-hint">DFIR_PORT — the dashboard moves with it; reopen on the new port. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_PORT" placeholder="4773" readonly /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>Custom importers dir<span class="sfield-hint">DFIR_IMPORTERS_DIR — folder of *.json declarative importer specs; blank = importers/ beside cases root</span></label><input id="env-DFIR_IMPORTERS_DIR" placeholder="(importers/ beside cases root)" /></div>
@@ -2485,7 +2528,7 @@
           </div>
           <div id="cc-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
         </div>
-        <script>
+        <script nonce="__CSP_NONCE__">
         (function () {
           var sel = document.getElementById('env-DFIR_VISION_PROVIDER');
           var card = document.getElementById('claude-code-status');
@@ -2592,7 +2635,7 @@
           </div>
           <div id="cx-connect-hint" style="font-size:11px;color:var(--c-9aa4b2);margin-top:6px;display:none"></div>
         </div>
-        <script>
+        <script nonce="__CSP_NONCE__">
         (function () {
           var sel = document.getElementById('env-DFIR_AI_SYNTH_PROVIDER');
           var card = document.getElementById('codex-status');
@@ -3906,7 +3949,7 @@
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
-    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
+    <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
       <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
     <!-- Deep pass (#204). Sits between the conclusions it rewrites and the timeline it reads. -->
@@ -3922,11 +3965,11 @@
       </div>
       <div id="deepPassResult"></div>
     </section>
-    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" onclick="event.stopPropagation()"><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" onclick="event.stopPropagation()"><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" onclick="event.stopPropagation()"><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" onclick="event.stopPropagation()"><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
+    <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" data-stop-click><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" data-stop-click><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" data-stop-click><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" data-stop-click><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <input id="meTime" type="datetime-local" title="Event time in UTC (defaults to now if blank)" />
           <input id="meDesc" placeholder="what happened" style="flex:1; min-width:220px" />
           <select id="meSev" title="Severity"><option>Critical</option><option>High</option><option selected>Medium</option><option>Low</option><option>Info</option></select>
@@ -4085,7 +4128,7 @@
     <section id="sec-assets" style="grid-column: 1 / -1">
       <h2>Compromised Assets &amp; IoC Graph<span class="ev-sub">assets and IOCs derived from findings and the timeline, plus any you add by hand — edges show how they connect</span><button class="add-toggle" type="button" title="Add / edit assets and links manually" aria-label="Add asset">+</button></h2>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <span style="color:var(--c-9aa4b2)">Add asset:</span>
           <input id="assetAddName" placeholder="hostname or account" style="min-width:180px" />
           <select id="assetAddType" title="Asset type">
@@ -4097,7 +4140,7 @@
           <button id="addAssetBtn" type="button">Add</button>
           <span id="addAssetMsg" class="manual-msg"></span>
         </form>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <span style="color:var(--c-9aa4b2)">Link asset↔IoC:</span>
           <input id="assetLinkAsset" placeholder="asset id (e.g. host:win-01)" style="min-width:210px" />
           <input id="assetLinkIoc" placeholder="IoC id" style="min-width:160px" />
@@ -4256,27 +4299,27 @@
       <div id="geoStats" class="geo-stats">—</div>
       <div id="geoControls" class="geo-controls" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0;font-size:12px;color:var(--c-9aa4b2)">
         <span class="sev-legend" title="Show/hide markers by severity">
-          <label class="sev-item sev-Critical"><input type="checkbox" class="geo-sev-filter" value="Critical" checked onchange="renderGeoView()"><span class="sev-dot"></span>Critical</label>
-          <label class="sev-item sev-High"><input type="checkbox" class="geo-sev-filter" value="High" checked onchange="renderGeoView()"><span class="sev-dot"></span>High</label>
-          <label class="sev-item sev-Medium"><input type="checkbox" class="geo-sev-filter" value="Medium" checked onchange="renderGeoView()"><span class="sev-dot"></span>Medium</label>
-          <label class="sev-item sev-Low"><input type="checkbox" class="geo-sev-filter" value="Low" checked onchange="renderGeoView()"><span class="sev-dot"></span>Low</label>
-          <label class="sev-item sev-Info"><input type="checkbox" class="geo-sev-filter" value="Info" checked onchange="renderGeoView()"><span class="sev-dot"></span>Info</label>
+          <label class="sev-item sev-Critical"><input type="checkbox" class="geo-sev-filter" value="Critical" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Critical</label>
+          <label class="sev-item sev-High"><input type="checkbox" class="geo-sev-filter" value="High" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>High</label>
+          <label class="sev-item sev-Medium"><input type="checkbox" class="geo-sev-filter" value="Medium" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Medium</label>
+          <label class="sev-item sev-Low"><input type="checkbox" class="geo-sev-filter" value="Low" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Low</label>
+          <label class="sev-item sev-Info"><input type="checkbox" class="geo-sev-filter" value="Info" checked data-act="renderGeoView" data-act-on="change"><span class="sev-dot"></span>Info</label>
         </span>
-        <label>Source <select id="geoSrcFilter" onchange="renderGeoView()" style="font-size:12px"><option value="">all</option></select></label>
-        <label>From <input type="date" id="geoFrom" onchange="renderGeoView()"></label>
-        <label>To <input type="date" id="geoTo" onchange="renderGeoView()"></label>
-        <label><input type="checkbox" id="geoFlows" onchange="renderGeoMarkers()"> Flows</label>
-        <button type="button" onclick="geoDownloadCsv()" title="Download IPs + geolocation as CSV">⬇ CSV</button>
+        <label>Source <select id="geoSrcFilter" data-act="renderGeoView" data-act-on="change" style="font-size:12px"><option value="">all</option></select></label>
+        <label>From <input type="date" id="geoFrom" data-act="renderGeoView" data-act-on="change"></label>
+        <label>To <input type="date" id="geoTo" data-act="renderGeoView" data-act-on="change"></label>
+        <label><input type="checkbox" id="geoFlows" data-act="renderGeoMarkers" data-act-on="change"> Flows</label>
+        <button type="button" data-act="geoDownloadCsv" title="Download IPs + geolocation as CSV">⬇ CSV</button>
       </div>
       <div id="geoMapWrap" style="display:none;position:relative">
         <div id="geoMap" style="height:440px;border-radius:6px;display:none"></div>
-        <button type="button" id="geoShowMapBtn" onclick="ensureGeoMap()" style="padding:8px 14px">🗺 Show map (loads tiles from OpenStreetMap)</button>
+        <button type="button" id="geoShowMapBtn" data-act="ensureGeoMap" style="padding:8px 14px">🗺 Show map (loads tiles from OpenStreetMap)</button>
       </div>
     </section>
 
-    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" onclick="event.stopPropagation()"><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" onclick="event.stopPropagation()"><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><select class="corrob-sel" id="riskIocs" title="Risk lens (#63) — show only IOCs at or above a composite risk tier (verdict + severity + corroboration + KEV). A lens; nothing is deleted." onclick="event.stopPropagation()"><option value="0">🎚 any risk</option><option value="2">◆ medium+</option><option value="3">◆ high+</option><option value="4">◆ critical</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" onclick="event.stopPropagation()"><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" onsubmit="return false" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
+    <section id="sec-iocs" style="grid-column: 1 / -1"><h2>IOCs<span id="iocFlaggedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><button id="iocSignalBtn" type="button" class="active" title="Show only IOCs that are flagged (malicious/suspicious), corroborated by 2+ tools, or have enrichment data — click to show every IOC">🎯 Signal only</button><button id="iocFlaggedBtn" type="button" title="Show only IOCs with a malicious or suspicious verdict from any enrichment engine">⚠ Flagged only</button><span class="ioc-prov-filter" title="Provenance lens — how each IOC entered the case: detection-linked (appears in a graded Low+ event) vs telemetry-only (only in Info telemetry). Distinct from the threat-intel verdict."><button type="button" class="ioc-prov-btn active" data-prov="all">All IOCs</button><button type="button" class="ioc-prov-btn" data-prov="detection">Detection-linked</button><button type="button" class="ioc-prov-btn" data-prov="telemetry">Telemetry-only</button></span><label class="ioc-noise-chk" title="Hide IOCs marked as a false positive or checked against threat intel with no result"><input type="checkbox" id="iocHideNoiseChk" checked /> Hide FP/no-intel</label><label class="ioc-noise-chk" title="Hide file IOCs under well-known OS system paths (e.g. C:\Windows\System32\*.exe, C:\Windows\SysWOW64\*.exe) — display only, nothing is deleted"><input type="checkbox" id="iocHideSysPathsChk" checked /> Hide OS system paths</label><span class="src-legend" id="iocTypeLegendWrap" style="display:none" title="Show or hide IOCs by indicator type" data-stop-click><button type="button" id="iocTypeFilterBtn" class="src-filter-btn">▾ Types</button><div id="iocTypeFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobIocs" title="Corroboration lens — show only IOCs observed by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select><select class="corrob-sel" id="riskIocs" title="Risk lens (#63) — show only IOCs at or above a composite risk tier (verdict + severity + corroboration + KEV). A lens; nothing is deleted." data-stop-click><option value="0">🎚 any risk</option><option value="2">◆ medium+</option><option value="3">◆ high+</option><option value="4">◆ critical</option></select><span class="src-legend" id="iocExcludeWrap" title="Domains/hostnames matching a rule are removed entirely from this case and never enriched (per-case, permanent — separate from the global IOC Whitelist)" data-stop-click><button type="button" id="iocExcludeBtn" class="src-filter-btn">🚫 Exclude</button><div id="iocExcludeMenu" class="src-filter-menu" hidden><div id="iocExcludeList" style="max-height:220px;overflow:auto;margin-bottom:6px"></div><form id="iocExcludeForm" data-act="noSubmit" data-act-on="submit" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"><select id="iocExcludeMode" title="Match mode"><option value="suffix">suffix</option><option value="exact">exact</option><option value="regex">regex</option></select><input id="iocExcludePattern" placeholder="e.g. lan" style="flex:1;min-width:110px" /><input id="iocExcludeNote" placeholder="note (optional)" style="flex:1;min-width:110px" /><button id="iocExcludeAddBtn" type="button">Add</button></form><span id="iocExcludeMsg" class="manual-msg"></span></div></span><button class="add-toggle" type="button" title="Add an IOC manually" aria-label="Add an IOC manually">+</button></h2>
       <div class="manual-add" hidden>
-        <form class="manual-form" onsubmit="return false">
+        <form class="manual-form" data-act="noSubmit" data-act-on="submit">
           <select id="miType" title="IOC type"><option value="ip">ip</option><option value="domain">domain</option><option value="hash">hash</option><option value="url">url</option><option value="file">file</option><option value="process">process</option><option value="other">other</option></select>
           <input id="miValue" placeholder="indicator value" style="flex:1; min-width:240px" />
           <input id="miNote" placeholder="note (optional) — host, port, why" title="Context to record alongside the indicator. Keep it OUT of the value: a value like &quot;10.10.20.15 (DC01)&quot; is not a valid IP and strict consumers (MISP) reject it." style="flex:1; min-width:180px" />
@@ -4346,7 +4389,7 @@
       #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
     </style>
-    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" onclick="generateRemediation(this)" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
+    <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" data-act="generateRemediation" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
     <style>
       #sec-d3fend .rem-h{font-size:13px;font-weight:bold;color:var(--c-c79bff);margin:0 0 6px}
       #sec-d3fend .rem-sub{font-size:11px;font-weight:400;color:var(--c-9aa4b2);margin-left:6px}
@@ -4389,6 +4432,44 @@
       #sec-d3fend .d3f-cover{color:var(--c-6aa9ff);background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px;font-size:10px;text-decoration:none}
       #sec-d3fend .d3f-cover:hover{text-decoration:underline}
       #sec-d3fend .d3f-cover-more{color:var(--c-9aa4b2);font-size:10px;cursor:help}
+    </style>
+    <section id="sec-compliance" style="grid-column: 1 / -1"><h2>Compliance Impact<span class="ev-sub">control failures &amp; regulatory obligations for this case's CONFIRMED findings — offline, no AI, not legal advice</span></h2>
+      <div id="complianceControls" class="cmp-controls">
+        <label class="cmp-ctl-label" for="complianceDiscovered">Incident discovery date</label>
+        <input id="complianceDiscovered" type="date" data-act="setComplianceDiscovered" data-act-on="change" title="The date notification clocks are counted from. Each obligation's clock actually starts on its own legal trigger (awareness, discovery, a materiality determination) — set this to the date your counsel is working from.">
+        <button id="complianceDiscoveredClear" type="button" data-act="clearComplianceDiscovered" title="Clear the date and switch every countdown off">clear</button>
+        <span id="complianceDiscoveredHint" class="cmp-ctl-hint"></span>
+      </div>
+      <div id="complianceFilter" class="cmp-filter"></div>
+      <div id="compliancePanel">—</div></section>
+    <style>
+      #sec-compliance .cmp-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+      #sec-compliance .cmp-ctl-label{color:var(--c-9aa4b2);font-size:11px}
+      #sec-compliance #complianceDiscovered{background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:4px;color:var(--c-c9d1db);font-size:11px;padding:2px 6px}
+      #sec-compliance #complianceDiscoveredClear{background:transparent;border:1px solid var(--c-232a33);border-radius:4px;color:var(--c-9aa4b2);font-size:11px;padding:1px 8px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-compliance .cmp-ctl-hint{color:var(--c-9aa4b2);font-size:11px;font-style:italic}
+      #sec-compliance .cmp-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+      #sec-compliance .cmp-fw{display:inline-flex;align-items:center;gap:4px;color:var(--c-9aa4b2);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:1px 6px;cursor:pointer}
+      #sec-compliance .cmp-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px;line-height:1.45}
+      #sec-compliance .cmp-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:10px}
+      #sec-compliance .cmp-empty{color:var(--c-9aa4b2)}
+      #sec-compliance .cmp-tech{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-6aa9ff);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+      #sec-compliance .cmp-tech-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+      #sec-compliance .cmp-tech-id{color:var(--c-6aa9ff);font-weight:bold;font-size:12px;text-decoration:none}
+      #sec-compliance .cmp-tech-id:hover{text-decoration:underline}
+      #sec-compliance .cmp-tech-finding{color:var(--c-9aa4b2);font-size:11px}
+      #sec-compliance .cmp-fw-group{margin:6px 0 0}
+      #sec-compliance .cmp-fw-h{color:var(--c-d6deea);font-weight:bold;font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
+      #sec-compliance .cmp-row{padding:3px 0 3px 8px;border-left:1px solid var(--c-232a33);margin-bottom:3px}
+      #sec-compliance .cmp-ctrl{color:var(--c-ff9f43);font-weight:bold;font-size:12px}
+      #sec-compliance .cmp-title{color:var(--c-c9d1db);font-size:11px}
+      #sec-compliance .cmp-obl{color:var(--c-9aa4b2);font-size:11px;line-height:1.45;margin-top:1px}
+      #sec-compliance .cmp-clock{font-size:11px;margin-top:2px;color:var(--c-9aa4b2)}
+      #sec-compliance .cmp-due{border-radius:3px;padding:0 5px;font-size:10px;font-weight:bold;margin-right:5px}
+      #sec-compliance .cmp-due-overdue{background:var(--c-3a1a1a);border:1px solid var(--c-5a2a2a);color:var(--c-ff6b6b)}
+      #sec-compliance .cmp-due-soon{background:var(--c-3a2a00);border:1px solid var(--c-7a5d1e);color:var(--c-ffb454)}
+      #sec-compliance .cmp-due-open{background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);color:var(--c-6bcb77)}
+      #sec-compliance .cmp-editions{color:var(--c-9aa4b2);font-size:10px;margin-top:8px;font-style:italic}
     </style>
     <section id="sec-velohunts" style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <style>
@@ -4620,11 +4701,11 @@
       <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>
       <p style="font-size:12px;color:var(--c-9aa4b2);margin:0 0 10px">The complete record of every event ever imported (from any source — Velociraptor, firewall, VPN, host triage, anything), before scope/legitimate filtering. Filter by time, origin, and tag; star / comment / tag rows for triage; then <em>promote</em> the events that matter up into the analyzed forensic timeline (where the AI synthesizes them). Nothing here is removed — this is a superset view.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-        <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
-        <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" onchange="superPage(0)" /></label>
-        <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" onchange="applyTimeframe()"><option value="">— none —</option></select></label>
-        <button class="ev-bulk-btn" onclick="saveTimeframe()" title="Save the current From/To as a reusable named timeframe">Save current range</button>
-        <button class="ev-bulk-btn" onclick="clearSuperTime()" title="Clear the time range (show all)">Clear time</button>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">From<br /><input id="stFrom" type="datetime-local" title="UTC" data-act="superPageReset" data-act-on="change" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">To<br /><input id="stTo" type="datetime-local" title="UTC" data-act="superPageReset" data-act-on="change" /></label>
+        <label style="font-size:11px;color:var(--c-9aa4b2)">Saved timeframe<br /><select id="stTimeframe" data-act="applyTimeframe" data-act-on="change"><option value="">— none —</option></select></label>
+        <button class="ev-bulk-btn" data-act="saveTimeframe" title="Save the current From/To as a reusable named timeframe">Save current range</button>
+        <button class="ev-bulk-btn" data-act="clearSuperTime" title="Clear the time range (show all)">Clear time</button>
         <span id="stSaveMsg" style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"></span>
         <div class="sf-sep"></div>
         <span class="src-legend st-dd" id="stOriginWrap" style="display:none;margin-left:0" title="Show or hide events by origin (the artifact/source that produced them)"><button type="button" class="src-filter-btn" id="stOriginBtn">⛏ Origins</button><div class="src-filter-menu" id="stOriginMenu" hidden></div></span>
@@ -4639,10 +4720,10 @@
       <div id="stAiPanel" hidden style="margin:6px 0"></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px;border:1px solid var(--c-2b3242);border-radius:6px">
         <strong style="font-size:12px;color:var(--c-9aa4b2)">🏷 Content tagger</strong>
-        <button class="ev-bulk-btn" onclick="runTagger()" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
-        <button class="ev-bulk-btn" onclick="clearTaggerTags()" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
-        <button class="ev-bulk-btn" onclick="toggleTaggerRules()" title="View / edit the tagging rules (YAML)">Edit rules</button>
-        <button id="taggerSuggestToggle" class="ev-bulk-btn" onclick="toggleTaggerSuggest()" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
+        <button class="ev-bulk-btn" data-act="runTagger" title="Run the content-based rules over this case and tag matching events (like Timesketch's tagger analyzer)">Run tagger</button>
+        <button class="ev-bulk-btn" data-act="clearTaggerTags" title="Remove every tag the tagger applied (author 'tagger:*'); analyst tags are kept">Clear tagger tags</button>
+        <button class="ev-bulk-btn" data-act="toggleTaggerRules" title="View / edit the tagging rules (YAML)">Edit rules</button>
+        <button id="taggerSuggestToggle" class="ev-bulk-btn" data-act="toggleTaggerSuggest" title="Create tagger rules with AI from a plain-English description, and manage the active rule list">✨ Suggest rule</button>
         <span id="taggerMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
       </div>
       <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
@@ -4656,7 +4737,7 @@
         <textarea id="taggerSuggestInput" spellcheck="true" placeholder="e.g. flag any time the Windows security event log is cleared"
           style="width:100%;min-height:44px;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <button id="taggerSuggestBtn" class="ev-bulk-btn" onclick="suggestTaggerRule()" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
+          <button id="taggerSuggestBtn" class="ev-bulk-btn" data-act="suggestTaggerRule" title="Ask the AI to draft a tagger rule from your description (one AI call)">✨ Suggest rule</button>
           <span id="taggerSuggestMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
         <div id="taggerSuggestResult" hidden style="margin-top:6px">
@@ -4664,9 +4745,9 @@
           <textarea id="taggerSuggestYaml" spellcheck="false"
             style="width:100%;min-height:140px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <button class="ev-bulk-btn" onclick="previewTaggerRule()" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
-            <button class="ev-bulk-btn" onclick="addSuggestedTaggerRule()" title="Add this rule to the ruleset">Add rule</button>
-            <button class="ev-bulk-btn" onclick="discardSuggestedTaggerRule()">Discard</button>
+            <button class="ev-bulk-btn" data-act="previewTaggerRule" title="Count how many events in this case the draft rule would match (no changes made)">Check matches</button>
+            <button class="ev-bulk-btn" data-act="addSuggestedTaggerRule" title="Add this rule to the ruleset">Add rule</button>
+            <button class="ev-bulk-btn" data-act="discardSuggestedTaggerRule">Discard</button>
             <span id="taggerSuggestResultMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
           </div>
           <div id="taggerSuggestMatches" hidden style="margin-top:6px;max-height:170px;overflow-y:auto;border:1px solid var(--c-2b3242);border-radius:6px;padding:6px;font-size:11px;font-family:monospace;color:var(--c-9aa4b2)"></div>
@@ -4676,8 +4757,8 @@
       <div id="taggerRuleList" style="margin-bottom:8px">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
           <strong style="font-size:12px;color:var(--c-9aa4b2)">Active rules</strong>
-          <button class="ev-bulk-btn" onclick="refreshTaggerRuleList()" title="Reload the rule list">↻</button>
-          <button class="ev-bulk-btn" onclick="resetTaggerRules()" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
+          <button class="ev-bulk-btn" data-act="refreshTaggerRuleList" title="Reload the rule list">↻</button>
+          <button class="ev-bulk-btn" data-act="resetTaggerRules" title="Discard all customizations and restore the shipped default rules">Reset to defaults</button>
           <span id="taggerRuleListMsg" style="font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
         <div id="taggerRuleRows" style="font-size:12px"></div>
@@ -4687,20 +4768,20 @@
         <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">Rules YAML — one entry per rule (name → any/all/none conditions + tags/mitre/severity/view). Source: <span id="taggerRulesSource">—</span>. Matchable fields: description, message, asset, path, processName, parentName, sources, sha256, port, severity, …</div>
         <textarea id="taggerRulesText" spellcheck="false" style="width:100%;min-height:220px;font-family:monospace;font-size:12px;background:var(--c-11151c);color:var(--c-e6e6e6);border:1px solid var(--c-2b3242);border-radius:6px;padding:8px"></textarea>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-          <button class="ev-bulk-btn" onclick="saveTaggerRules()" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
-          <button class="ev-bulk-btn" onclick="toggleTaggerRules()">Close</button>
+          <button class="ev-bulk-btn" data-act="saveTaggerRules" title="Validate and save the rules (an invalid ruleset is rejected without overwriting)">Save rules</button>
+          <button class="ev-bulk-btn" data-act="toggleTaggerRules">Close</button>
           <span id="taggerRulesMsg" style="font-size:12px"></span>
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <label style="font-size:12px;color:var(--c-9aa4b2);white-space:nowrap"><input type="checkbox" id="stSelectAll" title="Select every row on this page" /> All</label>
         <span id="stSelCount" style="font-size:12px;color:var(--c-9aa4b2)"></span>
-        <button class="ev-bulk-btn" onclick="promoteSuperSelected()" title="Copy the selected events up into the analyzed forensic timeline">⬆ Promote selected → forensic timeline</button>
+        <button class="ev-bulk-btn" data-act="promoteSuperSelected" title="Copy the selected events up into the analyzed forensic timeline">⬆ Promote selected → forensic timeline</button>
         <button id="stBulkStar" class="ev-bulk-btn" title="Star / unstar every selected event">★ Star selected</button>
         <button id="stBulkTag" class="ev-bulk-btn" title="Add a tag to every selected event">🏷️ Tag selected</button>
         <span id="stPager" style="font-size:12px;color:var(--c-9aa4b2)"></span>
-        <button id="stPrev" class="ev-bulk-btn" onclick="superPage(-1)">‹ Prev</button>
-        <button id="stNext" class="ev-bulk-btn" onclick="superPage(1)">Next ›</button>
+        <button id="stPrev" class="ev-bulk-btn" data-act="superPagePrev">‹ Prev</button>
+        <button id="stNext" class="ev-bulk-btn" data-act="superPageNext">Next ›</button>
       </div>
       <div id="superTimelineList">—</div>
     </section>
@@ -4798,7 +4879,7 @@
       <div id="caseLoadingText" style="color:var(--c-c9d1d9);font-size:14px;font-weight:500;">Loading case…</div>
     </div>
   </div>
-  <script>
+  <script nonce="__CSP_NONCE__">
     // ---- Theme (issue #53: dark/light with persistence + OS preference) ---------------------
     // The effective theme lives in <html data-theme>. It was set FOUC-free by the <head> bootstrap;
     // here we wire the toggle, persist the choice, follow OS changes (until the user overrides), and
@@ -5294,7 +5375,7 @@
         title,
         // Placed right after the host chip (before the description) to save a line — the panel itself
         // stays block-level wherever it's placed, so it still drops to its own row when expanded.
-        toggle: `<button type="button" class="ev-details-toggle" onclick="var d=document.getElementById('${uid}');d.hidden=!d.hidden;this.textContent=d.hidden?'[details ▶]':'[details ▼]'">[details ▶]</button>`,
+        toggle: `<button type="button" class="ev-details-toggle" data-act="evDetailsToggle" data-target="${uid}">[details ▶]</button>`,
         panel: `<div id="${uid}" hidden class="ev-details-panel">${parts.map(p => `<div>${p}</div>`).join("")}</div>`,
       };
     }
@@ -6537,14 +6618,14 @@
       el.innerHTML = notebookEntries.map(e => {
         const who = e.author ? `<span style="font-size:10px;color:var(--c-cbd3df);font-weight:600">${esc(e.author)}</span>` : "";
         const ts = e.timestamp ? `<span style="margin-left:auto;font-size:10px;color:var(--c-52617a)">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
-        const promote = `<button class="nb-action-btn" onclick="promoteToHypothesis('${escAttr(e.id)}')" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
+        const promote = `<button class="nb-action-btn" data-act="promoteToHypothesis" data-id="${escAttr(e.id)}" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
         return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
           `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
           `<div class="nb-entry-text">${esc(e.text)}</div>` +
           `<div class="nb-entry-actions">` +
           promote +
-          `<button class="nb-action-btn" onclick="nbStartEdit('${escAttr(e.id)}')">Edit</button>` +
-          `<button class="nb-action-btn del" onclick="nbDelete('${escAttr(e.id)}')">Delete</button>` +
+          `<button class="nb-action-btn" data-act="nbStartEdit" data-id="${escAttr(e.id)}">Edit</button>` +
+          `<button class="nb-action-btn del" data-act="nbDelete" data-id="${escAttr(e.id)}">Delete</button>` +
           `</div></div>`;
       }).join("");
     }
@@ -6677,15 +6758,15 @@
         : "";
       return `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
         `<div class="hyp-row1">` +
-          `<select class="hyp-status" onchange="hypPatch('${id}',{status:this.value})">${opts}</select>` +
+          `<select class="hyp-status" data-act="hypPatchStatus" data-act-on="change" data-id="${id}">${opts}</select>` +
           `<span class="hyp-title">${esc(h.title)}</span>${src}${review}${exhausted}` +
           // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
-          (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" onclick="linkNextHuntToHypothesis('${id}', this.getAttribute('data-t'))" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
-          `<button class="hyp-del" onclick="hypDelete('${id}')" title="Delete">✕</button>` +
+          (h.status === "open" && !h.exhausted ? ` <button class="hyp-hunt" data-act="linkNextHunt" data-id="${id}" data-t="${escAttr(h.title)}" title="Deploy a Velociraptor hunt to test this hypothesis — the next hunt you launch is linked, so an empty result counts as a miss against it (→ exhausted)">🎯 test via hunt</button>` : "") +
+          `<button class="hyp-del" data-act="hypDelete" data-id="${id}" title="Delete">✕</button>` +
         `</div>${outcome}${desc}${discrim}${meta}${history}` +
         `<div class="hyp-row2">` +
-          `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" onchange="hypPatch('${id}',{assignee:this.value})" />` +
-          `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" onchange="hypPatch('${id}',{notes:this.value})" />` +
+          `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" data-act="hypPatchAssignee" data-act-on="change" data-id="${id}" />` +
+          `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" data-act="hypPatchNotes" data-act-on="change" data-id="${id}" />` +
         `</div>` +
       `</div>`;
     }
@@ -6705,7 +6786,7 @@
     function linkNextHuntToHypothesis(id, title) {
       pendingHuntHypothesis = { id, title: title || id };
       const msg = document.getElementById("suggestHuntsMsg");
-      if (msg) msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" onclick="pendingHuntHypothesis=null;this.parentElement.textContent='';return false;" style="color:var(--c-6aa9ff)">cancel</a>`;
+      if (msg) msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" data-act="clearPendingHunt" style="color:var(--c-6aa9ff)">cancel</a>`;
       const sec = document.getElementById("sec-velohunts");
       if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -6784,7 +6865,7 @@
         reviews.map(r => {
           const st = r.recommendedStatus || "unknown";
           const apply = st === "open" ? "" :
-            `<button class="hyp-rev-apply" onclick="hypApplyReview('${escAttr(r.hypothesisId)}','${escAttr(st)}')" title="Set this hypothesis's status to ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)} (marks it analyst-edited)">Apply → ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</button>`;
+            `<button class="hyp-rev-apply" data-act="hypApplyReview" data-id="${escAttr(r.hypothesisId)}" data-st="${escAttr(st)}" title="Set this hypothesis's status to ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)} (marks it analyst-edited)">Apply → ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</button>`;
           return `<div class="hyp-rev-item">` +
             `<div class="hyp-rev-title">${esc(r.title)}<span class="hyp-rev-rec ${esc(st)}">recommends: ${esc(HYP_REVIEW_STATUS_LABEL[st] || st)}</span>${apply}</div>` +
             `<div class="hyp-rev-cols"><div class="hyp-rev-for"><b>Supports</b>${bullets(r.supportingEvidence, "for")}</div>` +
@@ -7292,7 +7373,7 @@
         // behave like the same component, just fed from different sources.
         return `<div class="ev-row" data-evid="${escAttr(e.id)}">` +
           `<div class="ev-col-ctrl">` +
-          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" onchange="toggleSuperPromote('${escAttr(e.id)}', this.checked)" />` +
+          `<input type="checkbox" class="st-row-cb" data-evid="${escAttr(e.id)}" ${superPromote.has(e.id) ? "checked" : ""} title="Select (for promotion / bulk star / bulk tag)" data-act="toggleSuperPromote" data-act-on="change" data-id="${escAttr(e.id)}" />` +
           `<button class="ev-star${starred ? " starred" : ""}" data-evid="${escAttr(e.id)}" title="${starred ? "Unstar event" : "Star event"}">${ICON_STAR}</button>` +
           `${commentChip("event", e.id)} ${tagAddBtn("event", e.id)} ${huntChip("event", e.id)} ${explainChip(e.id)} ${ctx}` +
           `</div>` +
@@ -7714,7 +7795,7 @@
       el.innerHTML = tasks.map(t => {
         const opts = PB_STATUS.map(([v, l]) => `<option value="${v}" ${t.status === v ? "selected" : ""}>${l}</option>`).join("");
         const src = t.source === "custom" ? "custom" : (t.source === "finding" ? "from finding" : "from next step");
-        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" onclick="pbJumpFinding();return false">↳ finding</a>` : "";
+        const findingLink = t.relatedFindingId ? `<a href="#" class="pb-finding-link" title="Go to findings" data-act="pbJumpFinding">↳ finding</a>` : "";
         const desc = t.description ? `<div class="pb-desc">${esc(t.description)}</div>` : "";
         const blockedByTitles = (t.blockedBy || []).map(id => {
           const dep = playbookTasks.find(o => o.id === id);
@@ -7731,21 +7812,21 @@
           `<div class="pb-row1">` +
             `<span class="pb-drag ${canDrag ? "" : "pb-drag-off"}" title="Drag to reorder">⠿</span>` +
             (t.shortId ? `<span class="pb-shortid">${esc(t.shortId)}</span>` : "") +
-            `<select class="pb-status" onchange="pbPatch('${escAttr(t.id)}',{status:this.value})">${opts}</select>` +
+            `<select class="pb-status" data-act="pbPatchStatus" data-act-on="change" data-id="${escAttr(t.id)}">${opts}</select>` +
             `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
             `<span class="pb-title">${esc(t.title)}</span>` +
             blockedBadge +
             `<span class="pb-src">${src}</span>${findingLink}` +
             `<span class="pb-move">` +
-              `<button onclick="pbMove('${escAttr(t.id)}',-1)" title="Move up">▲</button>` +
-              `<button onclick="pbMove('${escAttr(t.id)}',1)" title="Move down">▼</button>` +
-              `<button class="pb-del" onclick="pbDelete('${escAttr(t.id)}')" title="Delete">✕</button>` +
+              `<button data-act="pbMovePrev" data-id="${escAttr(t.id)}" title="Move up">▲</button>` +
+              `<button data-act="pbMoveNext" data-id="${escAttr(t.id)}" title="Move down">▼</button>` +
+              `<button class="pb-del" data-act="pbDelete" data-id="${escAttr(t.id)}" title="Delete">✕</button>` +
             `</span>` +
           `</div>` + desc +
           `<div class="pb-row2">` +
-            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" onchange="pbPatch('${escAttr(t.id)}',{assignee:this.value})" />` +
-            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" onchange="pbPatch('${escAttr(t.id)}',{dueDate:this.value})" title="Due date" />` +
-            `<button type="button" class="pb-deps-btn" onclick="pbToggleDeps('${escAttr(t.id)}')" title="Set which tasks must be done before this one can start">🔗 depends on${depCount ? ` (${depCount})` : ""}</button>` +
+            `<input class="pb-assignee" placeholder="assignee" value="${escAttr(t.assignee || "")}" data-act="pbPatchAssignee" data-act-on="change" data-id="${escAttr(t.id)}" />` +
+            `<input class="pb-due" type="date" value="${escAttr(t.dueDate || "")}" data-act="pbPatchDueDate" data-act-on="change" data-id="${escAttr(t.id)}" title="Due date" />` +
+            `<button type="button" class="pb-deps-btn" data-act="pbToggleDeps" data-id="${escAttr(t.id)}" title="Set which tasks must be done before this one can start">🔗 depends on${depCount ? ` (${depCount})` : ""}</button>` +
           `</div>` +
           pbDepsPanel(t) +
           renderTaskHunts(t.id) +
@@ -7805,7 +7886,7 @@
       if (!others.length) return `<div class="pb-deps-panel"><em style="color:var(--c-9aa4b2);font-size:11px">No other tasks yet.</em></div>`;
       const cur = new Set(t.dependsOn || []);
       const rows = others.map(o =>
-        `<label class="pb-dep-opt"><input type="checkbox" ${cur.has(o.id) ? "checked" : ""} onchange="pbToggleDep('${escAttr(t.id)}','${escAttr(o.id)}',this.checked)" /> ` +
+        `<label class="pb-dep-opt"><input type="checkbox" ${cur.has(o.id) ? "checked" : ""} data-act="pbToggleDep" data-act-on="change" data-id="${escAttr(t.id)}" data-dep="${escAttr(o.id)}" /> ` +
         `${o.shortId ? esc(o.shortId) + " — " : ""}${esc(o.title)}</label>`
       ).join("");
       return `<div class="pb-deps-panel">${rows}</div>`;
@@ -10605,11 +10686,10 @@
         .then(result => {
           const section = (label, content, color) =>
             content ? `<div class="explain-section"><strong>${label}</strong><span style="color:${color || "var(--c-c9d1d9)"}">${esc(content)}</span></div>` : "";
-          const qhtml = (result.pivotQueries || []).map((q, i) => {
-            const uid = "exq" + i + "_" + Date.now();
+          const qhtml = (result.pivotQueries || []).map((q) => {
             return `<div class="hunt-card">`
               + `<div class="hunt-card-head"><span>${esc(q.platform || "query")}</span>`
-              + `<button class="hunt-copy" onclick="navigator.clipboard?.writeText(${JSON.stringify(q.query)});this.textContent='✓ copied';setTimeout(()=>this.textContent='Copy',1500)">Copy</button></div>`
+              + `<button class="hunt-copy" data-q="${escAttr(q.query)}">Copy</button></div>`
               + `<pre style="margin:0;padding:10px;background:var(--c-0f1115);color:var(--c-d6deea);font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">${esc(q.query)}</pre>`
               + (q.rationale ? `<div style="padding:6px 10px;font-size:11px;color:var(--c-9aa4b2)">${esc(q.rationale)}</div>` : "")
               + `</div>`;
@@ -10631,6 +10711,15 @@
                 + `</div>` : "") +
             (qhtml ? `<div class="explain-section"><strong>Pivot queries</strong>${qhtml}</div>` : "") +
             (cited ? `<div class="explain-section"><strong>Related events</strong><span style="color:var(--c-9aa4b2);font-size:12px">${cited}</span></div>` : "");
+          // Copy buttons: attach the clipboard handler after render instead of building an inline
+          // onclick from the AI-supplied query (which could break out of the attribute/tag context).
+          // The query rides in an escAttr-escaped data-q attribute; dataset.q decodes back to the
+          // exact original string, so clipboard content and the "copied" feedback are unchanged.
+          bodyEl.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
+            navigator.clipboard?.writeText(b.dataset.q);
+            b.textContent = "✓ copied";
+            setTimeout(() => { b.textContent = "Copy"; }, 1500);
+          });
         })
         .catch(e => {
           const msg = String(e.message || e);
@@ -10760,7 +10849,7 @@
           scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
           scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
           scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
-          scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
+          scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
           scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
           loadSuperTimeline(caseId);
         })
@@ -12422,7 +12511,7 @@
       };
       el.innerHTML = "<div class='eg-list'>" + items.map(it => {
         if (it.kind === "silence_gap") {
-          return `<div class="eg-item eg-gap"><span class="eg-kind">silent window</span><span class="eg-label">${esc(it.label)}</span><br><a class="eg-gaplink" onclick="var g=document.getElementById('sec-gaps'); if(g) g.scrollIntoView({behavior:'smooth'})">See Timeline Gaps →</a></div>`;
+          return `<div class="eg-item eg-gap"><span class="eg-kind">silent window</span><span class="eg-label">${esc(it.label)}</span><br><a class="eg-gaplink" data-act="jumpToGaps">See Timeline Gaps →</a></div>`;
         }
         if (it.kind === "likely_next_technique") {
           return `<div class="eg-item eg-next"><span class="eg-kind">likely next</span><span class="eg-label">${esc(it.label)}</span></div>`;
@@ -12710,7 +12799,7 @@
       let scope = "";
       if (d.topHosts && d.topHosts.length && w.start) {
         const fmt = (t) => esc((t || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace("Z", ""));
-        scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" onclick="applyHostRankingScope()">Apply scope window</button></div>`;
+        scope = `<div class="hr-scope">⌖ Signal concentrated on <b>${esc(d.topHosts.join(", "))}</b> · suggested scope ${fmt(w.start)} → ${fmt(w.end)} <button class="hr-apply" data-act="applyHostRankingScope">Apply scope window</button></div>`;
       }
       const rows = d.ranks.map(r => {
         const key = `${r.type}:${r.name.toLowerCase()}`;
@@ -12871,7 +12960,7 @@
           const ds = (n.dataSources && n.dataSources.length)
             ? `<div class="adv-next-ds" title="ATT&CK data sources — telemetry to hunt in for this technique">🔍 ${esc(n.dataSources.join(" · "))}</div>` : "";
           // A targeted hunt: hand this technique to the AI Fleet-Hunts feature to generate a VQL query.
-          const huntBtn = `<button type="button" class="adv-next-hunt" onclick="huntForTechnique('${escAttr(n.id)}', this)" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
+          const huntBtn = `<button type="button" class="adv-next-hunt" data-act="huntForTechnique" data-id="${escAttr(n.id)}" title="Generate a Velociraptor VQL hunt for this technique (one AI call)">⌖ hunt this</button>`;
           return `<div class="adv-next-row">${tech}${nm}<span class="adv-next-tactic">${esc(n.tactic)}</span>${rare}${support}${huntBtn}</div>${ds}`;
         }).join("");
         return `<div class="adv-next">` +
@@ -12881,6 +12970,130 @@
         `</div>`;
       })() : "";
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
+    }
+
+    // ── Compliance Impact (#234 / #336) — control failures & regulatory obligations ─────────────
+    // Derived server-side from the case's CONFIRMED findings; offline, no AI. Two rules this
+    // renderer exists to keep:
+    //   - the "not legal advice" disclaimer and the framework editions render WITH the mapping,
+    //     never as a tooltip or a separate page. A control-failure list without them reads as a
+    //     compliance verdict.
+    //   - a countdown appears only where the API returned a real `deadline`. Rows with no
+    //     notification clock (control cadences: back up, train, review) get none, and nothing is
+    //     computed at all until the analyst sets a discovery date, because every clock starts on a
+    //     legal determination rather than on a forensic timestamp.
+    let complianceData = null;
+    function loadCompliance(caseId) {
+      fetch(`/cases/${caseId}/compliance`).then(r => r.ok ? r.json() : null).then(d => {
+        complianceData = (d && typeof d === "object" && Array.isArray(d.results)) ? d : null;
+        renderCompliance();
+      }).catch(() => {});
+    }
+    let complianceTimer = null;
+    function scheduleComplianceReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(complianceTimer);
+      complianceTimer = setTimeout(() => loadCompliance(caseId), 800);
+    }
+    function patchComplianceControl(patch) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      fetch(`/cases/${caseId}/compliance/control`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      }).then(r => r.ok ? r.json() : null).then(() => loadCompliance(caseId)).catch(() => {});
+    }
+    function setComplianceDiscovered(el) {
+      // <input type="date"> gives "YYYY-MM-DD"; send it as an explicit UTC instant so the stored
+      // value does not shift by a day depending on the viewer's timezone.
+      const v = (el.value || "").trim();
+      patchComplianceControl({ discoveredAt: v ? `${v}T00:00:00.000Z` : null });
+    }
+    function clearComplianceDiscovered() {
+      const input = document.getElementById("complianceDiscovered");
+      if (input) input.value = "";
+      patchComplianceControl({ discoveredAt: null });
+    }
+    function toggleComplianceFramework() {
+      const boxes = [...document.querySelectorAll("#complianceFilter input[type=checkbox]")];
+      const checked = boxes.filter(b => b.checked).map(b => b.dataset.fw);
+      // All boxes ticked === no filter at all (null), so the case does not carry a stale explicit
+      // list that would silently hide a framework added to the dataset later.
+      patchComplianceControl({ frameworks: checked.length === boxes.length ? null : checked });
+    }
+    function renderComplianceFilter(d) {
+      const el = document.getElementById("complianceFilter");
+      if (!el) return;
+      const all = d.availableFrameworks || [];
+      if (!all.length) { el.innerHTML = ""; return; }
+      const active = Array.isArray(d.frameworks) ? new Set(d.frameworks) : null;
+      el.innerHTML = `<span class="cmp-ctl-label">Frameworks</span>` + all.map(f =>
+        `<label class="cmp-fw"><input type="checkbox" data-act="toggleComplianceFramework" data-act-on="change" data-fw="${escAttr(f)}"${!active || active.has(f) ? " checked" : ""}>${esc(f)}</label>`
+      ).join("");
+    }
+    function complianceDueBadge(deadline) {
+      if (!deadline) return "";
+      const cls = deadline.status === "overdue" ? "cmp-due-overdue"
+        : deadline.status === "due-soon" ? "cmp-due-soon" : "cmp-due-open";
+      const label = deadline.status === "overdue" ? "OVERDUE"
+        : `${esc(deadline.remainingDays)}d left`;
+      return `<span class="cmp-due ${cls}">${label}</span> due ${esc(String(deadline.dueAt).slice(0, 10))}`;
+    }
+    function renderCompliance() {
+      const el = document.getElementById("compliancePanel");
+      if (!el) return;
+      const d = complianceData;
+      if (!d) { el.innerHTML = `<div class="cmp-empty">—</div>`; return; }
+
+      renderComplianceFilter(d);
+      const input = document.getElementById("complianceDiscovered");
+      if (input && d.discoveredAt) input.value = String(d.discoveredAt).slice(0, 10);
+      const hint = document.getElementById("complianceDiscoveredHint");
+      if (hint) {
+        hint.textContent = d.discoveredAt
+          ? "each clock starts on its own legal trigger — confirm the real start date with counsel"
+          : "set a date to compute notification deadlines";
+      }
+
+      // The disclaimer leads, always — before a single obligation.
+      const caveat = d.disclaimer ? `<div class="cmp-caveat">⚖️ ${esc(d.disclaimer)}</div>` : "";
+      const editions = d.frameworkVersions
+        ? `<div class="cmp-editions">Control identifiers drawn from: ${Object.entries(d.frameworkVersions).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(" · ")}</div>`
+        : "";
+
+      if (!d.results.length) {
+        el.innerHTML = caveat + `<div class="cmp-empty">No confirmed finding maps to a control failure in the bundled mapping.</div>` + editions;
+        return;
+      }
+
+      const clocks = d.results.reduce((n, r) => n + r.frameworks.filter(f => f.notification).length, 0);
+      const meta = `<div class="cmp-meta">${esc(d.results.length)} technique instance(s) with mapped obligations · ${esc(clocks)} notification obligation(s)${d.discoveredAt ? "" : " (no deadlines computed — no discovery date set)"}</div>`;
+
+      const cards = d.results.map(r => {
+        const u = attackUrl(r.technique);
+        const id = u
+          ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="cmp-tech-id">${esc(r.technique)}</a>`
+          : `<span class="cmp-tech-id">${esc(r.technique)}</span>`;
+        const groups = new Map();
+        for (const row of r.frameworks) {
+          const key = String(row.framework);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(row);
+        }
+        const body = [...groups.entries()].map(([fw, rows]) => {
+          const items = rows.map(row => {
+            const clock = row.notification
+              ? `<div class="cmp-clock">${complianceDueBadge(row.deadline)}${row.deadline ? " · " : ""}${esc(row.notification.within)} ${row.notification.unit === "business" ? "business days" : "calendar time"}, from ${esc(row.notification.from)}</div>`
+              : "";
+            return `<div class="cmp-row"><span class="cmp-ctrl">${esc(row.control)}</span> <span class="cmp-title">${esc(row.title)}</span><div class="cmp-obl">${esc(row.obligation)}</div>${clock}</div>`;
+          }).join("");
+          return `<div class="cmp-fw-group"><div class="cmp-fw-h">${esc(fw)}</div>${items}</div>`;
+        }).join("");
+        return `<div class="cmp-tech"><div class="cmp-tech-h">${id}<span class="cmp-tech-finding">finding ${esc(r.findingId)}</span></div>${body}</div>`;
+      }).join("");
+
+      el.innerHTML = caveat + meta + cards + editions;
     }
 
     // ── ATT&CK Mitigations (#178) — the concrete "what to do" layer above D3FEND ───────────────
@@ -13861,7 +14074,7 @@
       el.innerHTML =
         `<span style="color:var(--c-6aa9ff)">⧉ Showing ${shown} of ${n} event${n !== 1 ? "s" : ""} in this group` +
         `${evIdFilterLabel ? " — " + esc(evIdFilterLabel) : ""}</span>` +
-        ` <button type="button" onclick="clearEvIdFilter()" style="margin-left:8px;font-size:11px;background:var(--c-2a2f3a);border:none;color:var(--c-c9d1db);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
+        ` <button type="button" data-act="clearEvIdFilter" style="margin-left:8px;font-size:11px;background:var(--c-2a2f3a);border:none;color:var(--c-c9d1db);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
     }
 
     // Reveal a forensic event by id and scroll+flash it — used by the Evidence panel's supporting-event
@@ -14154,7 +14367,7 @@
         const isActive = kcSelectedTac === tac && !isEmpty;
         return `<div class="kc-phase${isEmpty ? " kc-empty" : ""}${isActive ? " kc-active" : ""}" ` +
           `data-tac="${escAttr(tac)}" ` +
-          `onclick="if(!this.classList.contains('kc-empty'))kcSelect('${escAttr(tac)}')">` +
+          `data-act="kcSelect" data-tac="${escAttr(tac)}">` +
           `<div class="kc-phase-header" style="border-top-color:${topColor}">` +
           `<span class="kc-tac">${esc(tac)}</span>` +
           `<span class="kc-count" style="color:${isEmpty ? "#2a2f3a" : topColor}">${count}</span>` +
@@ -14610,14 +14823,14 @@
       const iocPageSizeOpts = iocPageSizes.map(n =>
         `<option value="${n}"${iocPageSize === n ? " selected" : ""}>${n === 0 ? "All" : n}</option>`).join("");
       const iocPaginationBar = (iocPageSize > 0 && totalFiltered > iocPageSize) ? `<div class="tl-page-bar">`
-        + `<button class="tl-page-btn" onclick="iocPageStep(-1)" ${iocPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<button class="tl-page-btn" data-act="iocPagePrev" ${iocPage === 0 ? "disabled" : ""}>‹ Prev</button>`
         + `<span class="tl-page-info">${iocStart + 1}–${iocEnd} of ${totalFiltered}</span>`
-        + `<button class="tl-page-btn" onclick="iocPageStep(1)" ${iocPage >= iocTotalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `<button class="tl-page-btn" data-act="iocPageNext" ${iocPage >= iocTotalPages - 1 ? "disabled" : ""}>Next ›</button>`
         + `</div>` : "";
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
         + `<span>Type</span><span>${countLabel}</span>`
-        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" onchange="iocSetPageSize(+this.value)">${iocPageSizeOpts}</select></span>`
+        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" data-act="iocSetPageSize" data-act-on="change">${iocPageSizeOpts}</select></span>`
         + `</div>`;
       const rows = pageVisible.map(i => {
         const isNew = newIocKeys.has(i.value);
@@ -14960,7 +15173,7 @@
         const from = new Date(b.startMs).toISOString();
         const to = new Date(b.endMs).toISOString();
         const label = `${b.count} event${b.count === 1 ? "" : "s"} · ${b.maxSeverity} · ${from.slice(0, 16).replace("T", " ")}–${to.slice(0, 16).replace("T", " ")} UTC (click to zoom)`;
-        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" onclick="zoomToTimeWindow('${from}','${to}')"></div>`;
+        return `<div class="tl-heatmap-bar" style="height:${heightPct}%;background:${color}" title="${escAttr(label)}" data-act="zoomToTimeWindow" data-from="${from}" data-to="${to}"></div>`;
       }).join("");
     }
 
@@ -15111,9 +15324,9 @@
         `<option value="${n}"${tlPageSize === n ? " selected" : ""}>${pageSizeLabel(n)}</option>`
       ).join("");
       const paginationBar = (tlPageSize > 0 && totalFiltered > tlPageSize) ? `<div class="tl-page-bar">`
-        + `<button class="tl-page-btn" onclick="if(tlPage>0){_tlKeepPage=true;tlPage--;renderTimelineEvents(lastFt)}" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
+        + `<button class="tl-page-btn" data-act="tlPagePrev" ${tlPage === 0 ? "disabled" : ""}>‹ Prev</button>`
         + `<span class="tl-page-info">${pStart + 1}–${pEnd} of ${totalFiltered}</span>`
-        + `<button class="tl-page-btn" onclick="if(tlPage<${totalPages - 1}){_tlKeepPage=true;tlPage++;renderTimelineEvents(lastFt)}" ${tlPage >= totalPages - 1 ? "disabled" : ""}>Next ›</button>`
+        + `<button class="tl-page-btn" data-act="tlPageNext" data-total="${totalPages - 1}" ${tlPage >= totalPages - 1 ? "disabled" : ""}>Next ›</button>`
         + `</div>` : "";
 
       const headerRow = `<div class="ev-header-row">`
@@ -15121,7 +15334,7 @@
         + `<div class="ev-header-sev">Severity${sortArrows("severity")}</div>`
         + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
         + `<div style="flex:1">Message</div>`
-        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" onchange="tlPageSize=+this.value;renderTimelineEvents(lastFt)">${pageSizeOpts}</select></div>`
+        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" data-act="tlSetPageSize" data-act-on="change">${pageSizeOpts}</select></div>`
         + `</div>`;
 
       const tld = loadTlDisplay();   // per-browser timeline-row display toggles (Settings → General)
@@ -15934,6 +16147,7 @@
       loadHostRanking(caseId);
       loadD3fend(caseId);
       loadAttackMitigations(caseId);
+      loadCompliance(caseId);
       loadGeoMap(caseId);
       loadSwimlane(caseId);
       loadIocSources(caseId);
@@ -16029,7 +16243,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -18316,6 +18530,123 @@
       updateToggleAllLabel();
     };
 
+    // ── data-act dispatch (CSP: no inline handlers) ───────────────────────────────────────────
+    //
+    // Every control that used to carry an inline `onclick=` / `onchange=` / `onsubmit=` now carries
+    // `data-act="<name>"` (plus `data-act-on="change|submit"` when it isn't a click), and the
+    // behaviour lives in ACTIONS below. This is what lets the server send `script-src 'self'`:
+    // an inline handler attribute is script, and CSP blocks it outright — a nonce cannot whitelist
+    // one (nonces apply to <script nonce="__CSP_NONCE__"> blocks only), so the attributes had to go.
+    //
+    // Dispatch is DELEGATED from <main>, so markup rendered later into innerHTML is covered with no
+    // re-wiring at each render site — the pattern the pivot-query Copy button already used (#281).
+    // ACTIONS is a fixed literal, deliberately NOT a `window[name]` lookup: `name` comes from a DOM
+    // attribute, and resolving that against the global scope would hand any future markup-injection
+    // bug a call-anything primitive — the opposite of the point of this change.
+    //
+    // `el` is the element carrying data-act; interpolated ids/values ride in data-* beside it,
+    // escAttr-escaped exactly as they were inside the old handler string.
+    const ACTIONS = {
+      // Geo map
+      renderGeoView:              (el) => renderGeoView(),
+      renderGeoMarkers:           (el) => renderGeoMarkers(),
+      geoDownloadCsv:             (el) => geoDownloadCsv(),
+      ensureGeoMap:               (el) => ensureGeoMap(),
+      // Tagger
+      runTagger:                  (el) => runTagger(),
+      clearTaggerTags:            (el) => clearTaggerTags(),
+      toggleTaggerRules:          (el) => toggleTaggerRules(),
+      toggleTaggerSuggest:        (el) => toggleTaggerSuggest(),
+      suggestTaggerRule:          (el) => suggestTaggerRule(),
+      previewTaggerRule:          (el) => previewTaggerRule(),
+      addSuggestedTaggerRule:     (el) => addSuggestedTaggerRule(),
+      discardSuggestedTaggerRule: (el) => discardSuggestedTaggerRule(),
+      refreshTaggerRuleList:      (el) => refreshTaggerRuleList(),
+      resetTaggerRules:           (el) => resetTaggerRules(),
+      saveTaggerRules:            (el) => saveTaggerRules(),
+      // Supertimeline
+      superPageReset:             (el) => superPage(0),
+      superPagePrev:              (el) => superPage(-1),
+      superPageNext:              (el) => superPage(1),
+      promoteSuperSelected:       (el) => promoteSuperSelected(),
+      toggleSuperPromote:         (el) => toggleSuperPromote(el.dataset.id, el.checked),
+      applyTimeframe:             (el) => applyTimeframe(),
+      saveTimeframe:              (el) => saveTimeframe(),
+      clearSuperTime:             (el) => clearSuperTime(),
+      // Findings / remediation
+      generateRemediation:        (el) => generateRemediation(el),
+      // Notebook + hypotheses
+      promoteToHypothesis:        (el) => promoteToHypothesis(el.dataset.id),
+      nbStartEdit:                (el) => nbStartEdit(el.dataset.id),
+      nbDelete:                   (el) => nbDelete(el.dataset.id),
+      hypPatchStatus:             (el) => hypPatch(el.dataset.id, { status: el.value }),
+      hypPatchAssignee:           (el) => hypPatch(el.dataset.id, { assignee: el.value }),
+      hypPatchNotes:              (el) => hypPatch(el.dataset.id, { notes: el.value }),
+      hypDelete:                  (el) => hypDelete(el.dataset.id),
+      hypApplyReview:             (el) => hypApplyReview(el.dataset.id, el.dataset.st),
+      linkNextHunt:               (el) => linkNextHuntToHypothesis(el.dataset.id, el.getAttribute("data-t")),
+      clearPendingHunt:           (el, e) => { pendingHuntHypothesis = null; el.parentElement.textContent = ""; e.preventDefault(); },
+      // Playbook tasks
+      pbJumpFinding:              (el, e) => { pbJumpFinding(); e.preventDefault(); },
+      pbPatchStatus:              (el) => pbPatch(el.dataset.id, { status: el.value }),
+      pbPatchAssignee:            (el) => pbPatch(el.dataset.id, { assignee: el.value }),
+      pbPatchDueDate:             (el) => pbPatch(el.dataset.id, { dueDate: el.value }),
+      pbMovePrev:                 (el) => pbMove(el.dataset.id, -1),
+      pbMoveNext:                 (el) => pbMove(el.dataset.id, 1),
+      pbDelete:                   (el) => pbDelete(el.dataset.id),
+      pbToggleDeps:               (el) => pbToggleDeps(el.dataset.id),
+      pbToggleDep:                (el) => pbToggleDep(el.dataset.id, el.dataset.dep, el.checked),
+      // Timeline
+      evDetailsToggle:            (el) => {
+        const d = document.getElementById(el.dataset.target);
+        if (!d) return;
+        d.hidden = !d.hidden;
+        el.textContent = d.hidden ? "[details ▶]" : "[details ▼]";
+      },
+      zoomToTimeWindow:           (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
+      tlPagePrev:                 (el) => { if (tlPage > 0) { _tlKeepPage = true; tlPage--; renderTimelineEvents(lastFt); } },
+      tlPageNext:                 (el) => { if (tlPage < Number(el.dataset.total)) { _tlKeepPage = true; tlPage++; renderTimelineEvents(lastFt); } },
+      tlSetPageSize:              (el) => { tlPageSize = +el.value; renderTimelineEvents(lastFt); },
+      clearEvIdFilter:            (el) => clearEvIdFilter(),
+      // IOCs
+      iocPagePrev:                (el) => iocPageStep(-1),
+      iocPageNext:                (el) => iocPageStep(1),
+      iocSetPageSize:             (el) => iocSetPageSize(+el.value),
+      // ATT&CK / kill chain / hosts
+      huntForTechnique:           (el) => huntForTechnique(el.dataset.id, el),
+      kcSelect:                   (el) => { if (!el.classList.contains("kc-empty")) kcSelect(el.dataset.tac); },
+      applyHostRankingScope:      (el) => applyHostRankingScope(),
+      jumpToGaps:                 (el) => {
+        const g = document.getElementById("sec-gaps");
+        if (g) g.scrollIntoView({ behavior: "smooth" });
+      },
+      // Compliance Impact (#336)
+      setComplianceDiscovered:    (el) => setComplianceDiscovered(el),
+      clearComplianceDiscovered:  (el) => clearComplianceDiscovered(),
+      toggleComplianceFramework:  (el) => toggleComplianceFramework(),
+      // Forms that never navigate (were an inline onsubmit returning false)
+      noSubmit:                   (el, e) => e.preventDefault(),
+    };
+
+    function dispatchAct(e, type) {
+      const el = e.target.closest("[data-act]");
+      if (!el) return;
+      if ((el.dataset.actOn || "click") !== type) return;
+      const fn = ACTIONS[el.dataset.act];
+      if (typeof fn !== "function") return;   // unknown key: ignore rather than throw mid-render
+      fn(el, e);
+    }
+    ["click", "change", "submit"].forEach((type) => {
+      document.addEventListener(type, (e) => dispatchAct(e, type));
+    });
+
+    // These sit inside collapsible <h2> headers and previously carried an inline click handler
+    // to keep a click on the wrapper from toggling the section. The listener has to live ON the element
+    // (not delegated at document level) so it runs while the event is still below the <h2> handler.
+    document.querySelectorAll("[data-stop-click]").forEach((el) => {
+      el.addEventListener("click", (e) => e.stopPropagation());
+    });
+
     setupCollapsible();
     setupReorder();
 
@@ -18360,6 +18691,7 @@
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
+      { id: "sec-compliance",   label: "Compliance Impact" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-source-trust", label: "Source Trust" },
@@ -18380,6 +18712,131 @@
       if (vis[id] === undefined) { const d = SECTION_DEFS.find(s => s.id === id); return !(d && d.defaultHidden); }
       return vis[id] !== false;
     }
+
+    // ── Command palette registry (issue #238) ────────────────────────────────────────────────────
+    // The matching, ranking and overlay live in /js/command-palette.js; only the registry lives
+    // here, because this is the only scope that can see the dashboard's own functions and state.
+    //
+    // Almost every entry is DERIVED from a control that already exists — the section list, the two
+    // export <select>s, the toolbar buttons — rather than transcribed into a parallel list. A
+    // hand-written registry is stale the day someone adds a panel or an export, and stale entries
+    // are worse than missing ones: they point at ids that no longer resolve.
+
+    // The un-collapse + scroll idiom used by the panel deep-links elsewhere in this file.
+    function revealSection(id) {
+      const sec = document.getElementById(id);
+      if (!sec) return;
+      sec.classList.remove("collapsed");
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // display:none / detached elements have no client rects; offsetParent would report the same for
+    // these but lies about position:fixed ancestors, and the toolbar may end up inside one.
+    function paletteVisible(el) {
+      return !!el && el.getClientRects().length > 0;
+    }
+
+    // Curated entries: the toolbar controls, driven by .click() so each one reuses the handler that
+    // is already wired to it. Availability comes free — buttons the dashboard hides or disables for
+    // the current case state (2nd opinion, undo import, lifecycle, demo seed) drop out of the
+    // palette on their own, with no second copy of the gating logic to keep in sync.
+    const PALETTE_BUTTONS = [
+      { id: "act.synthesize",    btn: "synthesize",      category: "Actions",    label: "AI Re-synthesize",                        keywords: ["synthesize", "ai", "analysis", "rerun"] },
+      { id: "act.deepPass",      btn: "deepPassBtn",     category: "Actions",    label: "Run Deep Pass",                           keywords: ["deep", "pass", "reasoning"] },
+      { id: "act.secondOpinion", btn: "secondOpinion",   category: "Actions",    label: "Second Opinion",                          keywords: ["second", "opinion", "review", "model"] },
+      { id: "act.import",        btn: "importBtn",       category: "Actions",    label: "Import Evidence",                         keywords: ["import", "ingest", "upload", "evidence"] },
+      { id: "act.importUndo",    btn: "importUndoBtn",   category: "Actions",    label: "Undo Import",                             keywords: ["undo", "import", "revert"] },
+      { id: "act.importRedo",    btn: "importRedoBtn",   category: "Actions",    label: "Redo Import",                             keywords: ["redo", "import"] },
+      { id: "act.present",       btn: "presentBtn",      category: "Actions",    label: "Presentation Mode",                       keywords: ["present", "slides", "deck", "briefing"] },
+      { id: "nav.filter",        btn: "toggleSearchBar", category: "Navigation", label: "Search & Filter",                         keywords: ["search", "filter", "find", "query"] },
+      { id: "nav.toggleAll",     btn: "toggleAll",       category: "Navigation", label: "Collapse / Expand All Sections",          keywords: ["collapse", "expand", "all", "sections"] },
+      { id: "nav.jobs",          btn: "jobsBadge",       category: "Navigation", label: "Background Jobs",                         keywords: ["jobs", "queue", "background", "tasks"] },
+      { id: "set.settings",      btn: "settingsBtn",     category: "Settings",   label: "Open Settings",                           keywords: ["settings", "preferences", "config", "options"] },
+      { id: "set.theme",         btn: "themeToggle",     category: "Settings",   label: "Toggle Theme (light / dark)",             keywords: ["theme", "dark", "light", "appearance"] },
+      { id: "set.ai",            btn: "aiToggle",        category: "Settings",   label: "Toggle AI",                               keywords: ["ai", "llm", "enable", "disable"] },
+      { id: "set.enrich",        btn: "enrichToggle",    category: "Settings",   label: "Toggle Enrichment",                       keywords: ["enrich", "threatintel", "lookup"] },
+      { id: "set.anon",          btn: "anonToggle",      category: "Settings",   label: "Toggle Anonymization",                    keywords: ["anon", "anonymize", "redact", "privacy"] },
+      { id: "set.views",         btn: "dashViewBtn",     category: "Settings",   label: "Dashboard Views",                         keywords: ["view", "layout", "dashboard", "saved"] },
+      { id: "set.manual",        btn: "helpBtn",         category: "Settings",   label: "Open User Manual",                        keywords: ["help", "manual", "docs", "documentation"] },
+      { id: "case.new",          btn: "newCaseBtn",      category: "Case",       label: "New Case",                                keywords: ["new", "case", "create"] },
+      { id: "case.connect",      btn: "connect",         category: "Case",       label: "Connect to Case",                         keywords: ["connect", "open", "switch", "case"] },
+      { id: "case.import",       btn: "importCaseBtn",   category: "Case",       label: "Import Case",                             keywords: ["import", "case", "restore"] },
+      { id: "case.lifecycle",    btn: "lifecycleBtn",    category: "Case",       label: "Case Lifecycle (archive, close, delete)", keywords: ["archive", "close", "delete", "lifecycle", "status"] },
+      { id: "case.demo",         btn: "seedDemoBtn",     category: "Case",       label: "Seed Demo Case",                          keywords: ["demo", "seed", "sample", "example"] },
+    ];
+
+    // Panel labels double as their own keywords, so "swimlane" or "kill chain" finds the section
+    // even though every label is prefixed with the same "Go to".
+    function paletteSectionKeywords(label) {
+      return label.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+    }
+
+    // Turns the options of one toolbar <select> into actions. Running one sets the value and fires
+    // change, which is exactly what picking it with the mouse does — the existing onchange handler
+    // stays the single implementation of every export.
+    function paletteSelectActions(selectId, idPrefix, keywords, gate) {
+      const sel = document.getElementById(selectId);
+      if (!sel) return [];
+      return [...sel.options].filter(o => o.value).map(o => ({
+        id: idPrefix + o.value,
+        label: o.textContent.replace(/…\s*$/, "").trim(),
+        category: "Exports",
+        keywords: keywords,
+        available: () => gate() && !o.disabled && !sel.disabled,
+        run: () => { sel.value = o.value; sel.dispatchEvent(new Event("change")); },
+      }));
+    }
+
+    function buildPaletteActions() {
+      const vis = loadSectionsVis();                     // read once per keystroke, not once per panel
+      const caseIdEl = document.getElementById("caseId");
+      const hasCase = () => !!(caseIdEl && caseIdEl.value.trim());
+
+      const nav = SECTION_DEFS.map(s => ({
+        id: "nav." + s.id,
+        label: "Go to " + s.label,
+        category: "Navigation",
+        keywords: paletteSectionKeywords(s.label),
+        // A panel the analyst has switched off in Settings is not somewhere to jump to.
+        available: () => !!document.getElementById(s.id) && isSectionVisible(s.id, vis),
+        run: () => revealSection(s.id),
+      }));
+
+      const buttons = PALETTE_BUTTONS.map(b => ({
+        id: b.id,
+        label: b.label,
+        category: b.category,
+        keywords: b.keywords,
+        available: () => {
+          const el = document.getElementById(b.btn);
+          return paletteVisible(el) && !el.disabled;
+        },
+        run: () => document.getElementById(b.btn).click(),
+      }));
+
+      // Every export needs a connected case — the onchange handler bails without one, so offering
+      // them on an empty dashboard would produce actions that silently do nothing.
+      const exports = paletteSelectActions("exportSelect", "exp.", ["export", "download", "save"], hasCase);
+      const pushes = paletteSelectActions("pushSelect", "push.", ["push", "send", "integration"],
+        () => hasCase() && paletteVisible(document.getElementById("pushSelect")));
+
+      const extras = [{
+        id: "set.shortcuts",
+        label: "Keyboard Shortcuts",
+        category: "Settings",
+        keywords: ["keyboard", "shortcuts", "keys", "cheat", "help"],
+        run: () => kbdOpenHelp(),
+      }];
+
+      return [...nav, ...buttons, ...exports, ...pushes, ...extras];
+    }
+
+    // Published as a global rather than passed in a call because module scripts run AFTER this
+    // inline one — the palette module reads this when it loads, so neither side has to wait on the
+    // other. Both fields are thunks: the registry and `lastState` are re-read on every keystroke,
+    // so a palette opened before the case loads is correct the moment it does.
+    window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => lastState };
+
     function loadSectionsOrder() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
     }
@@ -18809,16 +19266,28 @@
       applySectionsVis();
 
       // 3. Env vars → POST /settings/env
+      // ONLY the fields the analyst actually changed. Posting all ~250 of them (the original
+      // behaviour) meant one edit dragged every other key into the request, and the server's
+      // allowlist rejects a batch atomically — so changing a single Timesketch URL failed with a
+      // wall of unrelated key names, and no Settings save could ever succeed. Read-only fields are
+      // skipped outright: the server refuses them by design, they're rendered for reference only.
       const updates = {};
       document.querySelectorAll("[id^='env-']").forEach(el => {
         const key = el.id.replace(/^env-/, "");
+        if (el.readOnly || el.disabled) return;
+        let val;
         if (el.type === "password") {
-          if (el.value.trim()) updates[key] = el.value.trim();
+          // Secrets load blank behind a "(already set)" placeholder, so only a typed value is a change.
+          val = el.value.trim();
+          if (!val) return;
         } else if (el.tagName === "SELECT") {
-          if (el.value) updates[key] = el.value;
+          // A blank select is "leave whatever .env has" — it must not blank an existing key.
+          if (!el.value) return;
+          val = el.value;
         } else {
-          updates[key] = el.value.trim();
+          val = el.value.trim();
         }
+        if (val !== (loadedEnvValues[key] ?? "")) updates[key] = val;
       });
       const msg = document.getElementById("settingsSaveMsg");
       msg.textContent = "";
@@ -18835,7 +19304,7 @@
             // corrected MISP URL could sit on disk while the running server kept pushing to the old
             // one (#178). Now every integration group the save touched is applied live: /settings/reload
             // loads it into the environment AND rebuilds the clients it feeds, reporting them back.
-            const changed = Object.keys(updates).filter(k => updates[k] !== (loadedEnvValues[k] ?? ""));
+            const changed = Object.keys(updates);
             const rebuilt = await applySavedEnvGroups(changed);
             // The saved values are the new baseline, so saving twice without reopening the modal
             // doesn't rebuild the same clients again.
@@ -18844,14 +19313,11 @@
               msg.textContent = "✓ Saved and applied live: " + rebuilt.join(", ") +
                 " — AI model changes still need a server restart";
               msg.style.color = "#5fd470";
-            } else if (changed.length > 0) {
+            } else {
               // Changed something with no live client behind it (AI models, tool paths) — the honest
               // answer is still "restart", so don't claim more than the server actually did.
               msg.textContent = "✓ Saved — restart the server to apply server-side changes";
               msg.style.color = "#ffd93b";
-            } else {
-              msg.textContent = "✓ Saved";
-              msg.style.color = "#5fd470";
             }
           } else {
             const j = await r.json().catch(() => ({}));
@@ -18865,10 +19331,12 @@
           ok = false;
         }
       } else {
-        msg.textContent = "✓ Saved";
+        msg.textContent = "✓ No .env changes to save";
         msg.style.color = "#5fd470";
       }
-      setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
+      // Only the success note self-clears. An error used to vanish after 5s too, which meant a long
+      // rejection message scrolled off before it could be read — errors now stay until the next save.
+      if (ok) setTimeout(() => { if (msg) msg.textContent = ""; }, 5000);
       return ok;
     }
 

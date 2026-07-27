@@ -62,6 +62,7 @@ import {
 import { buildBrandingContext, defaultReportTemplate, renderTemplateString, type ReportTemplate } from "./reportTemplate.js";
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
+import type { ComplianceControlStore, ComplianceControl } from "../analysis/complianceControl.js";
 import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
@@ -97,6 +98,7 @@ export interface ReportWriterOptions {
   synthMeta?: SynthMetaStore;   // #11 deferred: second-look collection leads in the report
   lateralPathDismissals?: LateralPathDismissStore;   // analyst-rejected lateral chains
   reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
+  complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
 }
 
 export class ReportWriter {
@@ -114,6 +116,7 @@ export class ReportWriter {
   private readonly synthMeta?: SynthMetaStore;
   private readonly lateralPathDismissals?: LateralPathDismissStore;
   private readonly reportVersions?: ReportVersionStore;
+  private readonly complianceControl?: ComplianceControlStore;
 
   constructor(
     private readonly cases: CaseStore,
@@ -134,6 +137,7 @@ export class ReportWriter {
     this.synthMeta = opts.synthMeta;
     this.lateralPathDismissals = opts.lateralPathDismissals;
     this.reportVersions = opts.reportVersions;
+    this.complianceControl = opts.complianceControl;
   }
 
   // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
@@ -481,9 +485,10 @@ export class ReportWriter {
     coverage?: SynthesisCoverage | null,
     lateralPaths?: LateralPath[],
     modelPerf?: ModelPerfSnapshot | null,
+    complianceControl?: ComplianceControl,
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl),
       html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
@@ -519,7 +524,8 @@ export class ReportWriter {
     // Lateral chains the analyst dismissed must not reappear in the written report.
     const lateralPaths = filterDismissedPaths(buildLateralPaths(state), await this.loadLateralPathDismissals(caseId));
     const modelPerf = await this.loadModelPerf(caseId);
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf);
+    const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -571,6 +577,8 @@ export class ReportWriter {
       buildLateralPaths(state),
       applyAnonDeep(await this.loadLateralPathDismissals(caseId), redact),
     );
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths);
+    // The control carries no case data (a date and a framework list), so it needs no redaction.
+    const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl);
   }
 }

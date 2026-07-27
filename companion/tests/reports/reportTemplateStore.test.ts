@@ -74,7 +74,7 @@ describe("ReportTemplateStore", () => {
     it("returns a built-in by id with builtIn flag", async () => {
       const brief = await store.get("executive-brief");
       expect(brief?.builtIn).toBe(true);
-      expect(orderedEnabledSections(brief!)).toEqual(["titlePage", "executiveSummary", "businessImpact", "conclusions"]);
+      expect(orderedEnabledSections(brief!)).toEqual(["titlePage", "executiveSummary", "businessImpact", "conclusions", "compliance"]);
     });
 
     it("returns null for an unknown custom id", async () => {

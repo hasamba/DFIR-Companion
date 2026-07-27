@@ -10,13 +10,21 @@ import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 // Performance / load test for issue #183: a synthetic 10k-event case exercising the hot
 // deterministic paths. No AI calls, no I/O, no network — pure in-memory benchmarking.
 //
-// These tests assert almost no absolute wall-clock budget. Under a full parallel
-// `vitest run` every worker competes for the same cores, and the same unchanged code
-// measures 2-3x slower than it does in isolation — so an absolute threshold either flakes
-// (renderMarkdownReport: ~3.5s alone, 5.5s contended, against a 5s budget) or is loosened
-// until it can no longer catch anything. Instead each hot path is timed against ITSELF at
-// two input sizes: contention inflates both measurements, so the growth RATIO stays stable
-// while still separating linear growth from a quadratic regression. See expectSubQuadratic.
+// These tests assert almost no absolute time budget. Under a full parallel `vitest run` every
+// worker competes for the same cores, and the same unchanged code measures 2-3x slower than it
+// does in isolation — so an absolute threshold either flakes (renderMarkdownReport: ~3.5s alone,
+// 5.5s contended, against a 5s budget) or is loosened until it can no longer catch anything.
+// Instead each hot path is timed against ITSELF at two input sizes, and only the growth RATIO is
+// asserted. See expectSubQuadratic.
+//
+// The ratio alone is NOT enough to make this robust, which cost a round of flakes to learn. The
+// original reasoning — "contention inflates both measurements, so the ratio stays stable" — is
+// wrong: the full-size run is GROWTH_FACTOR times longer than the baseline, so it is
+// proportionally likelier to be descheduled, and best-of-N only rescues a measurement if SOME
+// sample runs clean. Under sustained load the short baseline escaped while the long run did not,
+// and correlateEvents reported 63.7x against a limit of 32 — a pure artefact. bestOf therefore
+// measures process.cpuUsage(), not wall clock, so time spent waiting for a core is never counted
+// and the ratio reflects the code rather than the machine. Every figure below is CPU-time.
 //
 // Grow ONE dimension at a time. Scaling events, IOCs and findings together makes a path
 // that is merely linear in (events x iocs) look quadratic in events — renderMarkdownReport
@@ -258,30 +266,53 @@ function buildSyntheticState(eventCount: number, iocCount: number): Investigatio
 
 interface Measurement { ms: number; result: unknown }
 
-// Best of N runs. Contention and GC can only ever ADD time, so the minimum is the closest
-// estimate of the code's own cost and — unlike a single sample — one scheduler stall can't
-// skew it.
+// Best of N runs, measured in CPU time rather than wall clock.
+//
+// Wall clock counts every millisecond this process spends descheduled while some other test
+// worker holds the core, so under a loaded machine it reports the machine's contention, not the
+// code's cost. Best-of-N was meant to absorb that, and does when a stall is occasional — but it
+// only helps if SOME sample runs clean, and the full-size run is GROWTH_FACTOR times longer than
+// the baseline, so under sustained load it is proportionally likelier that every one of its
+// samples is hit while the short baseline escapes. That asymmetry inflates the ratio and fails
+// the assertion for reasons that have nothing to do with the code under test.
+//
+// process.cpuUsage() counts only cycles actually burned on this process's behalf, so time spent
+// waiting for a core simply isn't counted. Every measured fn here is synchronous, so nothing else
+// in this worker can run inside the window and contribute. Same minimum-of-N, honest clock.
 function bestOf(fn: () => unknown, repeats: number): Measurement {
   let ms = Infinity;
   let result: unknown;
   for (let i = 0; i < repeats; i++) {
-    const t0 = performance.now();
+    const start = process.cpuUsage();
     result = fn();
-    const elapsed = performance.now() - t0;
+    const { user, system } = process.cpuUsage(start);
+    const elapsed = (user + system) / 1000;   // microseconds → milliseconds
     if (elapsed < ms) ms = elapsed;
   }
   return { ms, result };
 }
 
 // How much slower the same code may get when its input grows GROWTH_FACTOR (8x) along one
-// dimension. Linear work costs 8x; a quadratic regression costs 64x. Measured today:
-// renderMarkdownReport 7.1x and filterEventsByScope ~8x (linear), buildSynthesisContext
-// 3.7-7.7x in IOC count (linear), correlateEvents 12.8-14.4x (~n^1.25, sort + windowed
-// scan). 32 leaves 2x of headroom over the slowest of those and sits 2x below quadratic.
+// dimension. Linear work costs 8x; a quadratic regression costs 64x.
+//
+// Measured in CPU time over 6 idle runs (ratio range, and how much of its own allowance the
+// WORST of those runs actually used — the allowance being baseline*GROWTH_LIMIT + FLOOR_MS):
+//   buildSynthesisContext  2.5-4.4x  in IOC count (linear)          worst run used 13%
+//   renderMarkdownReport   4.2-5.9x  (linear)                       worst run used 18%
+//   filterEventsByScope    7.7-13.7x (linear; ~1ms baseline, noisy) worst run used 20%
+//   correlateEvents        7.4-18.2x (~n^1.25, sort + windowed scan) worst run used 49%
+//
+// Read the ratio spread and the allowance column together. correlateEvents touching 18x looks
+// close to 32, but its high ratios come from runs where the BASELINE landed near 5ms, and there
+// FLOOR_MS dominates the limit — so the assertion still had 2.1x of room. Every path keeps at
+// least 2x, and 32 stays 2x below the 64x a genuinely quadratic path would cost.
 const GROWTH_LIMIT = 32;
-// Absolute slack, so a sub-millisecond baseline (where timer resolution dominates and the
-// ratio is meaningless) can't fail the assertion on noise alone. Any genuinely quadratic
-// path costs far more than this at 10k events, so it does not blunt the check.
+// Absolute slack (CPU-ms), so a very small baseline — where measurement resolution and JIT
+// variance dominate and the ratio stops meaning anything — can't fail the assertion on noise
+// alone. This carries more weight than it looks: it is what keeps the cheap paths, and
+// correlateEvents on its fastest-baseline runs, comfortably inside the limit even when their raw
+// ratio spikes. Any genuinely quadratic path costs far more than this at 10k events, so it does
+// not blunt the check.
 const FLOOR_MS = 25;
 
 interface Growth { baseline: Measurement; full: Measurement; label: string; dimension: string }

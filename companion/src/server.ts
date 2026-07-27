@@ -27,12 +27,15 @@ import { registerTimelineRoutes } from "./routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
 import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
+import { registerCustodyRoutes } from "./routes/custody.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
+import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerComplianceRoutes } from "./routes/compliance.js";
 import { registerCoachRoutes } from "./routes/coach.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
@@ -117,8 +120,10 @@ import { StarredReportStore } from "./analysis/starredReportStore.js";
 import { TaggerStore } from "./analysis/taggerStore.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
+import { CustodyStore } from "./analysis/custody.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
+import { ComplianceControlStore } from "./analysis/complianceControl.js";
 import { PlaybookStore } from "./analysis/playbookStore.js";
 import { type PlaybookTask } from "./analysis/playbook.js";
 import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
@@ -146,7 +151,13 @@ import {
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
-import { createOriginGuard, parseAllowedOrigins } from "./http/originGuard.js";
+import {
+  createOriginGuard,
+  parseAllowedOrigins,
+  parseAllowedHosts,
+  parseAllowedHostSuffixes,
+} from "./http/originGuard.js";
+import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
@@ -346,11 +357,16 @@ export interface AppOptions {
   // clients over the WS to re-fetch after the per-case threshold changes.
   forensicGateControlStore?: ForensicGateControlStore;
   onForensicGate?: (caseId: string) => void;
+  custodyStore?: CustodyStore;
   // Per-case minimum-confidence display preference (#226) — a machine/analyst preference, not
   // investigation data, mirroring forensicGateControlStore's shape. Purely a display filter: nothing
   // is removed from state, only the dashboard's findings list defaults to this floor.
   confidenceControlStore?: ConfidenceControlStore;
   onConfidenceControl?: (caseId: string) => void;
+  // Per-case compliance-view settings (#336): the analyst-set incident-discovery date the
+  // notification clocks run from, and which frameworks to show. Both are inputs the ATT&CK ->
+  // obligation mapping cannot derive on its own — see analysis/complianceControl.ts.
+  complianceControlStore?: ComplianceControlStore;
   // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
   // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
   // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
@@ -604,9 +620,15 @@ export interface AppOptions {
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
   // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
-  // extension, loopback, and the server's own host). From DFIR_ALLOWED_ORIGINS — see
-  // src/http/originGuard.ts. Absent → only the built-in trusted origins.
+  // extension and loopback). From DFIR_ALLOWED_ORIGINS — see src/http/originGuard.ts.
+  // Absent → only the built-in trusted origins.
   allowedOrigins?: string[];
+  // Extra Host header values this companion answers to, beyond loopback and bare IP addresses.
+  // From DFIR_ALLOWED_HOSTS / DFIR_ALLOWED_HOST_SUFFIXES. Needed only when the dashboard is reached
+  // through a NAME rather than an address (reverse proxy, PaaS) — an unrecognised name is how a
+  // DNS-rebinding attack announces itself, so it cannot be inferred. See src/http/originGuard.ts.
+  allowedHosts?: string[];
+  allowedHostSuffixes?: string[];
 }
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
@@ -670,12 +692,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
   };
 
-  // Let the browser extension and the dashboard reach this localhost-only server, and turn every
-  // OTHER browser origin away (issue #211). Binding to 127.0.0.1 stops other machines, not other
-  // origins: without this gate any page you happen to be browsing could POST a custom tool here and
-  // have the companion spawn it. Non-browser callers (curl, scripted pushes) send no Origin and are
-  // unaffected. See src/http/originGuard.ts for the full threat model.
-  app.use(createOriginGuard({ allowedOrigins: options.allowedOrigins }));
+  // Let the browser extension and the dashboard reach this server, and turn every OTHER browser
+  // origin away (issue #211) — plus every request arriving under a hostname we do not answer to
+  // (#280), which is what a DNS-rebinding attack looks like from in here. Binding to 127.0.0.1
+  // stops other machines, not other origins: without this gate any page you happen to be browsing
+  // could POST a custom tool here and have the companion spawn it. Non-browser callers (curl,
+  // scripted pushes) are unaffected. See src/http/originGuard.ts for the full threat model.
+  app.use(createOriginGuard({
+    allowedOrigins: options.allowedOrigins,
+    allowedHosts: options.allowedHosts,
+    allowedHostSuffixes: options.allowedHostSuffixes,
+  }));
+
+  // Content-Security-Policy on every response. Deliberately does NOT constrain script/style — the
+  // dashboard's ~80 inline handlers and ~1157 style attributes have to be converted first, and a
+  // policy carrying 'unsafe-inline' would block nothing anyway. What this DOES buy while inline
+  // script is still allowed is egress: connect-src/img-src pin network access to this origin, so an
+  // injected script (see #281) cannot beacon case data or API keys out. See http/securityHeaders.ts.
+  app.use(createSecurityHeaders());
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
@@ -899,8 +933,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerAnalysisGraphRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
+  registerCustodyRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
+  // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
+  // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so
+  // registering the interactive report after it makes the route permanently unreachable.
+  registerInteractiveReportRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
@@ -909,6 +948,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
+  registerComplianceRoutes(app, ctx);
 
   const windowSize = options.windowSize ?? 4;
   const buffers = new Map<string, CaptureMetadata[]>();
@@ -2699,7 +2739,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
   // cytoscape+dagre for the graphs) plus first-party browser modules (the shared graph-view module
-  // used by the Login/Assets/Evidence graphs). Whitelisted paths only.
+  // used by the Login/Assets/Evidence graphs, and the command palette, #238). Whitelisted paths only.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
     "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
@@ -2708,6 +2748,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
     "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
     "/js/graph-view.js": "application/javascript; charset=utf-8",
+    "/js/command-palette.js": "application/javascript; charset=utf-8",
   };
   for (const [route, type] of Object.entries(vendorFiles)) {
     app.get(route, async (_req, res) => {
@@ -3368,7 +3409,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
+  const custodyStore = new CustodyStore(store);
   const confidenceControlStore = new ConfidenceControlStore(store);
+  const complianceControlStore = new ComplianceControlStore(store);
   const playbookStore = new PlaybookStore(store);
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
@@ -3401,6 +3444,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     synthMeta: synthMetaStore,
     lateralPathDismissals: lateralPathDismissStore,
     reportVersions: reportVersionStore,
+    complianceControl: complianceControlStore,
   });
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
@@ -3533,8 +3577,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     starredReportStore,
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
+    custodyStore,
     confidenceControlStore,
     onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
+    complianceControlStore,
     playbookStore,
     playbookHuntStore,
     playbookControlStore,
@@ -3560,9 +3606,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
-    // Extra browser origins permitted past the origin guard (#211), beyond the extension, loopback,
-    // and this server's own host. Comma-separated, e.g. "https://soc.example.com".
+    // Extra browser origins permitted past the origin guard (#211), beyond the extension and
+    // loopback. Comma-separated, e.g. "https://soc.example.com".
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
+    // Extra hostnames this companion answers to (#280), beyond loopback and bare IP addresses.
+    // Only a deployment reached through a NAME needs these — e.g. "dfir.example.com", or the
+    // suffix ".lab.example.com" where the platform mints a fresh hostname per session.
+    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
+    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
     importUndoStore,
     onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
     jobManager,
@@ -3767,14 +3818,18 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
 
   // Live state socket. Subscribing hands the socket every future broadcast of that case's FULL
-  // investigation state, so the upgrade is authorized first (#212): trusted origin, real case, and
-  // — because Express middleware never runs for a WebSocket upgrade — the same case-password check
-  // the HTTP routes get. See src/live/wsGate.ts.
+  // investigation state, so the upgrade is authorized first (#212): recognised host and trusted
+  // origin (#280), real case, and — because Express middleware never runs for a WebSocket upgrade
+  // — the same case-password check the HTTP routes get. See src/live/wsGate.ts.
   attachLiveSocket(server, hub, {
     store,
     // Same load-or-create call createApp makes, so both gates verify unlock cookies with one key.
     secret: loadOrCreateInstanceSecret(store.casesRoot),
+    // Same guard config the HTTP middleware gets, so a socket can never be admitted where a fetch
+    // to the same path would be refused.
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
+    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
+    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
   });
 }
 

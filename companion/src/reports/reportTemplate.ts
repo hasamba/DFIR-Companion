@@ -33,6 +33,7 @@ export const REPORT_SECTION_DEFS = [
   { key: "hypotheses", label: "Hypotheses (what we investigated & concluded)" },
   { key: "playbook", label: "Response Playbook" },
   { key: "d3fend", label: "Mitigation & defensive countermeasures (ATT&CK + D3FEND)" },
+  { key: "compliance", label: "Compliance Impact (control failures & notification obligations)" },
   { key: "notebook", label: "Analyst Notebook" },
 ] as const;
 
@@ -160,7 +161,8 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
   normalizeReportTemplate({
     id: "executive-brief",
     name: "Executive Brief",
-    description: "A short client-facing brief: cover, executive summary, and conclusions only.",
+    description:
+      "A short client-facing brief: cover, executive summary, compliance impact, and conclusions.",
     accentColor: "#0b6e4f",
     coverTitle: "Incident Report — Executive Brief",
     coverSubtitle: "{{organization}}{{#if incidentId}} · {{incidentId}}{{/if}}",
@@ -179,6 +181,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "hypotheses", enabled: false },
       { key: "playbook", enabled: false },
       { key: "d3fend", enabled: false },
+      { key: "compliance", enabled: true },
       { key: "notebook", enabled: false },
     ],
   }),
@@ -205,6 +208,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "hypotheses", enabled: true },
       { key: "playbook", enabled: true },
       { key: "d3fend", enabled: true },
+      { key: "compliance", enabled: true },
       { key: "notebook", enabled: true },
     ],
   }),

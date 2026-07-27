@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { readPublicAsset } from "../serverAssets.js";
+import { withNonce } from "../http/securityHeaders.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "../reports/reportTemplate.js";
 import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type NewHypothesis } from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
@@ -824,7 +825,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
       const tpl = await readPublicAsset("present.html", "utf8");
       const safeJson = JSON.stringify(deck).replace(/</g, "\\u003c");
-      const html = tpl.replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
+      // Standalone offline deck: opened from the filesystem, where no CSP header exists and a nonce
+      // would mean nothing. Strip the placeholder rather than stamp it, so the downloaded file
+      // carries no dangling __CSP_NONCE__ markers and its inline scripts run unconditionally.
+      const html = withNonce(tpl, "").replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res
         .type("html")
@@ -841,6 +845,6 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // backs the offline standalone-HTML export (which just embeds the deck via window.__DECK__).
   app.get("/cases/:id/present", async (_req, res) => {
     const html = await readPublicAsset("present.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 }
