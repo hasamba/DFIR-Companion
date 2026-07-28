@@ -1599,6 +1599,88 @@ describe("state and report routes", () => {
     expect(res.body.hints).toEqual([]);
   });
 
+  it("matches the case's technique sequence against the bundled playbook catalog", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-pbmatch-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    // Conti's documented chain, in order, on one host.
+    const chain = ["T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"];
+    seeded.forensicTimeline.push(
+      ...chain.map((t, i) => ({
+        id: `e${i}`,
+        timestamp: `2026-05-20T14:0${i}:00Z`,
+        description: t,
+        severity: "High" as const,
+        mitreTechniques: [t],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WKSTN01",
+      })),
+    );
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/playbook-match");
+    expect(res.status).toBe(200);
+    expect(res.body.caveat).toMatch(/not attribution/i);
+    expect(res.body.observed).toEqual(chain);
+    expect(res.body.matches[0].name).toBe("Conti");
+    expect(res.body.matches[0].score).toBe(100);
+    // every matched step points back at the event that evidences it
+    for (const s of res.body.matches[0].steps) {
+      expect(s.status).toBe("matched");
+      expect(chain).toContain(s.matchedTechnique);
+      expect(s.matchedEventId).toMatch(/^e\d$/);
+    }
+  });
+
+  it("holds playbook matches to the score floor and honours ?minScore / ?topN", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-pbmatch-floor-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
+    // Encryption alone ends every ransomware playbook — an overlap, not a sequence.
+    seeded.forensicTimeline.push({
+      id: "e1", timestamp: "2026-05-20T14:01:00Z", description: "ransom note", severity: "High",
+      mitreTechniques: ["T1486"], relatedFindingIds: [], sourceScreenshots: [],
+    });
+    await stateStore.save(seeded);
+
+    const res = await request(app).get("/cases/c1/playbook-match");
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toEqual([]);
+    expect(res.body.minScore).toBeGreaterThan(0);
+    // even with the floor dropped to zero, one shared step is structurally not a sequence
+    const forced = await request(app).get("/cases/c1/playbook-match?minScore=0");
+    expect(forced.body.matches).toEqual([]);
+    // a junk override falls back to the configured default rather than NaN-ing the comparison
+    const junk = await request(app).get("/cases/c1/playbook-match?minScore=abc&topN=abc");
+    expect(junk.status).toBe(200);
+    expect(junk.body.minScore).toBe(res.body.minScore);
+  });
+
+  it("404s playbook-match for an unknown case", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-pbmatch-404-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    const res = await request(app).get("/cases/nope/playbook-match");
+    expect(res.status).toBe(404);
+  });
+
+  it("501s playbook-match when no state store is configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-pbmatch-501-"));
+    const store = new CaseStore(root);
+    const app = createApp(store, {});
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const res = await request(app).get("/cases/c1/playbook-match");
+    expect(res.status).toBe(501);
+  });
+
   it("exports just the incident timeline as CSV on demand (no full report needed)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-timeline-csv-"));
     const store = new CaseStore(root);

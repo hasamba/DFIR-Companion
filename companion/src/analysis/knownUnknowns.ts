@@ -18,6 +18,7 @@ import type { CollectDirective, ForensicEvent, InvestigationState } from "./stat
 import { detectTimelineGaps, type GapOptions } from "./gapDetect.js";
 import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
 import type { NextTechnique } from "./adversaryEmulation.js";
+import type { PlaybookMatch } from "./playbookMatch.js";
 import { rankHosts } from "./hostRanking.js";
 import { rankConnectiveIocs } from "./iocAnchors.js";
 import { buildEvidenceGraph } from "./evidenceGraph.js";
@@ -42,28 +43,37 @@ const CORE_TACTICS: readonly IrisTactic[] = [
 export interface KnownUnknownsOptions {
   gapOptions?: GapOptions;                      // forwarded to detectTimelineGaps
   nextTechniques?: readonly NextTechnique[];    // from adversaryEmulation — caller supplies (needs the offline dataset)
+  playbookMatch?: PlaybookMatch | null;         // #230 top playbook match — caller supplies (needs the offline catalog)
   yieldWarning?: ImportYieldWarning | null;     // source-yield #10 trigger (a): a zero-yield AI import (caller loads importMeta)
   maxGaps?: number;                             // cap on coverage-gap lines (default 3)
   maxNextTechniques?: number;                   // cap on likely-next-technique lines (default 5)
+  maxPlaybookSteps?: number;                    // cap on unobserved-playbook-step lines (default 4)
   max?: number;                                 // hard cap on TOTAL bullets in the rendered block (default 10)
 }
 
 const DEFAULT_MAX_GAPS = 3;
 const DEFAULT_MAX_NEXT = 5;
+const DEFAULT_MAX_PLAYBOOK_STEPS = 4;
 const DEFAULT_MAX_TOTAL = 10;
 const MAX_HOSTS_PER_TACTIC = 3;
 
-export type KnownUnknownKind = "uncovered_tactic" | "silence_gap" | "likely_next_technique" | "yield_gap";
+export type KnownUnknownKind =
+  | "uncovered_tactic"
+  | "silence_gap"
+  | "likely_next_technique"
+  | "yield_gap"
+  | "playbook_step";
 
 // One structured gap the case is missing. `collect` carries deterministic "where to look" directives
-// (only for uncovered_tactic — silence gaps link to the existing Timeline Gaps panel, and likely-next
-// techniques are predictive hunt priorities, not a specific collection).
+// (for uncovered_tactic and playbook_step — silence gaps link to the existing Timeline Gaps panel, and
+// likely-next techniques are predictive hunt priorities, not a specific collection).
 export interface KnownUnknownItem {
   kind: KnownUnknownKind;
   label: string;                                          // the human sentence
-  tactic?: IrisTactic;                                    // uncovered_tactic / likely_next_technique
-  technique?: { id: string; name?: string };              // likely_next_technique
+  tactic?: IrisTactic;                                    // uncovered_tactic / likely_next_technique / playbook_step
+  technique?: { id: string; name?: string };              // likely_next_technique / playbook_step
   window?: { start: string; end: string; durationLabel: string; complete: boolean };  // silence_gap
+  playbook?: { name: string; score: number; reference?: string };                     // playbook_step
   collect: CollectDirective[];                            // deployable collection directives (may be empty)
 }
 
@@ -83,6 +93,13 @@ const TACTIC_EVIDENCE: Partial<Record<IrisTactic, readonly TacticEvidenceSpec[]>
   "Command and Control": [{ logSource: "DNS + web-proxy logs for the connective IOCs", artifact: "Windows.Network.Netstat" }],
   "Exfiltration": [{ logSource: "SRUM network-usage + USN journal for staged archives", artifact: "Windows.Forensics.SRUM" }],
   "Impact": [{ logSource: "Security.evtx + VSS/backup-deletion + ransom-note artifacts", artifact: "Windows.EventLogs.Evtx" }],
+  // The three below are NOT in CORE_TACTICS — their absence is rarely a lead on its own, so they
+  // never raise an "uncovered phase". They are here because a PLAYBOOK step can land on them (#230):
+  // once a named chain says credential theft happened at this point, "no LSASS-access telemetry" is
+  // a specific, collectable gap rather than a generic observation.
+  "Credential Access": [{ logSource: "Sysmon EID 10 LSASS access + Security.evtx 4656/4663 on lsass.exe", artifact: "Windows.EventLogs.Evtx" }],
+  "Discovery": [{ logSource: "Security.evtx 4688 + Sysmon EID 1 for net/nltest/AdFind-style enumeration", artifact: "Windows.EventLogs.Evtx" }],
+  "Defense Evasion": [{ logSource: "Security.evtx 1102 / Sysmon EID 1 for AV-tamper + log-clear activity", artifact: "Windows.EventLogs.Evtx" }],
 };
 
 function uniq(arr: readonly (string | undefined)[]): string[] {
@@ -250,7 +267,32 @@ export function buildKnownUnknownItems(
   const netGap = networkTelemetryWithoutDetector(state);
   if (netGap) items.push({ kind: "yield_gap", label: netGap, collect: [] });
 
-  // 4. Likely-next techniques — what lookalike actors use that this case hasn't shown (predictive hunt
+  // 4. Unobserved playbook steps (#230) — the case's technique sequence resembles a published
+  //    playbook, but these steps of it were never evidenced. That is a sharper gap than an uncovered
+  //    tactic: it names the specific stage the chain implies happened but nothing recorded, with the
+  //    same deterministic collection directive. `out-of-order` steps are deliberately excluded — the
+  //    evidence EXISTS there, only the ordering is off, which is a chronology question (clock skew,
+  //    collection lag) rather than something to go collect.
+  const pb = opts.playbookMatch;
+  if (pb) {
+    const maxSteps = Math.max(0, opts.maxPlaybookSteps ?? DEFAULT_MAX_PLAYBOOK_STEPS);
+    const where = pb.scope === "host" && pb.host ? ` on ${pb.host}` : "";
+    for (const s of pb.steps.filter((x) => x.status === "missing").slice(0, maxSteps)) {
+      items.push({
+        kind: "playbook_step",
+        ...(s.tactic ? { tactic: s.tactic } : {}),
+        technique: { id: s.step.technique, name: s.step.name },
+        playbook: { name: pb.name, score: pb.score, ...(pb.reference ? { reference: pb.reference } : {}) },
+        label:
+          `Not observed: ${s.step.technique} (${s.step.name})${s.tactic ? ` [${s.tactic}]` : ""} — ` +
+          `a step of the ${pb.name} playbook, which this case${where} otherwise matches ${pb.score}%. ` +
+          `Either it did not happen, or the evidence for it was not collected.`,
+        collect: s.tactic ? tacticCollectDirectives(s.tactic, state, scopedEvents, topHosts) : [],
+      });
+    }
+  }
+
+  // 5. Likely-next techniques — what lookalike actors use that this case hasn't shown (predictive hunt
   //    priorities; statistical similarity, NOT attribution). Caller supplies them.
   const maxNext = Math.max(0, opts.maxNextTechniques ?? DEFAULT_MAX_NEXT);
   for (const nt of (opts.nextTechniques ?? []).slice(0, maxNext)) {
@@ -277,7 +319,14 @@ export function renderKnownUnknowns(items: readonly KnownUnknownItem[], max: num
   if (uncovered.length) bullets.push(`No finding yet explains these ATT&CK phases: ${uncovered.join(", ")}.`);
 
   for (const i of items) {
-    if (i.kind === "silence_gap" || i.kind === "likely_next_technique" || i.kind === "yield_gap") bullets.push(i.label);
+    if (
+      i.kind === "silence_gap" ||
+      i.kind === "likely_next_technique" ||
+      i.kind === "yield_gap" ||
+      i.kind === "playbook_step"
+    ) {
+      bullets.push(i.label);
+    }
   }
 
   if (!bullets.length) return "";

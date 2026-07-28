@@ -102,6 +102,47 @@ describe("renderMarkdownReport", () => {
     expect(md).toMatch(/https:\/\/attack\.mitre\.org\/groups\/G\d{4}\//);
   });
 
+  it("renders the Likely playbook subsection (4.6.2) with a per-step breakdown and its source (#230)", () => {
+    const state = emptyState("c1");
+    // Conti's documented chain, in order — a 100% sequence match.
+    const chain = ["T1566.001", "T1059.001", "T1003.001", "T1021.002", "T1486"];
+    chain.forEach((t, i) => {
+      state.forensicTimeline.push({
+        id: `e${i}`, timestamp: `2026-05-28T10:0${i}:00.000Z`, description: t, severity: "High",
+        mitreTechniques: [t], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN01",
+      });
+    });
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("#### 4.6.2 Likely playbook");
+    expect(md).toContain("not attribution");
+    expect(md).toContain("Conti");
+    expect(md).toContain("**100%**");
+    expect(md).toContain("| # | Step | Tactic | Status | Evidence |");
+    expect(md).toContain("✅ matched");
+    // Links back to the advisory the chain was distilled from.
+    expect(md).toMatch(/\[source\]\(https:\/\/www\.cisa\.gov\//);
+  });
+
+  it("names an unobserved playbook step as an evidence gap (4.6.3) (#230)", () => {
+    const state = emptyState("c1");
+    // Conti's chain with the LSASS step absent — matched either side, so the chain still holds.
+    const chain = ["T1566.001", "T1059.001", "T1021.002", "T1486"];
+    chain.forEach((t, i) => {
+      state.forensicTimeline.push({
+        id: `e${i}`, timestamp: `2026-05-28T10:0${i}:00.000Z`, description: t, severity: "High",
+        mitreTechniques: [t], relatedFindingIds: [], sourceScreenshots: [], asset: "WKSTN01",
+      });
+    });
+
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("#### 4.6.3 Evidence gaps — what this case is missing");
+    expect(md).toContain("Unobserved playbook step");
+    expect(md).toContain("T1003.001");
+    // The gap must state the two readings — not-happened vs not-collected — never just "missing".
+    expect(md).toMatch(/did not happen, or the evidence for (it|them) was not collected/i);
+  });
+
   it("renders a complete-silence timeline gap in the §3.3 coverage section", () => {
     const state = emptyState("c1");
     // Dense one-minute cadence, then a 2-hour blackout, then activity resumes — one source.

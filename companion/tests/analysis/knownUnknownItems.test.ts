@@ -105,3 +105,63 @@ describe("derivePlaybookTasks — uncovered-tactic seeds (#9)", () => {
     expect(derivePlaybookTasks(s).some((t) => t.source === "known_unknown")).toBe(false);
   });
 });
+
+// #230: a step of a playbook the case otherwise follows, that nothing evidenced. Sharper than an
+// uncovered tactic — it names the specific stage the chain implies, and carries the same directive.
+describe("buildKnownUnknownItems — unobserved playbook steps (#230)", () => {
+  const contiMatch = (missing: string[]) => ({
+    name: "Conti",
+    description: "",
+    reference: "https://example.invalid/conti",
+    score: 80,
+    matchedCount: 4,
+    exactCount: 4,
+    outOfOrderCount: 0,
+    missingCount: missing.length,
+    scope: "host" as const,
+    host: "WKSTN01",
+    steps: [
+      { step: { technique: "T1566.001", name: "Spearphish" }, status: "matched" as const, tactic: "Initial Access" as const },
+      ...missing.map((t) => ({
+        step: { technique: t, name: `step ${t}` },
+        status: "missing" as const,
+        tactic: "Credential Access" as const,
+      })),
+    ],
+  });
+
+  it("emits one item per missing step, naming the playbook, the score and both readings", () => {
+    const items = buildKnownUnknownItems(seriousState(), seriousState().forensicTimeline, {
+      playbookMatch: contiMatch(["T1003.001"]),
+    });
+    const pb = items.filter((i) => i.kind === "playbook_step");
+    expect(pb).toHaveLength(1);
+    expect(pb[0].technique).toEqual({ id: "T1003.001", name: "step T1003.001" });
+    expect(pb[0].playbook).toEqual({ name: "Conti", score: 80, reference: "https://example.invalid/conti" });
+    expect(pb[0].label).toContain("Conti");
+    expect(pb[0].label).toContain("WKSTN01");   // the scope the match was found at
+    expect(pb[0].label).toMatch(/did not happen, or the evidence for it was not collected/i);
+    // Same deterministic "collect X from host Y" directive an uncovered tactic gets.
+    expect(pb[0].collect.length).toBeGreaterThan(0);
+  });
+
+  it("caps the number of missing steps reported", () => {
+    const items = buildKnownUnknownItems(seriousState(), seriousState().forensicTimeline, {
+      playbookMatch: contiMatch(["T1003.001", "T1003.002", "T1552", "T1555", "T1110"]),
+      maxPlaybookSteps: 2,
+    });
+    expect(items.filter((i) => i.kind === "playbook_step")).toHaveLength(2);
+  });
+
+  it("emits nothing when no playbook matched", () => {
+    const items = buildKnownUnknownItems(seriousState(), seriousState().forensicTimeline, {});
+    expect(items.some((i) => i.kind === "playbook_step")).toBe(false);
+  });
+
+  it("carries the step into the synthesis prompt block, so the model sees the same gap", () => {
+    const items = buildKnownUnknownItems(seriousState(), seriousState().forensicTimeline, {
+      playbookMatch: contiMatch(["T1003.001"]),
+    });
+    expect(renderKnownUnknowns(items)).toContain("T1003.001");
+  });
+});

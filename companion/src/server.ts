@@ -30,6 +30,7 @@ import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerCustodyRoutes } from "./routes/custody.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
+import { registerPlaybookMatchRoutes } from "./routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
@@ -956,6 +957,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerTaggerRoutes(app, ctx);
   registerCustodyRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
+  registerPlaybookMatchRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so

@@ -19,6 +19,8 @@ import { attackTechniqueMd } from "../analysis/attack.js";
 import { buildAdversaryHintsResult } from "../analysis/adversaryHints.js";
 import { ADVERSARY_EMULATION_CAVEAT } from "../analysis/adversaryEmulation.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../analysis/adversaryGroupsData.js";
+import { loadKnownPlaybooks } from "../analysis/knownPlaybooksData.js";
+import { buildPlaybookMatchResult, playbookMatchEnvOptions, type PlaybookMatch } from "../analysis/playbookMatch.js";
 import { buildD3fendResult, D3FEND_ACTION_INFO } from "../analysis/d3fendMap.js";
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { buildMitigationsResult } from "../analysis/attackMitigations.js";
@@ -384,18 +386,25 @@ function timelineAnomalies(state: InvestigationState, lines: string[]): void {
 // diffuse match reads differently from a 4-of-12 focused one, and the caveat is stated up front).
 // Evidence gaps (investigation-guidance #9): the kill-chain phases with no covering finding, each with
 // a deterministic "collect X from host Y" directive — the report analog of the dashboard Evidence Gaps
-// panel. Only the uncovered-tactic items are rendered here (silent windows already have §3.3, and
-// lookalike-actor next techniques are §4.6.1); "" when the case has none.
+// panel. Only the uncovered-tactic, source-yield and unobserved-playbook-step items are rendered here
+// (silent windows already have §3.3, and lookalike-actor next techniques are §4.6.1); "" when none.
 function evidenceGaps(state: InvestigationState, lines: string[], secondLookLeads: string[] = []): void {
-  const all = buildKnownUnknownItems(state, state.forensicTimeline);
+  const all = buildKnownUnknownItems(state, state.forensicTimeline, {
+    playbookMatch: topPlaybookMatch(state),
+  });
   const uncovered = all.filter((i) => i.kind === "uncovered_tactic");
   const yieldGaps = all.filter((i) => i.kind === "yield_gap");   // #10 source-yield blind spots
+  const pbSteps = all.filter((i) => i.kind === "playbook_step"); // #230 chain steps never evidenced
   const leads = secondLookLeads.filter((l) => l && l.trim());     // #11 second-look collection leads
-  if (!uncovered.length && !yieldGaps.length && !leads.length) return;
-  lines.push("#### 4.6.2 Evidence gaps — what this case is missing", "");
+  if (!uncovered.length && !yieldGaps.length && !pbSteps.length && !leads.length) return;
+  lines.push("#### 4.6.3 Evidence gaps — what this case is missing", "");
   lines.push("_Coverage gaps derived from the case (a lead, not proof). Collect the named evidence to close each._", "");
   for (const i of uncovered) {
     lines.push(`- **${i.tactic}** — ${cellMd(i.label)}`);
+    for (const c of i.collect) lines.push(`  - ${cellMd(collectSummary(c))}`);
+  }
+  for (const i of pbSteps) {
+    lines.push(`- **Unobserved playbook step** — ${cellMd(i.label)}`);
     for (const c of i.collect) lines.push(`  - ${cellMd(collectSummary(c))}`);
   }
   for (const i of yieldGaps) {
@@ -407,6 +416,90 @@ function evidenceGaps(state: InvestigationState, lines: string[], secondLookLead
     lines.push(`- **Unresolved lead** — ${cellMd(lead)} (searched the raw record, no evidence found yet — collect to confirm/deny)`);
   }
   lines.push("");
+}
+
+// The case's best playbook match, or null — shared by §4.6.2 and the evidence-gap section so the
+// report never names a chain in one place and gaps from a different one in the other.
+function topPlaybookMatch(state: InvestigationState): PlaybookMatch | null {
+  try {
+    const r = buildPlaybookMatchResult(state.forensicTimeline, loadKnownPlaybooks(), playbookMatchEnvOptions());
+    return r.matches[0] ?? null;
+  } catch {
+    return null;   // a catalog problem must never break the report
+  }
+}
+
+// 4.6.2 — Likely playbook (#230): whether the case's techniques occurred in an order a published
+// playbook describes. §4.6.1 answers "which techniques does this case share with a known group";
+// this answers "did they happen in that group's sequence", which is the stronger signal — and, via
+// the missing steps, tells the analyst exactly which stage to go collect. NOT attribution: the chain
+// is public tradecraft that many affiliates reuse.
+function likelyPlaybook(state: InvestigationState, lines: string[]): void {
+  const result = (() => {
+    try {
+      return buildPlaybookMatchResult(state.forensicTimeline, loadKnownPlaybooks(), playbookMatchEnvOptions());
+    } catch {
+      return null;
+    }
+  })();
+  if (!result) return;
+
+  lines.push("#### 4.6.2 Likely playbook", "");
+  lines.push(`_${result.caveat}_`, "");
+  if (result.observed.length === 0) {
+    lines.push("_No ATT&CK-tagged events in the timeline yet — sequence matching needs a chronology._", "");
+    return;
+  }
+  if (result.matches.length === 0) {
+    lines.push(
+      `_No published playbook matches the case's ${result.observed.length}-technique sequence at or above ` +
+        `${result.minScore}%._`,
+      "",
+    );
+    return;
+  }
+
+  const top = result.matches[0];
+  const where = top.scope === "host" && top.host ? ` on **${cellMd(top.host)}**` : " across the case timeline";
+  const ref = top.reference ? ` ([source](${top.reference}))` : "";
+  lines.push(
+    `The case's chronological technique sequence matches the **${cellMd(top.name)}** playbook at ` +
+      `**${top.score}%**${where}${ref} — ${top.matchedCount} of ${top.steps.length} steps observed in order ` +
+      `(${top.exactCount} at the exact sub-technique). ${cellMd(top.description)}`,
+    "",
+  );
+  lines.push("| # | Step | Tactic | Status | Evidence |", "| --- | --- | --- | --- | --- |");
+  top.steps.forEach((s, i) => {
+    const mark = s.status === "matched" ? "✅ matched" : s.status === "out-of-order" ? "🟡 out of order" : "❌ not observed";
+    const evidence =
+      s.status === "matched"
+        ? `${attackTechniqueMd(s.matchedTechnique ?? "")}${s.matchKind === "base" ? " _(base technique only)_" : ""}`
+        : s.status === "out-of-order"
+          ? "_observed, but not at a point that keeps the chain_"
+          : "_—_";
+    lines.push(
+      `| ${i + 1} | ${attackTechniqueMd(s.step.technique)} ${cellMd(s.step.name)} | ${cellMd(s.tactic ?? "—")} | ${mark} | ${evidence} |`,
+    );
+  });
+  lines.push("");
+
+  const missing = top.steps.filter((s) => s.status === "missing");
+  if (missing.length) {
+    lines.push(
+      `**Gaps.** ${missing.length} step(s) of this chain were never evidenced — ` +
+        `${missing.map((s) => `${s.step.technique} (${cellMd(s.step.name)})`).join(", ")}. ` +
+        "Either they did not happen, or the evidence for them was not collected; §4.6.3 carries the " +
+        "collection directive for each.",
+      "",
+    );
+  }
+  const runners = result.matches.slice(1);
+  if (runners.length) {
+    lines.push(
+      `Also considered: ${runners.map((m) => `${cellMd(m.name)} (${m.score}%)`).join(", ")}.`,
+      "",
+    );
+  }
 }
 
 function adversaryHints(state: InvestigationState, lines: string[]): void {
@@ -652,6 +745,8 @@ function investigation(state: InvestigationState, lines: string[], exposure?: Cu
   }
 
   adversaryHints(state, lines);
+
+  likelyPlaybook(state, lines);
 
   evidenceGaps(state, lines, secondLookLeads);
 

@@ -57,6 +57,8 @@ import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } fr
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "./importMeta.js";
 import { buildAdversaryHintsResult } from "./adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "./adversaryGroupsData.js";
+import { loadKnownPlaybooks } from "./knownPlaybooksData.js";
+import { buildPlaybookMatchResult, playbookMatchEnvOptions } from "./playbookMatch.js";
 import { buildSynthesisCoverage, type SynthMetaStore, type SynthesisCoverage } from "./synthMeta.js";
 import { AiCostStore, bucketForLabel } from "./aiCost.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
@@ -4401,9 +4403,13 @@ export class AnalysisPipeline {
   private knownUnknownItems(state: InvestigationState, scopedEvents: ForensicEvent[], yieldWarning?: ImportYieldWarning | null): KnownUnknownItem[] {
     try {
       const hints = buildAdversaryHintsResult(state, loadAdversaryGroupsDataset(), adversaryHintEnvOptions());
+      // #230: the top playbook match, so an unobserved step of a chain the case otherwise follows
+      // becomes a named gap. Scored over the SCOPED events, exactly as the panel and report see them.
+      const playbook = buildPlaybookMatchResult(scopedEvents, loadKnownPlaybooks(), playbookMatchEnvOptions());
       return buildKnownUnknownItems(state, scopedEvents, {
         gapOptions: gapEnvOptions(),
         nextTechniques: hints.nextTechniques,
+        playbookMatch: playbook.matches[0] ?? null,
         yieldWarning,
       });
     } catch {
