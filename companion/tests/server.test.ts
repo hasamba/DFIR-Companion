@@ -1461,6 +1461,32 @@ describe("state and report routes", () => {
     expect(state.body.keyQuestions.some((q: { pinned?: boolean }) => q.pinned)).toBe(true);
   });
 
+  it("POST /cases/:id/questions keeps every concurrently-added question", async () => {
+    // Each add is a load → append → save. Run them concurrently without the per-case StateLock
+    // and they all read the same starting state, so the last save wins and the rest of the
+    // analyst's questions vanish — the same read-modify-write race a synthesis running alongside
+    // an add would lose to.
+    const root = await mkdtemp(join(tmpdir(), "dfir-questions-race-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    // runStateExclusive is a no-op unless a StateLock is wired, so the lock has to be passed for
+    // this to test anything — startServer wires one.
+    const { StateLock } = await import("../src/analysis/stateLock.js");
+    const app = createApp(store, { stateStore, stateLock: new StateLock() });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await stateStore.save((await import("../src/analysis/stateTypes.js")).emptyState("c1"));
+
+    const adds = await Promise.all(Array.from({ length: 8 }, (_, i) =>
+      request(app).post("/cases/c1/questions").send({ question: `q${i}` })));
+    expect(adds.every((r) => r.status === 201)).toBe(true);
+
+    const state = await request(app).get("/cases/c1/state");
+    const questions = state.body.keyQuestions as { id: string; question: string }[];
+    expect(questions).toHaveLength(8);
+    expect(new Set(questions.map((q) => q.id)).size).toBe(8);          // no id collisions either
+    expect(new Set(questions.map((q) => q.question)).size).toBe(8);
+  });
+
   it("derives the asset ↔ IoC graph on demand", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-asset-graph-"));
     const store = new CaseStore(root);

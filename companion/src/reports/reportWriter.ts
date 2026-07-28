@@ -569,7 +569,22 @@ export class ReportWriter {
   async redactedReportContents(caseId: string, redact: (s: string) => string): Promise<RedactedReportContents> {
     const state = applyAnonDeep(await this.loadFilteredState(caseId), redact);
     const rawMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    const meta: ReportMeta = { ...applyAnonDeep(rawMeta, redact), companyLogo: rawMeta.companyLogo };
+    // The redacted export is meant for EXTERNAL parties. The anonymizer's apply() only tokenizes
+    // structured indicators (IP/email/host/domain/path/account/secret) — it has no detector for
+    // free-text PEOPLE names or the investigating firm's internal distribution list. Without
+    // stripping these, the redacted report shipped the victim org's CISO by name ("Chris Reynolds
+    // — CISO, GlobalTech Industries"), the VP Engineering, the case investigators, and the
+    // incident manager in cleartext (bug #18). These fields are firm-internal metadata, not case
+    // content an external party needs, so blank them in the redacted meta copy. The on-disk
+    // report (writeAll) keeps them; only the redacted export is affected.
+    const redactedMeta: ReportMeta = {
+      ...rawMeta,
+      investigators: [],
+      reviewer: "",
+      incidentManager: "",
+      distribution: [],
+    };
+    const meta: ReportMeta = { ...applyAnonDeep(redactedMeta, redact), companyLogo: rawMeta.companyLogo };
     const exposure = applyAnonDeep(await this.loadExposure(caseId), redact);
     const notebookEntries = applyAnonDeep(await this.loadNotebook(caseId), redact);
     const playbookTasks = applyAnonDeep(await this.loadPlaybook(caseId), redact);

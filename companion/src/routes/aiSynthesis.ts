@@ -569,13 +569,21 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
 
   // Save an analyst-edited narrative timeline. The analyst may edit the AI-generated narrative
   // before export; this persists the edit to state.narrativeTimeline until the next synthesis.
+  // Serialize the load→save on the per-case StateLock so this write can't race synthesis's locked
+  // persistLatest (which overwrites the whole state file) — without the lock whichever writer
+  // saves last silently destroys the other's data (analyst edit lost OR synthesis results lost).
   app.put("/cases/:id/narrative", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const narrative = typeof req.body?.narrativeTimeline === "string" ? req.body.narrativeTimeline : "";
     try {
-      const state = await options.stateStore.load(req.params.id);
-      const updated = { ...state, narrativeTimeline: narrative };
-      await options.stateStore.save(updated);
+      const stateStore = options.stateStore;
+      const saved = await ctx.runStateExclusive(req.params.id, async () => {
+        const state = await stateStore.load(req.params.id);
+        const updated = { ...state, narrativeTimeline: narrative };
+        await stateStore.save(updated);
+        return updated;
+      });
+      options.onState?.(saved);
       return res.status(200).json({ narrativeTimeline: narrative });
     } catch (err) {
       return sendPipelineError(res, err);
@@ -605,6 +613,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
 
   // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
   // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
+  // Serialized on the per-case StateLock (same as PUT /narrative) so a concurrent synthesis's
+  // persistLatest can't overwrite the analyst's just-added question.
   app.post("/cases/:id/questions", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
@@ -612,20 +622,24 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const statusIn = String(req.body?.status ?? "unknown");
     const status: QuestionStatus = statusIn === "answered" || statusIn === "partial" ? statusIn : "unknown";
     try {
-      const state = await options.stateStore.load(req.params.id);
-      const nums = state.keyQuestions.map((q) => Number(/^aq(\d+)$/.exec(q.id)?.[1])).filter((n) => !Number.isNaN(n));
-      const newQuestion: InvestigationQuestion = {
-        id: `aq${(nums.length ? Math.max(...nums) : 0) + 1}`,
-        question,
-        status,
-        answer: typeof req.body?.answer === "string" ? req.body.answer : "",
-        pointer: typeof req.body?.pointer === "string" ? req.body.pointer : "",
-        pinned: true,
-      };
-      const next = { ...state, keyQuestions: [...state.keyQuestions, newQuestion] };
-      await options.stateStore.save(next);
-      options.onState?.(next);
-      return res.status(201).json(newQuestion);
+      const stateStore = options.stateStore;
+      const result = await ctx.runStateExclusive(req.params.id, async () => {
+        const state = await stateStore.load(req.params.id);
+        const nums = state.keyQuestions.map((q) => Number(/^aq(\d+)$/.exec(q.id)?.[1])).filter((n) => !Number.isNaN(n));
+        const newQuestion: InvestigationQuestion = {
+          id: `aq${(nums.length ? Math.max(...nums) : 0) + 1}`,
+          question,
+          status,
+          answer: typeof req.body?.answer === "string" ? req.body.answer : "",
+          pointer: typeof req.body?.pointer === "string" ? req.body.pointer : "",
+          pinned: true,
+        };
+        const next = { ...state, keyQuestions: [...state.keyQuestions, newQuestion] };
+        await stateStore.save(next);
+        return { newQuestion, next };
+      });
+      options.onState?.(result.next);
+      return res.status(201).json(result.newQuestion);
     } catch (err) {
       return sendPipelineError(res, err);
     }
