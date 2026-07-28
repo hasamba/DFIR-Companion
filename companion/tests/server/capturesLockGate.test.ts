@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { _resetDedupCache } from "../../src/ingest/captureIngest.js";
 import { hashCasePassword } from "../../src/analysis/casePassword.js";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
 
 // POST /captures is a top-level route (not under /cases/:id), so createCaseLockGate never covers
 // it (see tests/analysis/caseLockGate.test.ts) — the route carries its own password check instead
@@ -29,6 +30,7 @@ const CAPTURE_BODY = {
 
 beforeEach(async () => {
   _resetDedupCache();
+  resetLimiters();
   const root = await mkdtemp(join(tmpdir(), "dfir-captureslock-"));
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -75,5 +77,31 @@ describe("POST /captures — case-password gate", () => {
   it("400s an invalid caseId before ever touching the store", async () => {
     const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, caseId: "../../etc/passwd" });
     expect(res.status).toBe(400);
+  });
+
+  it("rate-limits brute-force: 5 wrong passwords via /captures then 429 lockout", async () => {
+    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    // Hammer /captures with wrong passwords (the previously-unthrottled second entry point).
+    let statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
+      statuses.push(res.status);
+    }
+    // First 5 are 401 (failures), 6th triggers the lockout → 429.
+    expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
+    expect(statuses).toContain(429);
+    // After lockout, even the CORRECT password is rejected with 429 (lockout takes precedence).
+    const locked = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: "secret123" });
+    expect(locked.status).toBe(429);
+  });
+
+  it("shares the limiter with /unlock so /captures failures count toward /unlock lockout", async () => {
+    await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
+    // Burn attempts on /captures, then /unlock should already be locked out (shared counter).
+    for (let i = 0; i < 6; i++) {
+      await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
+    }
+    const unlock = await request(app).post("/cases/c1/unlock").send({ password: "secret123" });
+    expect(unlock.status).toBe(429);
   });
 });
