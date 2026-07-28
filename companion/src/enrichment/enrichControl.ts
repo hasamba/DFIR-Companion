@@ -40,12 +40,18 @@ export class EnrichControlStore {
     return join(this.cases.stateDir(caseId), "enrich-control.json");
   }
 
-  // Returns the raw stored control (possibly legacy-shaped), or null when never set.
+  // Returns the raw stored control (possibly legacy-shaped), or null when never set OR when the
+  // file is corrupt/unreadable (empty, truncated, hand-edited, a crash mid-write). A corrupt
+  // control previously threw JSON.parse's SyntaxError out of load, propagating to the lock gate
+  // and the enrichment engine — GET /cases/:id/enrich-control returned 500 and enrichment
+  // silently errored for that case with no recovery. Treat a corrupt file as "never set" (null)
+  // so the case degrades to the OPSEC-safe local-only default and the analyst can re-save (#6).
   async load(caseId: string): Promise<RawControl | null> {
     try {
       return JSON.parse(await readFile(this.path(caseId), "utf8")) as RawControl;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (err instanceof SyntaxError) return null;   // corrupt/unreadable → fall back to default
       throw err;
     }
   }
