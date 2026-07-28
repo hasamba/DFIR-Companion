@@ -36,6 +36,7 @@ export const REPORT_SECTION_DEFS = [
   { key: "d3fend", label: "Mitigation & defensive countermeasures (ATT&CK + D3FEND)" },
   { key: "compliance", label: "Compliance Impact (control failures & notification obligations)" },
   { key: "notebook", label: "Analyst Notebook" },
+  { key: "chainOfCustody", label: "Chain of Custody (per-artifact custody chain)" },
 ] as const;
 
 export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
@@ -187,6 +188,9 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "d3fend", enabled: false },
       { key: "compliance", enabled: true },
       { key: "notebook", enabled: false },
+      // Off for the same reason as sessions: a per-artifact custody table is operator detail, and
+      // this template exists to keep the client-facing brief short. The full report carries it.
+      { key: "chainOfCustody", enabled: false },
     ],
   }),
   normalizeReportTemplate({
