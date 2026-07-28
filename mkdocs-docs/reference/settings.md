@@ -4,30 +4,30 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 
 ---
 
-## Simple vs Advanced
+## Essential vs All
 
-Settings opens in **Simple**, which shows only the controls a feature is dead without — the AI
+Settings opens on **Essential**, which shows only the controls a feature is dead without — the AI
 models, enrichment and exposure API keys, and integration URLs and credentials — across six tabs.
-**Advanced** shows everything: all 16 tabs and every tuning knob. The choice is remembered per
-browser.
+**All** shows everything: 16 tabs and every tuning knob. The choice is remembered per browser.
 
 The rule, for anyone adding a field:
 
-> A control is **Simple** if the feature behind it does nothing until you type something in.
-> Anything with a working default is **Advanced**.
+> A control is **Essential** if the feature behind it does nothing until you type something in.
+> Anything with a working default lives under **All**.
 
-So credentials and endpoint URLs are Simple; timeouts, retry counts, throttle delays, output caps,
-TLS trust overrides (`_CA`, `_INSECURE`), and prompt-file overrides are Advanced. Tabs that manage
+So credentials and endpoint URLs are Essential; timeouts, retry counts, throttle delays, output
+caps, TLS trust overrides (`_CA`, `_INSECURE`), and prompt-file overrides are not. Tabs that manage
 content rather than configuration — IOC Whitelist, NSRL, Importers, KEV, Report Templates,
-Dashboard Views — are Advanced too: they are empty and working out of the box.
+Dashboard Views — sit under All too: they are empty and working out of the box.
 
-**Tools** is Advanced in full. Every external binary it wires up (Hayabusa, the Velociraptor CLI,
+**Tools** is All-only in full. Every external binary it wires up (Hayabusa, the Velociraptor CLI,
 Suricata, Snort, YARA) is blank-means-off, so nothing is broken by leaving them unconfigured —
-setting one up is a deliberate trip to Advanced rather than something a new install must face.
+setting one up is a deliberate trip to All rather than something a new install must face.
 
-In the markup a Simple control carries a `data-simple` attribute, so a newly added field is Advanced
-until someone opts it in. `companion/tests/settings/settingsSimpleAdvanced.test.ts` pins the full
-Simple set; adding to it means editing that list.
+In the markup an Essential control carries a `data-essential` attribute, so a newly added field
+stays out of Essential until someone opts it in.
+`companion/tests/settings/settingsEssentialAll.test.ts` pins the full Essential set; adding to it
+means editing that list.
 
 Hiding a field never changes what is saved. Save posts only the keys whose values you actually
 changed, so a field you cannot see cannot blank a `.env` key, and switching modes mid-edit keeps
