@@ -6,6 +6,7 @@ import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { applyFalsePositive, filterFalsePositiveEvents, type FalsePositiveStore } from "../analysis/falsePositive.js";
 import { renderMarkdownReport } from "./markdown.js";
+import type { CustodyRecord, CustodyStore } from "../analysis/custody.js";
 import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
@@ -102,6 +103,7 @@ export interface ReportWriterOptions {
   reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
   complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
   clockSkew?: ClockSkewStore;   // #228 per-host clock offsets + the alignment toggle
+  custodyStore?: CustodyStore;   // #231 chain-of-custody appendix
 }
 
 export class ReportWriter {
@@ -121,6 +123,7 @@ export class ReportWriter {
   private readonly lateralPathDismissals?: LateralPathDismissStore;
   private readonly reportVersions?: ReportVersionStore;
   private readonly complianceControl?: ComplianceControlStore;
+  private readonly custodyStore?: CustodyStore;
 
   constructor(
     private readonly cases: CaseStore,
@@ -128,6 +131,7 @@ export class ReportWriter {
     opts: ReportWriterOptions = {},
   ) {
     this.scope = opts.scope;
+    this.custodyStore = opts.custodyStore;
     this.falsePositives = opts.falsePositives;
     this.reportMeta = opts.reportMeta;
     this.customerExposure = opts.customerExposure;
@@ -498,10 +502,11 @@ export class ReportWriter {
     lateralPaths?: LateralPath[],
     modelPerf?: ModelPerfSnapshot | null,
     complianceControl?: ComplianceControl,
+    custody?: CustodyRecord[],
   ): RedactedReportContents {
     return {
-      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl),
-      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses),
+      markdown: renderMarkdownReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl, custody),
+      html: renderHtmlReport(state, meta, exposure, graph, notebookEntries, playbookTasks, template, hypotheses, custody),
       findingsCsv: findingsCsv(state),
       iocsCsv: iocsCsv(state),
       timelineCsv: timelineCsv(state),
@@ -537,7 +542,8 @@ export class ReportWriter {
     const lateralPaths = filterDismissedPaths(buildLateralPaths(state), await this.loadLateralPathDismissals(caseId));
     const modelPerf = await this.loadModelPerf(caseId);
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
-    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl);
+    const custody = this.custodyStore ? await this.custodyStore.load(caseId) : undefined;
+    const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl, custody);
     await writeFile(paths.markdown, c.markdown, "utf8");
     await writeFile(paths.html, c.html, "utf8");
     await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
@@ -606,6 +612,10 @@ export class ReportWriter {
     );
     // The control carries no case data (a date and a framework list), so it needs no redaction.
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl);
+    // Custody records live in custody.jsonl, NOT in investigation.json, so they never passed
+    // through the applyAnonDeep(state) above. Redacting them here is what stops the appendix
+    // shipping real hostnames, analyst names and filesystem paths to an external party (#231).
+    const custody = this.custodyStore ? applyAnonDeep(await this.custodyStore.load(caseId), redact) : undefined;
+    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl, custody);
   }
 }

@@ -3569,6 +3569,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const irisExportStore = new IrisExportStore(store);
   const lateralPathDismissStore = new LateralPathDismissStore(store);
   const reportWriter = new ReportWriterImpl(store, stateStore, {
+    custodyStore,
     scope: new ScopeStore(store),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
