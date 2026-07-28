@@ -87,23 +87,28 @@ async function pushEventsToTimesketch(
   // (non-fatal — if listing/deleting fails we still upload, but flag the possible duplication).
   // Matching by name is also what keeps the forensic and super-timeline pushes from clobbering
   // each other — they use different timelineName defaults within the same sketch.
+  // ONLY delete when we have events to replace it with — a zero-event push (all timestamps
+  // unparseable, or the source timeline is empty) must NOT destroy the existing timeline,
+  // otherwise a no-op re-push silently erases prior data with nothing to show for it.
   let replacedTimeline = false;
-  try {
-    for (const t of await client.listTimelines(sketch.id)) {
-      if (t.name === timelineName) {
-        await client.deleteTimeline(sketch.id, t.id);
-        replacedTimeline = true;
+  if (events.length) {
+    try {
+      for (const t of await client.listTimelines(sketch.id)) {
+        if (t.name === timelineName) {
+          await client.deleteTimeline(sketch.id, t.id);
+          replacedTimeline = true;
+        }
       }
+    } catch (err) {
+      warnings.push(`timeline cleanup: ${(err as Error).message} — a re-push may duplicate events`);
     }
-  } catch (err) {
-    warnings.push(`timeline cleanup: ${(err as Error).message} — a re-push may duplicate events`);
   }
 
   // 5. Upload (fatal on failure — the push has nothing else to do).
   if (events.length) {
     await client.uploadEvents(sketch.id, timelineName, jsonl);
   } else {
-    warnings.push("no events with a parseable timestamp to upload");
+    warnings.push("no events with a parseable timestamp to upload; existing timeline left untouched");
   }
 
   return {
