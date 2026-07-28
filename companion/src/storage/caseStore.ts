@@ -82,7 +82,7 @@ export class CaseStore {
   }
 
   /** Reserve the next never-yet-used sequence number for this case+kind. */
-  private reserveSequence(kind: "capture" | "import", caseId: string, countOnDisk: () => Promise<number>): Promise<number> {
+  private reserveSequence(kind: "capture" | "import" | "custody", caseId: string, countOnDisk: () => Promise<number>): Promise<number> {
     const key = `${kind}:${caseId}`;
     return this.seqLock.runExclusive(key, async () => {
       // Disk is authoritative across restarts (the map starts empty); the map is authoritative
@@ -123,6 +123,9 @@ export class CaseStore {
   }
   importsLogPath(caseId: string): string {
     return join(this.metadataDir(caseId), "imports.jsonl");
+  }
+  custodyLogPath(caseId: string): string {
+    return join(this.metadataDir(caseId), "custody.jsonl");
   }
   // Screenshot OCR full-text search index (#176). A sidecar — NOT captures.jsonl, which is
   // append-only — keyed by screenshotFile so a re-OCR replaces a row instead of duplicating it.
@@ -298,6 +301,13 @@ export class CaseStore {
     const updated = { ...existing, ...patch, caseId } as CaseMeta;
     await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
     return updated;
+  }
+
+  // Ordinal for the next chain-of-custody entry (#231). Same allocator as captures and imports, so a
+  // custody record that fails to append burns its number rather than letting the next one reuse it —
+  // gaps are the safe direction for provenance, reuse is not.
+  async nextCustodySeq(caseId: string): Promise<number> {
+    return this.reserveSequence("custody", caseId, () => this.countLogLines(this.custodyLogPath(caseId)));
   }
 
   async nextImportSeq(caseId: string): Promise<number> {
