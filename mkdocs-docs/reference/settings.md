@@ -4,6 +4,32 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 
 ---
 
+## Simple vs Advanced
+
+Settings opens in **Simple**, which shows only the controls a feature is dead without — API keys,
+service URLs, and tool binary paths — across seven tabs. **Advanced** shows everything: all 16 tabs
+and every tuning knob. The choice is remembered per browser.
+
+The rule, for anyone adding a field:
+
+> A control is **Simple** if the feature behind it does nothing until you type something in.
+> Anything with a working default is **Advanced**.
+
+So credentials, endpoint URLs and binary paths are Simple; timeouts, retry counts, throttle delays,
+output caps, TLS trust overrides (`_CA`, `_INSECURE`), and prompt-file overrides are Advanced. Tabs
+that manage content rather than configuration — IOC Whitelist, NSRL, Importers, KEV, Report
+Templates, Dashboard Views — are Advanced too: they are empty and working out of the box.
+
+In the markup a Simple control carries a `data-simple` attribute, so a newly added field is Advanced
+until someone opts it in. `companion/tests/settings/settingsSimpleAdvanced.test.ts` pins the full
+Simple set; adding to it means editing that list.
+
+Hiding a field never changes what is saved. Save posts only the keys whose values you actually
+changed, so a field you cannot see cannot blank a `.env` key, and switching modes mid-edit keeps
+whatever you have typed.
+
+---
+
 ## General
 
 - Case root location
