@@ -100,8 +100,55 @@ export function hasExposureFinding(
 // Excludes noise (registry hive / ATT&CK folder / generic word, via the same isNoiseDomain the
 // anonymizer uses) and any domain that is itself a case IOC (an adversary domain, never a
 // customer asset). Pure + deterministic.
+//
+// OPSEC: this is the list of domains sent to third-party breach-check APIs (HIBP, LeakCheck,
+// DeHashed). An adversary domain reaching this list leaks attacker infrastructure to those
+// third parties. The IOC-exclusion filter must therefore match not just exact IOC values but
+// also URL-IOC hosts and parent domains of any IOC value, and must reject bare public-suffix
+// TLDs (a 2-label host like "evil.com" would otherwise derive domain = "com" and query HIBP for
+// the "com" breach). See bug #30.
+function parentDomain(host: string): string {
+  const parts = host.toLowerCase().split(".");
+  // Keep the last two labels (the registrable domain) for a multi-label host; for a 2-label
+  // host the "parent" is the host itself, so this returns the same value.
+  return parts.length >= 2 ? parts.slice(-2).join(".") : host;
+}
+
+function isPublicSuffixOrTld(domain: string): boolean {
+  const d = domain.toLowerCase().trim();
+  if (!d) return true;
+  // A single label with no dot is not a registrable domain (it's a TLD or a noise word —
+  // isNoiseDomain already covers the known-noise ones; everything else single-label is a TLD).
+  if (!d.includes(".")) return true;
+  return false;
+}
+
+function iocHostsAndParents(iocs: { value: string; type: string }[]): string[] {
+  const out = new Set<string>();
+  for (const ioc of iocs) {
+    const v = ioc.value.toLowerCase().trim();
+    if (!v) continue;
+    let host = v;
+    if (ioc.type === "url") {
+      try { host = new URL(v).hostname; } catch { /* not a URL; treat the value as the host */ }
+    }
+    if (!host || !host.includes(".")) continue;
+    out.add(host);
+    out.add(parentDomain(host));
+  }
+  return [...out];
+}
+
+// Anything at or under an adversary name is adversary too. An exact-set lookup is not enough:
+// an asset of "a.b.evil.com" derives the domain "b.evil.com", which equals neither the IOC
+// ("evil.com") nor its registrable parent, so the exact check waved it straight through to HIBP
+// — the leak this filter exists to stop.
+function isAtOrUnder(candidate: string, excluded: readonly string[]): boolean {
+  return excluded.some((e) => candidate === e || candidate.endsWith("." + e));
+}
+
 export function extractCaseDomains(state: InvestigationState): string[] {
-  const iocVals = new Set(state.iocs.map((i) => i.value.toLowerCase()));
+  const excluded = iocHostsAndParents(state.iocs);
   const domains = new Set<string>();
   for (const e of state.forensicTimeline) {
     const host = e.asset?.trim().toLowerCase();
@@ -109,7 +156,9 @@ export function extractCaseDomains(state: InvestigationState): string[] {
     const dot = host.indexOf(".");
     if (dot <= 0) continue; // no dot (or leading dot) — not a FQDN, nothing to derive
     const domain = host.slice(dot + 1);
-    if (isNoiseDomain(domain) || iocVals.has(domain)) continue;
+    if (isNoiseDomain(domain)) continue;
+    if (isPublicSuffixOrTld(domain)) continue;       // bare TLD like "com"/"org" — never a customer domain
+    if (isAtOrUnder(domain, excluded) || isAtOrUnder(host, excluded)) continue;  // adversary domain (IOC) — OPSEC boundary
     domains.add(domain);
   }
   return [...domains];
