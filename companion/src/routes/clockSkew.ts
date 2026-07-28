@@ -44,7 +44,7 @@ export function registerClockSkewRoutes(app: Express, ctx: RouteContext): void {
     if (!options.clockSkewStore) return res.status(501).json({ error: "clock-skew store not configured" });
     try {
       const state = await options.stateStore.load(req.params.id);
-      const report = detectClockSkew(correlationGroups(state.forensicTimeline), thresholds);
+      const report = detectClockSkew(correlationGroups(state.forensicTimeline, { crossHostArtifacts: true }), thresholds);
       const record = await options.clockSkewStore.recordDetection(req.params.id, report, { replace: req.body?.replace === true });
       options.onClockSkew?.(req.params.id);
       return res.status(200).json({ ...record, thresholds, anchorGroups: report.anchorGroups, groupsExamined: report.groupsExamined });

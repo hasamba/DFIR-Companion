@@ -1753,7 +1753,7 @@ export class AnalysisPipeline {
     if (!store) return undefined;
     let record;
     try {
-      const report = detectClockSkew(correlationGroups(preMerge, opts), opts);
+      const report = detectClockSkew(correlationGroups(preMerge, { ...opts, crossHostArtifacts: true }), opts);
       record = await store.recordDetection(caseId, report);
     } catch {
       try { record = await store.load(caseId); } catch { return undefined; }
