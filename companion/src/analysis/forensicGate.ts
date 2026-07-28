@@ -2,7 +2,13 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 
 // Info is the "don't know / not suspicious" floor; Low+ is a deliberate signal (source verdict or
 // one of our deterministic rules). The forensic timeline keeps Low+ and above; Info telemetry is
-// routed to the super-timeline only. See docs/superpowers/specs/2026-07-03-forensic-severity-gate-ioc-provenance-design.md.
+// routed to the super-timeline only.
+//
+// The consequence to hold on to: anything graded Info never reaches the forensic timeline, so the
+// AI cannot see it. A detection that matters must be graded above Info — which is what the
+// deterministic content tagger does at the route seam, promoting high-value telemetry AFTER import.
+// Gating Info out earlier, at merge time, was tried and reverted: it hid exactly the events the
+// tagger would have promoted.
 export const SEVERITY_RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
 const VALID: readonly Severity[] = ["Info", "Low", "Medium", "High", "Critical"];
