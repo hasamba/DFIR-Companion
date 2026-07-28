@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import sharp from "sharp";
 import {
   ocrRedactImage,
@@ -174,16 +174,48 @@ describe("ocrRedactImage", () => {
 });
 
 describe("TesseractOcrRunner", () => {
-  it("resolves a callable recognize() from the tesseract.js module shape", async () => {
-    // Regression guard: tesseract.js is CommonJS, so under ESM dynamic import `recognize`
-    // lives on the default export, NOT as a top-level named binding (`mod.recognize` is
+  it("resolves a callable createWorker() from the tesseract.js module shape", async () => {
+    // Regression guard: tesseract.js is CommonJS, so under ESM dynamic import `createWorker`
+    // lives on the default export, NOT as a top-level named binding (`mod.createWorker` is
     // undefined). The runner must read it off `.default`. Importing the namespace does not
-    // spawn the WASM worker (that only happens on an actual recognize() call), so this stays
+    // spawn the WASM worker (that only happens on an actual createWorker() call), so this stays
     // within the "no real OCR in tests" invariant while still catching the broken-import bug.
     const mod = await import("tesseract.js");
-    const recognize = mod.default?.recognize ?? mod.recognize;
-    expect(typeof recognize).toBe("function");
+    const createWorker = mod.default?.createWorker ?? mod.createWorker;
+    expect(typeof createWorker).toBe("function");
     // The runner exists and exposes the method we wire into the pipeline.
     expect(typeof new TesseractOcrRunner().recognize).toBe("function");
+  });
+
+  // The whole point of the explicit worker lifecycle: tesseract.js's onMessage handler does
+  // `if (errorHandler) errorHandler(data); else throw Error(data)` (createWorker.js). That bare
+  // throw runs on the worker's message loop, so nothing in our call stack can catch it and a
+  // single malformed screenshot takes the server down. Passing an errorHandler turns it into a
+  // rejected recognize() promise, which pumpOcrQueue already handles.
+  it("passes an errorHandler so a worker-side abort rejects instead of throwing uncaught", async () => {
+    const seen: { errorHandler?: unknown; terminated: boolean } = { terminated: false };
+    vi.doMock("tesseract.js", () => ({
+      default: {
+        createWorker: async (_langs: string, _oem: number, options: { errorHandler?: unknown }) => {
+          seen.errorHandler = options?.errorHandler;
+          return {
+            // A WASM abort surfaces here as a rejection once an errorHandler is installed.
+            recognize: async () => { throw new Error("Aborted(). Build with -sASSERTIONS"); },
+            terminate: async () => { seen.terminated = true; },
+          };
+        },
+      },
+    }));
+    // Re-import so the runner's dynamic `import("tesseract.js")` resolves to the mock above.
+    vi.resetModules();
+    const { TesseractOcrRunner: Runner } = await import("../../src/analysis/ocrRedact.js");
+    try {
+      await expect(new Runner().recognize(Buffer.from("not a real png"))).rejects.toThrow(/Aborted/);
+      expect(typeof seen.errorHandler).toBe("function"); // without this the library throws uncaught
+      expect(seen.terminated).toBe(true);                // and the worker is not leaked
+    } finally {
+      vi.doUnmock("tesseract.js");
+      vi.resetModules();
+    }
   });
 });
