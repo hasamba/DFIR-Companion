@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { hashFile } from "../analysis/custody.js";
+import { hashFile, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
 
@@ -38,6 +38,13 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     const collectedBy = typeof req.body?.collectedBy === "string" ? req.body.collectedBy.trim() : "";
     const source = typeof req.body?.source === "string" ? req.body.source.trim() : "";
     const trigger = typeof req.body?.trigger === "string" ? req.body.trigger.trim() : "";
+    // An unrecognized event is rejected rather than quietly filed as a collection: this is the route
+    // an analyst uses to record a transfer or a release, and a custody chain that silently relabels
+    // what happened to the evidence is worse than one that refuses the entry.
+    const rawEvent = req.body?.event;
+    if (rawEvent !== undefined && !isCustodyEvent(rawEvent)) {
+      return res.status(400).json({ error: `event must be one of: ${CUSTODY_EVENTS.join(", ")}` });
+    }
     let sha256: string;
     try {
       sha256 = await hashFile(artifactPath);
@@ -53,6 +60,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         source,
         trigger,
         caseId,
+        event: rawEvent,
       });
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "custody-record", actor: collectedBy || "analyst",
@@ -69,12 +77,22 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     const caseId = req.params.id;
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
     try {
-      const mismatches = await options.custodyStore.verifyIntegrity(caseId);
+      // Two independent questions: did the EVIDENCE change (re-hash each artifact), and did the LOG
+      // change (walk the chain). Either alone misses a whole class of tampering — swapping a file
+      // leaves the chain intact, and rewriting who collected it leaves every hash intact.
+      const [mismatches, chainBreaks] = await Promise.all([
+        options.custodyStore.verifyIntegrity(caseId),
+        options.custodyStore.verifyChain(caseId),
+      ]);
+      const problems = [
+        mismatches.length ? `${mismatches.length} mismatch(es)` : "",
+        chainBreaks.length ? `${chainBreaks.length} chain break(s)` : "",
+      ].filter(Boolean);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "custody-verify",
-        detail: mismatches.length === 0 ? "integrity verified — no mismatches" : `${mismatches.length} mismatch(es)`,
+        detail: problems.length === 0 ? "integrity verified — no mismatches, chain intact" : problems.join(", "),
       });
-      return res.status(200).json({ ok: mismatches.length === 0, mismatches });
+      return res.status(200).json({ ok: problems.length === 0, mismatches, chainBreaks });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

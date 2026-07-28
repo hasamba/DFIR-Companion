@@ -286,6 +286,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         req.params.id,
         exportOptions,
       );
+      // The package carries redacted derivatives rather than the originals, but the evidence still
+      // left the instance — so each artifact under custody gets an `exported` event naming the
+      // redacted package as its destination (#231).
+      await options.custodyStore?.recordExport(req.params.id, { exportedBy: "analyst", destination: "redacted export package" });
       res.type("application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${redactedExportFilename(req.params.id)}"`);
       res.setHeader("Cache-Control", "private, no-cache");

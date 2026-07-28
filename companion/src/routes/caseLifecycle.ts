@@ -238,6 +238,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       logLine(`[archive] starting archive for case=${id}`);
       const result = await archiveCase(store.casesRoot, id, {}, meta.name, store.caseDir(id));
       logLine(`[archive] done case=${id} files=${result.manifest.totalFiles} bytes=${result.manifest.totalBytes} path=${result.archivePath}`);
+      // Evidence just left the instance, so every artifact under custody gets an `exported` event
+      // (#231). Recorded only after the archive exists — a failed export must never log one that
+      // happened — and before removeFromList, though either order works: custody paths are stored
+      // relative to the case dir, so the move to _archived/ does not disturb them.
+      await options.custodyStore?.recordExport(id, { exportedBy: meta.investigator || "analyst", destination: `zip archive: ${result.archivePath}` });
       let removedFromList = false;
       let removeFromListError: string | undefined;
       if (removeFromList) {
@@ -466,6 +471,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       const archive = await exportEncryptedCase(store, id, password);
       const filename = dfircaseFilename(id, meta?.name);
+      // Same as the ZIP path: the evidence is leaving, so the chain records it (#231).
+      await options.custodyStore?.recordExport(id, { exportedBy: meta?.investigator || "analyst", destination: `encrypted archive: ${filename}` });
       let removedFromList = false;
       if (removeFromList) {
         const outcome = await removeCaseFromActiveListBestEffort(id, "[export]");
