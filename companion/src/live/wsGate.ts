@@ -88,6 +88,20 @@ export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeD
 export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDeps): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
 
+  // Ping/reaper: every 30s, mark each socket dead (isAlive=false), ping it, and let the pong
+  // handler flip it back alive. On the NEXT sweep, anything still dead is terminated and dropped
+  // from the hub. Without this a client that vanishes without a close frame (laptop sleep, NAT
+  // timeout, Wi-Fi loss — common for a localhost dashboard left open) lingers in `hub.subs`
+  // forever (memory leak) and the next broadcast's `send()` to the half-open socket throws an
+  // unhandled 'error' on the WebSocket (no error listener was attached) → process crash.
+  const REAPER_INTERVAL_MS = 30_000;
+  const reaper = setInterval(() => hub.sweepReaper(), REAPER_INTERVAL_MS);
+  // Don't keep the process alive just for the reaper (tests rely on the event loop emptying).
+  if (typeof reaper.unref === "function") reaper.unref();
+  // Stop sweeping once this server is closed, so a test (or a /settings/reload) that attaches a
+  // second WebSocketServer doesn't leave the first one's timer pinging a hub nobody serves.
+  wss.on("close", () => clearInterval(reaper));
+
   server.on("upgrade", (req, socket, head) => {
     // Only claim our own path; anything else is left for another handler to answer (or to time out).
     const path = new URL(req.url ?? "", "http://localhost").pathname;
@@ -103,8 +117,20 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
         }
         const { caseId } = decision;
         wss.handleUpgrade(req, socket, head, (ws) => {
-          hub.subscribe(caseId, ws as unknown as SocketLike);
-          ws.on("close", () => hub.unsubscribe(caseId, ws as unknown as SocketLike));
+          const sock = ws as unknown as SocketLike;
+          // Track liveness for the ping/reaper: pong flips isAlive back to true.
+          sock.isAlive = true;
+          // ws attaches no default 'error' handler; an unhandled 'error' event (a send to a
+          // half-open peer, a protocol/RST error) would throw "Unhandled 'error' event" and
+          // kill the process. Contain it: log + drop from the hub so we stop broadcasting to it.
+          ws.on("error", () => {
+            try { ws.terminate(); } catch { /* already gone */ }
+            hub.unsubscribe(caseId, sock);
+          });
+          // pong handler: mark alive so the next reaper sweep doesn't terminate us.
+          ws.on("pong", () => { sock.isAlive = true; });
+          hub.subscribe(caseId, sock);
+          ws.on("close", () => hub.unsubscribe(caseId, sock));
           wss.emit("connection", ws, req);
         });
       })
