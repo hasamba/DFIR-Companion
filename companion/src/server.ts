@@ -129,6 +129,7 @@ import { TaggerStore } from "./analysis/taggerStore.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
 import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
 import { CustodyStore } from "./analysis/custody.js";
+import { EvidenceIntegrityMonitor, resolveIntegrityConfig } from "./analysis/custodyIntegrity.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
 import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
 import { ComplianceControlStore } from "./analysis/complianceControl.js";
@@ -255,6 +256,11 @@ export function getServerLogger(): Logger { return serverLogger; }
 function logLine(msg: string): void { serverLogger.info(msg); }
 function warnLine(msg: string): void { serverLogger.warn(msg); }
 
+// Delay before the first evidence-integrity sweep after boot. Long enough to stay out of the
+// startup path, short enough that Diagnostics reports a real answer rather than "not verified
+// yet" for a whole interval (#231).
+const INITIAL_INTEGRITY_SWEEP_DELAY_MS = 60_000;
+
 // Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry.
 function shortValue(value: string): string {
   return value.length > 24 ? `${value.slice(0, 24)}…` : value;
@@ -374,6 +380,7 @@ export interface AppOptions {
   forensicGateControlStore?: ForensicGateControlStore;
   onForensicGate?: (caseId: string) => void;
   custodyStore?: CustodyStore;
+  integrityMonitor?: EvidenceIntegrityMonitor;
   // Per-case minimum-confidence display preference (#226) — a machine/analyst preference, not
   // investigation data, mirroring forensicGateControlStore's shape. Purely a display filter: nothing
   // is removed from state, only the dashboard's findings list defaults to this floor.
@@ -3612,6 +3619,43 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     logLine(`[backup] automatic backups every ${backupConfig.intervalMs / 1000}s (retain ${backupConfig.retain})`);
   }
 
+  // Periodic evidence re-verification (#231 item 3). Scheduled here beside the backup timer rather
+  // than inside BackupManager: it reuses that scheduling PATTERN, but state backups and custody
+  // verification are unrelated concerns and folding one into the other would only couple them.
+  const integrityConfig = resolveIntegrityConfig(process.env);
+  const integrityMonitor = new EvidenceIntegrityMonitor(store, custodyStore, integrityConfig, (sweep) => {
+    const problems = [
+      sweep.failedArtifacts ? `${sweep.failedArtifacts} artifact(s) failed verification` : "",
+      sweep.chainBreaks ? `${sweep.chainBreaks} custody-log chain break(s)` : "",
+    ].filter(Boolean).join(", ");
+    warnLine(`[custody] EVIDENCE INTEGRITY ALERT — ${problems} across ${sweep.problemCases.length} case(s): ${sweep.problemCases.map((c) => c.caseId).join(", ")}`);
+    // One notification per affected case, so it lands in that case's feed where an analyst will
+    // see it rather than in a global channel nobody is watching. Fully guarded, like onSynth
+    // below: notifications are a side channel and must never break the sweep.
+    try {
+      for (const problem of sweep.problemCases) {
+        const url = `${dashboardBaseUrl}/dashboard?caseId=${encodeURIComponent(problem.caseId)}`;
+        const event = milestoneEvent(problem.caseId, "Evidence integrity check FAILED", [
+          `${problem.mismatches.length} artifact(s) failed verification, ${problem.chainBreaks.length} custody-log chain break(s).`,
+          ...problem.mismatches.slice(0, 5).map((m) => `${m.reason}: ${m.artifactPath}`),
+        ], sweep.finishedAt);
+        notifier.dispatch({ ...event, url }).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
+      }
+    } catch (err) {
+      logLine(`[custody] integrity alert dispatch error: ${(err as Error).message}`);
+    }
+  });
+  if (integrityConfig.intervalMs > 0) {
+    const integrityTimer = setInterval(() => { void integrityMonitor.runSweepIfIdle(); }, integrityConfig.intervalMs);
+    integrityTimer.unref();
+    // A first sweep shortly after boot, so Diagnostics reports a real answer instead of "not
+    // verified yet" for a whole interval. Delayed rather than inline: re-hashing every artifact
+    // must not sit in the startup path.
+    const firstSweep = setTimeout(() => { void integrityMonitor.runSweepIfIdle(); }, INITIAL_INTEGRITY_SWEEP_DELAY_MS);
+    firstSweep.unref();
+    logLine(`[custody] evidence integrity sweep every ${integrityConfig.intervalMs / 1000}s`);
+  }
+
   const provider = buildProvider();
   const synthesisProvider = buildSynthesisProvider();
   const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
@@ -3713,6 +3757,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
     custodyStore,
+    integrityMonitor,
     confidenceControlStore,
     onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
     complianceControlStore,
