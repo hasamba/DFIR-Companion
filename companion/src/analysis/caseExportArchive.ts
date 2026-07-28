@@ -88,7 +88,15 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
  * Build a `.dfircase` file: the whole case directory zipped, then AES-256-GCM encrypted with a
  * password-derived key. Throws if the case doesn't exist (no files under its directory).
  */
-export async function exportEncryptedCase(store: CaseStore, caseId: string, password: string): Promise<Buffer> {
+export async function exportEncryptedCase(
+  store: CaseStore,
+  caseId: string,
+  password: string,
+  // Files generated for the archive rather than read from the case dir — currently the signed
+  // chain-of-custody manifest (#231). Passed in rather than written into the case first, so
+  // exporting never mutates the case it is exporting.
+  extraEntries: ZipEntry[] = [],
+): Promise<Buffer> {
   if (!isValidCaseId(caseId)) throw new Error(`invalid case id "${caseId}"`);
   const caseDir = store.caseDir(caseId);
   const relPaths = (await walkDir(caseDir)).map((p) => p.replace(/\\/g, "/"));
@@ -108,6 +116,13 @@ export async function exportEncryptedCase(store: CaseStore, caseId: string, pass
     entries.push({ path: rel, data });
     manifestFiles.push({ path: rel, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length });
     totalBytes += data.length;
+  }
+  // Listed in archive-manifest.json alongside the case's own files, so a recipient checking the
+  // archive's checksums sees the generated entries too.
+  for (const entry of extraEntries) {
+    entries.push(entry);
+    manifestFiles.push({ path: entry.path, sha256: createHash("sha256").update(entry.data).digest("hex"), bytes: entry.data.length });
+    totalBytes += entry.data.length;
   }
   const manifest = {
     caseId,

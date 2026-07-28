@@ -24,6 +24,7 @@ import { logActivity, ACTIVITY_CATEGORIES, type ActivityCategory } from "../anal
 import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
+import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
 import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, validateEnvUpdates } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
@@ -83,7 +84,7 @@ import type { RouteContext } from "./context.js";
  */
 export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): void {
   const {
-    store, options, serverLogger, hasAiProvider,
+    store, options, serverLogger, hasAiProvider, instanceSecret,
     dispatchNotify, ensureDropFolders, runStateExclusive, resynthesizeInBackground,
     syncPlaybook, reloadImporters,
   } = ctx;
@@ -469,7 +470,15 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const meta = await store.getCaseMeta(id);
       if (meta?.status === "archived") return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
-      const archive = await exportEncryptedCase(store, id, password);
+      // The signed custody manifest travels inside the archive, so the recipient can verify the
+      // chain — including its length, which the log alone cannot vouch for (#231).
+      const custodyManifest = options.custodyStore
+        ? [{
+            path: CUSTODY_MANIFEST_FILENAME,
+            data: Buffer.from(JSON.stringify(await buildCustodyManifest(store, options.custodyStore, id, instanceSecret), null, 2), "utf8"),
+          }]
+        : [];
+      const archive = await exportEncryptedCase(store, id, password, custodyManifest);
       const filename = dfircaseFilename(id, meta?.name);
       // Same as the ZIP path: the evidence is leaving, so the chain records it (#231).
       await options.custodyStore?.recordExport(id, { exportedBy: meta?.investigator || "analyst", destination: `encrypted archive: ${filename}` });

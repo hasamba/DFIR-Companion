@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { injectPrintTrigger } from "../reports/html.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -7,6 +7,7 @@ import { milestoneEvent } from "../analysis/notifications.js";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
+import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -54,7 +55,7 @@ import type { RouteContext } from "./context.js";
  * iris-import handler keeps its original logLine(...) calls verbatim.
  */
 export function registerReportsExportRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, dispatchNotify, resynthesizeInBackground } = ctx;
+  const { store, options, dispatchNotify, resynthesizeInBackground, instanceSecret } = ctx;
 
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved call
   // sites stay verbatim.
@@ -64,6 +65,14 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
       const paths = await options.reportWriter.writeAll(req.params.id);
+      // The report is the court-facing deliverable, so the signed custody manifest is written
+      // beside it — a report whose evidence provenance cannot be checked is the gap #231 exists to
+      // close. Written after the report so a failed generation leaves no manifest claiming one.
+      if (options.custodyStore) {
+        const manifest = await buildCustodyManifest(store, options.custodyStore, req.params.id, instanceSecret);
+        await mkdir(store.reportsDir(req.params.id), { recursive: true });
+        await writeFile(join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), "utf8");
+      }
       dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "export", action: "report-generated", detail: "report (Markdown + HTML) regenerated",
