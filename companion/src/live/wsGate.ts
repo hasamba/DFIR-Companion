@@ -98,6 +98,9 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
   const reaper = setInterval(() => hub.sweepReaper(), REAPER_INTERVAL_MS);
   // Don't keep the process alive just for the reaper (tests rely on the event loop emptying).
   if (typeof reaper.unref === "function") reaper.unref();
+  // Stop sweeping once this server is closed, so a test (or a /settings/reload) that attaches a
+  // second WebSocketServer doesn't leave the first one's timer pinging a hub nobody serves.
+  wss.on("close", () => clearInterval(reaper));
 
   server.on("upgrade", (req, socket, head) => {
     // Only claim our own path; anything else is left for another handler to answer (or to time out).

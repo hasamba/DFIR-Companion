@@ -28,7 +28,7 @@ export class LiveHub {
 
   /** For the ping/reaper: every socket that has not ponged since the last sweep is dead. */
   sweepReaper(): void {
-    for (const set of this.subs.values()) {
+    for (const [caseId, set] of this.subs) {
       for (const socket of set) {
         if (socket.isAlive === false) {
           socket.terminate?.();
@@ -36,12 +36,16 @@ export class LiveHub {
           continue;
         }
         socket.isAlive = false;
-        try { socket.ping?.(); } catch { set.delete(socket); }
+        // A ping to an already-dead peer throws; that socket is gone, so close it out the same
+        // way the broadcast paths do rather than dropping the reference and leaking the handle.
+        try {
+          socket.ping?.();
+        } catch {
+          set.delete(socket);
+          socket.terminate?.();
+        }
       }
-      if (set.size === 0) {
-        const caseId = [...this.subs.entries()].find(([, s]) => s === set)?.[0];
-        if (caseId) this.subs.delete(caseId);
-      }
+      if (set.size === 0) this.subs.delete(caseId);
     }
   }
 
