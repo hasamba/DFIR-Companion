@@ -2312,7 +2312,7 @@
         <button class="stab" data-stab="ai" data-simple>AI</button>
         <button class="stab" data-stab="enrichment" data-simple>Enrichment</button>
         <button class="stab" data-stab="exposure" data-simple>Exposure</button>
-        <button class="stab" data-stab="integrations">Integrations</button>
+        <button class="stab" data-stab="integrations" data-simple>Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="tools">Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
@@ -2965,11 +2965,11 @@
 
       <!-- Integrations -->
       <div class="stab-pane" id="stab-integrations">
-        <div class="srestart-note">⚠ All integration settings require a server restart to take effect</div>
-        <div class="settings-group-head">DFIR-IRIS</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
-          <div class="sfield"><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-simple>⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head" data-simple>DFIR-IRIS</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
+          <div class="sfield" data-simple><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_IRIS_CA</span></label><input id="env-DFIR_IRIS_CA" placeholder="path/to/ca.pem" /></div>
@@ -2979,30 +2979,30 @@
         <div class="sfield-row">
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-simple style="display:flex; gap:8px; align-items:center; margin-top:4px;">
           <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="irisReconnectMsg" style="font-size:12px; color:var(--c-9aa4b2);"></span>
         </div>
-        <div class="settings-group-head">Timesketch</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
-          <div class="sfield"><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
+        <div class="settings-group-head" data-simple>Timesketch</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
+          <div class="sfield" data-simple><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR-Companion Forensic Timeline" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">Notion</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Integration token<span class="sfield-hint">DFIR_NOTION_TOKEN — internal-integration secret; share the page/database with it</span></label><input id="env-DFIR_NOTION_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Database ID<span class="sfield-hint">DFIR_NOTION_DATABASE_ID — default DB for "new page" (investigation template)</span></label><input id="env-DFIR_NOTION_DATABASE_ID" placeholder="(optional)" /></div>
+        <div class="settings-group-head" data-simple>Notion</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Integration token<span class="sfield-hint">DFIR_NOTION_TOKEN — internal-integration secret; share the page/database with it</span></label><input id="env-DFIR_NOTION_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-simple><label>Database ID<span class="sfield-hint">DFIR_NOTION_DATABASE_ID — default DB for "new page" (investigation template)</span></label><input id="env-DFIR_NOTION_DATABASE_ID" placeholder="(optional)" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Parent page ID<span class="sfield-hint">DFIR_NOTION_PARENT_PAGE_ID — alternative default parent for "new page"</span></label><input id="env-DFIR_NOTION_PARENT_PAGE_ID" placeholder="(optional)" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Parent page ID<span class="sfield-hint">DFIR_NOTION_PARENT_PAGE_ID — alternative default parent for "new page"</span></label><input id="env-DFIR_NOTION_PARENT_PAGE_ID" placeholder="(optional)" /></div>
           <div class="sfield"><label>Managed block title<span class="sfield-hint">DFIR_NOTION_CONTAINER_TITLE</span></label><input id="env-DFIR_NOTION_CONTAINER_TITLE" placeholder="🔍 DFIR Companion — Auto-generated" /></div>
         </div>
         <div class="sfield-row3">
@@ -3010,22 +3010,22 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">ClickUp</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
+        <div class="settings-group-head" data-simple>ClickUp</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-simple><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">Velociraptor</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
+        <div class="settings-group-head" data-simple>Velociraptor</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
         </div>
-        <div class="sfield-row3">
-          <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
+        <div class="sfield-row3" data-simple>
+          <div class="sfield" data-simple><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
           <div class="sfield"><label>GUI org<span class="sfield-hint">DFIR_VELOCIRAPTOR_ORG — for deep links (default root)</span></label><input id="env-DFIR_VELOCIRAPTOR_ORG" placeholder="root" /></div>
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
         </div>
@@ -3059,12 +3059,12 @@
         </div>
 
         <!-- Push ingest (#84) -->
-        <div class="settings-group-head">Push ingest (webhook)</div>
-        <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 8px">Let external tools (a SIEM webhook, a Velociraptor client-event poller, a custom script) POST alerts straight into the connected case. The server auto-detects the payload type (same engine as the Import button) and runs the import → synthesize pipeline. Auth is a token in the <code>X-DFIR-Key</code> header — a <strong>global</strong> one (below) and/or a <strong>per-case</strong> one (generated here). Push is OFF until a token is configured.</p>
-        <div class="sfield-row">
-          <div class="sfield"><label>Global push token<span class="sfield-hint">DFIR_PUSH_TOKEN — one secret for every case (optional)</span></label><input id="env-DFIR_PUSH_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>Push ingest (webhook)</div>
+        <p data-simple style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 8px">Let external tools (a SIEM webhook, a Velociraptor client-event poller, a custom script) POST alerts straight into the connected case. The server auto-detects the payload type (same engine as the Import button) and runs the import → synthesize pipeline. Auth is a token in the <code>X-DFIR-Key</code> header — a <strong>global</strong> one (below) and/or a <strong>per-case</strong> one (generated here). Push is OFF until a token is configured.</p>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Global push token<span class="sfield-hint">DFIR_PUSH_TOKEN — one secret for every case (optional)</span></label><input id="env-DFIR_PUSH_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div id="pushTokenPanel" style="background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;margin-top:6px">
+        <div data-simple id="pushTokenPanel" style="background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;margin-top:6px">
           <div id="pushTokenInfo" style="font-size:12px;color:var(--c-9aa4b2)">Connect to a case to manage its push token.</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
             <button id="pushTokenGenBtn" type="button" title="Generate (or rotate) a per-case push token">Generate per-case token</button>

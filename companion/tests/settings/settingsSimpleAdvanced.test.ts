@@ -34,6 +34,16 @@ const SIMPLE_ENV_KEYS: Record<string, string[]> = {
   ],
   // Keys only. Domain limits, the HIBP user-agent, the DeHashed base URL and the delay all default.
   exposure: ["DFIR_LEAKCHECK_KEY", "DFIR_HIBP_KEY", "DFIR_DEHASHED_KEY", "DFIR_SHODAN_KEY"],
+  // What each integration needs to connect at all. Optional IRIS ids, `_CA`/`_INSECURE`, the 15
+  // Velociraptor tuning/VQL knobs, and DFIR_PUBLIC_URL (link rendering only) stay Advanced.
+  integrations: [
+    "DFIR_IRIS_URL", "DFIR_IRIS_KEY",
+    "DFIR_TIMESKETCH_URL", "DFIR_TIMESKETCH_USER", "DFIR_TIMESKETCH_PASSWORD",
+    "DFIR_NOTION_TOKEN", "DFIR_NOTION_DATABASE_ID", "DFIR_NOTION_PARENT_PAGE_ID",
+    "DFIR_CLICKUP_TOKEN", "DFIR_CLICKUP_LIST_ID",
+    "DFIR_VELOCIRAPTOR_API_CONFIG", "DFIR_VELOCIRAPTOR_BINARY", "DFIR_VELOCIRAPTOR_GUI_URL",
+    "DFIR_PUSH_TOKEN",
+  ],
 };
 
 const ALL_SIMPLE = Object.values(SIMPLE_ENV_KEYS).flat().sort();
