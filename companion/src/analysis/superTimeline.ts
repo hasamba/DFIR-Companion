@@ -62,10 +62,18 @@ export function dedupeAppend(existing: ForensicEvent[], incoming: ForensicEvent[
   // correlate has nothing to dedup against and the duplicate (new id, identical content) passed
   // through. The super-timeline is the durable superset that retains Info events, so deduping
   // here closes the gap (#26).
-  const seenContent = new Set(existing.map((e) => `${e.timestamp} ${cleanDescription(e.description)}`));
+  //
+  // The HOST is part of the key, exactly as in correlate step 0 (#345): a fleet-wide sweep reports
+  // identical text at the identical second on every machine it touches, and those are as many
+  // observations as there are machines. Key on time+text alone and a 200-host sweep collapses to
+  // one row here — silently deleting the lateral-movement picture. A re-import always carries the
+  // same asset, so the dedup this exists for is unaffected.
+  const contentKey = (e: ForensicEvent): string =>
+    `${e.timestamp} ${cleanDescription(e.description)} ${superHostOf(e)}`;
+  const seenContent = new Set(existing.map(contentKey));
   const fresh = incoming.filter((e) => {
     if (seenIds.has(e.id)) return false;
-    const ck = `${e.timestamp} ${cleanDescription(e.description)}`;
+    const ck = contentKey(e);
     if (seenContent.has(ck)) return false;
     seenContent.add(ck);
     return true;
