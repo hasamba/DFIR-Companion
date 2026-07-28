@@ -56,9 +56,22 @@ export class GeminiProvider implements AIProvider {
       const body = await res.text().catch(() => "");
       throw new ProviderError(httpErrorMessage("Gemini", res.status, body), httpErrorKind(res.status));
     }
-    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const json = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
+    };
     const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new ProviderError("Gemini returned no content", "other");
-    return { rawText: text };
+    // Google's Generative Language response includes usageMetadata (promptTokenCount,
+    // candidatesTokenCount, cachedContentTokenCount). Parse it so the Diagnostics "AI cost — this
+    // case" card shows real token counts for Gemini instead of always 0/0 (bug #3). Google does
+    // not report a dollar cost, so costUSD is omitted (matching the other providers).
+    const u = json.usageMetadata;
+    const usage = u && {
+      ...(u.promptTokenCount !== undefined ? { inputTokens: u.promptTokenCount } : {}),
+      ...(u.candidatesTokenCount !== undefined ? { outputTokens: u.candidatesTokenCount } : {}),
+      ...(u.cachedContentTokenCount !== undefined ? { cacheReadTokens: u.cachedContentTokenCount } : {}),
+    };
+    return { rawText: text, ...(usage ? { usage } : {}) };
   }
 }
