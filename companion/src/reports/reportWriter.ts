@@ -14,6 +14,8 @@ import { buildAttackLayer, type NavigatorLayer } from "./attackLayer.js";
 import { toTimesketchJsonl } from "../integrations/timesketch/timesketchMap.js";
 import { buildAssetGraph, type AssetGraph, type TimeWindow } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type EvidenceGraph, type LateralPath } from "../analysis/evidenceGraph.js";
+import { projectAlignment } from "../analysis/clockSkew.js";
+import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
 import { detectTimelineGaps, gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
@@ -99,6 +101,7 @@ export interface ReportWriterOptions {
   lateralPathDismissals?: LateralPathDismissStore;   // analyst-rejected lateral chains
   reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
   complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
+  clockSkew?: ClockSkewStore;   // #228 per-host clock offsets + the alignment toggle
 }
 
 export class ReportWriter {
@@ -114,6 +117,7 @@ export class ReportWriter {
   private readonly kevStore?: KevStore;
   private readonly hypothesisStore?: HypothesisStore;
   private readonly synthMeta?: SynthMetaStore;
+  private readonly clockSkew?: ClockSkewStore;
   private readonly lateralPathDismissals?: LateralPathDismissStore;
   private readonly reportVersions?: ReportVersionStore;
   private readonly complianceControl?: ComplianceControlStore;
@@ -138,6 +142,7 @@ export class ReportWriter {
     this.lateralPathDismissals = opts.lateralPathDismissals;
     this.reportVersions = opts.reportVersions;
     this.complianceControl = opts.complianceControl;
+    this.clockSkew = opts.clockSkew;
   }
 
   // Second-look collection leads (investigation-guidance #11, deferred): requests the raw re-query made
@@ -186,7 +191,14 @@ export class ReportWriter {
   // even if AI re-synthesis hasn't run. Shared by the full report and single-section exports.
   private async loadFilteredState(caseId: string): Promise<InvestigationState> {
     const loaded = await this.state.load(caseId);
-    const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
+    // Clock-skew alignment (#228) applies FIRST, so every consumer of this method — the report, the
+    // evidence graph, the lateral-movement paths, the CSV/Timesketch exports — reasons over one time
+    // axis. It is a projection: each shifted event keeps its recorded time in `originalTimestamp`,
+    // and nothing here is ever written back to the case. Scope filtering follows, so an alignment
+    // that moves an event across the investigation window is honoured by the window too.
+    const skew = this.clockSkew ? await this.clockSkew.load(caseId) : undefined;
+    const aligned = { ...loaded, forensicTimeline: projectAlignment(skew, loaded.forensicTimeline) };
+    const scoped = projectScope(aligned, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
     const markers = this.falsePositives ? await this.falsePositives.load(caseId) : [];
     return applyFalsePositive(
       { ...scoped, forensicTimeline: filterFalsePositiveEvents(scoped.forensicTimeline, markers) },

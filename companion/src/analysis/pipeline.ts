@@ -72,9 +72,11 @@ import {
   setAllPendingStatus,
   type SecondOpinion,
 } from "./secondOpinion.js";
-import { correlateEvents } from "./correlate.js";
+import { correlateEvents, correlationGroups, type CorrelateOptions } from "./correlate.js";
+import { detectClockSkew, effectiveOffsets, alignedEpoch } from "./clockSkew.js";
 import { effectiveTrustMap } from "./sourceTrust.js";
 import type { SourceTrustStore } from "./sourceTrustStore.js";
+import type { ClockSkewStore } from "./clockSkewStore.js";
 import { detectTool } from "./toolDetect.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWindow } from "./scope.js";
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
@@ -1552,6 +1554,10 @@ export interface PipelineOptions {
   // Per-source trust overrides (issue #66): steers cross-source merge description choice + caps confidence
   // for low-trust-only findings. Absent → built-in DEFAULT_SOURCE_TRUST only (no per-case override).
   sourceTrustStore?: SourceTrustStore;
+  // Per-host clock offsets + the alignment toggle (#228). Synthesis measures skew from the pre-merge
+  // timeline and stores it here; when alignment is on the corrected times steer correlation windows.
+  // Absent → no skew detection, correlation compares recorded times (pre-#228 behavior).
+  clockSkewStore?: ClockSkewStore;
   // Analyst IOC merges (#82): duplicate value -> canonical IOC id. When set, every mergeDelta call
   // resolves it first, so a later import/synthesis re-extracting the merged-away duplicate routes
   // onto the canonical IOC instead of recreating it. Absent → no alias resolution (pre-#82 behavior).
@@ -1728,6 +1734,34 @@ export class AnalysisPipeline {
         { caseId },
       );
     });
+  }
+
+  /**
+   * Measure per-host clock skew (#228) from the PRE-merge timeline and persist it, then return the
+   * time function correlation should compare at — skew-corrected when the analyst has alignment on,
+   * `undefined` (recorded times) otherwise.
+   *
+   * Detection is best-effort: a case with no clock-skew store, or one whose evidence yields no
+   * anchors, simply correlates on recorded times exactly as before.
+   */
+  private async detectSkew(
+    caseId: string,
+    preMerge: ForensicEvent[],
+    opts: CorrelateOptions,
+  ): Promise<((e: ForensicEvent) => number | undefined) | undefined> {
+    const store = this.opts.clockSkewStore;
+    if (!store) return undefined;
+    let record;
+    try {
+      const report = detectClockSkew(correlationGroups(preMerge, opts), opts);
+      record = await store.recordDetection(caseId, report);
+    } catch {
+      try { record = await store.load(caseId); } catch { return undefined; }
+    }
+    if (!record.alignEnabled) return undefined;
+    const offsets = effectiveOffsets(record.results, record.overrides);
+    if (offsets.size === 0) return undefined;
+    return (e: ForensicEvent) => alignedEpoch(e, offsets);
   }
 
   private async getKevCatalog(): Promise<KevCatalog | undefined> {
@@ -5279,9 +5313,15 @@ export class AnalysisPipeline {
     // wins a cross-source merge below, and caps confidence for low-trust-only findings in grounding later.
     const trustOverrides = this.opts.sourceTrustStore ? await this.opts.sourceTrustStore.load(caseId) : undefined;
     const sourceTrust = effectiveTrustMap(trustOverrides);
+    // Clock skew (#228) is measured HERE, on the pre-merge timeline: the correlation below collapses
+    // each anchor group to a single event, and with it the evidence that two clocks disagreed. When
+    // the analyst has alignment on, the corrected times feed the correlation WINDOWS (via epochOf)
+    // so a host running minutes fast still correlates with the fleet — the events themselves, and so
+    // everything persisted below, keep their recorded timestamps.
+    const skew = await this.detectSkew(caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
     const state: InvestigationState = {
       ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds, sourceTrust }),
+      forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds, sourceTrust, epochOf: skew }),
     };
 
     const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];

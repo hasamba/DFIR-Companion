@@ -938,6 +938,8 @@
     #forensicTimeline .ev-row.sevr-Medium   { border-left-color: var(--c-ffd93b); }
     #forensicTimeline .ev-row.sevr-Low      { border-left-color: var(--c-6bcb77); }
     #forensicTimeline .ev-row.sevr-Info     { border-left-color: var(--c-6aa9ff); }
+    /* Clock-skew alignment (#228): the recorded time, kept visible under the corrected one. */
+    #forensicTimeline .ev-skew { color: var(--c-7e8aa0); font-size: 10.5px; white-space: nowrap; }
     /* Severity column: coloured square + label, colour driven by the .sev-<level> class. */
     .ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
     .ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
@@ -3783,6 +3785,29 @@
         <div style="margin-bottom:12px;padding:10px;background:var(--c-161a22);border:1px solid var(--c-2a2f3a);border-radius:6px">
           <div style="font-weight:600;color:var(--c-9aa4b2);font-size:12.5px;margin-bottom:6px">Case Statistics</div>
           <div id="caseStatsPanel" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
+        </div>
+
+        <!-- Clock skew (#228) — per-host offsets measured from cross-tool anchor events, plus the
+             virtual alignment toggle. Offsets are a VIEW: the stored evidence keeps its recorded
+             timestamps, and every aligned row still shows the time the artifact actually carried. -->
+        <div style="margin-bottom:12px;padding:10px;background:var(--c-161a22);border:1px solid var(--c-2a2f3a);border-radius:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <div style="font-weight:600;color:var(--c-9aa4b2);font-size:12.5px">Host Clock Skew</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label style="display:flex;gap:5px;align-items:center;font-size:12px;color:var(--c-cbd3df);cursor:pointer">
+                <input type="checkbox" id="clockSkewAlign" /> Align timelines
+              </label>
+              <button id="clockSkewRecomputeBtn" type="button" title="Re-measure offsets from the current timeline">↻ Re-measure</button>
+            </div>
+          </div>
+          <div class="sfield-hint" style="display:block;margin-bottom:6px">
+            Offsets are measured where one artifact was recorded by two different tools, and are only
+            trusted when several anchors agree — a scattered host is shown but never aligned.
+            Alignment shifts events for display, correlation and reports; the recorded timestamp is
+            always kept and shown alongside.
+          </div>
+          <div id="clockSkewPanel" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
+          <span id="clockSkewMsg" class="manual-msg"></span>
         </div>
 
         <div class="sfield-row" style="margin-bottom:10px">
@@ -15508,8 +15533,15 @@
         const isNew = newEventKeys.has(evKey(e));   // added by the last import (see #importMeta)
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
 
-        const span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
+        let span = (e.endTimestamp && e.endTimestamp !== e.timestamp)
           ? `${esc(e.timestamp || "(undated)")} → ${esc(e.endTimestamp)}` : esc(e.timestamp || "(undated)");
+        // Clock-skew alignment (#228): this row's time has been corrected for its host's clock. The
+        // RECORDED time is the evidence, so it stays on screen underneath rather than being replaced.
+        if (e.originalTimestamp) {
+          const shift = Math.round((e.skewOffsetMs || 0) / 1000);
+          span += `<div class="ev-skew" title="This host's clock is ${Math.abs(shift)}s ${shift > 0 ? "fast" : "slow"}; shown time is corrected. Recorded: ${escAttr(e.originalTimestamp)}">`
+            + `⏱ recorded ${esc(e.originalTimestamp)}</div>`;
+        }
         const badge = (e.count && e.count > 1)
           ? ` <span class="ev-badge-count" title="${escAttr(e.count)} occurrences collapsed into one event">×${esc(e.count)}</span>` : "";
         const realSrc = (e.sources || []).filter(s => s && s !== "unknown source");
@@ -16444,6 +16476,7 @@
         else if (msg.type === "false_positive_changed") loadFalsePositives(caseId);
         else if (msg.type === "learned_patterns_changed") loadLearnedPatterns(caseId);
         else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
+        else if (msg.type === "clock_skew_changed") loadClockSkew(caseId);
         else if (msg.type === "scope_changed") {
           scope = { start: msg.start ?? null, end: msg.end ?? null };
           document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
@@ -20134,6 +20167,25 @@
     document.getElementById("diagRefreshBtn").addEventListener("click", loadDiagnostics);
     document.getElementById("diagCopyBtn").addEventListener("click", diagCopy);
     document.getElementById("diagSizesBtn").addEventListener("click", diagComputeSizes);
+    // Clock skew (#228). The override inputs are re-rendered on every refresh, so their handler is
+    // delegated from the panel rather than bound per row.
+    document.getElementById("clockSkewAlign").addEventListener("change", e => {
+      clockSkewMutate("align", { enable: e.target.checked }, e.target.checked ? "Aligning…" : "Restoring…");
+    });
+    document.getElementById("clockSkewRecomputeBtn").addEventListener("click", () => {
+      clockSkewMutate("recompute", { replace: true }, "Measuring…");
+    });
+    document.getElementById("clockSkewPanel").addEventListener("change", e => {
+      const input = e.target.closest(".clock-skew-override");
+      if (!input) return;
+      const raw = input.value.trim();
+      if (raw !== "" && !Number.isFinite(Number(raw))) {
+        const msg = document.getElementById("clockSkewMsg");
+        if (msg) msg.textContent = "Offset must be a number of seconds.";
+        return;
+      }
+      clockSkewMutate("override", { host: input.dataset.host, offsetMs: raw === "" ? null : Math.round(Number(raw) * 1000) });
+    });
     document.getElementById("preflightRerunBtn").addEventListener("click", () => {
       const msg = document.getElementById("preflightRerunMsg");
       const btn = document.getElementById("preflightRerunBtn");
@@ -20226,7 +20278,7 @@
         if (tab === "notifications") { ntfTypeChanged(); loadNotifications(); }
         if (tab === "updates") loadUpdateCheck();
         if (tab === "tools") loadTools();
-        if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); loadCaseStats(); }
+        if (tab === "diagnostics") { loadPreflightStatus(); loadDiagnostics(); loadCaseStats(); loadClockSkew(); }
       });
     });
 
@@ -21186,6 +21238,99 @@
             ${caseStatsBarChart(j.importVelocity || [])}`;
         })
         .catch(e => { el.innerHTML = `<span style="color:#ff9f9f">Could not load case stats: ${esc(e.message)}</span>`; });
+    }
+    // Host Clock Skew panel (#228) — per-host offsets, the alignment toggle and manual overrides.
+    // Offsets are stored in milliseconds; the UI talks in seconds because that is how an analyst
+    // thinks about NTP drift and timezone slips.
+    function skewOffsetLabel(ms) {
+      const abs = Math.abs(ms);
+      if (abs < 1000) return ms === 0 ? "0s" : ms + "ms";
+      if (abs < 90_000) return (ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1) + "s";
+      if (abs < 5_400_000) return (ms / 60_000).toFixed(1) + "m";
+      return (ms / 3_600_000).toFixed(2) + "h";
+    }
+    function renderClockSkew(j) {
+      const el = document.getElementById("clockSkewPanel");
+      if (!el) return;
+      const results = j.results || [];
+      const overrides = j.overrides || {};
+      const alertMs = (j.thresholds && j.thresholds.alertThresholdMs) || 60000;
+      const align = document.getElementById("clockSkewAlign");
+      if (align) align.checked = j.alignEnabled === true;
+      // A host can carry an override with no detection behind it, so union the two key sets.
+      const keys = [...new Set([...results.map(r => r.hostKey), ...Object.keys(overrides)])].sort();
+      if (!keys.length) {
+        el.innerHTML = `<div style="color:#7e8aa0">No clock-skew anchors yet. Offsets are measured during
+          synthesis, from events that two different tools recorded for the same artifact — a case with a
+          single evidence source, or one not yet synthesized, has nothing to compare.</div>`;
+        return;
+      }
+      const byKey = new Map(results.map(r => [r.hostKey, r]));
+      const rows = keys.map(key => {
+        const r = byKey.get(key);
+        const ov = Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : null;
+        const effective = ov !== null ? ov : (r && r.qualified ? r.offsetMs : 0);
+        const flagged = Math.abs(effective) > alertMs;
+        const name = esc(r ? r.host : key);
+        const measured = r
+          ? `${skewOffsetLabel(r.offsetMs)} · ${r.anchorCount} anchor${r.anchorCount === 1 ? "" : "s"} · ±${skewOffsetLabel(r.dispersionMs)} · ${esc(r.confidence)}`
+          : "not measured";
+        const why = r && !r.qualified
+          ? `<div style="color:#7e8aa0;font-size:11px">not aligned — ${r.anchorCount < 3 ? "too few anchors" : "offsets disagree across anchors (looks like propagation delay, not a clock)"}</div>`
+          : "";
+        const src = r && r.sources.length ? `<div style="color:#7e8aa0;font-size:11px">from ${esc(r.sources.join(", "))}</div>` : "";
+        return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--c-2a2f3a)">
+          <div style="min-width:0">
+            <div style="font-weight:600;color:${flagged ? "#ffcf8f" : "#cbd3df"}">${flagged ? "⚠ " : ""}${name}
+              <span style="font-weight:400;color:#7e8aa0">${esc(measured)}</span></div>
+            ${why}${src}
+          </div>
+          <div style="display:flex;gap:5px;align-items:center;white-space:nowrap">
+            <input type="number" step="1" class="clock-skew-override" data-host="${esc(r ? r.host : key)}"
+              value="${ov === null ? "" : ov / 1000}" placeholder="${r ? (r.offsetMs / 1000).toFixed(0) : "0"}"
+              title="Manual offset in seconds. Overrides the measurement; 0 pins this clock as correct; empty clears it."
+              style="width:74px;text-align:right" />
+            <span style="color:#7e8aa0;font-size:11px">s</span>
+          </div>
+        </div>`;
+      }).join("");
+      const shifted = keys.filter(k => {
+        const ov = Object.prototype.hasOwnProperty.call(overrides, k) ? overrides[k] : null;
+        const r = byKey.get(k);
+        return ov !== null ? ov !== 0 : !!(r && r.qualified && r.offsetMs !== 0);
+      }).length;
+      el.innerHTML = rows + `<div style="color:#7e8aa0;margin-top:6px">
+        ${shifted} host${shifted === 1 ? "" : "s"} would shift when alignment is on${j.detectedAt ? " · measured " + esc(j.detectedAt.slice(0, 19).replace("T", " ")) + "Z" : ""}</div>`;
+    }
+    function loadClockSkew(caseId) {
+      const el = document.getElementById("clockSkewPanel");
+      if (!el) return;
+      const id = (caseId || document.getElementById("caseId").value).trim();
+      if (!id) { el.innerHTML = '<span style="color:#7e8aa0">Select a case first.</span>'; return; }
+      fetch(`/cases/${encodeURIComponent(id)}/clock-skew`)
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(renderClockSkew)
+        .catch(e => { el.innerHTML = `<span style="color:#ff9f9f">Could not load clock skew: ${esc(e.message)}</span>`; });
+    }
+    // Every mutation re-renders the panel AND re-fetches the case state: alignment changes the
+    // timestamp on every row the analyst is looking at, so the timeline must be redrawn with it.
+    function clockSkewMutate(path, body, note) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const msg = document.getElementById("clockSkewMsg");
+      if (msg) msg.textContent = note || "Saving…";
+      fetch(`/cases/${encodeURIComponent(caseId)}/clock-skew/${path}`, {
+        method: path === "override" ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
+        .then(j => {
+          renderClockSkew(j);
+          if (msg) msg.textContent = "";
+          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
+        })
+        .catch(e => { if (msg) msg.textContent = "Failed: " + e.message; });
     }
     function diagAiTest() {
       const btn = document.getElementById("diagAiTestBtn");

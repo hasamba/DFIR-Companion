@@ -144,6 +144,13 @@ export interface ForensicEvent {
   sourceScreenshots: string[];
   count?: number;               // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
   endTimestamp?: string;        // time of the last occurrence when aggregated (timestamp is the first)
+  // Clock-skew projection (#228), set ONLY on read-path copies while timeline alignment is on and
+  // stripped before anything derived from them is persisted (analysis/clockSkew.ts). When present,
+  // `timestamp` is the aligned (virtual) time and `originalTimestamp` is what the artifact actually
+  // recorded — the report and the UI must show the recorded time alongside the corrected one, since
+  // only the former is evidence.
+  originalTimestamp?: string;
+  skewOffsetMs?: number;        // correction applied: recorded − aligned
   // Structured identifiers used to CORRELATE the same real-world artifact across tools
   // (e.g. a Velociraptor alert and a THOR alert about the same downloaded file).
   sha256?: string;

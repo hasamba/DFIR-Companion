@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Clock-skew detection & cross-host timeline alignment** (#228) — measures each host's clock offset from artifacts two different tools recorded for the same event, flags hosts beyond 60s in Diagnostics → Host Clock Skew, and offers an "Align timelines" toggle that projects every host onto a common axis for the timeline, correlation windows, the evidence graph and the report. Offsets need several consistent anchors before they are trusted (a scattered host is shown but never aligned), analysts can override any host's offset by hand, and alignment never rewrites the case: each shifted row keeps and displays its recorded timestamp.
+
+### Added
 - **Three new local PII detectors** — credit card numbers (issuer-prefix + Luhn check), phone numbers (E.164/Israeli/NANP, narrow patterns to avoid PIDs/ports), and Israeli Teudat Zehut national ID numbers (check-digit validated), joining the existing anonymization categories.
 - **Optional Presidio layer** — point `DFIR_PRESIDIO_URL` at a self-run [Presidio Analyzer](mkdocs-docs/reference/presidio.md) container to catch what regex can't, principally people's names, in already-masked text. Fails closed if configured but unreachable; new PII surfaces through an analyst approval gate (409 for interactive calls, a persisted pending-approval store for imports) before it ever reaches the model.
 - **Essential / All view in Settings** — Settings opens on **Essential**, showing only the 43 controls a feature is dead without (AI models, enrichment/exposure keys, integration credentials) across 6 tabs, instead of 257 fields across 16. **All** restores the full view, and the choice is remembered per browser. Anything with a working default lives under All.

@@ -243,15 +243,35 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     lines.push("_No dated forensic events extracted yet._", "");
     return;
   }
-  lines.push("| Time | Host | Count | Severity | Event | MITRE | Findings |", "| --- | --- | --- | --- | --- | --- | --- |");
+  // Clock-skew alignment (#228). If the analyst has it on, some times below are CORRECTED rather
+  // than recorded, which a reader must be told before they rely on them — so the report says so and
+  // carries the recorded time in its own column for every row that moved.
+  const aligned = state.forensicTimeline.filter((e) => e.originalTimestamp);
+  const alignedHosts = [...new Set(aligned.map((e) => e.asset).filter(Boolean))] as string[];
+  if (aligned.length > 0) {
+    lines.push(
+      `> **Clock-skew alignment is ON.** Times for ${alignedHosts.length} host(s) — ` +
+      `${alignedHosts.join(", ")} — have been shifted onto a common axis to correct a measured clock ` +
+      "offset. The **Recorded** column carries the time the artifact itself holds, which is the " +
+      "evidence; the **Time** column is a derived, corrected view.",
+      "",
+    );
+  }
+  const recordedCol = aligned.length > 0 ? " Recorded |" : "";
+  const recordedSep = aligned.length > 0 ? " --- |" : "";
+  lines.push(
+    `| Time |${recordedCol} Host | Count | Severity | Event | MITRE | Findings |`,
+    `| --- |${recordedSep} --- | --- | --- | --- | --- | --- |`,
+  );
   const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
   for (const e of ordered) {
     const time = e.endTimestamp && e.endTimestamp !== e.timestamp
       ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
       : (e.timestamp || "(undated)");
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
+    const recorded = aligned.length > 0 ? ` ${cellMd(e.originalTimestamp ?? "")} |` : "";
     lines.push(
-      `| ${cellMd(time)} | ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
+      `| ${cellMd(time)} |${recorded} ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
       `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }

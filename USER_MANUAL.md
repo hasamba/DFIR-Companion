@@ -1308,6 +1308,37 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore (automatic backups taken before each synthesis and on a 1-hour timer)
 - **State backup configuration** (retention counts, interval)
+- **Host Clock Skew** — per-host clock offsets and the timeline alignment toggle (see below)
+
+#### Host Clock Skew
+
+When hosts disagree about the time — NTP drift, a wrong timezone, a tampered log — cross-host
+correlation silently breaks and the timeline tells the wrong story. This panel measures it.
+
+Offsets are measured during synthesis, from **anchors**: artifacts that two *different* tools
+recorded for the same event (a logon written by both the endpoint and the DC). Each host's offset is
+the median across anchors, expressed against the best-anchored host as the reference clock. Hosts
+past 60s are flagged with ⚠.
+
+An offset is only trusted — and only ever used to align — when it has at least 3 anchors that
+**agree** with each other. That consistency check is what separates a wrong clock (systematically
+off by the same amount) from a file that genuinely took time to travel between hosts (off by a
+different amount each time). A host whose anchors disagree is still listed, with its spread, but is
+never shifted.
+
+**Align timelines** projects every host onto a common axis. It affects the dashboard timeline,
+correlation windows, the evidence graph, lateral-movement paths and the report — but it is a *view*,
+never a rewrite:
+
+- The stored case keeps every recorded timestamp, untouched.
+- Each shifted row shows the recorded time beneath the corrected one.
+- An aligned report carries an explicit notice and a **Recorded** column, because the recorded time
+  is the evidence and the corrected time is a derivation.
+- Toggling it is written to the case activity log.
+
+Use the per-host box to enter an offset by hand (in seconds) when you know a host's clock better than
+the detector does — for example a documented timezone misconfiguration. A manual offset always wins
+over the measured one; `0` pins a host as correct; clearing the box restores the measurement.
 
 ---
 

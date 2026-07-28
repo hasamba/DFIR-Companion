@@ -23,6 +23,11 @@ export interface CorrelateOptions {
   // description is taken from the highest-TRUST contributor (tie-broken by the old length rule), so a
   // noisy raw-artifact row never wins the shown text over a CrowdStrike/THOR detection of the same fact.
   sourceTrust?: SourceTrustMap;
+  // The time each event is COMPARED at, for the windowed steps below. Defaults to its recorded
+  // timestamp. Clock-skew alignment (#228) passes skew-corrected times here so a host running seven
+  // minutes fast still correlates against the rest of the fleet — without touching the events
+  // themselves, so what gets merged and persisted still carries the recorded time.
+  epochOf?: (e: ForensicEvent) => number | undefined;
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -170,12 +175,16 @@ function withSignature(e: ForensicEvent): ForensicEvent {
   return sig ? { ...e, chainSignature: sig } : e;
 }
 
-export function correlateEvents(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[] {
+// The grouping half of correlateEvents: decide WHICH events describe the same real-world artifact,
+// without merging them. Returns the signature-stamped working copy plus each group's member indices
+// in first-appearance order (singletons included). Split out so clock-skew detection (#228) can read
+// the groups BEFORE mergeGroup collapses them — a group whose members were recorded by different
+// tools is exactly the "same event, two clocks" anchor the skew detector needs, and after the merge
+// only one timestamp survives. correlateEvents is the sole other caller; the two must stay in step.
+function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): { evs: ForensicEvent[]; groups: number[][] } {
   const windowMs = (opts.windowSeconds ?? 2) * 1000;
+  const timeOf = opts.epochOf ?? ((e: ForensicEvent) => epoch(e.timestamp));
   const n = events.length;
-  // Always strip any legacy corroboration note from descriptions, even for a single
-  // event, so old polluted state self-heals on the next merge/synthesis.
-  if (n < 2) return events.map((e) => withSignature(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e));
   // Work over a copy with chainSignature populated so step 4 can key on it and every emitted
   // process-creation event carries the field (satisfying the importer-agnostic path).
   const evs = events.map(withSignature);
@@ -226,7 +235,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   });
   for (const entries of byPath.values()) {
     if (entries.length < 2) continue;
-    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: epoch(evs[x.i].timestamp) }))
+    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: timeOf(evs[x.i]) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
@@ -256,7 +265,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   });
   for (const idxs of byPid.values()) {
     if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: epoch(evs[i].timestamp) }))
+    const dated = idxs.map((i) => ({ i, t: timeOf(evs[i]) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
@@ -280,7 +289,7 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   });
   for (const idxs of bySig.values()) {
     if (idxs.length < 2) continue;
-    const dated = idxs.map((i) => ({ i, t: epoch(evs[i].timestamp) }))
+    const dated = idxs.map((i) => ({ i, t: timeOf(evs[i]) }))
       .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
     for (let k = 1; k < dated.length; k++) {
       const a = dated[k - 1], b = dated[k];
@@ -290,18 +299,40 @@ export function correlateEvents(events: readonly ForensicEvent[], opts: Correlat
   }
 
   // Collect groups, preserving first-appearance order.
-  const groups = new Map<number, number[]>();
+  const byRoot = new Map<number, number[]>();
   for (let i = 0; i < n; i++) {
     const r = dsu.find(i);
-    (groups.get(r) ?? groups.set(r, []).get(r)!).push(i);
+    (byRoot.get(r) ?? byRoot.set(r, []).get(r)!).push(i);
   }
-  const out: ForensicEvent[] = [];
+  const groups: number[][] = [];
   const emitted = new Set<number>();
   for (let i = 0; i < n; i++) {
     const r = dsu.find(i);
     if (emitted.has(r)) continue;
     emitted.add(r);
-    const members = groups.get(r)!;
+    groups.push(byRoot.get(r)!);
+  }
+  return { evs, groups };
+}
+
+// Groups of events that describe the SAME real-world artifact, un-merged, in first-appearance order.
+// Singleton groups are included so a caller can tell "seen once" from "not seen". The events carry a
+// populated chainSignature (as correlateEvents emits them) but are otherwise untouched. Used by
+// clock-skew detection (#228) — see groupEvents above for why the pre-merge view matters.
+export function correlationGroups(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[][] {
+  if (events.length === 0) return [];
+  if (events.length < 2) return [[withSignature(events[0])]];
+  const { evs, groups } = groupEvents(events, opts);
+  return groups.map((members) => members.map((m) => evs[m]));
+}
+
+export function correlateEvents(events: readonly ForensicEvent[], opts: CorrelateOptions = {}): ForensicEvent[] {
+  // Always strip any legacy corroboration note from descriptions, even for a single
+  // event, so old polluted state self-heals on the next merge/synthesis.
+  if (events.length < 2) return events.map((e) => withSignature(CORRO_NOTE.test(e.description) ? { ...e, description: cleanDescription(e.description) } : e));
+  const { evs, groups } = groupEvents(events, opts);
+  const out: ForensicEvent[] = [];
+  for (const members of groups) {
     if (members.length > 1) {
       out.push(mergeGroup(members.map((m) => evs[m]), opts.sourceTrust));
     } else {

@@ -36,6 +36,7 @@ import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerClockSkewRoutes } from "./routes/clockSkew.js";
 import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
 import { registerCoachRoutes } from "./routes/coach.js";
@@ -116,6 +117,7 @@ import { NotebookStore } from "./analysis/notebookStore.js";
 import { HypothesisStore } from "./analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "./analysis/sourceTrustStore.js";
+import { ClockSkewStore } from "./analysis/clockSkewStore.js";
 import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
 import { StarredReportStore } from "./analysis/starredReportStore.js";
@@ -338,6 +340,11 @@ export interface AppOptions {
   // Per-case source-trust overrides (issue #66). onSourceTrust pings dashboard clients to re-fetch.
   sourceTrustStore?: SourceTrustStore;
   onSourceTrust?: (caseId: string) => void;
+  // Per-host clock offsets, the analyst's manual overrides and the alignment toggle (#228), in
+  // state/clock-skew.json. onClockSkew pings dashboard clients to re-fetch — alignment changes every
+  // timestamp on screen, so the timeline must be reloaded with it.
+  clockSkewStore?: ClockSkewStore;
+  onClockSkew?: (caseId: string) => void;
   // Analyst-defined attacker-presence time windows (dwell-time feature). onDwellWindow pings live
   // dashboard clients over the WS to re-fetch after a mutation, mirroring onHypotheses.
   dwellWindowStore?: DwellWindowStore;
@@ -961,6 +968,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
   registerSlashCommandRoutes(app, ctx);
@@ -3240,6 +3248,9 @@ export interface RuntimePipelineParams {
   logger?: Logger;
   // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
   kevStore?: KevStore;
+  // Clock-skew store (#228): synthesis measures per-host offsets from the PRE-merge timeline (the
+  // correlation that follows collapses the anchors) and stores them here.
+  clockSkewStore?: ClockSkewStore;
   // Second LLM opinion (issue #116): a different model + its persistence store, plus the model
   // labels for the comparison header. Absent → the feature is disabled (route 501).
   secondOpinionProvider?: AnalyzeProvider;
@@ -3275,6 +3286,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
     learnedPatternStore: new LearnedPatternStore(params.store), // #65 feed learned dismissal patterns into synthesis
     sourceTrustStore: new SourceTrustStore(params.store),   // #66 per-source trust weights for merge + confidence
+    clockSkewStore: params.clockSkewStore,                  // #228 measure clock skew on the PRE-merge timeline
     playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
     importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
@@ -3431,6 +3443,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const learnedPatternStore = new LearnedPatternStore(store);
   const sourceTrustStore = new SourceTrustStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
+  const clockSkewStore = new ClockSkewStore(store);   // #228 per-host clock offsets + alignment toggle
   const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
@@ -3470,6 +3483,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     lateralPathDismissals: lateralPathDismissStore,
     reportVersions: reportVersionStore,
     complianceControl: complianceControlStore,
+    clockSkew: clockSkewStore,
   });
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
@@ -3528,7 +3542,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     : undefined;
   if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore,
     presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
@@ -3594,6 +3608,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     learnedPatternStore,
     onLearnedPatterns: (caseId) => hub.broadcastTo(caseId, { type: "learned_patterns_changed" }),
     sourceTrustStore,
+    clockSkewStore,
+    onClockSkew: (caseId) => hub.broadcastTo(caseId, { type: "clock_skew_changed" }),
     onSourceTrust: (caseId) => hub.broadcastTo(caseId, { type: "source_trust_changed" }),
     dwellWindowStore,
     onDwellWindow: (caseId) => hub.broadcastTo(caseId, { type: "dwell_window_changed" }),

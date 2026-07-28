@@ -18,6 +18,7 @@ import {
 import { DecryptionError } from "../analysis/caseEncryption.js";
 import { getImportLimiter } from "../http/rateLimiter.js";
 import { computeCaseStats } from "../analysis/caseStats.js";
+import { projectAlignment } from "../analysis/clockSkew.js";
 import { logActivity, ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
@@ -325,7 +326,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       const state = await options.stateStore.load(req.params.id);
-      return res.status(200).json(state);
+      // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
+      // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
+      // while state/state.json keeps the evidence exactly as imported.
+      const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
+      return res.status(200).json({ ...state, forensicTimeline: projectAlignment(skew, state.forensicTimeline) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
