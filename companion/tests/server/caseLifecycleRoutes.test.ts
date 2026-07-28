@@ -322,3 +322,29 @@ describe("POST /cases/:id/delete", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("POST /cases/seed-demo — force guard (#19)", () => {
+  it("refuses force:true on an OPEN case (doesn't clobber an in-progress investigation)", async () => {
+    const { app } = await harness();
+    await seedCase(app, "demoforce", "Active investigation");
+    // case is open by default
+    const res = await request(app).post("/cases/seed-demo").send({ caseId: "demoforce", force: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/open/i);
+  });
+
+  it("force:true on a CLOSED case re-seeds (clears the dir, no orphans)", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "democlosed", "Old case");
+    // Add an orphan file the demo wouldn't write.
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    await mkdir(join(store.casesRoot, "democlosed", "state"), { recursive: true });
+    await writeFile(join(store.casesRoot, "democlosed", "state", "custom.json"), '{"my":"state"}');
+    await request(app).patch("/cases/democlosed/status").send({ status: "closed" });
+    const res = await request(app).post("/cases/seed-demo").send({ caseId: "democlosed", force: true });
+    expect(res.status).toBe(201);
+    // The orphan is gone — the demo re-seeded into a cleared directory.
+    const { stat } = await import("node:fs/promises");
+    await expect(stat(join(store.casesRoot, "democlosed", "state", "custom.json"))).rejects.toThrow();
+  });
+});
