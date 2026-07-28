@@ -205,3 +205,19 @@ describe("loginEdgeEvents", () => {
     expect(r.events[0]).toHaveProperty("description");
   });
 });
+
+describe("buildLoginGraph — epoch vs string timestamp comparison (#14)", () => {
+  it("lastSeen picks the chronologically-later endTimestamp even when it has higher fractional-second precision", () => {
+    // ...09:20:00Z (epoch X) vs ...09:20:00.500Z (epoch X+500ms). The '.' (0x2E) sorts before 'Z'
+    // (0x5A), so a lexicographic string `>` would DISCARD the genuinely-later .500Z time. The fix
+    // compares Date.parse epoch ms instead.
+    const rows = [
+      LOGON("CORP\\jdoe", "SRV-01", 1, { ts: "2026-06-10T09:20:00Z", endTs: "2026-06-10T09:20:00.500Z" }),
+      LOGON("CORP\\jdoe", "SRV-01", 1, { ts: "2026-06-10T09:20:00Z" }),
+    ];
+    const g = buildLoginGraph(rows);
+    expect(g.edges).toHaveLength(1);
+    // lastSeen must be the .500Z time (chronologically later), not the shorter Z time.
+    expect(g.edges[0].lastSeen).toBe("2026-06-10T09:20:00.500Z");
+  });
+});

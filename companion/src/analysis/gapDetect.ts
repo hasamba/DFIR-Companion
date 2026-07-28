@@ -103,6 +103,16 @@ function endMs(e: ForensicEvent): number {
   return Number.isNaN(end) ? Date.parse(e.timestamp) : end;
 }
 
+// The display-string companion to endMs: fall back to e.timestamp when endTimestamp is absent OR
+// unparseable. The plain `e.endTimestamp || e.timestamp` truthiness check kept an unparseable-
+// but-non-empty endTimestamp (e.g. "invalid-date") as the display value while endMs correctly
+// fell back — so the gap card rendered a garbage ISO string for startTimestamp, and a Finding
+// built from it carried a non-ISO firstSeen (#15).
+function endTsStr(e: ForensicEvent): string {
+  const end = e.endTimestamp ? Date.parse(e.endTimestamp) : NaN;
+  return Number.isNaN(end) ? e.timestamp : e.endTimestamp!;
+}
+
 // An event's distinct named sources (the tools/imports that reported it). Events with no `sources`
 // (e.g. screenshot extraction, manual entry) still bound gaps on the full timeline, but they don't
 // belong to any named source's per-source stream.
@@ -256,7 +266,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
   // activity so a long aggregated event doesn't open a false gap. A qualifying window between the
   // running end and the next event's start is a stretch where NOTHING logged → all sources silent.
   let prevEndMs = endMs(dated[0]);
-  let prevEndTs = dated[0].endTimestamp || dated[0].timestamp;
+  let prevEndTs = endTsStr(dated[0]);
   let prevId = dated[0].id;
   for (let i = 1; i < dated.length; i++) {
     const e = dated[i];
@@ -278,7 +288,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
       });
     }
     const eEnd = endMs(e);
-    if (eEnd >= prevEndMs) { prevEndMs = eEnd; prevEndTs = e.endTimestamp || e.timestamp; prevId = e.id; }
+    if (eEnd >= prevEndMs) { prevEndMs = eEnd; prevEndTs = endTsStr(e); prevId = e.id; }
   }
 
   // Pass B — PARTIAL silence per source. Only meaningful with ≥2 named sources (with one source every
@@ -300,7 +310,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
         const durationSeconds = Math.round((bStart - fromMs) / 1000);
         gaps.push({
           id: "",
-          startTimestamp: a.endTimestamp || a.timestamp,
+          startTimestamp: endTsStr(a),
           endTimestamp: b.timestamp,
           durationSeconds,
           durationLabel: formatDuration(durationSeconds),
