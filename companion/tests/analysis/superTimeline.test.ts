@@ -21,6 +21,41 @@ describe("dedupeAppend", () => {
     const out = dedupeAppend(existing, incoming);
     expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
   });
+
+  it("#26: drops a re-imported event with a new id but identical timestamp + description (content-key dedup)", () => {
+    // Re-import mints brand-new ids from the new sequence prefix; the old id-only dedup let the
+    // duplicate through, doubling the super-timeline for demoted (Info) events. The fix also
+    // dedups by timestamp + cleanDescription.
+    const existing = [ev({ id: "1e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })];
+    const incoming = [ev({ id: "2e1", timestamp: "2026-06-01T00:00:00Z", description: "Failed password from 10.0.0.5" })]; // new id, same content
+    const out = dedupeAppend(existing, incoming);
+    expect(out.map((e) => e.id)).toEqual(["1e1"]);   // the duplicate (2e1) was dropped
+  });
+
+  it("#26: keeps a genuinely different event that shares a timestamp but has a different description", () => {
+    const existing = [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "logon A" })];
+    const incoming = [ev({ id: "e2", timestamp: "2026-06-01T00:00:00Z", description: "logon B" })];
+    const out = dedupeAppend(existing, incoming);
+    expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
+  });
+
+  it("#345: keeps one row PER HOST when a fleet sweep reports identical text at the identical second", () => {
+    // A sweep across the estate emits the same detection text, same second, on every machine it
+    // hits. Those are as many observations as there are hosts — keying on time+text alone
+    // collapses the whole sweep to a single row and deletes the lateral-movement picture, which
+    // is the bug correlate step 0 already had to fix.
+    const sweep = ["WS-01", "WS-02", "SRV-03"].map((asset, i) =>
+      ev({ id: `e${i}`, timestamp: "2026-06-01T00:00:00Z", description: "Suspicious service installed", asset }));
+    const out = dedupeAppend([], sweep);
+    expect(out.map((e) => e.asset)).toEqual(["WS-01", "WS-02", "SRV-03"]);
+  });
+
+  it("#345: still drops a re-import of that same fleet sweep (same hosts, new ids)", () => {
+    const sweep = (prefix: string) => ["WS-01", "WS-02"].map((asset, i) =>
+      ev({ id: `${prefix}e${i}`, timestamp: "2026-06-01T00:00:00Z", description: "Suspicious service installed", asset }));
+    const out = dedupeAppend(sweep("1"), sweep("2"));
+    expect(out.map((e) => e.id)).toEqual(["1e0", "1e1"]);
+  });
 });
 
 describe("capEvents", () => {

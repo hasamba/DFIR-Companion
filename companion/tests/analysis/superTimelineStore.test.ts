@@ -90,7 +90,7 @@ describe("SuperTimelineStore", () => {
   it("serializes concurrent appends so no batch is clobbered", async () => {
     const batches = Array.from({ length: 12 }, (_, b) =>
       Array.from({ length: 5 }, (_, i) =>
-        ev({ id: `b${b}e${i}`, timestamp: `2026-06-0${(b % 9) + 1}T00:0${i}:00Z` })),
+        ev({ id: `b${b}e${i}`, timestamp: `2026-06-0${(b % 9) + 1}T00:0${i}:00Z`, description: `batch ${b} event ${i}` })),
     );
     await Promise.all(batches.map((batch) => store.append("c1", batch)));
     const r = await store.query("c1", {});

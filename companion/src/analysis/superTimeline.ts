@@ -4,6 +4,7 @@
 
 import type { ForensicEvent } from "./stateTypes.js";
 import { eventMatchesSearch, eventMatchesExclude } from "./searchFilter.js";
+import { cleanDescription } from "./correlate.js";
 
 export type SuperLabelMap = Record<string, string[]>;
 
@@ -52,8 +53,31 @@ export function superHostOf(event: ForensicEvent): string {
 // Append incoming events, dropping any whose id already exists (a re-import of the same rows must not
 // double the super-timeline). Preserves order: existing first, then genuinely-new incoming.
 export function dedupeAppend(existing: ForensicEvent[], incoming: ForensicEvent[]): ForensicEvent[] {
-  const seen = new Set(existing.map((e) => e.id));
-  const fresh = incoming.filter((e) => !seen.has(e.id));
+  const seenIds = new Set(existing.map((e) => e.id));
+  // Also dedup by content key (timestamp + cleanDescription) so a re-import of the same file —
+  // which mints brand-new event ids from the new sequence prefix — doesn't double the super-
+  // timeline. The correlate step 0 exact-dedup uses the same key, but it only runs inside
+  // mergeDelta over the CURRENT forensic timeline, and Info events have already been demoted OUT
+  // of the forensic timeline by the previous import's .then() handler. So the second import's
+  // correlate has nothing to dedup against and the duplicate (new id, identical content) passed
+  // through. The super-timeline is the durable superset that retains Info events, so deduping
+  // here closes the gap (#26).
+  //
+  // The HOST is part of the key, exactly as in correlate step 0 (#345): a fleet-wide sweep reports
+  // identical text at the identical second on every machine it touches, and those are as many
+  // observations as there are machines. Key on time+text alone and a 200-host sweep collapses to
+  // one row here — silently deleting the lateral-movement picture. A re-import always carries the
+  // same asset, so the dedup this exists for is unaffected.
+  const contentKey = (e: ForensicEvent): string =>
+    `${e.timestamp} ${cleanDescription(e.description)} ${superHostOf(e)}`;
+  const seenContent = new Set(existing.map(contentKey));
+  const fresh = incoming.filter((e) => {
+    if (seenIds.has(e.id)) return false;
+    const ck = contentKey(e);
+    if (seenContent.has(ck)) return false;
+    seenContent.add(ck);
+    return true;
+  });
   return [...existing, ...fresh];
 }
 
