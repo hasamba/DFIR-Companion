@@ -155,8 +155,14 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
 // ── CSV format ────────────────────────────────────────────────────────────────
 
 function csvCell(s: string): string {
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+  // CSV injection guard: a cell starting with = + - @ (or a tab/CR) is interpreted as a formula by
+  // Excel/LibreOffice. Prefix a single quote so spreadsheet apps treat it as text. Mirrors the
+  // guard in csv.ts:cell — the two exporters were written independently and iocBlocklist missed it.
+  // IOC ingest does not reject formula-prefixed values (a token starting with = can be real
+  // evidence), so they reach the export and would execute as formulas on the analyst's machine.
+  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  if (/[",\r\n]/.test(guarded)) return `"${guarded.replace(/"/g, '""')}"`;
+  return guarded;
 }
 
 /**
