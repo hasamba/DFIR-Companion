@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { segmentSessions, DEFAULT_SESSION_GAP_SECONDS, UNKNOWN_HOST } from "../../src/analysis/sessionSegmentation.js";
+import {
+  segmentSessions,
+  DEFAULT_SESSION_GAP_SECONDS,
+  DEFAULT_IOC_GRACE_FACTOR,
+  UNKNOWN_HOST,
+} from "../../src/analysis/sessionSegmentation.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -142,5 +147,135 @@ describe("segmentSessions", () => {
 
   it("defaults the gap threshold to 5 minutes", () => {
     expect(DEFAULT_SESSION_GAP_SECONDS).toBe(300);
+  });
+
+  it("carries every event id so the caller can filter the timeline to exactly this session", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01" }),
+      ev("e2", "2026-05-20T14:00:30Z", { asset: "DC01" }),
+      ev("e3", "2026-05-20T16:00:00Z", { asset: "DC01" }),
+    ]);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].eventIds).toEqual(["e1", "e2"]);
+    expect(sessions[1].eventIds).toEqual(["e3"]);
+  });
+});
+
+// #344 — segmentation binds on more than host + time.
+const logon = (acct: string, host: string, type = 10) =>
+  `Windows Security Successful logon (EID 4624) - ${acct} - LogonType=${type} @ ${host}`;
+
+describe("segmentSessions — account binding (#344)", () => {
+  it("splits when a second account logs on to the same host inside the gap window", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "SRV-01", description: logon("CORP\\jdoe", "SRV-01") }),
+      ev("e2", "2026-05-20T14:00:30Z", { asset: "SRV-01", description: "file read" }),
+      // 30s later — well inside the 5-min gap, but a DIFFERENT account. Two stories, not one.
+      ev("e3", "2026-05-20T14:01:00Z", { asset: "SRV-01", description: logon("CORP\\svc_backup", "SRV-01") }),
+      ev("e4", "2026-05-20T14:01:30Z", { asset: "SRV-01", description: "file write" }),
+    ]);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]).toMatchObject({ account: "CORP\\jdoe", eventCount: 2 });
+    expect(sessions[1]).toMatchObject({ account: "CORP\\svc_backup", eventCount: 2 });
+  });
+
+  it("names the account in the label when one was observed", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "SRV-01", description: logon("CORP\\jdoe", "SRV-01") }),
+    ]);
+    expect(sessions[0].label).toBe(
+      "Activity SRV-01 (CORP\\jdoe) → 2026-05-20T14:00:00Z-2026-05-20T14:00:00Z, 1 events",
+    );
+  });
+
+  it("leaves account undefined and the label unchanged when no logon was observed", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "SRV-01", description: "file read" }),
+    ]);
+    expect(sessions[0].account).toBeUndefined();
+    expect(sessions[0].label).toContain("Activity SRV-01 →");
+  });
+
+  it("re-logon by the SAME account does not split the session", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "SRV-01", description: logon("CORP\\jdoe", "SRV-01") }),
+      ev("e2", "2026-05-20T14:00:30Z", { asset: "SRV-01", description: logon("CORP\\jdoe", "SRV-01", 3) }),
+    ]);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].eventCount).toBe(2);
+  });
+
+  it("does not split on FAILED logons, so a brute-force burst stays one readable block", () => {
+    const fail = (acct: string) =>
+      `Windows Security Failed logon (EID 4625) - ${acct} - LogonType=3 @ SRV-01`;
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "SRV-01", description: fail("CORP\\a") }),
+      ev("e2", "2026-05-20T14:00:10Z", { asset: "SRV-01", description: fail("CORP\\b") }),
+      ev("e3", "2026-05-20T14:00:20Z", { asset: "SRV-01", description: fail("CORP\\c") }),
+    ]);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].eventCount).toBe(3);
+    expect(sessions[0].account).toBeUndefined();   // a rejected logon establishes nothing
+  });
+});
+
+describe("segmentSessions — shared-IOC gap resistance (#344)", () => {
+  it("absorbs an over-gap event that shares a hash with the running session", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "AABB" }),
+      // 8 min later: over the 5-min gap, but under the 3x grace, and it shares the hash.
+      ev("e2", "2026-05-20T14:08:00Z", { asset: "DC01", sha256: "aabb" }),
+    ]);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].eventCount).toBe(2);
+  });
+
+  it("still splits a shared-indicator event once it exceeds the grace window", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "aabb" }),
+      // 20 min later: past 3 x 5 min, so even a shared hash cannot hold it.
+      ev("e2", "2026-05-20T14:20:00Z", { asset: "DC01", sha256: "aabb" }),
+    ]);
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("splits an over-gap event that shares nothing", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "aabb" }),
+      ev("e2", "2026-05-20T14:08:00Z", { asset: "DC01", sha256: "ccdd" }),
+    ]);
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("matches on path, IP, and decoded-payload IOC ids too", () => {
+    const byPath = segmentSessions([
+      ev("a1", "2026-05-20T14:00:00Z", { asset: "DC01", path: "c:\\temp\\x.exe" }),
+      ev("a2", "2026-05-20T14:08:00Z", { asset: "DC01", path: "c:\\temp\\x.exe" }),
+    ]);
+    expect(byPath).toHaveLength(1);
+
+    const byIp = segmentSessions([
+      ev("b1", "2026-05-20T14:00:00Z", { asset: "DC01", dstIp: "203.0.113.7" }),
+      ev("b2", "2026-05-20T14:08:00Z", { asset: "DC01", srcIp: "203.0.113.7" }),
+    ]);
+    expect(byIp).toHaveLength(1);
+
+    const byIoc = segmentSessions([
+      ev("c1", "2026-05-20T14:00:00Z", { asset: "DC01", deobfuscated: { decoded: "x", method: "base64", iocs: ["i12"] } }),
+      ev("c2", "2026-05-20T14:08:00Z", { asset: "DC01", deobfuscated: { decoded: "y", method: "base64", iocs: ["i12"] } }),
+    ]);
+    expect(byIoc).toHaveLength(1);
+  });
+
+  it("iocGraceFactor: 1 disables the grace entirely", () => {
+    const sessions = segmentSessions([
+      ev("e1", "2026-05-20T14:00:00Z", { asset: "DC01", sha256: "aabb" }),
+      ev("e2", "2026-05-20T14:08:00Z", { asset: "DC01", sha256: "aabb" }),
+    ], { iocGraceFactor: 1 });
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("defaults the IOC grace factor to 3", () => {
+    expect(DEFAULT_IOC_GRACE_FACTOR).toBe(3);
   });
 });

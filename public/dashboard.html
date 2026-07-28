@@ -885,6 +885,36 @@
     .hunt-run-res { padding: 8px 10px; border-top: 1px solid var(--c-2a2f3a); }
     .hunt-refresh { background: var(--c-2a2f3a); border: 0; color: var(--c-cbd3df); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
     .hunt-refresh:hover { color: #fff; }
+    /* Attacker Sessions story view (#341). Session cards share the bordered-card language of the
+       timeline rows below them, with the severity rail keyed to the session's WORST severity so a
+       scan down the column reads as an escalation curve. */
+    .ses-card {
+      border: 1px solid var(--c-2a2f3a); border-left: 3px solid var(--c-2a2f3a); border-radius: 6px;
+      background: var(--c-11151c); padding: 6px 10px; margin-bottom: 5px; cursor: pointer;
+    }
+    .ses-card:hover { background: var(--c-142038); border-color: var(--c-3a4050); }
+    .ses-card.sevr-Critical { border-left-color: var(--c-ff5c5c); }
+    .ses-card.sevr-High     { border-left-color: var(--c-ff9f43); }
+    .ses-card.sevr-Medium   { border-left-color: var(--c-ffd93b); }
+    .ses-card.sevr-Low      { border-left-color: var(--c-6bcb77); }
+    .ses-card.sevr-Info     { border-left-color: var(--c-6aa9ff); }
+    .ses-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .ses-num { color: var(--c-9aa4b2); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .ses-host { font-weight: 600; }
+    /* The unknown-host bucket must never look like a hostname — italic + muted, and it carries a
+       title explaining that the row may span several machines. */
+    .ses-host.ses-unknown { font-weight: 400; font-style: italic; color: var(--c-9aa4b2); }
+    .ses-acct { color: var(--c-6aa9ff); font-size: 12px; }
+    .ses-tactic { font-size: 11px; background: var(--c-1a1f2e); border: 1px solid var(--c-2a2f3a); border-radius: 3px; padding: 1px 6px; }
+    .ses-when { color: var(--c-9aa4b2); font-size: 11px; font-family: ui-monospace, monospace; margin-left: auto; }
+    .ses-body { margin-top: 5px; font-size: 12px; color: var(--c-c9d1db); }
+    .ses-actions { margin-top: 5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .ses-btn { font-size: 11px; background: var(--c-2a2f3a); border: none; color: var(--c-c9d1db); border-radius: 3px; padding: 2px 8px; cursor: pointer; }
+    .ses-btn:hover { background: var(--c-3a4050); }
+    .ses-summary { margin-top: 6px; padding: 6px 8px; background: var(--c-0d1117); border: 1px solid var(--c-2a2f3a); border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
+    .ses-msg { font-size: 11px; color: var(--c-9aa4b2); }
+    section#sec-sessions.ses-collapsed .ses-body { display: none; }
+
     /* Timeline table layout — checkbox · star · icons | severity | timestamp | tags+message.
        The forensic timeline uses the same bordered-card row language as Findings / IOCs: each event
        is its own rounded card with a severity-coloured left rail, a dedicated severity column
@@ -2791,6 +2821,7 @@
         <div class="sfield-row">
           <div class="sfield"><label>Starred-report prompt file<span class="sfield-hint">DFIR_AI_STARREDREPORT_PROMPT_FILE — TimeSketch-style Starred Events Report over the analyst's starred events</span></label><input id="env-DFIR_AI_STARREDREPORT_PROMPT_FILE" placeholder="path/to/starred-report.txt" /></div>
           <div class="sfield"><label>View-summary prompt file<span class="sfield-hint">DFIR_AI_VIEWSUMMARY_PROMPT_FILE — quick AI overview of the current super-timeline view (filters applied)</span></label><input id="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE" placeholder="path/to/view-summary.txt" /></div>
+          <div class="sfield"><label>Session-summary prompt file<span class="sfield-hint">DFIR_AI_SESSIONSUMMARY_PROMPT_FILE — focused account of ONE attacker session from the Attacker Sessions panel</span></label><input id="env-DFIR_AI_SESSIONSUMMARY_PROMPT_FILE" placeholder="path/to/session-summary.txt" /></div>
         </div>
         <div class="settings-group-head">AI analysis parameters</div>
         <div class="sfield-row">
@@ -3993,6 +4024,10 @@
       </div>
       <div id="deepPassResult"></div>
     </section>
+    <!-- Attacker Sessions story view (#341 / #229): a collapsible layer directly above the Forensic
+         Timeline. Each card is one sitting on one host; clicking it filters the timeline below to
+         exactly that session's events. Derived server-side (GET /cases/:id/sessions), no AI. -->
+    <section id="sec-sessions" style="grid-column: 1 / -1"><h2>Attacker Sessions<span class="ev-sub">the timeline re-threaded as per-host chapters — a contiguous run on one host with no long gap inside it (derived, no AI); click a card to filter the timeline to that session</span><span id="sessionsCount" style="margin-left:6px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="sessionsCollapseAllBtn" type="button" title="Collapse or expand every session card" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">⇕ Collapse all</button></h2><div id="sessions">—</div></section>
     <section id="sec-timeline" style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" data-stop-click><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" style="display:none" title="Show or hide events by the tool/source that produced them" data-stop-click><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" style="display:none" title="Show or hide events by origin (the artifact that produced them)" data-stop-click><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" style="display:none" title="Show or hide events by affected host" data-stop-click><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div style="font-size:11px; color:var(--c-9aa4b2); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
@@ -10874,7 +10909,7 @@
           // timeline — no AI call needed, so refresh them right away instead of waiting on the
           // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
           scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
-          scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload();
+          scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload();
           scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
           scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
           scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
@@ -12483,6 +12518,101 @@
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ items, reason: "detection-misfire", note: `anomaly spike suppressed (${label})` }),
       }).then(() => { scheduleAnomaliesReload(); }).catch(() => {});
+    }
+
+    // ── Attacker Sessions story view (#341 / #229) ────────────────────────────────────────
+    // The timeline re-threaded as per-host chapters. Derived server-side (GET /cases/:id/sessions)
+    // from the raw forensic timeline; re-derived (debounced) on each state change like the panels
+    // above. Clicking a card filters the Forensic Timeline below to exactly that session's events.
+    let sessionsData = [];
+    let sessionsTimer = null;
+    const sessionSummaries = new Map();   // sessionId → markdown, for the current segmentation only
+    let sessionsCollapsed = false;
+
+    function loadSessions(caseId) {
+      fetch(`/cases/${caseId}/sessions`).then(r => r.ok ? r.json() : { sessions: [] }).then(d => {
+        const next = Array.isArray(d && d.sessions) ? d.sessions : [];
+        // Session ids are POSITIONAL within a segmentation run, so a re-derive can silently reassign
+        // "session-3" to a different sitting. Drop cached summaries whose session no longer has the
+        // same identity, or a card would show another session's account under its own heading.
+        for (const [id, cached] of [...sessionSummaries]) {
+          const still = next.find(s => s.id === id);
+          if (!still || still.label !== cached.label) sessionSummaries.delete(id);
+        }
+        sessionsData = next;
+        renderSessions();
+      }).catch(() => {});
+    }
+    function scheduleSessionsReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(sessionsTimer);
+      sessionsTimer = setTimeout(() => loadSessions(caseId), 800);
+    }
+
+    function renderSessions() {
+      const el = document.getElementById("sessions");
+      if (!el) return;
+      const countEl = document.getElementById("sessionsCount");
+      if (!sessionsData.length) {
+        el.innerHTML = "<span style='color:var(--c-9aa4b2)'>No attacker sessions — sessions are derived from dated timeline events.</span>";
+        if (countEl) countEl.textContent = "";
+        return;
+      }
+      const hosts = new Set(sessionsData.map(s => s.host));
+      if (countEl) countEl.textContent = `(${sessionsData.length} session${sessionsData.length !== 1 ? "s" : ""} across ${hosts.size} host${hosts.size !== 1 ? "s" : ""})`;
+
+      el.innerHTML = sessionsData.map((s, i) => {
+        const worst = (s.severityRange && s.severityRange[0]) || "Info";
+        // The server's unknown-host bucket is events whose asset was never recorded — possibly from
+        // several machines. Render it as a stated absence, never as a hostname.
+        const unknown = s.host === "(unknown host)";
+        const hostCell = unknown
+          ? `<span class="ses-host ses-unknown" title="These events' source tool did not report an affected asset. They are grouped by time alone and may span more than one machine.">host not recorded</span>`
+          : `<span class="ses-host">${esc(s.host)}</span>`;
+        const acct = s.account ? `<span class="ses-acct" title="Account established by a successful logon inside this session">${esc(s.account)}</span>` : "";
+        const tactic = s.dominantTactic ? `<span class="ses-tactic" title="Most common ATT&amp;CK tactic across this session's events">${esc(s.dominantTactic)}</span>` : "";
+        const sum = sessionSummaries.get(s.id);
+        const summaryBlock = sum ? `<div class="ses-summary">${esc(sum.markdown)}</div>` : "";
+        const rows = (s.eventIds || []).length;
+        return `<div class="ses-card sevr-${esc(worst)}" data-sesid="${escAttr(s.id)}" data-evids="${escAttr((s.eventIds || []).join(","))}" data-label="${escAttr(s.label || "")}" title="Click to filter the Forensic Timeline to this session's events">`
+          + `<div class="ses-head"><span class="ses-num">#${i + 1}</span>${hostCell}${acct}${tactic}`
+          + `<span class="ses-when">${esc(s.startTime)} → ${esc(s.endTime)}</span></div>`
+          // Rows vs occurrences: eventCount sums aggregated `count`, so a single collapsed row can
+          // report 14 events. Clicking the card filters the timeline to ROWS, so the card states the
+          // row count and mentions occurrences only when the two actually differ — otherwise the
+          // card promises 14 and the timeline below shows 1.
+          + `<div class="ses-body"><span style="color:var(--c-9aa4b2)">${esc(String(rows))} row${rows !== 1 ? "s" : ""}`
+          + (s.eventCount > rows ? ` · ${esc(String(s.eventCount))} occurrences` : "")
+          + ` · ${esc((s.severityRange || []).join(", "))}</span>`
+          + `<div class="ses-actions">`
+          + `<button type="button" class="ses-btn ses-filter">⧉ Show these events</button>`
+          + `<button type="button" class="ses-btn ses-summarize" title="One focused AI call over just this session's events">✨ Summarize session</button>`
+          + `<span class="ses-msg"></span></div>${summaryBlock}</div></div>`;
+      }).join("");
+    }
+
+    // One focused AI call over a single session (#342). Ephemeral — the answer is held in memory for
+    // this segmentation only and is deliberately not persisted.
+    function summarizeSession(card) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const sid = card.getAttribute("data-sesid");
+      if (!caseId || !sid) return;
+      const msg = card.querySelector(".ses-msg");
+      const btn = card.querySelector(".ses-summarize");
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "summarizing…";
+      fetch(`/cases/${caseId}/sessions/${encodeURIComponent(sid)}/summary`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      }).then(r => r.json().then(b => ({ ok: r.ok, b }))).then(({ ok, b }) => {
+        if (!ok) { if (msg) msg.textContent = (b && b.error) || "summary failed"; if (btn) btn.disabled = false; return; }
+        sessionSummaries.set(sid, { markdown: b.markdown || "", label: b.label || "" });
+        if (msg) msg.textContent = b.truncated ? `(${b.usedEvents} of ${b.eventCount} events used)` : "";
+        renderSessions();
+      }).catch(() => {
+        if (msg) msg.textContent = "summary failed";
+        if (btn) btn.disabled = false;
+      });
     }
 
     // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
@@ -16176,6 +16306,7 @@
       loadEvidenceGaps(caseId);
       loadBeacons(caseId);
       loadAnomalies(caseId);
+      loadSessions(caseId);
       loadAdversaryHints(caseId);
       loadHostRanking(caseId);
       loadD3fend(caseId);
@@ -16276,7 +16407,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -16995,6 +17126,15 @@
       if (e.target.id === "findingBulkTagBtn") { bulkTagFindings(); return; }
       if (e.target.id === "findingBulkFpBtn") { bulkMarkFindingsFalsePositive(); return; }
       if (e.target.id === "findingBulkClearBtn") { clearFindingSelection(); return; }
+      // Attacker Sessions collapse-all (#341): collapse every card to its one-line header for a
+      // high-level read of the intrusion, expand for the detail. Purely visual, no refetch.
+      if (e.target.id === "sessionsCollapseAllBtn") {
+        sessionsCollapsed = !sessionsCollapsed;
+        const sec = document.getElementById("sec-sessions");
+        if (sec) sec.classList.toggle("ses-collapsed", sessionsCollapsed);
+        e.target.textContent = sessionsCollapsed ? "⇕ Expand all" : "⇕ Collapse all";
+        return;
+      }
       // Star filter toggle
       if (e.target.id === "evStarFilterBtn") {
         showStarredOnly = !showStarredOnly;
@@ -17049,6 +17189,23 @@
         e.preventDefault();
         const ids = (aev.getAttribute("data-evids") || "").split(",").filter(Boolean);
         filterTimelineToEventIds(ids, aev.getAttribute("data-label") || "");
+        return;
+      }
+      // Attacker Sessions (#341): "Summarize session" runs one focused AI call; anywhere else on the
+      // card (or the explicit "Show these events" button) filters the timeline to that session.
+      // Checked before the generic card handler so the button doesn't also trigger the filter.
+      const sesSum = e.target.closest && e.target.closest(".ses-summarize");
+      if (sesSum) {
+        e.preventDefault();
+        const card = sesSum.closest(".ses-card");
+        if (card) summarizeSession(card);
+        return;
+      }
+      const sesCard = e.target.closest && e.target.closest(".ses-card");
+      if (sesCard) {
+        e.preventDefault();
+        const ids = (sesCard.getAttribute("data-evids") || "").split(",").filter(Boolean);
+        filterTimelineToEventIds(ids, sesCard.getAttribute("data-label") || "");
         return;
       }
       // Timeline-anomaly "mark spike FP" link (#12) → batch-mark every event in the spike false positive.
@@ -18703,6 +18860,7 @@
       { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
       { id: "sec-deep-pass",    label: "Deep Pass" },
       { id: "sec-timeline",     label: "Forensic Timeline" },
+      { id: "sec-sessions",     label: "Attacker Sessions" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },
       { id: "sec-hostranking",  label: "Host & Account Ranking" },

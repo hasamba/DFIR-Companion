@@ -25,6 +25,7 @@ import { mergeDelta, type WindowContext } from "./stateMerge.js";
 import type { IocAliasStore } from "./iocAlias.js";
 import type { StateLock } from "./stateLock.js";
 import { sortByEventTime } from "./forensicSort.js";
+import { segmentSessions, sessionEnvOptions } from "./sessionSegmentation.js";
 import { applySeverityFloor } from "./severityFloor.js";
 import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
 import type { ExternalImporter } from "./declarativeImporter.js";
@@ -755,7 +756,7 @@ export const OBSERVE_PROMPT = [
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "OBSERVE", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "SESSIONSUMMARY" | "OBSERVE", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -1055,6 +1056,31 @@ export const VIEW_SUMMARY_PROMPT = [
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
   JSON.stringify({ markdown: "the concise overview as raw Markdown" }, null, 2),
+].join("\n");
+
+// Per-session summary (#342): one focused call over the events of a SINGLE attacker session — a
+// contiguous run on one host — rather than the whole timeline. The events already share a host and a
+// tight time window, so the model is asked for the story of that one sitting, not a case-wide report.
+export const SESSION_SUMMARY_PROMPT = [
+  "You are a digital forensic analyst. The events below are ONE attacker session: a contiguous run",
+  "of activity on a SINGLE host, with no long gap inside it. Write a short account of what happened",
+  "during this one sitting, in Markdown.",
+  "",
+  "Cover, in this order, as flowing tight prose or bullets (no headings, no title):",
+  "- What the actor appears to have been DOING in this session, in sequence.",
+  "- The key observables — hostnames, accounts, IP addresses, file paths, process names, hashes.",
+  "- Whether the session's activity appears to have SUCCEEDED, and what in the events says so.",
+  "- What a responder should check next specifically because of this session.",
+  "",
+  "Highlight key observables in markdown bold (**…**).",
+  "",
+  "Ground EVERY statement in the supplied events. Do not invent entities, timestamps, or activity",
+  "they do not contain, and do not speculate about what happened BEFORE or AFTER this session — you",
+  "are seeing one slice of the intrusion, not the whole case. If the events are too sparse to say",
+  "what happened, say exactly that instead of guessing.",
+  "",
+  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
+  JSON.stringify({ markdown: "the session account as raw Markdown (no title heading)" }, null, 2),
 ].join("\n");
 
 // Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
@@ -1437,6 +1463,7 @@ export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY",
 export const getHypothesisReviewPrompt = (): string => resolvePrompt("HYPREVIEW", HYPOTHESIS_REVIEW_PROMPT);
 export const getStarredReportPrompt = (): string => resolvePrompt("STARREDREPORT", STARRED_REPORT_PROMPT);
 export const getViewSummaryPrompt = (): string => resolvePrompt("VIEWSUMMARY", VIEW_SUMMARY_PROMPT);
+export const getSessionSummaryPrompt = (): string => resolvePrompt("SESSIONSUMMARY", SESSION_SUMMARY_PROMPT);
 
 export const IMPORTER_PROMPT = [
   "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
@@ -1481,6 +1508,12 @@ export interface StarredSummaryResult {
   eventCount: number;
   usedEvents: number;
   truncated: boolean;
+}
+
+/** One session's AI account (#342). Carries the session identity so a stale card can't mislabel it. */
+export interface SessionSummaryResult extends StarredSummaryResult {
+  sessionId: string;
+  label: string;
 }
 
 export interface PipelineOptions {
@@ -4841,6 +4874,53 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
 
     return { markdown: result.markdown, eventCount: all.length, usedEvents: events.length, truncated: events.length < all.length };
+  }
+
+  // Per-session summary (#342): ONE text-only AI call over just the events of a single attacker
+  // session. Cheaper and more coherent than full synthesis — the events already share a host and a
+  // tight window, so the model gets a focused slice instead of a 600-event wall.
+  //
+  // The session is re-derived HERE from the case's own timeline rather than trusting a caller-passed
+  // event list: a session id is only meaningful relative to a segmentation run, and re-segmenting
+  // with sessionEnvOptions() guarantees the summary covers exactly the session the dashboard and the
+  // report call by that id. EPHEMERAL — no state change.
+  async sessionSummary(caseId: string, sessionId: string): Promise<SessionSummaryResult> {
+    const provider = this.opts.synthesisProvider ?? this.requireProvider("session summary");
+    const loaded = await this.opts.stateStore.load(caseId);
+    const sessions = segmentSessions(loaded.forensicTimeline, sessionEnvOptions());
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!session) throw new Error(`session not found: ${sessionId}`);
+
+    const wanted = new Set(session.eventIds);
+    const all = sortByEventTime(loaded.forensicTimeline.filter((e) => wanted.has(e.id)));
+    if (!all.length) throw new Error(`session not found: ${sessionId}`);
+
+    const prompt = getSessionSummaryPrompt();
+    const { events, render } = this.fitViewEvents(all, estimateTokens(prompt) + 300);
+
+    const userPrompt =
+      `SESSION: ${session.label}\n` +
+      `HOST: ${session.host}\n` +
+      (session.account ? `ACCOUNT: ${session.account}\n` : "") +
+      `WINDOW: ${session.startTime} → ${session.endTime}\n\n` +
+      `EVENTS (${events.length} of ${all.length}, chronological):\n` +
+      events.map(render).join("\n") +
+      `\n\nWrite the session account as JSON.`;
+
+    const mdSchema = z.object({ markdown: z.string().min(1) });
+    const result = await this.withRetry(caseId, "session-summary", async () => {
+      const parsed = await this.analyzeRestored(caseId, loaded, provider, { systemPrompt: prompt, userPrompt, images: [] }, "session-summary");
+      return mdSchema.parse(parsed);
+    }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
+
+    return {
+      markdown: result.markdown,
+      sessionId: session.id,
+      label: session.label,
+      eventCount: all.length,
+      usedEvents: events.length,
+      truncated: events.length < all.length,
+    };
   }
 
   // Summarize the analyst's CURRENT super-timeline view: the route passes the exact filter set the
