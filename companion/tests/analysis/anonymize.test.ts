@@ -459,6 +459,63 @@ describe("deriveKnownEntities", () => {
     expect(k.internalDomains).toContain("adatumlab");        // NETBIOS domain
     expect(k.internalDomains).toContain("adatumlab.local");  // from the FQDN host
   });
+
+  it("derives internal domains from IOC values too (redacted-export PII leak #17)", () => {
+    // A victim internal AD domain that appears ONLY as an IOC (not as any event.asset) must
+    // still contribute its parent to internalDomains so the redacted-export anonymizer
+    // tokenizes it. Previously the demo case's globaltech.local survived unredacted because
+    // the FQDN host lived in state.iocs, not state.forensicTimeline[].asset.
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "compromise observed", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "DC01" },
+    ];
+    s.iocs = [
+      { id: "i1", type: "domain", value: "dc01.globaltech.local", firstSeen: "" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("dc01.globaltech.local");
+    expect(k.internalDomains).toContain("globaltech.local");
+  });
+
+  it("leaves an adversary domain/url IOC alone — a redacted export that hides the C2 is useless intel", () => {
+    // Most domain/url IOCs are attacker infrastructure. Taking them into hosts/internalDomains
+    // makes anonHosts/anonDomains tokenize the C2 to ANON_HOST_n in the redacted export, which
+    // strips out the very indicators the recipient needs (same reasoning as the public-IP rule).
+    const s = emptyState("c1");
+    s.iocs = [
+      { id: "i1", type: "url", value: "https://c2.evil.example/path", firstSeen: "" },
+      { id: "i2", type: "domain", value: "payload.badguys.net", firstSeen: "" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toEqual([]);
+    expect(k.internalDomains).toEqual([]);
+  });
+
+  it("takes an IOC host that sits under a domain the accounts pass already proved internal", () => {
+    // victim.com is established as internal by the UPN account, so fs01.victim.com is victim
+    // infrastructure even though its TLD is public.
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "logon by jdoe@victim.com", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS-1" },
+    ];
+    s.iocs = [{ id: "i1", type: "domain", value: "fs01.victim.com", firstSeen: "" }];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("fs01.victim.com");
+    expect(k.internalDomains).toContain("victim.com");
+  });
+
+  it("ignores IOC types that aren't host-shaped (hash, ip, file, process, sid)", () => {
+    const s = emptyState("c1");
+    s.iocs = [
+      { id: "i1", type: "hash", value: "a".repeat(64), firstSeen: "" },
+      { id: "i2", type: "ip", value: "10.0.0.5", firstSeen: "" },
+      { id: "i3", type: "sid", value: "S-1-5-21-1", firstSeen: "" },
+      { id: "i4", type: "process", value: "powershell.exe", firstSeen: "" },
+    ];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toEqual([]);
+    expect(k.internalDomains).toEqual([]);
+  });
 });
 
 describe("isNoiseDomain / isNoiseAccount", () => {
