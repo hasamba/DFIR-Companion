@@ -110,6 +110,20 @@ describe("buildCustomerExposureTargets", () => {
     expect(built.domains).toEqual([]);
   });
 
+  it("OPSEC: excludes a deeper adversary subdomain whose derived domain is neither the IOC nor its parent (#30)", () => {
+    // Asset "a.b.evil.com" derives the domain "b.evil.com" — not equal to the IOC "evil.com" nor
+    // to its registrable parent, so an exact-set check let it through to HIBP. Anything at or
+    // under an adversary name is adversary.
+    const state = emptyState("c1");
+    state.forensicTimeline = [{
+      id: "e1", timestamp: "2026-06-01T00:00:00Z", description: "beacon", severity: "Medium",
+      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "a.b.evil.com",
+    }];
+    state.iocs = [{ id: "i1", type: "domain", value: "evil.com", firstSeen: "2026-06-01T00:00:00Z" }];
+    const built = buildCustomerExposureTargets(state, { domains: [], emails: [] });
+    expect(built.domains).toEqual([]);
+  });
+
   it("OPSEC: keeps a genuine victim subdomain whose parent is NOT an IOC", () => {
     const state = emptyState("c1");
     state.forensicTimeline = [{

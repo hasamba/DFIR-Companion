@@ -123,7 +123,7 @@ function isPublicSuffixOrTld(domain: string): boolean {
   return false;
 }
 
-function iocHostsAndParents(iocs: { value: string; type: string }[]): Set<string> {
+function iocHostsAndParents(iocs: { value: string; type: string }[]): string[] {
   const out = new Set<string>();
   for (const ioc of iocs) {
     const v = ioc.value.toLowerCase().trim();
@@ -136,7 +136,15 @@ function iocHostsAndParents(iocs: { value: string; type: string }[]): Set<string
     out.add(host);
     out.add(parentDomain(host));
   }
-  return out;
+  return [...out];
+}
+
+// Anything at or under an adversary name is adversary too. An exact-set lookup is not enough:
+// an asset of "a.b.evil.com" derives the domain "b.evil.com", which equals neither the IOC
+// ("evil.com") nor its registrable parent, so the exact check waved it straight through to HIBP
+// — the leak this filter exists to stop.
+function isAtOrUnder(candidate: string, excluded: readonly string[]): boolean {
+  return excluded.some((e) => candidate === e || candidate.endsWith("." + e));
 }
 
 export function extractCaseDomains(state: InvestigationState): string[] {
@@ -150,7 +158,7 @@ export function extractCaseDomains(state: InvestigationState): string[] {
     const domain = host.slice(dot + 1);
     if (isNoiseDomain(domain)) continue;
     if (isPublicSuffixOrTld(domain)) continue;       // bare TLD like "com"/"org" — never a customer domain
-    if (excluded.has(domain) || excluded.has(host)) continue;  // adversary domain (IOC) — OPSEC boundary
+    if (isAtOrUnder(domain, excluded) || isAtOrUnder(host, excluded)) continue;  // adversary domain (IOC) — OPSEC boundary
     domains.add(domain);
   }
   return [...domains];
