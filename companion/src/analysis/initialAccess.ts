@@ -35,7 +35,12 @@ export function emailLinkDomains(e: ForensicEvent): string[] {
 // Boundary-aware containment so "evil.com" doesn't match "notevil.com" / "evil.com.au".
 function mentions(hay: string, domain: string): boolean {
   const esc = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^a-z0-9.-])${esc}([^a-z0-9-]|$)`, "i").test(hay);
+  // The lookahead must exclude dots the same way the lookbehind does, so "evil.com" does NOT match
+  // inside "evil.com.au" (the .au TLD continues the domain). Previously the lookahead was
+  // [^a-z0-9-] which does NOT exclude dots — a dot matched, so "evil.com" matched inside
+  // "evil.com.au" and the host event got a fabricated initial-access link + Medium T1566.002
+  // (#16). The doc comment already claimed this didn't happen.
+  return new RegExp(`(^|[^a-z0-9.-])${esc}([^a-z0-9.-]|$)`, "i").test(hay);
 }
 
 export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
