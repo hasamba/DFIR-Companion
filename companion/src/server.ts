@@ -823,7 +823,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // ── Case password protection ─────────────────────────────────────────────────────────
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
   // here, before ANY /cases/:id/* route is registered, so it covers all of them via prefix
-  // matching. See docs/superpowers/specs/2026-07-09-case-password-protection-design.md.
+  // matching — a route added later is protected with no change to this file. See
+  // caseLockGate.ts for the gate itself.
   app.use("/cases/:id", createCaseLockGate(store, instanceSecret));
 
   // Bail out of read-only case routes whose client already gave up (#174). The dashboard's connect

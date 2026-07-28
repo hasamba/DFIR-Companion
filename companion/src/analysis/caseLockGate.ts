@@ -33,7 +33,9 @@ function lockPromptHtml(caseId: string): string {
  * once via `app.use('/cases/:id', createCaseLockGate(store, secret))`, as early as possible
  * (before ANY `/cases/:id/*` route is registered) — Express's prefix matching means it
  * covers every route registered after it, current or future, with no per-route changes.
- * See docs/superpowers/specs/2026-07-09-case-password-protection-design.md. */
+ *
+ * A per-route opt-in was rejected for exactly that reason: it leaves each new route one
+ * forgotten decorator away from serving a locked case's evidence unauthenticated. */
 export function createCaseLockGate(store: CaseStore, secret: Buffer) {
   return async function caseLockGate(req: Request, res: Response, next: NextFunction): Promise<void> {
     const caseId = req.params.id;

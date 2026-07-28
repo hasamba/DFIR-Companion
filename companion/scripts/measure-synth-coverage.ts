@@ -1,7 +1,12 @@
 // Measure how much of a real case's forensic timeline fits the synthesis prompt once detection bursts
-// are grouped. This is the decision input for tier 3 (the batched deep pass) in
-// docs/superpowers/specs/2026-07-21-forensic-timeline-ai-coverage-design.md: if the collapsed set fits
-// the cap on real imports, tier 3 is unnecessary and should be dropped.
+// are grouped.
+//
+// Why it exists: full AI coverage of the timeline was scoped as three tiers — (1) group bursts so a
+// repetitive detection costs one prompt row, (2) select what remains by severity and rarity, and
+// (3) a batched deep pass that runs synthesis over the timeline in chunks so nothing is unseen.
+// Tier 3 is much the most expensive, in tokens and in complexity. This script is the evidence for
+// whether it is needed at all: run it against real cases, and if the grouped timeline already fits
+// the prompt cap, tier 3 buys nothing and should be dropped rather than built.
 //
 // Usage (from companion/):  npx tsx scripts/measure-synth-coverage.ts <path-to-investigation.json>
 
