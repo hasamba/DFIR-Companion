@@ -7,6 +7,7 @@ import { isLocalAiProvider } from "./anonymize.js";
 import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
 import type { ImporterLoadError } from "./importerStore.js";
+import type { EvidenceIntegrityStatus } from "./custodyIntegrity.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
 export function formatBytes(bytes: number): string {
@@ -288,6 +289,8 @@ export interface DiagnosticsReport {
     totalBytes: number;
     retain: number;
   };
+  /** Result of the last periodic re-verification of stored evidence (#231). */
+  evidenceIntegrity: EvidenceIntegrityStatus;
 }
 
 /**
@@ -362,5 +365,28 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
       lines.push(`    ${e.file}: ${e.errors.map((x) => `${x.path}: ${x.message}`).join("; ")}`);
     }
   }
+  lines.push("");
+  lines.push("-- Evidence integrity --");
+  lines.push(...evidenceIntegrityLines(r.evidenceIntegrity));
   return lines.join("\n");
+}
+
+/**
+ * The custody sweep's headline. A failure leads the line rather than trailing an all-clear, because
+ * this is the one section an operator scans for a reason to worry.
+ */
+function evidenceIntegrityLines(e: EvidenceIntegrityStatus): string[] {
+  if (!e.enabled) return ["  disabled (DFIR_CUSTODY_VERIFY_INTERVAL_MS=0)"];
+  if (!e.lastRunAt) return [`  not verified yet — next sweep within ${formatAge(e.intervalMs)}`];
+
+  const ago = formatAge(Date.now() - Date.parse(e.lastRunAt));
+  const lines: string[] = [];
+  if (e.failedArtifacts > 0) {
+    lines.push(`  last verified ${ago} ago — ${e.failedArtifacts} of ${e.artifacts} artifacts FAILED verification`);
+  } else {
+    lines.push(`  last verified ${ago} ago — all ${e.artifacts} artifacts OK`);
+  }
+  if (e.chainBreaks > 0) lines.push(`  ${e.chainBreaks} custody-log chain break(s)`);
+  if (e.problemCaseIds.length) lines.push(`  affected cases: ${e.problemCaseIds.join(", ")}`);
+  return lines;
 }

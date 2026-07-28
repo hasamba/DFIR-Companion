@@ -199,6 +199,10 @@ function sampleReport(): DiagnosticsReport {
       perImporter: [],
       loadErrors: [],
     },
+    evidenceIntegrity: {
+      enabled: true, intervalMs: 86_400_000, lastRunAt: null, lastDurationMs: null,
+      artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
+    },
   };
 }
 
