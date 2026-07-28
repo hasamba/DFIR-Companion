@@ -4,7 +4,7 @@ import {
   _resetKnownPlaybooksCache,
 } from "../../src/analysis/knownPlaybooksData.js";
 import { normalizeTechniqueId } from "../../src/analysis/adversaryHints.js";
-import { matchPlaybook, observedSequences } from "../../src/analysis/playbookMatch.js";
+import { matchPlaybook, observedSequences, stepTactic } from "../../src/analysis/playbookMatch.js";
 
 // The dataset is a committed file the SEA build stages next to the binary, so these guard both the
 // loader's contract and the shipped JSON itself — a malformed entry is silently dropped at load
@@ -28,14 +28,38 @@ describe("loadKnownPlaybooks", () => {
   it("ships every catalogued playbook intact (none silently dropped by validation)", () => {
     const ds = loadKnownPlaybooks();
     // Named in the shipped file; if validation drops one, this list stops matching.
-    expect(ds.playbooks.map((p) => p.name).sort()).toEqual(["Akira", "BlackCat", "Conti", "LockBit"]);
+    expect(ds.playbooks.map((p) => p.name).sort()).toEqual([
+      "Akira",
+      "Black Basta",
+      "BlackCat (ALPHV)",
+      "BlackSuit (Royal)",
+      "Conti",
+      "LockBit",
+      "Play",
+      "Scattered Spider",
+    ]);
     for (const p of ds.playbooks) {
       expect(p.description.length).toBeGreaterThan(0);
       expect(p.steps.length).toBeGreaterThan(1); // a one-step "chain" has no order to match
+      // Every chain cites the public advisory it was distilled from — the report and the panel
+      // link to it, and an uncited chain is an unfalsifiable claim.
+      expect(p.reference).toMatch(/^https:\/\//);
       for (const s of p.steps) {
         expect(s.name.length).toBeGreaterThan(0);
         // Every step id must survive normalization, or the matcher skips the step entirely.
         expect(normalizeTechniqueId(s.technique)).toBe(s.technique);
+        for (const alt of s.alternatives ?? []) {
+          expect(normalizeTechniqueId(alt)).toBe(alt);
+          expect(alt).not.toBe(s.technique); // a self-alternative is a no-op typo
+        }
+      }
+    }
+  });
+
+  it("maps every step to an ATT&CK tactic, so a missing step becomes a collection directive", () => {
+    for (const p of loadKnownPlaybooks().playbooks) {
+      for (const s of p.steps) {
+        expect(stepTactic(s), `${p.name} / ${s.technique}`).toBeDefined();
       }
     }
   });

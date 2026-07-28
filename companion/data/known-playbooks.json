@@ -1,51 +1,120 @@
 {
-  "source": "MITRE ATT&CK + public ransomware playbook reporting",
-  "generated": "2026-07-24",
+  "source": "MITRE ATT&CK + CISA #StopRansomware advisories",
+  "generated": "2026-07-28",
+  "note": "Ordered technique chains distilled from public advisories. Each step's `alternatives` are the documented variants of that stage (a playbook branch: LockBit enters by exploit OR stolen credentials), matched as any-of. A chain is the COMMON path, not a required one — real intrusions skip, repeat and reorder steps, which is why matching is a fuzzy subsequence rather than an equality test.",
   "playbooks": [
     {
       "name": "Conti",
-      "description": "Conti ransomware affiliate playbook: spearphish entry, hands-on-keyboard PowerShell, LSASS credential dumping, SMB/PsExec lateral movement, and mass encryption.",
+      "description": "Conti ransomware affiliate playbook: spearphish entry, hands-on-keyboard PowerShell/Cobalt Strike, LSASS credential dumping, SMB/PsExec lateral movement, and mass encryption.",
+      "reference": "https://www.cisa.gov/news-events/alerts/2021/09/22/conti-ransomware",
       "steps": [
-        { "technique": "T1566.001", "name": "Spearphishing Attachment" },
-        { "technique": "T1059.001", "name": "PowerShell" },
-        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
-        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1566.001", "name": "Spearphishing Attachment", "alternatives": ["T1566.002", "T1078"] },
+        { "technique": "T1059.001", "name": "PowerShell", "alternatives": ["T1059.003"] },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump", "alternatives": ["T1003.002"] },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral", "alternatives": ["T1021.001"] },
         { "technique": "T1486", "name": "Data Encrypted for Impact" }
       ]
     },
     {
       "name": "LockBit",
-      "description": "LockBit 3.0 affiliate playbook: initial access via exploited public-facing app or stolen RDP credentials, Cobalt Strike beaconing, credential theft, lateral spread, and double-extortion encryption.",
+      "description": "LockBit affiliate playbook: initial access via an exploited public-facing app or stolen RDP credentials, tooling staged on the host, Cobalt Strike beaconing, credential theft, lateral spread, and double-extortion exfiltration before encryption.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-165a",
       "steps": [
-        { "technique": "T1190", "name": "Exploit Public-Facing Application" },
+        { "technique": "T1190", "name": "Exploit Public-Facing Application", "alternatives": ["T1078", "T1133"] },
         { "technique": "T1105", "name": "Ingress Tool Transfer" },
         { "technique": "T1071.001", "name": "Web Protocols C2" },
         { "technique": "T1003.001", "name": "LSASS Memory Dump" },
-        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral", "alternatives": ["T1021.001"] },
+        { "technique": "T1567.002", "name": "Exfiltration to Cloud Storage", "alternatives": ["T1048"] },
         { "technique": "T1486", "name": "Data Encrypted for Impact" }
       ]
     },
     {
-      "name": "BlackCat",
-      "description": "BlackCat/ALPHV playbook: identity-driven access (compromised VPN/RDP credentials), privileged credential theft, deployment via PsExec/SMB, and cross-platform Rust encryption with exfiltration.",
+      "name": "BlackCat (ALPHV)",
+      "description": "BlackCat/ALPHV playbook: identity-driven access with compromised VPN/RDP credentials, hands-on-keyboard scripting, privileged credential theft, deployment via PsExec/SMB, and cross-platform Rust encryption after staged exfiltration.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-353a",
       "steps": [
-        { "technique": "T1078", "name": "Valid Accounts" },
+        { "technique": "T1078", "name": "Valid Accounts", "alternatives": ["T1133"] },
+        { "technique": "T1059.001", "name": "PowerShell", "alternatives": ["T1059.003"] },
         { "technique": "T1003.001", "name": "LSASS Memory Dump" },
-        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral" },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral", "alternatives": ["T1021.001"] },
         { "technique": "T1560.001", "name": "Archive via Utility" },
-        { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol" },
+        { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol", "alternatives": ["T1567.002"] },
         { "technique": "T1486", "name": "Data Encrypted for Impact" }
       ]
     },
     {
       "name": "Akira",
-      "description": "Akira ransomware playbook: VPN credential compromise (often lacking MFA), hands-on-keyboard via Cisco SSH/AnyConnect, credential theft with LSASS, lateral SMB/RDP, and encryption with data exfiltration.",
+      "description": "Akira ransomware playbook: VPN access without MFA, credential theft with LSASS tooling, Active Directory discovery, RDP/SMB lateral movement, WinRAR staging with rclone/FileZilla exfiltration, shadow-copy deletion, then encryption.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-109a",
       "steps": [
-        { "technique": "T1078", "name": "Valid Accounts" },
+        { "technique": "T1133", "name": "External Remote Services (VPN without MFA)", "alternatives": ["T1078"] },
         { "technique": "T1003.001", "name": "LSASS Memory Dump" },
-        { "technique": "T1021.001", "name": "Remote Desktop Protocol Lateral" },
+        { "technique": "T1018", "name": "Remote System Discovery", "alternatives": ["T1087.002"] },
+        { "technique": "T1021.001", "name": "Remote Desktop Protocol Lateral", "alternatives": ["T1021.002"] },
         { "technique": "T1560.001", "name": "Archive via Utility" },
-        { "technique": "T1048.002", "name": "Exfiltration Over Asymmetric Encrypted Protocol" },
+        { "technique": "T1048.002", "name": "Exfiltration Over Asymmetric Encrypted Protocol", "alternatives": ["T1567.002"] },
+        { "technique": "T1490", "name": "Inhibit System Recovery" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "Scattered Spider",
+      "description": "Scattered Spider playbook: social-engineered help-desk resets and vishing rather than malware for entry, MFA fatigue or SIM-swap to finish the logon, legitimate remote-access tooling instead of implants, credentials pulled from password stores, SaaS/cloud discovery, cloud exfiltration, and ransomware deployment last.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a",
+      "steps": [
+        { "technique": "T1566.004", "name": "Spearphishing Voice (help-desk social engineering)", "alternatives": ["T1656"] },
+        { "technique": "T1621", "name": "MFA Request Generation (push fatigue)", "alternatives": ["T1111"] },
+        { "technique": "T1078", "name": "Valid Accounts" },
+        { "technique": "T1219", "name": "Remote Access Software", "alternatives": ["T1105"] },
+        { "technique": "T1555", "name": "Credentials from Password Stores", "alternatives": ["T1003.001"] },
+        { "technique": "T1087", "name": "Account Discovery", "alternatives": ["T1526", "T1018"] },
+        { "technique": "T1567.002", "name": "Exfiltration to Cloud Storage", "alternatives": ["T1048"] },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "Black Basta",
+      "description": "Black Basta playbook: phishing (historically QakBot) for entry, user execution of the dropped loader, Mimikatz-style credential theft, exploitation for privilege escalation, RDP/PsExec lateral movement, RClone exfiltration, shadow-copy deletion, then encryption.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa24-131a",
+      "steps": [
+        { "technique": "T1566.001", "name": "Spearphishing Attachment", "alternatives": ["T1566.002"] },
+        { "technique": "T1204.002", "name": "User Execution: Malicious File", "alternatives": ["T1059.001"] },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1068", "name": "Exploitation for Privilege Escalation", "alternatives": ["T1548"] },
+        { "technique": "T1021.001", "name": "Remote Desktop Protocol Lateral", "alternatives": ["T1021.002"] },
+        { "technique": "T1567.002", "name": "Exfiltration to Cloud Storage", "alternatives": ["T1048"] },
+        { "technique": "T1490", "name": "Inhibit System Recovery" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "BlackSuit (Royal)",
+      "description": "BlackSuit/Royal playbook: phishing or an exploited public-facing service for entry, tooling staged and beaconing over HTTP(S), credential theft, RDP lateral movement, exfiltration over alternative protocols, shadow-copy deletion, then encryption.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-061a",
+      "steps": [
+        { "technique": "T1566.002", "name": "Spearphishing Link", "alternatives": ["T1566.001", "T1190"] },
+        { "technique": "T1105", "name": "Ingress Tool Transfer" },
+        { "technique": "T1071.001", "name": "Web Protocols C2" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1021.001", "name": "Remote Desktop Protocol Lateral", "alternatives": ["T1021.002"] },
+        { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol", "alternatives": ["T1567.002"] },
+        { "technique": "T1490", "name": "Inhibit System Recovery" },
+        { "technique": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "name": "Play",
+      "description": "Play ransomware playbook: valid accounts or an exploited public-facing service (FortiOS, Exchange) for entry, security tooling disabled, credential theft, Active Directory discovery, SMB/RDP lateral movement, WinRAR staging with WinSCP exfiltration, then encryption.",
+      "reference": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-352a",
+      "steps": [
+        { "technique": "T1078", "name": "Valid Accounts", "alternatives": ["T1190", "T1133"] },
+        { "technique": "T1562.001", "name": "Disable or Modify Tools" },
+        { "technique": "T1003.001", "name": "LSASS Memory Dump" },
+        { "technique": "T1018", "name": "Remote System Discovery", "alternatives": ["T1087.002"] },
+        { "technique": "T1021.002", "name": "SMB/Windows Admin Share Lateral", "alternatives": ["T1021.001"] },
+        { "technique": "T1560.001", "name": "Archive via Utility" },
+        { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol", "alternatives": ["T1567.002"] },
         { "technique": "T1486", "name": "Data Encrypted for Impact" }
       ]
     }

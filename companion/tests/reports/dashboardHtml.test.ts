@@ -315,6 +315,34 @@ describe("dashboard.html", () => {
     expect(html).toContain("/geo-map");
   });
 
+  it("has the Playbook Match panel with per-step status and a jump to the evidencing event (#230)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="sec-playbook-match"');
+    expect(html).toContain("function loadPlaybookMatch");
+    expect(html).toContain("function renderPlaybookMatch");
+    expect(html).toContain("/playbook-match");
+    // Registered in the section list + both reload chains, or the panel silently goes stale.
+    expect(html).toContain('{ id: "sec-playbook-match", label: "Playbook Match" }');
+    expect(html).toContain("schedulePlaybookMatchReload");
+    // Three per-step states, each visually distinct (#230 asks for matched/missing/out-of-order).
+    expect(html).toContain("pm-matched");
+    expect(html).toContain("pm-ooo");
+    expect(html).toContain("pm-missing");
+    // Click a matched step → the event that evidences it; an unobserved step → Evidence Gaps.
+    expect(html).toContain('data-act="playbookJumpToEvent"');
+    expect(html).toContain("playbookJumpToEvent:        (el) => jumpToEvent(el.dataset.id)");
+    expect(html).toContain('data-act="playbookJumpToGaps"');
+    // The non-attribution caveat renders WITH the match, not as a tooltip.
+    expect(html).toContain("not attribution");
+  });
+
+  it("renders an unobserved playbook step as its own Evidence Gaps item (#230)", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('it.kind === "playbook_step"');
+    expect(html).toContain("eg-playbook");
+    expect(html).toContain("unobserved playbook step");
+  });
+
   it("wires the mark-false-positive modal (reason/note/candidates/whitelist) (#227)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="fpOverlay"');

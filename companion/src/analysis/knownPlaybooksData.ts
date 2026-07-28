@@ -32,7 +32,15 @@ function candidatePaths(): string[] {
 
 function isStep(value: unknown): value is PlaybookStep {
   const s = value as Partial<PlaybookStep>;
-  return !!s && typeof s.technique === "string" && typeof s.name === "string";
+  return (
+    !!s &&
+    typeof s.technique === "string" &&
+    typeof s.name === "string" &&
+    // `alternatives` is optional, but a malformed one would silently widen or narrow what the step
+    // matches — reject the step rather than quietly matching something the catalog didn't intend.
+    (s.alternatives === undefined ||
+      (Array.isArray(s.alternatives) && s.alternatives.every((a) => typeof a === "string")))
+  );
 }
 
 // `description` is required by the Playbook type and rendered verbatim by every surface, so an entry
@@ -44,6 +52,7 @@ function isPlaybook(value: unknown): value is Playbook {
     !!p &&
     typeof p.name === "string" &&
     typeof p.description === "string" &&
+    (p.reference === undefined || typeof p.reference === "string") &&
     Array.isArray(p.steps) &&
     p.steps.length > 0 &&
     p.steps.every(isStep)

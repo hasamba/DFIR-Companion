@@ -4139,6 +4139,7 @@
       #sec-evidence-gaps .eg-item.eg-gap{border-left-color:var(--c-ffb454)}
       #sec-evidence-gaps .eg-item.eg-next{border-left-color:var(--c-6aa9ff)}
       #sec-evidence-gaps .eg-item.eg-yield{border-left-color:var(--c-ff6b6b,#ff6b6b)}
+      #sec-evidence-gaps .eg-item.eg-playbook{border-left-color:var(--c-c79bff)}
       #sec-evidence-gaps .eg-kind{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--c-9aa4b2);margin-right:6px}
       #sec-evidence-gaps .eg-label{color:var(--c-d6deea)}
       #sec-evidence-gaps .eg-collect{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:12px}
@@ -4476,6 +4477,39 @@
       #sec-adversary .adv-next-hunt{background:var(--c-2f8f4e);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
       #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
       #sec-adversary .adv-next-ds{color:var(--c-9aa4b2);font-size:11px;margin:2px 0 0 4px;font-style:italic}
+    </style>
+    <section id="sec-playbook-match" style="grid-column: 1 / -1"><h2>Playbook Match<span class="ev-sub">did this case's techniques happen in the ORDER a published ransomware playbook describes — matches the playbook, not the actor (derived, no AI)</span></h2><div id="playbookMatch">—</div></section>
+    <style>
+      #sec-playbook-match .pm-caveat{color:var(--c-ffb454);font-size:12px;margin-bottom:8px}
+      #sec-playbook-match .pm-meta{color:var(--c-9aa4b2);font-size:11px;margin-bottom:8px}
+      #sec-playbook-match .pm-empty{color:var(--c-9aa4b2)}
+      #sec-playbook-match .pm-list{display:flex;flex-direction:column;gap:10px}
+      #sec-playbook-match .pm-card{background:var(--c-161b22);border:1px solid var(--c-232a33);border-left:3px solid var(--c-c79bff);border-radius:6px;padding:8px 10px}
+      #sec-playbook-match .pm-card-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+      #sec-playbook-match .pm-name{color:var(--c-c79bff);font-weight:bold;font-size:13px}
+      #sec-playbook-match .pm-ref{color:var(--c-6aa9ff);font-size:11px;text-decoration:none}
+      #sec-playbook-match .pm-ref:hover{text-decoration:underline}
+      #sec-playbook-match .pm-scope{color:var(--c-9aa4b2);font-size:11px;background:var(--c-0f1620);border:1px solid var(--c-1f2a3a);border-radius:3px;padding:0 5px}
+      #sec-playbook-match .pm-score{margin-left:auto;background:var(--c-2a2233);color:var(--c-c79bff);border:1px solid var(--c-4a3a5a);border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+      #sec-playbook-match .pm-desc{color:var(--c-c9d1db);font-size:12px;margin:6px 0}
+      #sec-playbook-match .pm-steps{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+      #sec-playbook-match .pm-step{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;padding:3px 6px;border-radius:4px;border-left:3px solid var(--c-2a2f3a);background:var(--c-0f1620)}
+      #sec-playbook-match .pm-step.pm-matched{border-left-color:var(--c-6bcb77)}
+      #sec-playbook-match .pm-step.pm-ooo{border-left-color:var(--c-ffb454)}
+      #sec-playbook-match .pm-step.pm-missing{border-left-color:var(--c-ff5c5c);opacity:.85}
+      #sec-playbook-match .pm-step-n{color:var(--c-9aa4b2);font-size:11px;min-width:16px}
+      #sec-playbook-match .pm-step-tech{color:var(--c-6aa9ff);text-decoration:none;font-size:11px}
+      #sec-playbook-match .pm-step-tech:hover{text-decoration:underline}
+      #sec-playbook-match .pm-step-name{color:var(--c-d6deea)}
+      #sec-playbook-match .pm-step-tactic{color:var(--c-9aa4b2);font-size:11px;background:var(--c-161b22);border:1px solid var(--c-232a33);border-radius:3px;padding:0 5px}
+      #sec-playbook-match .pm-step-status{margin-left:auto;font-size:11px;white-space:nowrap}
+      #sec-playbook-match .pm-matched .pm-step-status{color:var(--c-6bcb77)}
+      #sec-playbook-match .pm-ooo .pm-step-status{color:var(--c-ffb454)}
+      #sec-playbook-match .pm-missing .pm-step-status{color:var(--c-ff5c5c)}
+      #sec-playbook-match .pm-jump{color:var(--c-6aa9ff);cursor:pointer;font-size:11px;text-decoration:underline;background:none;border:0;padding:0}
+      #sec-playbook-match .pm-base{color:var(--c-9aa4b2);font-size:11px;font-style:italic}
+      #sec-playbook-match .pm-gaps{margin-top:8px;border-top:1px solid var(--c-232a33);padding-top:8px;color:var(--c-c9d1db);font-size:12px}
+      #sec-playbook-match .pm-gaplink{color:var(--c-6aa9ff);cursor:pointer;font-size:12px;text-decoration:underline}
     </style>
     <section id="sec-d3fend" style="grid-column: 1 / -1"><h2>Mitigation &amp; Defensive Countermeasures<span class="ev-sub">concrete MITRE ATT&amp;CK mitigations to apply for this incident's techniques, plus D3FEND defensive techniques — offline, no AI</span><button id="remediationBtn" type="button" data-act="generateRemediation" title="Ask the AI to write a concrete, incident-specific remediation plan from this case's findings + ATT&CK mitigations (one AI call)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate remediation plan</button><span id="remediationMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="remediationPlan"></div><div id="mitigationsPanel">—</div><div id="d3fendPanel">—</div></section>
     <style>
@@ -10935,7 +10969,7 @@
           // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
           scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
           scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload();
-          scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload();
+          scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload();
           scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
           scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
           loadSuperTimeline(caseId);
@@ -12709,6 +12743,15 @@
           // or a telemetry type with no detector to corroborate it — a blind spot, not a clean source.
           return `<div class="eg-item eg-yield"><span class="eg-kind">blind spot</span><span class="eg-label">${esc(it.label)}</span></div>`;
         }
+        if (it.kind === "playbook_step") {
+          // Unobserved playbook step (#230): the case follows a published chain but never evidenced
+          // this stage — a sharper gap than an uncovered tactic, and it carries the same directive.
+          const collects = (it.collect || []).map(collectBtn).join("");
+          const ref = (it.playbook && it.playbook.reference)
+            ? ` <a class="eg-gaplink" href="${escAttr(it.playbook.reference)}" target="_blank" rel="noopener">playbook source ↗</a>`
+            : "";
+          return `<div class="eg-item eg-playbook"><span class="eg-kind">unobserved playbook step</span><span class="eg-label">${esc(it.label)}</span>${ref}${collects}</div>`;
+        }
         const collects = (it.collect || []).map(collectBtn).join("");
         return `<div class="eg-item"><span class="eg-kind">uncovered phase</span><span class="eg-label">${esc(it.label)}</span>${collects}</div>`;
       }).join("") + "</div>";
@@ -13158,6 +13201,96 @@
         `</div>`;
       })() : "";
       el.innerHTML = caveat + meta + `<div class="adv-list">${cards}</div>` + next;
+    }
+
+    // ── Playbook Match (#230) ──────────────────────────────────────────────────────────────────
+    // Adversary Hints above answers "which techniques does this case share with a known group".
+    // This answers the harder question: did they happen in the ORDER a published playbook describes.
+    // Derived server-side (GET /cases/:id/playbook-match) from the bundled catalog of CISA-documented
+    // ransomware chains — offline, no AI. Two rules this renderer exists to keep:
+    //   - the caveat renders WITH the match, never as a tooltip. A named group beside a percentage
+    //     reads as attribution unless it says plainly that it isn't.
+    //   - every matched step is clickable through to the event that evidences it. A step marked
+    //     green that the analyst can't verify is worse than no step at all.
+    let playbookMatchData = null;
+    let playbookMatchTimer = null;
+    function loadPlaybookMatch(caseId) {
+      fetch(`/cases/${caseId}/playbook-match`).then(r => r.ok ? r.json() : null).then(d => {
+        playbookMatchData = (d && typeof d === "object") ? d : null;
+        renderPlaybookMatch();
+      }).catch(() => {});
+    }
+    function schedulePlaybookMatchReload() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      clearTimeout(playbookMatchTimer);
+      playbookMatchTimer = setTimeout(() => loadPlaybookMatch(caseId), 800);
+    }
+    function renderPlaybookMatch() {
+      const el = document.getElementById("playbookMatch");
+      if (!el) return;
+      const d = playbookMatchData;
+      const caveat = `<div class="pm-caveat">⚠ ${esc((d && d.caveat) || "Sequence similarity to a published playbook — not attribution.")}</div>`;
+      if (!d) {
+        el.innerHTML = caveat + `<div class="pm-empty">Playbook catalog not available.</div>`;
+        return;
+      }
+      const observed = d.observed || [];
+      if (!observed.length) {
+        el.innerHTML = caveat + `<div class="pm-empty">No ATT&amp;CK-tagged events in the timeline yet — sequence matching needs a chronology.</div>`;
+        return;
+      }
+      const matches = d.matches || [];
+      if (!matches.length) {
+        el.innerHTML = caveat + `<div class="pm-empty">No published playbook matches this case's ${esc(observed.length)}-technique sequence at or above ${esc(d.minScore)}%.</div>`;
+        return;
+      }
+      const meta = `<div class="pm-meta">Top ${esc(matches.length)} of the catalog · matched over ${esc(observed.length)} chronological technique(s) · ${esc(d.source || "")}${d.generated ? ` (${esc(d.generated)})` : ""} · a step matches when it appears IN ORDER, allowing unrelated activity in between</div>`;
+      const cards = matches.map(m => {
+        const scope = m.scope === "host" && m.host
+          ? `<span class="pm-scope" title="This chain holds together on one host's slice of the timeline">on ${esc(m.host)}</span>`
+          : `<span class="pm-scope" title="This chain holds together across the whole case timeline, spanning hosts">case-wide</span>`;
+        const ref = m.reference
+          ? `<a class="pm-ref" href="${escAttr(m.reference)}" target="_blank" rel="noopener" title="The public advisory this chain was distilled from">source ↗</a>`
+          : "";
+        const steps = (m.steps || []).map((s, i) => {
+          const cls = s.status === "matched" ? "pm-matched" : s.status === "out-of-order" ? "pm-ooo" : "pm-missing";
+          const techUrl = attackUrl(s.step.technique);
+          const tech = techUrl
+            ? `<a class="pm-step-tech" href="${escAttr(techUrl)}" target="_blank" rel="noopener">${esc(s.step.technique)}</a>`
+            : `<span class="pm-step-tech">${esc(s.step.technique)}</span>`;
+          const tactic = s.tactic ? `<span class="pm-step-tactic">${esc(s.tactic)}</span>` : "";
+          let status;
+          if (s.status === "matched") {
+            const base = s.matchKind === "base"
+              ? ` <span class="pm-base" title="The case tagged a different sub-technique of the same base technique — a partial match">(base only: ${esc(s.matchedTechnique)})</span>`
+              : "";
+            const jump = s.matchedEventId
+              ? ` <button type="button" class="pm-jump" data-act="playbookJumpToEvent" data-id="${escAttr(s.matchedEventId)}" title="Jump to the timeline event that evidences this step">evidence →</button>`
+              : "";
+            status = `<span class="pm-step-status">✅ matched${base}</span>${jump}`;
+          } else if (s.status === "out-of-order") {
+            status = `<span class="pm-step-status" title="This technique IS in the case, but not at a point that keeps the chain — check host clocks and collection lag before reading anything into it">🟡 out of order</span>`;
+          } else {
+            status = `<span class="pm-step-status" title="Never observed — either it did not happen, or the evidence was not collected. See Evidence Gaps for what to collect.">❌ not observed</span>`;
+          }
+          return `<div class="pm-step ${cls}"><span class="pm-step-n">${esc(i + 1)}</span>${tech}<span class="pm-step-name">${esc(s.step.name)}</span>${tactic}${status}</div>`;
+        }).join("");
+        const missing = (m.steps || []).filter(s => s.status === "missing");
+        const gaps = missing.length
+          ? `<div class="pm-gaps">${esc(missing.length)} step(s) of this chain were never evidenced — either they did not happen, or the evidence was not collected. <a class="pm-gaplink" data-act="playbookJumpToGaps">See Evidence Gaps for what to collect →</a></div>`
+          : "";
+        return `<div class="pm-card">` +
+          `<div class="pm-card-head">` +
+            `<span class="pm-name">${esc(m.name)}</span>${ref}${scope}` +
+            `<span class="pm-score" title="Weighted fraction of the playbook's steps observed in order (exact sub-technique = full credit, base technique = half)">${esc(m.score)}% · ${esc(m.matchedCount)}/${esc((m.steps || []).length)} steps</span>` +
+          `</div>` +
+          `<div class="pm-desc">${esc(m.description)}</div>` +
+          `<div class="pm-steps">${steps}</div>` +
+          gaps +
+        `</div>`;
+      }).join("");
+      el.innerHTML = caveat + meta + `<div class="pm-list">${cards}</div>`;
     }
 
     // ── Compliance Impact (#234 / #336) — control failures & regulatory obligations ─────────────
@@ -16340,6 +16473,7 @@
       loadAnomalies(caseId);
       loadSessions(caseId);
       loadAdversaryHints(caseId);
+      loadPlaybookMatch(caseId);
       loadHostRanking(caseId);
       loadD3fend(caseId);
       loadAttackMitigations(caseId);
@@ -16439,7 +16573,7 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
         else if (msg.type === "job_changed") loadJobs(caseId);
@@ -18843,6 +18977,13 @@
         const g = document.getElementById("sec-gaps");
         if (g) g.scrollIntoView({ behavior: "smooth" });
       },
+      // Playbook Match (#230): a matched step jumps to the event that evidences it; an unobserved
+      // step sends the analyst to Evidence Gaps, which carries the collection directive for it.
+      playbookJumpToEvent:        (el) => jumpToEvent(el.dataset.id),
+      playbookJumpToGaps:         (el) => {
+        const g = document.getElementById("sec-evidence-gaps");
+        if (g) { g.classList.remove("collapsed"); g.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      },
       // Compliance Impact (#336)
       setComplianceDiscovered:    (el) => setComplianceDiscovered(el),
       clearComplianceDiscovered:  (el) => clearComplianceDiscovered(),
@@ -18914,6 +19055,7 @@
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },
+      { id: "sec-playbook-match", label: "Playbook Match" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-compliance",   label: "Compliance Impact" },
       { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },

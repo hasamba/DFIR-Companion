@@ -30,6 +30,7 @@
 import { baseTechniqueId, normalizeTechniqueId, BASE_MATCH_WEIGHT } from "./adversaryHints.js";
 import { sortByEventTime } from "./forensicSort.js";
 import { UNKNOWN_HOST } from "./sessionSegmentation.js";
+import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export { BASE_MATCH_WEIGHT };
@@ -38,6 +39,11 @@ export { BASE_MATCH_WEIGHT };
 export interface PlaybookStep {
   technique: string; // ATT&CK id, full granularity where mapped, e.g. "T1059.001"
   name: string; // human label, e.g. "PowerShell"
+  // The documented VARIANTS of this stage — the "optional branching" of #230, kept as a flat any-of
+  // rather than a tree because that is the shape real advisories describe ("entry via an exploited
+  // public-facing app OR stolen RDP credentials"). Any one of them satisfies the step; a full tree
+  // would let two mutually exclusive branches both score, which reads as a stronger match than it is.
+  alternatives?: string[];
 }
 
 // A canonical playbook: an ordered technique chain attributed to a ransomware group / intrusion set.
@@ -45,6 +51,7 @@ export interface Playbook {
   name: string;
   description: string;
   steps: PlaybookStep[];
+  reference?: string; // URL of the public advisory the chain was distilled from
 }
 
 // The shape of the bundled JSON dataset (companion/data/known-playbooks.json).
@@ -52,6 +59,22 @@ export interface KnownPlaybooksDataset {
   source: string;
   generated: string;
   playbooks: Playbook[];
+}
+
+// The ids that satisfy one step: its technique plus any documented alternative, normalized and
+// deduped. Invalid ids are dropped rather than silently matching nothing in a confusing way.
+export function stepTechniqueIds(step: PlaybookStep): string[] {
+  const ids = [step.technique, ...(step.alternatives ?? [])]
+    .map((t) => normalizeTechniqueId(t))
+    .filter((t): t is string => !!t);
+  return [...new Set(ids)];
+}
+
+// The ATT&CK tactic a step belongs to, for grouping in the report and for turning a MISSING step
+// into an evidence-gap collection directive. Derived from the step's own technique (not the
+// alternatives, which may span tactics); undefined when the id isn't in the tactic map.
+export function stepTactic(step: PlaybookStep): IrisTactic | undefined {
+  return tacticForTechniques([step.technique]);
 }
 
 // One observed technique, tied back to the event that produced it so the UI can jump from a matched
@@ -72,6 +95,7 @@ export interface ObservedSequence {
 export interface PlaybookStepMatch {
   step: PlaybookStep;
   status: "matched" | "missing" | "out-of-order";
+  tactic?: IrisTactic; // the step's ATT&CK tactic, when known — groups the report, drives gap collection
   matchedTechnique?: string; // the observed technique id that matched this step (when matched)
   matchedEventId?: string; // the forensic event that carried it — the UI's jump target (when matched)
   matchKind?: "exact" | "base"; // granularity of the match (when matched)
@@ -81,6 +105,7 @@ export interface PlaybookStepMatch {
 export interface PlaybookMatch {
   name: string;
   description: string;
+  reference?: string; // the public advisory the chain came from, when the catalog records one
   score: number; // 0–100: in-order matched fraction (exact full, base partial), of the playbook steps
   matchedCount: number; // steps observed in order (exact + partial)
   exactCount: number; // steps matched at the exact sub-technique
@@ -177,26 +202,42 @@ export function observedSequences(events: readonly ForensicEvent[]): ObservedSeq
 }
 
 // Try to match a single playbook step against the observed sequence from a cursor onward, returning
-// the matched technique + kind + the next cursor, or null when no in-order match exists. An exact
-// (full-id) match is preferred over a base-only match at the same cursor position: the walk looks
-// ahead for an exact match before accepting a partial one, so a coarse tag doesn't mask a precise one.
+// the matched technique + kind + the next cursor, or null when no in-order match exists. The step is
+// satisfied by its own technique OR any documented alternative (see PlaybookStep.alternatives). An
+// exact (full-id) match is preferred over a base-only match at the same cursor position: the walk
+// looks ahead for an exact match before accepting a partial one, so a coarse tag doesn't mask a
+// precise one.
 function matchStep(
   step: PlaybookStep,
   observed: readonly ObservedTechnique[],
   from: number,
 ): { observed: ObservedTechnique; kind: "exact" | "base"; next: number } | null {
-  const stepId = normalizeTechniqueId(step.technique);
-  const stepBase = stepId ? baseTechniqueId(stepId) : null;
-  if (!stepId) return null;
+  const exactIds = new Set(stepTechniqueIds(step));
+  if (exactIds.size === 0) return null;
+  const baseIds = new Set([...exactIds].map((id) => baseTechniqueId(id)).filter(Boolean));
   let partial: { observed: ObservedTechnique; next: number } | null = null;
   for (let i = from; i < observed.length; i++) {
     const obs = observed[i];
-    if (obs.technique === stepId) return { observed: obs, kind: "exact", next: i + 1 };
-    if (stepBase && baseTechniqueId(obs.technique) === stepBase) {
+    if (exactIds.has(obs.technique)) return { observed: obs, kind: "exact", next: i + 1 };
+    const obsBase = baseTechniqueId(obs.technique);
+    if (obsBase && baseIds.has(obsBase)) {
       if (!partial) partial = { observed: obs, next: i + 1 };
     }
   }
   return partial ? { observed: partial.observed, kind: "base", next: partial.next } : null;
+}
+
+// Does this step's technique (or any alternative) appear ANYWHERE in the sequence, in or out of
+// order? Distinguishes a step the case never evidenced (`missing`) from one it evidenced at a
+// position that breaks the chain (`out-of-order`).
+function stepSeenAnywhere(step: PlaybookStep, observed: readonly ObservedTechnique[]): boolean {
+  const exactIds = new Set(stepTechniqueIds(step));
+  const baseIds = new Set([...exactIds].map((id) => baseTechniqueId(id)).filter(Boolean));
+  return observed.some((o) => {
+    if (exactIds.has(o.technique)) return true;
+    const b = baseTechniqueId(o.technique);
+    return !!b && baseIds.has(b);
+  });
 }
 
 // Score one playbook against one observed sequence: walk the steps in order, advancing the cursor on
@@ -214,11 +255,13 @@ export function matchPlaybook(playbook: Playbook, sequence: ObservedSequence): P
   let weighted = 0;
 
   for (const step of playbook.steps) {
+    const tactic = stepTactic(step);
     const m = matchStep(step, observed, cursor);
     if (m) {
       steps.push({
         step,
         status: "matched",
+        ...(tactic ? { tactic } : {}),
         matchedTechnique: m.observed.technique,
         matchedEventId: m.observed.eventId,
         matchKind: m.kind,
@@ -230,13 +273,9 @@ export function matchPlaybook(playbook: Playbook, sequence: ObservedSequence): P
     } else {
       // The technique exists somewhere but appeared before the cursor (already consumed) → out-of-order;
       // never observed at all → missing.
-      const stepId = normalizeTechniqueId(step.technique);
-      const stepBase = stepId ? baseTechniqueId(stepId) : null;
-      const seenSomewhere = observed.some(
-        (o) => o.technique === stepId || (!!stepBase && baseTechniqueId(o.technique) === stepBase),
-      );
-      if (seenSomewhere) outOfOrder++;
-      steps.push({ step, status: seenSomewhere ? "out-of-order" : "missing" });
+      const seen = stepSeenAnywhere(step, observed);
+      if (seen) outOfOrder++;
+      steps.push({ step, status: seen ? "out-of-order" : "missing", ...(tactic ? { tactic } : {}) });
     }
   }
 
@@ -245,6 +284,7 @@ export function matchPlaybook(playbook: Playbook, sequence: ObservedSequence): P
   return {
     name: playbook.name,
     description: playbook.description,
+    ...(playbook.reference ? { reference: playbook.reference } : {}),
     score,
     matchedCount: matched,
     exactCount: exact,

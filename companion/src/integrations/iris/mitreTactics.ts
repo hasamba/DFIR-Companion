@@ -35,16 +35,17 @@ const TECHNIQUE_TACTIC: Record<string, IrisTactic> = {
   T1562: "Defense Evasion", T1218: "Defense Evasion", T1140: "Defense Evasion", T1497: "Defense Evasion",
   T1480: "Defense Evasion", T1055: "Defense Evasion", T1564: "Defense Evasion", T1222: "Defense Evasion",
   T1127: "Defense Evasion", T1006: "Defense Evasion", T1620: "Defense Evasion", T1535: "Defense Evasion",
-  T1207: "Defense Evasion", T1014: "Defense Evasion",
+  T1207: "Defense Evasion", T1014: "Defense Evasion", T1656: "Defense Evasion",
   // Credential Access
   T1003: "Credential Access", T1110: "Credential Access", T1555: "Credential Access", T1552: "Credential Access",
   T1558: "Credential Access", T1556: "Credential Access", T1187: "Credential Access", T1212: "Credential Access",
   T1040: "Credential Access", T1539: "Credential Access", T1649: "Credential Access",
+  T1621: "Credential Access", T1111: "Credential Access",
   // Discovery
   T1087: "Discovery", T1083: "Discovery", T1057: "Discovery", T1018: "Discovery", T1082: "Discovery",
   T1016: "Discovery", T1049: "Discovery", T1033: "Discovery", T1007: "Discovery", T1069: "Discovery",
   T1482: "Discovery", T1135: "Discovery", T1046: "Discovery", T1518: "Discovery", T1010: "Discovery",
-  T1124: "Discovery", T1201: "Discovery", T1012: "Discovery", T1614: "Discovery",
+  T1124: "Discovery", T1201: "Discovery", T1012: "Discovery", T1614: "Discovery", T1526: "Discovery",
   // Lateral Movement
   T1021: "Lateral Movement", T1570: "Lateral Movement", T1550: "Lateral Movement", T1563: "Lateral Movement",
   T1080: "Lateral Movement", T1072: "Lateral Movement", T1210: "Lateral Movement", T1534: "Lateral Movement",
