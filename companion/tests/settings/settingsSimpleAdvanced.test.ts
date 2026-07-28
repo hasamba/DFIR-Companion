@@ -16,6 +16,14 @@ import { validateEnvUpdates } from "../../src/settings/envManager.js";
 /** The env keys each Settings tab shows in Simple mode. One entry per tab that has any. */
 const SIMPLE_ENV_KEYS: Record<string, string[]> = {
   general: [],   // the Simple General view is the setup-wizard button + investigator name, no env fields
+  // The three models you can point somewhere. Timeouts, token caps, prompt-file overrides and the
+  // VQL hunt model stay Advanced — each has a working default or falls back to the synthesis model.
+  ai: [
+    "DFIR_VISION_PROVIDER", "DFIR_VISION_MODEL", "DFIR_VISION_KEY", "DFIR_VISION_BASE_URL",
+    "DFIR_AI_SYNTH_PROVIDER", "DFIR_AI_SYNTH_MODEL", "DFIR_AI_SYNTH_KEY", "DFIR_AI_SYNTH_BASE_URL",
+    "DFIR_AI_SECOND_OPINION_PROVIDER", "DFIR_AI_SECOND_OPINION_MODEL",
+    "DFIR_AI_SECOND_OPINION_KEY", "DFIR_AI_SECOND_OPINION_BASE_URL",
+  ],
 };
 
 const ALL_SIMPLE = Object.values(SIMPLE_ENV_KEYS).flat().sort();
