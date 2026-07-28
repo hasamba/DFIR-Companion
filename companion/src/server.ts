@@ -13,6 +13,7 @@ import { ZodError } from "zod";
 import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { atomicWrite } from "./storage/atomicWrite.js";
+import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext, ImportBase } from "./routes/context.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerCaptureRoutes } from "./routes/captures.js";
@@ -3913,7 +3914,11 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   const envFile = resolveEnvFilePath();
   loadDotenv({ path: envFile, quiet: true });
   logLine(`[DFIR] env file: ${envFile}`);
-  const raw = process.env.DFIR_CASES_ROOT ?? "cases";
+  // Expand a leading "~" to the user's home directory. dotenv does NOT do this
+  // expansion, so DFIR_CASES_ROOT=~/Documents/cases would otherwise create a
+  // literal "~/Documents" folder beside the companion package instead of using
+  // $HOME/Documents. See src/storage/expandHome.ts.
+  const raw = expandHome(process.env.DFIR_CASES_ROOT ?? "cases");
   // Anchor a relative cases root to the companion package directory, so the SAME
   // physical folder is used no matter which directory the server is launched from.
   // (Otherwise "./cases" resolves against cwd and you can end up with two folders.)
@@ -3942,8 +3947,11 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // Optional override for the GLOBAL session-log directory (per-case logs always live in the
   // case dir). Relative paths anchor to companion/ like DFIR_CASES_ROOT; unset → logs/ beside
   // the cases root.
-  const rawLogDir = process.env.DFIR_LOG_DIR;
-  const logDir = rawLogDir && rawLogDir.trim() !== ""
+  // Expand before the isAbsolute test, not after: "~/logs" is not absolute, so testing the raw
+  // value sends it down the relative branch and only resolve()'s absolute-second-argument rule
+  // saves it. Same reason as the cases root above — dotenv does not expand "~".
+  const rawLogDir = process.env.DFIR_LOG_DIR?.trim() ? expandHome(process.env.DFIR_LOG_DIR) : undefined;
+  const logDir = rawLogDir
     ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
     : undefined;
 
