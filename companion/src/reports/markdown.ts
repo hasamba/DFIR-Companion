@@ -25,6 +25,7 @@ import { buildMitigationsResult } from "../analysis/attackMitigations.js";
 import { loadMitigationsDataset } from "../analysis/attackMitigationsData.js";
 import { mapFindings, loadComplianceMap } from "../analysis/complianceMap.js";
 import { buildComplianceView, type ComplianceMappingView } from "../analysis/complianceView.js";
+import { segmentSessions, sessionEnvOptions, UNKNOWN_HOST } from "../analysis/sessionSegmentation.js";
 import type { ComplianceControl } from "../analysis/complianceControl.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
@@ -901,6 +902,57 @@ function mitigationsReportBlock(state: InvestigationState, lines: string[]): voi
   }
 }
 
+// Attacker Sessions (#229 / #343) — the forensic timeline segmented into per-host sittings, so the
+// report reads as chapters ("Session 1: initial access at 14:02… Session 3: encryption at 03:15")
+// instead of one flat run of rows. Offline + deterministic (no AI).
+//
+// FILTERING: this segments `state.forensicTimeline`, and by the time renderMarkdownReport is called
+// that state has ALREADY been scope-projected and false-positive filtered by reportWriter. So the
+// sessions here cover exactly the events the rest of the report covers — a session can never cite
+// activity the findings section excludes. This is deliberately NOT the same set the /cases/:id/sessions
+// endpoint returns: that one runs on the raw timeline because an analyst browsing the story view wants
+// to see everything, including what filtering hides. Same algorithm, different input, both correct.
+//
+// Session ids are positional within one segmentation run, so the numbering in this section is
+// generated from the same run that renders it and is never resolved against a stored id.
+function sessionsSection(state: InvestigationState, lines: string[]): void {
+  lines.push("## Attacker Sessions", "");
+  const sessions = segmentSessions(state.forensicTimeline, sessionEnvOptions());
+  if (!sessions.length) {
+    lines.push("_No dated events in scope — attacker sessions are derived from the forensic timeline._", "");
+    return;
+  }
+
+  const hosts = new Set(sessions.map((s) => s.host));
+  lines.push(
+    `The timeline segments into ${sessions.length} session(s) across ${hosts.size} host(s). A session is a ` +
+      `contiguous run of activity on one host with no long gap inside it; a change of account also starts ` +
+      `a new one. Derived deterministically from the timeline — no AI.`,
+    "",
+  );
+
+  lines.push("| # | Host | Account | Window | Events | Dominant tactic | Severity |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const [i, s] of sessions.entries()) {
+    // The unknown-host bucket must not be presented as a machine name — it is a set of events whose
+    // host was never recorded, possibly from several different hosts.
+    const host = s.host === UNKNOWN_HOST ? "_(host not recorded)_" : cellMd(s.host);
+    lines.push(
+      `| ${i + 1} | ${host} | ${s.account ? cellMd(s.account) : "—"} | ${cellMd(s.startTime)} → ${cellMd(s.endTime)} ` +
+        `| ${s.eventCount} | ${s.dominantTactic ?? "—"} | ${s.severityRange.join(", ")} |`,
+    );
+  }
+  lines.push("");
+
+  if (sessions.some((s) => s.host === UNKNOWN_HOST)) {
+    lines.push(
+      "_Sessions marked “host not recorded” group events whose source tool did not report an affected " +
+        "asset. They are grouped by time alone and may span more than one machine._",
+      "",
+    );
+  }
+}
+
 // Compliance Impact (#234 / #336) — for each CONFIRMED finding, the control failures and
 // regulatory obligations its techniques map to, grouped by framework. Offline + deterministic
 // (no AI), resolved from the bundled compliance mapping.
@@ -1223,6 +1275,7 @@ export function renderMarkdownReport(
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
     },
     d3fend: () => d3fendSection(state, lines),
+    sessions: () => sessionsSection(state, lines),
     compliance: () => complianceSection(state, complianceControl ?? {}, lines),
     notebook: () => {
       if (notebookEntries && notebookEntries.length > 0) analystNotebook(notebookEntries, lines);

@@ -734,6 +734,42 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
     expect([...defined].filter((a) => !used.has(a))).toEqual([]); // no dead entries left behind
   });
 
+  it("shows the attacker-session story view above the Forensic Timeline", async () => {
+    const html = await load();
+    // The section must sit ABOVE the timeline — the whole point is a layer you read first.
+    expect(html.indexOf('id="sec-sessions"')).toBeGreaterThan(0);
+    expect(html.indexOf('id="sec-sessions"')).toBeLessThan(html.indexOf('id="sec-timeline"'));
+    expect(html).toContain('{ id: "sec-sessions",     label: "Attacker Sessions" }');
+    // Clicking a card reuses the existing id-filter so the timeline shows exactly that session.
+    expect(html).toMatch(/ses-card[\s\S]{0,400}filterTimelineToEventIds/);
+    // Cards are re-derived on state change, like the sibling derived panels.
+    expect(html).toContain("function scheduleSessionsReload()");
+    expect(html).toMatch(/scheduleAnomaliesReload\(\); scheduleSessionsReload\(\)/);
+  });
+
+  it("never renders the unknown-host bucket as if it were a real machine", async () => {
+    const html = await load();
+    // A blank or literal "(unknown host)" in the host column reads as a hostname. It must render as
+    // a stated absence, and must carry the caveat that the row can span more than one machine.
+    expect(html).toMatch(/host not recorded/);
+    expect(html).toMatch(/ses-unknown[\s\S]{0,400}may span more than one machine/);
+  });
+
+  it("states session size in ROWS, since that is what clicking the card filters to", async () => {
+    const html = await load();
+    // eventCount sums aggregated `count`, so a 1-row session can report 14 events. The card must
+    // not promise 14 and then filter the timeline to 1.
+    expect(html).toMatch(/const rows = \(s\.eventIds \|\| \[\]\)\.length;/);
+    expect(html).toMatch(/s\.eventCount > rows \?[\s\S]{0,80}occurrences/);
+  });
+
+  it("drops a cached session summary when re-segmentation changes what that id means", async () => {
+    const html = await load();
+    // Session ids are positional, so "session-3" can become a different sitting after a re-derive.
+    // A stale summary left on the card would caption the wrong session.
+    expect(html).toMatch(/still\.label !== cached\.label[\s\S]{0,60}sessionSummaries\.delete/);
+  });
+
   it("gives every inline <script> block a nonce placeholder for the server to stamp", async () => {
     const html = await load();
     // Every <script> that is not a src= include must be nonced, or the CSP drops it.
