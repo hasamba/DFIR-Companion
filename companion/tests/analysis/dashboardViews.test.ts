@@ -138,3 +138,16 @@ describe("dashboardViews — getDashboardView", () => {
     expect(getDashboardView("does-not-exist")).toBeUndefined();
   });
 });
+
+describe("sec-collection-plan registration (#347)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-collection-plan");
+  });
+
+  it("appears in the Triage and Hunt Prep profiles", () => {
+    for (const id of ["triage", "hunt-prep"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-collection-plan`).toContain("sec-collection-plan");
+    }
+  });
+});

@@ -4031,6 +4031,19 @@
     </section>
     <section id="sec-exec" style="grid-column: 1 / -1"><h2>Executive Summary<button id="genExecBtn" type="button" title="Generate a management-facing executive summary with AI (review before saving it to the report)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genExecMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span></h2><div id="summary">—</div><div id="execGenResult"></div></section>
     <section id="sec-next-steps" style="grid-column: 1 / -1"><h2>Recommended Next Steps</h2><div id="nextSteps">—</div></section>
+    <!-- Collection plan (#347): the incident type's evidence checklist; hidden until a type is set. -->
+    <section id="sec-collection-plan" data-gate-open="" style="grid-column: 1 / -1; display:none"><h2>Collection Plan<span class="ev-sub">the evidence this incident type calls for, in order — ticked off from what the case already holds (derived, no AI)</span></h2><div id="collectionPlan">—</div></section>
+    <style>
+      #sec-collection-plan .cp-row{display:flex;align-items:baseline;gap:10px;padding:6px 8px;border-bottom:1px solid var(--c-232a33)}
+      #sec-collection-plan .cp-row:last-child{border-bottom:none}
+      #sec-collection-plan .cp-mark{width:16px;flex:0 0 16px;text-align:center}
+      #sec-collection-plan .cp-label{font-weight:600}
+      #sec-collection-plan .cp-next{color:var(--c-ffb454)}
+      #sec-collection-plan .cp-hint{color:var(--c-9aa4b2);font-size:11px}
+      #sec-collection-plan .cp-act{margin-left:auto;display:flex;gap:6px}
+      #sec-collection-plan .cp-act button{padding:1px 8px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-collection-plan .cp-done{color:var(--c-9aa4b2);font-size:12px;margin-bottom:8px}
+    </style>
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
@@ -16063,10 +16076,84 @@
       }
     });
 
+    // Collection plan (#347). Derived server-side from the case timeline; this only renders it and
+    // posts the analyst's overrides. The section is data-gated: no incident type → no plan → stays
+    // hidden, because a generic collection plan would be guesswork.
+    const CP_MARK = {
+      collected: "✔", "override-collected": "✔", "override-na": "—", external: "↗", outstanding: "○",
+    };
+    // Step id → analyst-facing label, mirroring COLLECTION_STEPS server-side. Kept here so the New
+    // Case preview reads "EDR telemetry → Memory image" rather than raw ids.
+    const CP_LABELS = {
+      "edr": "EDR telemetry", "windows-event-logs": "Windows event logs",
+      "endpoint-triage": "Endpoint triage artifacts", "memory": "Memory image",
+      "network": "Network traffic / IDS", "web-logs": "Web server access logs",
+      "m365": "Microsoft 365 / mailbox audit", "identity": "Identity sign-in logs",
+      "cloud-audit": "Cloud control-plane audit", "siem": "SIEM / aggregated logs",
+      "sandbox": "Malware sandbox report", "super-timeline": "Super-timeline",
+      "threat-scan": "Threat / YARA scan", "physical-access": "Physical access records",
+    };
+    async function renderCollectionPlan() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const sec = document.getElementById("sec-collection-plan");
+      const el = document.getElementById("collectionPlan");
+      if (!caseId) { sec.dataset.gateOpen = ""; applySectionsVis(); return; }
+      let data;
+      try {
+        const r = await fetch(`/cases/${encodeURIComponent(caseId)}/collection-plan`);
+        data = r.ok ? await r.json() : null;
+      } catch { data = null; }
+      if (!data || !data.plan) { sec.dataset.gateOpen = ""; applySectionsVis(); return; }
+
+      const p = data.plan;
+      const rows = p.steps.map(s => {
+        const isNext = s.id === p.nextStepId;
+        const hint = s.state === "external"
+          ? "collect outside DFIR Companion"
+          : s.reason ? esc(s.reason)
+          : s.state === "outstanding" ? "satisfied by: " + esc(s.satisfiedBy.join(", "))
+          : "";
+        const acts = s.state === "collected"
+          ? ""
+          : (s.state === "override-collected" || s.state === "override-na")
+            ? `<button data-cp-clear="${esc(s.id)}">Undo</button>`
+            : `<button data-cp-set="${esc(s.id)}" data-cp-state="collected">Have it</button>`
+              + `<button data-cp-set="${esc(s.id)}" data-cp-state="na">N/A</button>`;
+        return `<div class="cp-row"><span class="cp-mark">${CP_MARK[s.state] || "○"}</span>`
+          + `<span class="cp-label${isNext ? " cp-next" : ""}">${esc(s.label)}${isNext ? " — collect next" : ""}</span>`
+          + `<span class="cp-hint">${hint}</span><span class="cp-act">${acts}</span></div>`;
+      }).join("");
+      el.innerHTML = `<div class="cp-done">${p.collected} of ${p.total} collected</div>${rows}`;
+      sec.dataset.gateOpen = "1";
+      applySectionsVis();
+    }
+
+    document.getElementById("collectionPlan").addEventListener("click", async (e) => {
+      const setBtn = e.target.closest("[data-cp-set]");
+      const clearBtn = e.target.closest("[data-cp-clear]");
+      if (!setBtn && !clearBtn) return;
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const stepId = setBtn ? setBtn.dataset.cpSet : clearBtn.dataset.cpClear;
+      const url = `/cases/${encodeURIComponent(caseId)}/collection-plan/${encodeURIComponent(stepId)}`;
+      try {
+        if (setBtn) {
+          const state = setBtn.dataset.cpState;
+          const reason = prompt(state === "na" ? "Why does this not apply?" : "Where is this evidence?") ?? "";
+          await fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, reason }) });
+        } else {
+          await fetch(url, { method: "DELETE" });
+        }
+      } catch { /* transient — the next render re-reads the truth from the server */ }
+      renderCollectionPlan();
+    });
+
     function render(rawState) {
       // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
       // a slow response for an abandoned case load can silently overwrite the case now on screen.
       if (rawState && rawState.caseId && activeCaseId && rawState.caseId !== activeCaseId) return;
+      // Independent of rawState — it reads the plan from the server, so it is fire-and-forget here.
+      renderCollectionPlan();
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       lastState = rawState;
       const state = projectScope(rawState);
@@ -16690,7 +16777,7 @@
         // For an incident type, the import ORDER is the guidance ("EDR first, then DC logs") —
         // show it instead of the unordered recommended-imports list a plain template carries.
         const imports = kind === "type" && t.recommendedImportOrder?.length
-          ? { label: "Import order", value: t.recommendedImportOrder.join(" → ") }
+          ? { label: "Collect in order", value: t.recommendedImportOrder.map(id => CP_LABELS[id] || id).join(" → ") }
           : t.recommendedImports?.length
             ? { label: "Imports", value: t.recommendedImports.join(", ") }
             : null;
@@ -19077,6 +19164,7 @@
       // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
       // anytime from Settings → section visibility.
       { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
+      { id: "sec-collection-plan", label: "Collection Plan" },
       { id: "sec-deep-pass",    label: "Deep Pass" },
       { id: "sec-timeline",     label: "Forensic Timeline" },
       { id: "sec-sessions",     label: "Attacker Sessions" },

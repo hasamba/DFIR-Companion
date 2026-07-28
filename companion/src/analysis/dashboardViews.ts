@@ -49,6 +49,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-narrative",
   "sec-findings",
   "sec-next-steps",
+  "sec-collection-plan",
   "sec-deep-pass",
   "sec-timeline",
   "sec-kill-chain",
@@ -183,6 +184,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-kill-chain",
       "sec-phases",
       "sec-next-steps",
+      "sec-collection-plan",
       "sec-iocs",
     ],
     defaultSort: "severity",
@@ -252,6 +254,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     sections: [
       "sec-playbook",
       "sec-next-steps",
+      "sec-collection-plan",
       "sec-evidence-gaps",
       "sec-findings",
       "sec-hypotheses",
