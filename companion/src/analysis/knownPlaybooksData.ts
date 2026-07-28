@@ -35,9 +35,19 @@ function isStep(value: unknown): value is PlaybookStep {
   return !!s && typeof s.technique === "string" && typeof s.name === "string";
 }
 
+// `description` is required by the Playbook type and rendered verbatim by every surface, so an entry
+// missing it is malformed — accepting it would put a literal `undefined` in the API response.
+// `steps` must be non-empty: a chain with no steps scores every case 0 and can only be noise.
 function isPlaybook(value: unknown): value is Playbook {
   const p = value as Partial<Playbook>;
-  return !!p && typeof p.name === "string" && Array.isArray(p.steps) && p.steps.every(isStep);
+  return (
+    !!p &&
+    typeof p.name === "string" &&
+    typeof p.description === "string" &&
+    Array.isArray(p.steps) &&
+    p.steps.length > 0 &&
+    p.steps.every(isStep)
+  );
 }
 
 // Validate + normalize a parsed JSON blob into a dataset, dropping malformed playbook records.
