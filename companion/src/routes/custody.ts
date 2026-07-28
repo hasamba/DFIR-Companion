@@ -1,10 +1,24 @@
 import type { Express, Request, Response } from "express";
 import { hashFile, isCustodyEvent, CUSTODY_EVENTS } from "../analysis/custody.js";
+import { buildCustodyManifest } from "../analysis/custodyManifest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
 
 export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options } = ctx;
+  const { store, options, instanceSecret } = ctx;
+
+  // The signed manifest for this case, on demand. Signed with the instance secret, so a manifest
+  // fetched here verifies on this installation and nowhere else — which is the point (#231).
+  app.get("/cases/:id/custody/manifest", async (req: Request, res: Response) => {
+    if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    try {
+      return res.status(200).json(await buildCustodyManifest(store, options.custodyStore, caseId, instanceSecret));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
 
   app.get("/cases/:id/custody", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });

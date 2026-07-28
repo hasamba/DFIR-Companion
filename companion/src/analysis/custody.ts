@@ -84,9 +84,29 @@ export interface CustodyChainBreak {
   reason: "prev-hash-mismatch" | "seq-out-of-order";
 }
 
+/** Where the custody chain currently ends. Signed into the manifest to pin the log's length. */
+export interface CustodyChainHead {
+  records: number;
+  headSeq: number | null;
+  /** Hash of the last stored line; "" when nothing has been recorded. */
+  headHash: string;
+}
+
 /** Hash of one stored line, exactly as it sits in the file — the unit the chain links together. */
 function hashLine(line: string): string {
   return createHash("sha256").update(line, "utf8").digest("hex");
+}
+
+/**
+ * artifactPath expressed relative to caseDir, or null when it lives outside. Shared by the store
+ * (which persists the relative form) and the manifest (which publishes it), so both answer
+ * "is this artifact inside the case?" the same way.
+ */
+export function toCaseRelative(caseDir: string, artifactPath: string): string | null {
+  const rel = relative(caseDir, artifactPath);
+  // "" is the case dir itself; ".." escapes it; an absolute result means a different root entirely.
+  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  return rel;
 }
 
 export class CustodyStore {
@@ -119,10 +139,25 @@ export class CustodyStore {
    * relocation-proofing for free.
    */
   private caseRelative(caseId: string, artifactPath: string): string | null {
-    const rel = relative(this.cases.caseDir(caseId), artifactPath);
-    // "" is the case dir itself; ".." escapes it; an absolute result means a different root entirely.
-    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
-    return rel;
+    return toCaseRelative(this.cases.caseDir(caseId), artifactPath);
+  }
+
+  /**
+   * Where the chain currently ends: how many records, the last seq, and the hash of the last stored
+   * line. Signing these into the manifest is what makes tail truncation detectable — lopping lines
+   * off the end otherwise leaves a shorter but perfectly valid chain (see verifyChain).
+   */
+  async chainHead(caseId: string): Promise<CustodyChainHead> {
+    const lines = await this.storedLines(caseId);
+    if (lines.length === 0) return { records: 0, headSeq: null, headHash: "" };
+    let headSeq: number | null = null;
+    try {
+      const tail = JSON.parse(lines[lines.length - 1]) as StoredCustodyRecord;
+      if (typeof tail.seq === "number") headSeq = tail.seq;
+    } catch {
+      // a malformed tail still has a hash, which is what the chain actually links
+    }
+    return { records: lines.length, headSeq, headHash: hashLine(lines[lines.length - 1]) };
   }
 
   async record(caseId: string, input: CustodyRecordInput): Promise<CustodyRecord> {
