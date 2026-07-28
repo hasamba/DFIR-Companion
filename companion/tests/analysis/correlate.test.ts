@@ -268,3 +268,83 @@ describe("correlateEvents", () => {
     expect(out[0].chainCheck?.observed).toBe(false);
   });
 });
+
+// #345 — a hash or a path identifies an ARTIFACT, not an event. Merging one across hosts collapsed
+// the lateral movement between them into a single row, took the timestamp from one machine and the
+// name from the other, and left the evidence graph one asset where its lateral_move rule needs two.
+describe("artifact correlation is scoped to a host (#345)", () => {
+  const SHA = "d".repeat(64);
+
+  it("keeps the same binary on two hosts as two events", () => {
+    const out = correlateEvents([
+      ev({ id: "a", description: "beacon.exe dropped", asset: "WS-01", sha256: SHA, sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
+      ev({ id: "b", description: "beacon.exe dropped", asset: "SRV-02", sha256: SHA, sources: ["THOR"], timestamp: "2026-05-20T14:40:00Z" }),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out.map((e) => e.asset).sort()).toEqual(["SRV-02", "WS-01"]);
+    // Each keeps its OWN observation time — the 40-minute gap IS the lateral movement.
+    expect(out.find((e) => e.asset === "SRV-02")!.timestamp).toBe("2026-05-20T14:40:00Z");
+    expect(out.find((e) => e.asset === "WS-01")!.timestamp).toBe("2026-05-20T14:00:00Z");
+  });
+
+  it("still merges two tools reporting that binary on the SAME host", () => {
+    const out = correlateEvents([
+      ev({ id: "a", description: "beacon.exe dropped", asset: "WS-01", sha256: SHA, sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
+      ev({ id: "b", description: "Malware file found — beacon.exe", asset: "WS-01", sha256: SHA, sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sources).toEqual(expect.arrayContaining(["Velociraptor", "THOR"]));
+  });
+
+  it("treats an FQDN and a short hostname as the same host", () => {
+    const out = correlateEvents([
+      ev({ id: "a", asset: "FILE-BO-01", sha256: SHA, sources: ["Velociraptor"] }),
+      ev({ id: "b", asset: "FILE-BO-01.northstar-branch.local", sha256: SHA, sources: ["THOR"] }),
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it("adopts a host-less event when the artifact was seen on exactly one host", () => {
+    // The AI-extracted row carries no asset; the structured import does. One host ⇒ no ambiguity.
+    const out = correlateEvents([
+      ev({ id: "ai", description: `flagged file, sha256 ${SHA}`, sources: ["AI extraction"] }),
+      ev({ id: "imp", description: "Malware file found", asset: "WS-01", sha256: SHA, sources: ["THOR"] }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].asset).toBe("WS-01");
+  });
+
+  it("refuses to guess when the artifact spans two hosts", () => {
+    const out = correlateEvents([
+      ev({ id: "ai", description: `flagged file, sha256 ${SHA}`, sources: ["AI extraction"] }),
+      ev({ id: "w", description: "Malware file found", asset: "WS-01", sha256: SHA, sources: ["THOR"] }),
+      ev({ id: "s", description: "Malware file found", asset: "SRV-02", sha256: SHA, sources: ["THOR"] }),
+    ]);
+    expect(out).toHaveLength(3);
+    expect(out.find((e) => e.id === "ai")!.asset).toBeUndefined();
+  });
+
+  it("keeps the same path on two hosts as two events", () => {
+    const out = correlateEvents([
+      ev({ id: "a", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
+      ev({ id: "b", description: "file written", asset: "SRV-02", path: "c:\\windows\\temp\\evil.exe", sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it("still merges the same path reported by two tools on one host", () => {
+    const out = correlateEvents([
+      ev({ id: "a", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["Velociraptor"], timestamp: "2026-05-20T14:00:00Z" }),
+      ev({ id: "b", description: "file written", asset: "WS-01", path: "c:\\windows\\temp\\evil.exe", sources: ["THOR"], timestamp: "2026-05-20T14:00:01Z" }),
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it("host-less events still correlate with each other, as before", () => {
+    const out = correlateEvents([
+      ev({ id: "a", description: "flagged", sha256: SHA, sources: ["CSV import"] }),
+      ev({ id: "b", description: "Malware file found", sha256: SHA, sources: ["THOR"] }),
+    ]);
+    expect(out).toHaveLength(1);
+  });
+});

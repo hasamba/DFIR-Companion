@@ -204,10 +204,11 @@ export function detectClockSkew(groups: readonly ForensicEvent[][], opts: ClockS
  * Convenience wrapper that derives the correlation groups itself. Correct for a RAW (un-correlated)
  * timeline; on an already-correlated one it finds few anchors, because the merge that produced it
  * kept one timestamp per group. Callers holding the pre-merge events should prefer
- * `detectClockSkew(correlationGroups(events, opts), opts)`.
+ * `detectClockSkew(correlationGroups(events, { ...opts, crossHostArtifacts: true }), opts)` — the flag is
+ * required: without it correlate scopes each artifact to one host (#345) and no anchor ever spans two.
  */
 export function detectClockSkewFromTimeline(events: readonly ForensicEvent[], opts: ClockSkewOptions = {}): ClockSkewReport {
-  return detectClockSkew(correlationGroups(events, opts), opts);
+  return detectClockSkew(correlationGroups(events, { ...opts, crossHostArtifacts: true }), opts);
 }
 
 /**

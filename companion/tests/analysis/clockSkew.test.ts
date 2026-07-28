@@ -38,7 +38,9 @@ function anchorPair(i: number, host: string, hostSkewSec: number): ForensicEvent
   ];
 }
 
-const groupsOf = (events: ForensicEvent[]) => correlationGroups(events);
+// Anchors are cross-host by definition — one artifact stamped by two machines' clocks — so skew
+// detection asks correlate for the cross-host view that merging deliberately does not use (#345).
+const groupsOf = (events: ForensicEvent[]) => correlationGroups(events, { crossHostArtifacts: true });
 
 describe("detectClockSkew", () => {
   it("reports a zero offset when every host's anchors line up", () => {

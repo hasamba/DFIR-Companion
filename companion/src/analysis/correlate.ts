@@ -28,6 +28,11 @@ export interface CorrelateOptions {
   // minutes fast still correlates against the rest of the fleet — without touching the events
   // themselves, so what gets merged and persisted still carries the recorded time.
   epochOf?: (e: ForensicEvent) => number | undefined;
+  // Let the hash and path steps group an artifact ACROSS hosts (default false — see hostScopedGroups).
+  // Only clock-skew detection (#228) wants this: its anchors are, by definition, one artifact stamped
+  // by two different machines' clocks. Merging must never use it, or the lateral movement between
+  // those machines is collapsed into a single event (#345).
+  crossHostArtifacts?: boolean;
 }
 
 const SEV_RANK: Record<Severity, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
@@ -78,6 +83,40 @@ class DSU {
 
 function worse(a: Severity, b: Severity): Severity {
   return SEV_RANK[a] <= SEV_RANK[b] ? a : b;
+}
+
+// Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
+// `FILE-BO-01.northstar-branch.local` for the same host — keying on the full string would never match.
+// "" when the event has no recorded host.
+function shortHost(asset: string | undefined): string {
+  return (asset ?? "").split(".")[0].trim().toLowerCase();
+}
+
+// Split one artifact bucket (same hash, or same path) into the sets that may actually merge.
+//
+// A hash or a path identifies an ARTIFACT, not an event: the same binary dropped on two machines is
+// two facts, and the gap between them IS the lateral movement. Merging across hosts collapsed that
+// into one row — taking the timestamp from one host and the name from the other, and leaving the
+// evidence graph a single asset where its lateral_move rule needs two (#345). Steps 3 and 4 already
+// scope to a host (host+pid; host inside chainSignature); these two now do the same.
+//
+// Events with no recorded host are the exception. Attributing one to a host would be a guess, but
+// refusing to merge them at all would re-duplicate the AI-extracted rows that today gain their asset
+// from a structured sibling. So they group with each other, and join a real host only when the
+// artifact was seen on EXACTLY ONE — where there is nothing to be ambiguous about.
+function hostScopedGroups(indices: number[], evs: ForensicEvent[], crossHost: boolean): number[][] {
+  if (crossHost) return [indices];
+  const byHost = new Map<string, number[]>();
+  for (const i of indices) {
+    const key = shortHost(evs[i].asset);
+    (byHost.get(key) ?? byHost.set(key, []).get(key)!).push(i);
+  }
+  const unknown = byHost.get("") ?? [];
+  byHost.delete("");
+  const groups = [...byHost.values()];
+  if (groups.length === 1) { groups[0].push(...unknown); return groups; }   // unambiguous → attach
+  if (unknown.length) groups.push(unknown);
+  return groups;
 }
 
 // Path+time correlation (step 2) exists for CROSS-tool corroboration — the same file reported by two
@@ -184,18 +223,25 @@ function withSignature(e: ForensicEvent): ForensicEvent {
 function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): { evs: ForensicEvent[]; groups: number[][] } {
   const windowMs = (opts.windowSeconds ?? 2) * 1000;
   const timeOf = opts.epochOf ?? ((e: ForensicEvent) => epoch(e.timestamp));
+  const crossHostArtifacts = opts.crossHostArtifacts === true;
   const n = events.length;
   // Work over a copy with chainSignature populated so step 4 can key on it and every emitted
   // process-creation event carries the field (satisfying the importer-agnostic path).
   const evs = events.map(withSignature);
   const dsu = new DSU(n);
 
-  // 0) EXACT duplicates → union. Same event time + same description is the same
+  // 0) EXACT duplicates → union. Same event time + same description ON THE SAME HOST is the same
   // observation — this collapses re-imports of the SAME file (and any event type that
   // lacks a hash/path), so importing a report twice never doubles the timeline.
+  //
+  // The host is part of the key (#345): a fleet-wide sweep reports identical text at the identical
+  // second for every machine it hits, and those are as many findings as there are machines, not one.
+  // A re-import always carries the same asset, so dedup is unaffected. Unlike the artifact steps
+  // below this is never relaxed by crossHostArtifacts — two hosts' rows are not one observation, no
+  // matter who is asking.
   const byExact = new Map<string, number>();
   evs.forEach((e, i) => {
-    const k = `${e.timestamp} ${cleanDescription(e.description)}`;
+    const k = `${e.timestamp} ${cleanDescription(e.description)} ${shortHost(e.asset)}`;
     const prev = byExact.get(k);
     if (prev !== undefined) dsu.union(prev, i);
     else byExact.set(k, i);
@@ -206,7 +252,7 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
   //    they are two causal steps, not duplicates — and file_lineage edges can be derived.
   //    Events without an action (the common case) all share the "" bucket and correlate
   //    as before, so this is fully backward-compatible.
-  const byHash = new Map<string, number>(); // "hash:action" → first index with that pair
+  const byHash = new Map<string, number[]>(); // "hash:action" → every index with that pair
   evs.forEach((e, i) => {
     // Process-CREATION events (those carrying a `pid`) are correlated by host+pid in step 3, NOT by
     // image hash: a process's hash identifies the BINARY, not the activity, and an interpreter's image
@@ -218,11 +264,15 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
     if (e.pid !== undefined) return;
     for (const h of eventHashes(e)) {
       const key = `${h}:${e.action ?? ""}`;
-      const prev = byHash.get(key);
-      if (prev !== undefined) dsu.union(prev, i);
-      else byHash.set(key, i);
+      (byHash.get(key) ?? byHash.set(key, []).get(key)!).push(i);
     }
   });
+  for (const idxs of byHash.values()) {
+    if (idxs.length < 2) continue;
+    for (const group of hostScopedGroups(idxs, evs, crossHostArtifacts)) {
+      for (let k = 1; k < group.length; k++) dsu.union(group[0], group[k]);
+    }
+  }
 
   // 2) Same normalized path with timestamps within the window → union — but only when at least one
   //    side carries the path as a STRUCTURED field. Two free-text path mentions are too weak (a
@@ -235,15 +285,21 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
   });
   for (const entries of byPath.values()) {
     if (entries.length < 2) continue;
-    const dated = entries.map((x) => ({ i: x.i, structured: x.structured, t: timeOf(evs[x.i]) }))
-      .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
-    for (let k = 1; k < dated.length; k++) {
-      const a = dated[k - 1], b = dated[k];
-      if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
-      if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
-      // Undated events on the same path correlate too (no time to disprove); dated ones
-      // must be within the window.
-      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
+    const structuredBy = new Map(entries.map((x) => [x.i, x.structured]));
+    // Same path on two machines is two files, not one (#345) — so pair within a host, exactly like
+    // the hash step above.
+    for (const group of hostScopedGroups(entries.map((x) => x.i), evs, crossHostArtifacts)) {
+      if (group.length < 2) continue;
+      const dated = group.map((i) => ({ i, structured: structuredBy.get(i) === true, t: timeOf(evs[i]) }))
+        .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+      for (let k = 1; k < dated.length; k++) {
+        const a = dated[k - 1], b = dated[k];
+        if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
+        if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
+        // Undated events on the same path correlate too (no time to disprove); dated ones
+        // must be within the window.
+        if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) dsu.union(a.i, b.i);
+      }
     }
   }
 
@@ -254,9 +310,6 @@ function groupEvents(events: readonly ForensicEvent[], opts: CorrelateOptions): 
   //    (one side carries a source the other lacks) so two creations from ONE tool that happen to reuse a
   //    pid never merge — only genuine cross-tool pairs do. Only process-creation events carry `pid`.
   const pidWindowMs = (opts.pidWindowSeconds ?? 120) * 1000;
-  // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
-  // `FILE-BO-01.northstar-branch.local` for the same host — keying on the full string would never match.
-  const shortHost = (asset: string): string => asset.split(".")[0].trim().toLowerCase();
   const byPid = new Map<string, number[]>();
   evs.forEach((e, i) => {
     if (e.pid === undefined || !e.asset) return;

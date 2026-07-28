@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Correlation no longer merges one artifact across hosts** (#345) — the same binary hash or file path seen on two machines was collapsed into a single event, which erased the lateral-movement edge the evidence graph derives from it, left the surviving row holding one host's name and the other's timestamp, and could drop a host from the case entirely. The hash, path and exact-duplicate steps now correlate within a host (as the host+pid and command-line steps already did); an event with no recorded host still joins a host's group when the artifact was seen on exactly one. Note: timelines correlated by an earlier build stay merged — the fix applies as new evidence is correlated, and cannot un-merge what was already persisted.
+
 ### Added
 - **Clock-skew detection & cross-host timeline alignment** (#228) — measures each host's clock offset from artifacts two different tools recorded for the same event, flags hosts beyond 60s in Diagnostics → Host Clock Skew, and offers an "Align timelines" toggle that projects every host onto a common axis for the timeline, correlation windows, the evidence graph and the report. Offsets need several consistent anchors before they are trusted (a scattered host is shown but never aligned), analysts can override any host's offset by hand, and alignment never rewrites the case: each shifted row keeps and displays its recorded timestamp.
 
