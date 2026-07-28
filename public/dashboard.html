@@ -1481,7 +1481,7 @@
        active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
        (footer clipped) whenever the .stab-bar wrapped to two lines. */
     .settings-modal { width: min(820px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
-    .settings-modal > h3 { flex-shrink: 0; }
+    .settings-modal > h3 { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
     .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; flex-shrink: 0; }
     .stab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--c-9aa4b2);
       padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
@@ -1504,6 +1504,26 @@
     .settings-group-head { font-size: 11px; color: var(--c-6aa9ff); font-weight: 600; margin: 10px 0 4px; }
     .settings-hr { border: none; border-top: 1px solid var(--c-2a2f3a); margin: 12px 0; }
     .srestart-note { font-size: 11px; color: var(--c-ffd93b); margin-bottom: 10px; }
+    /* ── Essential / All view ───────────────────────────────────────────────────────────────
+       `data-essential` on an element means "visible in Essential mode". Everything else is hidden when
+       the modal is in Essential, so a field, group heading, or whole tab is opted IN explicitly and a
+       newly added tuning knob falls outside Essential by default — the safe way round.
+
+       Hiding TOP-LEVEL pane children is what makes group headings and <hr>s vanish along with the
+       fields under them, with no runtime pass computing whether a heading still has visible
+       children. Scoping to direct children is also what makes a blanket :not() safe: it can never
+       reach inside a field or a panel's own markup.
+
+       `!important` beats the inline display that JS toggles on panels like #claude-code-status;
+       without it a JS-shown block would leak into the Essential view. It only ever applies to
+       elements we mean to hide — a marked element doesn't match these selectors at all. */
+    .settings-mode { display: flex; margin-left: auto; border: 1px solid var(--c-353c49); border-radius: 6px; overflow: hidden; }
+    .settings-mode button { background: none; border: none; color: var(--c-9aa4b2); font-size: 11px; font-weight: 500; padding: 3px 12px; cursor: pointer; }
+    .settings-mode button:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
+    .settings-mode button.active { background: var(--c-2d6cdf); color: #fff; }
+    .settings-modal[data-mode="essential"] .stab:not([data-essential]) { display: none !important; }
+    .settings-modal[data-mode="essential"] .stab-pane:not([data-essential="pane"]) > *:not([data-essential]) { display: none !important; }
+    .settings-modal[data-mode="essential"] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential]) { display: none !important; }
     /* No inner scroll — the whole list expands and the single .stab-pane scrollbar handles overflow. */
     .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
     .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
@@ -2281,13 +2301,18 @@
   <!-- ── Settings modal ───────────────────────────────────────────────────── -->
   <div id="settingsOverlay" class="comment-overlay">
     <div class="comment-modal settings-modal">
-      <h3>Settings</h3>
+      <h3>Settings
+        <span class="settings-mode" role="group" aria-label="Settings detail level">
+          <button type="button" id="settingsModeEssential">Essential</button>
+          <button type="button" id="settingsModeAll">All</button>
+        </span>
+      </h3>
       <div class="stab-bar">
-        <button class="stab active" data-stab="general">General</button>
-        <button class="stab" data-stab="ai">AI</button>
-        <button class="stab" data-stab="enrichment">Enrichment</button>
-        <button class="stab" data-stab="exposure">Exposure</button>
-        <button class="stab" data-stab="integrations">Integrations</button>
+        <button class="stab active" data-stab="general" data-essential>General</button>
+        <button class="stab" data-stab="ai" data-essential>AI</button>
+        <button class="stab" data-stab="enrichment" data-essential>Enrichment</button>
+        <button class="stab" data-stab="exposure" data-essential>Exposure</button>
+        <button class="stab" data-stab="integrations" data-essential>Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="tools">Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
@@ -2296,19 +2321,19 @@
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="dashboard-views">Dashboard Views</button>
-        <button class="stab" data-stab="notifications">Notifications</button>
+        <button class="stab" data-stab="notifications" data-essential>Notifications</button>
         <button class="stab" data-stab="updates">Updates</button>
         <button class="stab" data-stab="diagnostics">Diagnostics</button>
       </div>
 
       <!-- General -->
       <div class="stab-pane active" id="stab-general">
-        <div class="sfield">
+        <div class="sfield" data-essential>
           <label>Guided setup</label>
           <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 6px">Configure AI + integrations + enrichment in one guided flow, each with a built-in connection test (#181).</p>
           <button type="button" id="openSetupWizard" style="background:var(--c-2d6cdf);color:#fff;border:0;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer">⚙️ Open setup wizard</button>
         </div>
-        <div class="sfield">
+        <div class="sfield" data-essential>
           <label>Investigator name</label>
           <input id="settingsInvestigator" placeholder="your name" />
           <span class="sfield-hint">Used as author when posting comments. Saved in this browser.</span>
@@ -2488,8 +2513,8 @@
 
       <!-- AI -->
       <div class="stab-pane" id="stab-ai">
-        <div class="srestart-note">⚠ All AI settings require a server restart to take effect</div>
-        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
+        <div class="srestart-note" data-essential>⚠ All AI settings require a server restart to take effect</div>
+        <p class="rm-hint" data-essential style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" style="color:var(--c-2d6cdf)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
         <div class="settings-group-head">Presidio (optional external PII detector)</div>
         <div class="sfield-row">
           <div class="sfield">
@@ -2503,8 +2528,8 @@
           <button type="button" id="presidioTestBtn">Test connection</button>
           <span id="presidioTestResult" style="margin-left:8px;font-size:12px;color:var(--c-9aa4b2)"></span>
         </div>
-        <div class="sfield-row">
-          <div class="sfield">
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential>
             <label>Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
             <select id="env-DFIR_VISION_PROVIDER">
               <option value="">— not set —</option>
@@ -2517,9 +2542,9 @@
               <option value="claude-code">claude code (subscription, no key)</option>
             </select>
           </div>
-          <div class="sfield"><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><input id="env-DFIR_VISION_MODEL" placeholder="gpt-4o-mini" /></div>
+          <div class="sfield" data-essential><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><input id="env-DFIR_VISION_MODEL" placeholder="gpt-4o-mini" /></div>
         </div>
-        <div id="claude-code-status" class="sfield" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
+        <div id="claude-code-status" class="sfield" data-essential style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span id="cc-status-dot" style="width:9px;height:9px;border-radius:50%;background:#6b7280;flex:0 0 auto"></span>
             <span id="cc-status-msg" style="font-size:12px">Checking Claude Code…</span>
@@ -2573,9 +2598,9 @@
           toggle();
         })();
         </script>
-        <div class="sfield-row">
-          <div class="sfield"><label>API key<span class="sfield-hint">DFIR_VISION_KEY</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_VISION_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>API key<span class="sfield-hint">DFIR_VISION_KEY</span></label><input id="env-DFIR_VISION_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label>Base URL override<span class="sfield-hint">DFIR_VISION_BASE_URL — leave blank for provider default</span></label><input id="env-DFIR_VISION_BASE_URL" placeholder="e.g. http://localhost:11434/v1" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_AI_TIMEOUT_MS</span></label><input id="env-DFIR_AI_TIMEOUT_MS" placeholder="180000" /></div>
@@ -2604,9 +2629,9 @@
           <div class="sfield"><label>Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><input id="env-DFIR_SYNTH_INCLUDE_INFO" placeholder="0" /></div>
           <div class="sfield"><label>Deep-pass max batches<span class="sfield-hint">DFIR_DEEP_PASS_MAX_BATCHES — hard ceiling on batches for an analyst-triggered deep pass; above it the run is refused and a floor that would fit is suggested (default 30)</span></label><input id="env-DFIR_DEEP_PASS_MAX_BATCHES" placeholder="30" /></div>
         </div>
-        <div class="settings-group-head">Synthesis model (optional — stronger model for one-shot synthesis)</div>
-        <div class="sfield-row">
-          <div class="sfield">
+        <div class="settings-group-head" data-essential>Synthesis model (optional — stronger model for one-shot synthesis)</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential>
             <label>Synth provider<span class="sfield-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
             <select id="env-DFIR_AI_SYNTH_PROVIDER">
               <option value="">— same as extraction —</option>
@@ -2620,11 +2645,11 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield"><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
+          <div class="sfield" data-essential><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><input id="env-DFIR_AI_SYNTH_MODEL" placeholder="e.g. gpt-4o" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label>Synth base URL<span class="sfield-hint">DFIR_AI_SYNTH_BASE_URL</span></label><input id="env-DFIR_AI_SYNTH_BASE_URL" /></div>
         </div>
         <div id="codex-status" class="sfield" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--c-2a2f3a,#2a2f3a);background:var(--c-161b22,#161b22)">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2701,10 +2726,10 @@
           <div class="sfield"><label>Velo API key<span class="sfield-hint">DFIR_AI_VELO_KEY</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Velo base URL<span class="sfield-hint">DFIR_AI_VELO_BASE_URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
         </div>
-        <div class="settings-group-head">Second opinion model (optional — a DIFFERENT model for the on-demand QA cross-check)</div>
-        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key.</p>
-        <div class="sfield-row">
-          <div class="sfield">
+        <div class="settings-group-head" data-essential>Second opinion model (optional — a DIFFERENT model for the on-demand QA cross-check)</div>
+        <p class="rm-hint" data-essential style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key.</p>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential>
             <label>2nd-opinion provider<span class="sfield-hint">DFIR_AI_SECOND_OPINION_PROVIDER</span></label>
             <select id="env-DFIR_AI_SECOND_OPINION_PROVIDER">
               <option value="">— same as main —</option>
@@ -2718,11 +2743,11 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield"><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
+          <div class="sfield" data-essential><label>2nd-opinion model<span class="sfield-hint">DFIR_AI_SECOND_OPINION_MODEL</span></label><input id="env-DFIR_AI_SECOND_OPINION_MODEL" placeholder="e.g. gpt-4o — set this to enable the feature" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label>2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
         </div>
         <div class="settings-group-head">Debugging & custom prompts</div>
         <div class="sfield-row">
@@ -2797,27 +2822,27 @@
 
       <!-- Enrichment -->
       <div class="stab-pane" id="stab-enrichment">
-        <div class="srestart-note">⚠ All enrichment settings require a server restart to take effect</div>
-        <div class="settings-group-head">VirusTotal</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-essential>⚠ All enrichment settings require a server restart to take effect</div>
+        <div class="settings-group-head" data-essential>VirusTotal</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">AbuseIPDB</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>AbuseIPDB</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">Hunting.ch (abuse.ch)</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Hunting.ch key<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>Hunting.ch (abuse.ch)</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Hunting.ch key<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">RockyRaccoon</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>RockyRaccoon</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
-        <div class="sfield-row3">
-          <div class="sfield"><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
-          <div class="sfield"><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>CrowdStrike Falcon Intelligence</div>
+        <div class="sfield-row3" data-essential>
+          <div class="sfield" data-essential><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
+          <div class="sfield" data-essential><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield">
             <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
             <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
@@ -2826,10 +2851,10 @@
         <div class="sfield-row">
           <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_BASE_URL" placeholder="(optional)" /></div>
         </div>
-        <div class="settings-group-head">MISP</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
-          <div class="sfield"><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>MISP</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
+          <div class="sfield" data-essential><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_MISP_CA</span></label><input id="env-DFIR_MISP_CA" placeholder="path/to/ca.pem" /></div>
@@ -2840,19 +2865,19 @@
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label>Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
-        <div class="settings-group-head">YETI</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
-          <div class="sfield"><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>YETI</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
+          <div class="sfield" data-essential><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">OpenCTI</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
-          <div class="sfield"><label>OpenCTI token<span class="sfield-hint">DFIR_OPENCTI_KEY</span></label><input id="env-DFIR_OPENCTI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>OpenCTI</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
+          <div class="sfield" data-essential><label>OpenCTI token<span class="sfield-hint">DFIR_OPENCTI_KEY</span></label><input id="env-DFIR_OPENCTI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_OPENCTI_CA</span></label><input id="env-DFIR_OPENCTI_CA" placeholder="path/to/ca.pem" /></div>
@@ -2865,14 +2890,14 @@
         <div class="sfield-row">
           <div class="sfield"><label>Base URL<span class="sfield-hint">DFIR_HASHLOOKUP_URL — override for a self-hosted mirror (default https://hashlookup.circl.lu)</span></label><input id="env-DFIR_HASHLOOKUP_URL" placeholder="https://hashlookup.circl.lu" /></div>
         </div>
-        <div class="settings-group-head">IP infrastructure context (Reverse DNS / WHOIS / GeoIP / Shodan)</div>
+        <div class="settings-group-head" data-essential>IP infrastructure context (Reverse DNS / WHOIS / GeoIP / Shodan)</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">These providers are keyless by default and always-on — they return infrastructure context (PTR hostnames, WHOIS netblock/country, GeoIP city/ASN) rather than a reputation verdict, so they never send IOCs to a third-party threat-intel service. Shodan (Exposed Hosts) requires an API key set on the Exposure tab.</p>
         <div class="sfield-row">
           <div class="sfield"><label>WHOIS / RDAP base URL<span class="sfield-hint">DFIR_RDAP_URL — WHOIS-over-RDAP endpoint (default https://rdap.org)</span></label><input id="env-DFIR_RDAP_URL" placeholder="https://rdap.org" /></div>
           <div class="sfield"><label>GeoIP URL template<span class="sfield-hint">DFIR_GEOIP_URL — {ip} is substituted; default uses ipinfo.io/{ip}/json (no key required); supports ip-api.com and ipwho.is shapes too</span></label><input id="env-DFIR_GEOIP_URL" placeholder="https://ipinfo.io/{ip}/json" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>GeoIP API key<span class="sfield-hint">DFIR_GEOIP_KEY — optional; appended as ?token= or substituted as {key} for paid / self-hosted backends</span></label><input id="env-DFIR_GEOIP_KEY" type="password" placeholder="(optional)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>GeoIP API key<span class="sfield-hint">DFIR_GEOIP_KEY — optional; appended as ?token= or substituted as {key} for paid / self-hosted backends</span></label><input id="env-DFIR_GEOIP_KEY" type="password" placeholder="(optional)" autocomplete="new-password" /></div>
         </div>
         <div class="settings-group-head">GeoIP map</div>
         <div class="sfield-row">
@@ -2919,32 +2944,32 @@
 
       <!-- Exposure -->
       <div class="stab-pane" id="stab-exposure">
-        <div class="srestart-note">⚠ All exposure settings require a server restart to take effect</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-essential>⚠ All exposure settings require a server restart to take effect</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>LeakCheck domain limit<span class="sfield-hint">DFIR_LEAKCHECK_DOMAIN_LIMIT</span></label><input id="env-DFIR_LEAKCHECK_DOMAIN_LIMIT" placeholder="1000" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>HIBP User-Agent<span class="sfield-hint">DFIR_HIBP_USER_AGENT</span></label><input id="env-DFIR_HIBP_USER_AGENT" placeholder="DFIR Companion" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>DeHashed base URL<span class="sfield-hint">DFIR_DEHASHED_BASE_URL</span></label><input id="env-DFIR_DEHASHED_BASE_URL" placeholder="https://api.dehashed.com/v2" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Exposure delay (ms)<span class="sfield-hint">DFIR_EXPOSURE_DELAY_MS</span></label><input id="env-DFIR_EXPOSURE_DELAY_MS" placeholder="1500" /></div>
         </div>
       </div>
 
       <!-- Integrations -->
       <div class="stab-pane" id="stab-integrations">
-        <div class="srestart-note">⚠ All integration settings require a server restart to take effect</div>
-        <div class="settings-group-head">DFIR-IRIS</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
-          <div class="sfield"><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-essential>⚠ All integration settings require a server restart to take effect</div>
+        <div class="settings-group-head" data-essential>DFIR-IRIS</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>IRIS URL<span class="sfield-hint">DFIR_IRIS_URL</span></label><input id="env-DFIR_IRIS_URL" placeholder="https://iris.example.org" /></div>
+          <div class="sfield" data-essential><label>IRIS key<span class="sfield-hint">DFIR_IRIS_KEY</span></label><input id="env-DFIR_IRIS_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_IRIS_CA</span></label><input id="env-DFIR_IRIS_CA" placeholder="path/to/ca.pem" /></div>
@@ -2954,30 +2979,30 @@
         <div class="sfield-row">
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_IRIS_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_IRIS_INSECURE" placeholder="false" /></div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+        <div data-essential style="display:flex; gap:8px; align-items:center; margin-top:4px;">
           <button id="irisReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the IRIS settings, rebuilds the client, and tests the connection — applies WITHOUT restarting the server.">Test / reconnect</button>
           <span id="irisReconnectMsg" style="font-size:12px; color:var(--c-9aa4b2);"></span>
         </div>
-        <div class="settings-group-head">Timesketch</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
-          <div class="sfield"><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
+        <div class="settings-group-head" data-essential>Timesketch</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Timesketch URL<span class="sfield-hint">DFIR_TIMESKETCH_URL</span></label><input id="env-DFIR_TIMESKETCH_URL" placeholder="https://timesketch.example.org" /></div>
+          <div class="sfield" data-essential><label>Username<span class="sfield-hint">DFIR_TIMESKETCH_USER</span></label><input id="env-DFIR_TIMESKETCH_USER" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Password<span class="sfield-hint">DFIR_TIMESKETCH_PASSWORD</span></label><input id="env-DFIR_TIMESKETCH_PASSWORD" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Timeline name<span class="sfield-hint">DFIR_TIMESKETCH_TIMELINE</span></label><input id="env-DFIR_TIMESKETCH_TIMELINE" placeholder="DFIR-Companion Forensic Timeline" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_TIMESKETCH_CA</span></label><input id="env-DFIR_TIMESKETCH_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_TIMESKETCH_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_TIMESKETCH_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">Notion</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Integration token<span class="sfield-hint">DFIR_NOTION_TOKEN — internal-integration secret; share the page/database with it</span></label><input id="env-DFIR_NOTION_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Database ID<span class="sfield-hint">DFIR_NOTION_DATABASE_ID — default DB for "new page" (investigation template)</span></label><input id="env-DFIR_NOTION_DATABASE_ID" placeholder="(optional)" /></div>
+        <div class="settings-group-head" data-essential>Notion</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Integration token<span class="sfield-hint">DFIR_NOTION_TOKEN — internal-integration secret; share the page/database with it</span></label><input id="env-DFIR_NOTION_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label>Database ID<span class="sfield-hint">DFIR_NOTION_DATABASE_ID — default DB for "new page" (investigation template)</span></label><input id="env-DFIR_NOTION_DATABASE_ID" placeholder="(optional)" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Parent page ID<span class="sfield-hint">DFIR_NOTION_PARENT_PAGE_ID — alternative default parent for "new page"</span></label><input id="env-DFIR_NOTION_PARENT_PAGE_ID" placeholder="(optional)" /></div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Parent page ID<span class="sfield-hint">DFIR_NOTION_PARENT_PAGE_ID — alternative default parent for "new page"</span></label><input id="env-DFIR_NOTION_PARENT_PAGE_ID" placeholder="(optional)" /></div>
           <div class="sfield"><label>Managed block title<span class="sfield-hint">DFIR_NOTION_CONTAINER_TITLE</span></label><input id="env-DFIR_NOTION_CONTAINER_TITLE" placeholder="🔍 DFIR Companion — Auto-generated" /></div>
         </div>
         <div class="sfield-row3">
@@ -2985,22 +3010,22 @@
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">ClickUp</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
-          <div class="sfield"><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
+        <div class="settings-group-head" data-essential>ClickUp</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>API token<span class="sfield-hint">DFIR_CLICKUP_TOKEN — personal token (Settings › Apps › API Token, pk_…)</span></label><input id="env-DFIR_CLICKUP_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield" data-essential><label>Default list ID<span class="sfield-hint">DFIR_CLICKUP_LIST_ID — optional; pre-fills the push modal (list URL's …/li/&lt;id&gt;)</span></label><input id="env-DFIR_CLICKUP_LIST_ID" placeholder="(optional)" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">Velociraptor</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
+        <div class="settings-group-head" data-essential>Velociraptor</div>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>API config path<span class="sfield-hint">DFIR_VELOCIRAPTOR_API_CONFIG</span></label><input id="env-DFIR_VELOCIRAPTOR_API_CONFIG" placeholder="path/to/api.config.yaml" /></div>
+          <div class="sfield" data-essential><label>Binary path<span class="sfield-hint">DFIR_VELOCIRAPTOR_BINARY</span></label><input id="env-DFIR_VELOCIRAPTOR_BINARY" placeholder="velociraptor" /></div>
         </div>
-        <div class="sfield-row3">
-          <div class="sfield"><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
+        <div class="sfield-row3" data-essential>
+          <div class="sfield" data-essential><label>GUI URL<span class="sfield-hint">DFIR_VELOCIRAPTOR_GUI_URL</span></label><input id="env-DFIR_VELOCIRAPTOR_GUI_URL" placeholder="https://velo:8889" /></div>
           <div class="sfield"><label>GUI org<span class="sfield-hint">DFIR_VELOCIRAPTOR_ORG — for deep links (default root)</span></label><input id="env-DFIR_VELOCIRAPTOR_ORG" placeholder="root" /></div>
           <div class="sfield"><label>Hunt platforms<span class="sfield-hint">DFIR_HUNT_PLATFORMS — comma-separated; blank = all</span></label><input id="env-DFIR_HUNT_PLATFORMS" placeholder="velociraptor,sigma,yara,…" /></div>
         </div>
@@ -3034,12 +3059,12 @@
         </div>
 
         <!-- Push ingest (#84) -->
-        <div class="settings-group-head">Push ingest (webhook)</div>
-        <p style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 8px">Let external tools (a SIEM webhook, a Velociraptor client-event poller, a custom script) POST alerts straight into the connected case. The server auto-detects the payload type (same engine as the Import button) and runs the import → synthesize pipeline. Auth is a token in the <code>X-DFIR-Key</code> header — a <strong>global</strong> one (below) and/or a <strong>per-case</strong> one (generated here). Push is OFF until a token is configured.</p>
-        <div class="sfield-row">
-          <div class="sfield"><label>Global push token<span class="sfield-hint">DFIR_PUSH_TOKEN — one secret for every case (optional)</span></label><input id="env-DFIR_PUSH_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-essential>Push ingest (webhook)</div>
+        <p data-essential style="font-size:12px;color:var(--c-9aa4b2);margin:2px 0 8px">Let external tools (a SIEM webhook, a Velociraptor client-event poller, a custom script) POST alerts straight into the connected case. The server auto-detects the payload type (same engine as the Import button) and runs the import → synthesize pipeline. Auth is a token in the <code>X-DFIR-Key</code> header — a <strong>global</strong> one (below) and/or a <strong>per-case</strong> one (generated here). Push is OFF until a token is configured.</p>
+        <div class="sfield-row" data-essential>
+          <div class="sfield" data-essential><label>Global push token<span class="sfield-hint">DFIR_PUSH_TOKEN — one secret for every case (optional)</span></label><input id="env-DFIR_PUSH_TOKEN" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div id="pushTokenPanel" style="background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;margin-top:6px">
+        <div data-essential id="pushTokenPanel" style="background:var(--c-161b28);border:1px solid var(--c-2a3146);border-radius:6px;padding:10px;margin-top:6px">
           <div id="pushTokenInfo" style="font-size:12px;color:var(--c-9aa4b2)">Connect to a case to manage its push token.</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
             <button id="pushTokenGenBtn" type="button" title="Generate (or rotate) a per-case push token">Generate per-case token</button>
@@ -3526,7 +3551,10 @@
 
       <!-- Notifications (issue #58) — Slack / MS Teams / SMTP email channels for critical findings,
            playbook updates, and investigation milestones. Global, shared across cases. -->
-      <div class="stab-pane" id="stab-notifications">
+      <!-- The only whole-pane opt-in: a channel is nothing without its webhook or credentials, and
+           there is no per-field split to make — the config lives behind the /notifications API,
+           not in .env. See tests/settings/settingsEssentialAll.test.ts. -->
+      <div class="stab-pane" id="stab-notifications" data-essential="pane">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
           Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, <strong>investigation milestones</strong>, and
           <strong>@mentions</strong> in comments to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
@@ -9583,7 +9611,7 @@
       badge.style.display = "";
       badge.style.color = errored && !active ? "#ff9f43" : "#ff5a5a";
       badge.textContent = `🔴 LIVE ${active}${errored ? ` · ⚠ ${errored}` : ""}`;
-      badge.onclick = () => { const b = document.getElementById("settingsBtn"); if (b) b.click(); const t = document.querySelector('.stab[data-stab="velociraptor"]'); if (t) t.click(); };
+      badge.onclick = () => openSettingsTab("velociraptor");
     }
     function renderVeloMonitors(monitors) {
       renderVeloMonitorBadge(monitors);
@@ -10375,8 +10403,7 @@
     const TOOL_LABELS = { hayabusa: "Hayabusa", velociraptor_cli: "Velociraptor CLI", suricata: "Suricata", snort: "Snort", yara: "YARA" };
     // Deep-link the Settings modal straight to the Tools tab (mirrors the velo badge link).
     function openToolsSettings() {
-      const b = document.getElementById("settingsBtn"); if (b) b.click();
-      const t = document.querySelector('.stab[data-stab="tools"]'); if (t) t.click();
+      openSettingsTab("tools");
     }
     // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
     function toolForExt(ext, status) {
@@ -19043,8 +19070,7 @@
       }));
     }
     function openDashViewEditor() {
-      const b = document.getElementById("settingsBtn"); if (b) b.click();
-      const t = document.querySelector('.stab[data-stab="dashboard-views"]'); if (t) t.click();
+      openSettingsTab("dashboard-views");
     }
     // Set the per-case report template to the active view's match, then fire the normal report export.
     async function generateViewReport() {
@@ -19351,6 +19377,47 @@
       return ok;
     }
 
+    // ── Essential / All view ────────────────────────────────────────────────────────────────
+    // Essential shows only the controls a feature is dead without — API keys, service URLs, tool
+    // binaries. Everything with a working default shows only under All. Which fields those are is authored
+    // in the markup as `data-essential` and enforced by tests/settings/settingsEssentialAll.test.ts;
+    // all this code does is set the mode. Stored per browser, like dfir.investigator.
+    const SETTINGS_MODE_KEY = "dfir.settingsMode";
+
+    function settingsMode() {
+      return localStorage.getItem(SETTINGS_MODE_KEY) === "all" ? "all" : "essential";
+    }
+
+    // Deliberately attribute-based, not offsetParent-based: this runs while the modal is still
+    // closed (openSettingsModal sets the mode before adding .open), when nothing has a layout box.
+    function stabHidden(btn, mode) {
+      return mode === "essential" && !btn.hasAttribute("data-essential");
+    }
+
+    function applySettingsMode(mode) {
+      const modal = document.querySelector(".settings-modal");
+      modal.dataset.mode = mode;
+      localStorage.setItem(SETTINGS_MODE_KEY, mode);
+      document.getElementById("settingsModeEssential").classList.toggle("active", mode === "essential");
+      document.getElementById("settingsModeAll").classList.toggle("active", mode === "all");
+      // Switching to Essential can hide the tab you were on — fall back to the first one still shown.
+      const active = document.querySelector(".stab.active");
+      if (active && stabHidden(active, mode)) {
+        const first = [...document.querySelectorAll(".stab")].find(b => !stabHidden(b, mode));
+        if (first) first.click();
+      }
+    }
+
+    // Open Settings on a named tab. A tab hidden in Essential (Velociraptor, Dashboard Views, …)
+    // forces All first, so an in-app deep link can never land on a tab that isn't there.
+    function openSettingsTab(name) {
+      document.getElementById("settingsBtn").click();
+      const tab = document.querySelector(`.stab[data-stab="${name}"]`);
+      if (!tab) return;
+      if (stabHidden(tab, settingsMode())) applySettingsMode("all");
+      tab.click();
+    }
+
     function openSettingsModal() {
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       document.getElementById("kbdShortcutsChk").checked = kbdShortcutsEnabled();
@@ -19371,6 +19438,9 @@
       loadVeloMonitors(veloCaseId());
       loadPushToken(veloCaseId());
       loadUpdateCheck();
+      // After the reset-to-first-tab above, so the fallback in applySettingsMode sees a real
+      // active tab; before .open, so Essential mode never flashes the full list.
+      applySettingsMode(settingsMode());
       document.getElementById("settingsOverlay").classList.add("open");
     }
 
@@ -19381,6 +19451,8 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    document.getElementById("settingsModeEssential").onclick = () => applySettingsMode("essential");
+    document.getElementById("settingsModeAll").onclick = () => applySettingsMode("all");
 
     // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
     // A multi-step onboarding overlay covering every config that has no default and won't work
@@ -21297,10 +21369,7 @@
           openBtn.type = 'button';
           openBtn.style.cssText = 'margin-left:10px';
           openBtn.textContent = 'Open Diagnostics';
-          openBtn.onclick = () => {
-            document.getElementById('settingsBtn')?.click();
-            document.querySelector('.stab[data-stab="diagnostics"]')?.click();
-          };
+          openBtn.onclick = () => openSettingsTab("diagnostics");
           const disableBtn = document.createElement('button');
           disableBtn.type = 'button';
           disableBtn.textContent = 'Disable checks';
