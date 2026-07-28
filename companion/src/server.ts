@@ -2946,10 +2946,7 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
 // DFIR_<NAME>_URL. NOTION and CLICKUP have no such env var — they're fixed SaaS hosts — so their
 // entries are the literal constants those clients themselves use, which correctly makes the guard
 // treat them as non-loopback (there's no legitimate reason to skip TLS verification against the
-// real api.notion.com/api.clickup.com). NOTIFY has no entry: it's one shared fetchFn reused across
-// whichever per-channel webhook URL a notification targets (stored in NotificationStore, not a
-// single env var at boot), so there's no single host to check here — DFIR_NOTIFY_INSECURE keeps
-// today's unguarded behavior until that's threaded through per-send instead of at construction.
+// real api.notion.com/api.clickup.com).
 const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>> = {
   MISP: () => process.env.DFIR_MISP_URL,
   YETI: () => process.env.DFIR_YETI_URL,
@@ -2962,15 +2959,19 @@ const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>>
   CLICKUP: "https://api.clickup.com/api/v2",
   // NOTIFY webhooks are arbitrary external URLs (hooks.slack.com, outlook.office.com, a self-
   // hosted Mattermost) only known at send time from NotificationConfigStore — there's no single
-  // env var to read at boot. DFIR_NOTIFY_INSECURE=1 used to silently bypass the non-loopback TLS-
-  // MITM guard for ALL of them (the guard defaulted to loopback when hostUrl was undefined). The
-  // minimal correct fix without a per-send-fetch refactor: when insecure is set, default hostUrl
-  // to a NON-loopback sentinel so the guard fires (and throws → caught → falls back to the
-  // verified global fetch) unless the operator also sets DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true.
-  // When insecure is NOT set, no custom fetch is built at all, so the sentinel is never consulted.
-  NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://hooks.slack.com" : undefined),
+  // env var to read at boot. That is precisely why DFIR_NOTIFY_INSECURE=1 silently bypassed the
+  // non-loopback TLS-MITM guard for ALL of them: hostUrl was undefined and the guard defaults to
+  // "treat as loopback", i.e. allow. Since we can't know the host, assume the answer that fails
+  // closed — a sentinel that is definitively not loopback, so the guard fires and tlsFetchFor
+  // falls back to the verified global fetch unless the operator ALSO sets
+  // DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. hostUrl feeds nothing but isLoopbackUrl, so a reserved
+  // .invalid name (RFC 2606) is the honest spelling: it names no real host and can't be mistaken
+  // for one being verified. Only consulted when insecure is set — otherwise no custom fetch is
+  // built at all. Threading the real per-send URL through would let a loopback webhook keep
+  // using insecure on its own, which this deliberately no longer does.
+  NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://notify-webhook.invalid" : undefined),
 };
-function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
+export function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
   const hostSource = TLS_HOST_URL[name];
   const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
   try {
