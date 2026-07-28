@@ -989,6 +989,26 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerSessionSegmentationRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
+  // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the
+  // store rather than onto the ~25 saveImport call sites, so no import route — including ones added
+  // later — can quietly land evidence without a custody entry. POST /cases/:id/custody remains for
+  // evidence the companion never wrote itself (mounted images, external tool output).
+  if (options.custodyStore) {
+    const custody = options.custodyStore;
+    store.onArtifactStored(async (artifact) => {
+      await custody.record(artifact.caseId, {
+        artifactPath: artifact.path,
+        sha256: artifact.sha256,
+        // Only the capture path knows its collector and origin URL; an import is attributed to the
+        // companion itself, with the analyst's action already in the activity log.
+        collectedBy: artifact.provenance?.collectedBy ?? "companion",
+        collectedAt: new Date().toISOString(),
+        source: artifact.provenance?.source ?? "",
+        trigger: artifact.provenance?.trigger ?? artifact.kind,
+        caseId: artifact.caseId,
+      });
+    });
+  }
   registerCustodyRoutes(app, ctx);
   registerPlaybookHuntsRoutes(app, ctx);
   registerPlaybookMatchRoutes(app, ctx);
