@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { archiveCase, buildZip, zipArchiveFilename } from "../../src/analysis/caseArchive.js";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 
 // ── ZIP structure helpers ───────────────────────────────────────────────────
 
@@ -144,32 +146,51 @@ describe("archiveCase", () => {
     expect(result.manifest.totalBytes).toBe(5);
   });
 
-  it("writes atomically: a failing default write leaves no partial file at the target", async () => {
-    // The default write (no deps.writeFile injected) must NOT leave a partial file at the
-    // target path if the write fails mid-stream. We force a failure by making the casesRoot
-    // directory read-only after the temp file is created — the rename step fails, and we
-    // verify the target archive never existed (no truncated ZIP left behind).
-    const os = await import("node:os");
-    const path = await import("node:path");
-    const fs = await import("node:fs/promises");
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dfir-archive-atomic-"));
-    const caseDir = path.join(dir, "c1");
-    await fs.mkdir(path.join(caseDir), { recursive: true });
-    await fs.writeFile(path.join(caseDir, "case.json"), '{"caseId":"c1"}');
-    // Inject a writeFile that writes the temp file then fails before the rename, so the
-    // default atomic path's cleanup branch runs. We verify the FINAL target is never created.
-    const archivePath = path.join(dir, "c1 (no password).zip");
-    const failingWrite = async (p: string, _d: Buffer): Promise<void> => {
-      // Simulate a crash mid-write: write a temp file then throw before renaming.
-      const tmp = `${p}.fail.tmp`;
-      await fs.writeFile(tmp, "partial");
-      throw new Error("simulated disk full");
-    };
-    await expect(archiveCase(dir, "c1", { writeFile: failingWrite })).rejects.toThrow("simulated disk full");
-    // The target archive must NOT exist (no partial ZIP at the final path).
-    await expect(fs.stat(archivePath)).rejects.toThrow();
-    // Cleanup
-    await fs.rm(dir, { recursive: true, force: true });
+  // These two run against the real filesystem with NO deps injected, because the atomicity lives
+  // entirely in the DEFAULT write. Passing deps.writeFile replaces the code under test with the
+  // fixture, so such a test asserts nothing about archiveCase at all.
+  describe("default write (real fs) is atomic", () => {
+    async function realCaseDir(): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), "dfir-archive-atomic-"));
+      await mkdir(join(dir, "c1"), { recursive: true });
+      await writeFile(join(dir, "c1", "case.json"), '{"caseId":"c1"}');
+      return dir;
+    }
+
+    it("lands a complete archive and leaves no temp file behind", async () => {
+      const dir = await realCaseDir();
+      try {
+        const result = await archiveCase(dir, "c1");
+        const written = await readFile(result.archivePath);
+        expect(written.subarray(0, 2).toString("latin1")).toBe("PK");   // a real ZIP, not a stub
+        expect(findEocd(written)).not.toBeNull();                       // complete, not truncated
+        expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    // The crash-mid-write property itself can't be observed in-process; what CAN be is the
+    // cleanup branch the atomic write adds, which is where a temp file becomes permanent litter
+    // sitting next to the case.
+    it("a failed rename leaves neither a partial archive at the target nor a temp file", async () => {
+      const dir = await realCaseDir();
+      try {
+        // A non-empty DIRECTORY at the target path makes rename() fail after the temp file exists.
+        const archivePath = join(dir, zipArchiveFilename("c1", null));
+        await mkdir(archivePath, { recursive: true });
+        await writeFile(join(archivePath, "blocker"), "x");
+
+        await expect(archiveCase(dir, "c1")).rejects.toThrow();
+
+        // The target is still the untouched directory — no truncated ZIP replaced it — and the
+        // temp file was cleaned up rather than left as litter next to the case.
+        expect((await stat(archivePath)).isDirectory()).toBe(true);
+        expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
 
