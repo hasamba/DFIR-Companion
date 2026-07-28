@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Collection plan** (#347) — the incident type's evidence checklist as a dashboard panel: what to collect for this kind of incident, in order, each item ticking itself off once matching evidence is in the case, whichever tool produced it. *Have it* records evidence held outside the tool and *N/A* retires a step this environment can't satisfy, so the plan stops nagging. Replaces the unused hunt-bundle and report-framing fields shipped with #236, which named Velociraptor bundles and report templates that do not exist.
 - **Incident-type auto-playbooks** (#236) — the New case dialog's *Incident type* picker pre-configures a case for a recurring incident pattern: eight built-in types (ransomware, BEC, data exfiltration, intrusion, insider threat, cloud compromise, web-app intrusion, malware outbreak) seed type-specific key questions, priority-ordered next steps, and that incident's expected findings as open confirm/deny questions. Synthesis is told which type the case is so it prioritizes the relevant ATT&CK techniques — prompt context only, it never reaches the report. Types are editable JSON in `companion/data/incident-types/`, analysts can drop their own into an `incident-types/` folder beside the cases root, and re-picking a type merges rather than overwriting analyst edits.
 
 ### Fixed

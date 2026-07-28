@@ -102,6 +102,25 @@ The same one-click collect directive also appears wherever a next step or key qu
 
 ---
 
+## Collection Plan
+
+Shown only for a case with an [incident type](cases.md#incident-types). Lists the evidence that type calls for, in collection order, and marks each one:
+
+| Mark | Meaning |
+|---|---|
+| ✔ | Collected — the case holds evidence from a matching source |
+| ○ | Outstanding; the next one is flagged **collect next** |
+| ↗ | Collect outside DFIR Companion — the tool cannot import this (e.g. building access records) |
+| — | Marked not applicable by an analyst |
+
+Derived from the evidence already imported, with no AI. A step names *evidence*, not a tool, so "Windows event logs" is satisfied whether it arrived via Chainsaw, Hayabusa, or raw event logs — the row lists what would satisfy it while it is still outstanding.
+
+**Have it** records evidence held outside the tool; **N/A** retires a step this environment can't satisfy (no EDR, no badge system); **Undo** returns a step to automatic. An override always beats the derived state and is remembered with the case.
+
+Distinct from [Evidence Gaps](#evidence-gaps) above: that panel is AI-derived from what the case can't yet answer, this one is a deterministic checklist fixed by the incident type.
+
+---
+
 ## Deep Pass
 
 A section (and toolbar button) between **Findings** and the **Forensic Timeline** for an analyst-triggered, batched AI pass that reads **every** graded event at or above a chosen severity floor — full coverage of a large, multi-host case a single synthesis prompt can't show.
