@@ -44,15 +44,10 @@ const SIMPLE_ENV_KEYS: Record<string, string[]> = {
     "DFIR_VELOCIRAPTOR_API_CONFIG", "DFIR_VELOCIRAPTOR_BINARY", "DFIR_VELOCIRAPTOR_GUI_URL",
     "DFIR_PUSH_TOKEN",
   ],
-  // Where the binary is, and the rules it needs. Run args, update commands, auto-run opt-ins,
-  // timeouts and output caps all have working defaults, so they stay Advanced.
-  tools: [
-    "DFIR_TOOL_HAYABUSA_BINARY",
-    "DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY", "DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS",
-    "DFIR_TOOL_SURICATA_BINARY",
-    "DFIR_TOOL_SNORT_BINARY", "DFIR_TOOL_SNORT_RULES",
-    "DFIR_TOOL_YARA_BINARY", "DFIR_TOOL_YARA_RULES",
-  ],
+  // Tools is Advanced in full — no entry here, and its tab is hidden in Simple. Every external
+  // binary is blank-means-off: nothing is broken by leaving Hayabusa, Suricata, Snort, YARA and the
+  // Velociraptor CLI unconfigured, so wiring them up is a deliberate trip to Advanced.
+  //
   // Notifications contributes no env keys — its config lives behind the /notifications API, which
   // is why that pane opts in whole with data-simple="all" rather than field by field.
 };
