@@ -53,14 +53,8 @@
     "web-logs",
     "network",
     "edr",
-    "siem",
-    "waf"
-  ],
-  "huntBundles": [
-    "webshell",
-    "suspicious-children",
-    "c2-callback",
-    "data-staging"
+    "windows-event-logs",
+    "siem"
   ],
   "findingsSeeds": [
     "Exploitation technique confirmed (SQLi/RCE/upload/SSRF)",
@@ -70,10 +64,5 @@
     "Data accessed or exfiltrated",
     "Vulnerability patched / system isolated"
   ],
-  "reportFraming": {
-    "template": "webapp-executive",
-    "audience": "app-team + security + executive",
-    "summaryPrompt": "Summarize the web-app intrusion, exploited vulnerability, and remediation for the app team and executive."
-  },
   "synthesisHint": "This is a web-app-intrusion case — prioritize T1190 Exploit Public-Facing Application, T1505.003 Server Software Component: Web Shell, T1059 Command and Scripting Interpreter, and T1071 Application Layer Protocol (C2)."
 }

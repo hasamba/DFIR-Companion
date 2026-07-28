@@ -27,9 +27,7 @@ function customType(over: Partial<IncidentType> = {}): IncidentType {
     severityFloor: "High",
     huntPlatforms: ["Velociraptor"],
     recommendedImportOrder: ["edr"],
-    huntBundles: ["custom-bundle"],
     findingsSeeds: ["Encryption observed"],
-    reportFraming: { template: "custom", audience: "exec", summaryPrompt: "summarize" },
     synthesisHint: "Org-specific ransomware — prioritize encryption.",
     ...over,
   };
@@ -47,9 +45,7 @@ describe("built-in incident-type library (data/incident-types/*.json)", () => {
       expect(t.initialKeyQuestions.length).toBeGreaterThan(0);
       expect(t.initialNextSteps.length).toBeGreaterThan(0);
       expect(t.recommendedImportOrder.length).toBeGreaterThan(0);
-      expect(t.huntBundles.length).toBeGreaterThan(0);
       expect(t.findingsSeeds.length).toBeGreaterThan(0);
-      expect(t.reportFraming.template.length).toBeGreaterThan(0);
       expect(t.synthesisHint.length).toBeGreaterThan(0);
     }
   });
@@ -62,13 +58,11 @@ describe("built-in incident-type library (data/incident-types/*.json)", () => {
   it("ransomware seeds VSS deletion and double-extortion; BEC seeds inbox rules and OAuth", () => {
     expect(ransomware.findingsSeeds).toContain("VSS shadow copies deleted");
     expect(ransomware.findingsSeeds).toContain("Double-extortion leak-site listing");
-    expect(ransomware.huntBundles).toContain("vss-delete");
     expect(ransomware.synthesisHint).toContain("T1486");
 
     const bec = getBuiltInIncidentType("bec")!;
     expect(bec.findingsSeeds).toContain("Attacker-created inbox/forwarding rules");
     expect(bec.findingsSeeds).toContain("OAuth app grant persistence");
-    expect(bec.huntBundles).toContain("mailbox-rules");
   });
 });
 
@@ -82,12 +76,10 @@ describe("parseIncidentType", () => {
   it("keeps a definition whose optional fields are malformed, defaulting just those", () => {
     const parsed = parseIncidentType({
       id: "minimal", name: "Minimal",
-      findingsSeeds: "not-an-array", huntBundles: 42, reportFraming: "nope",
+      findingsSeeds: "not-an-array",
     });
     expect(parsed?.id).toBe("minimal");
     expect(parsed?.findingsSeeds).toEqual([]);
-    expect(parsed?.huntBundles).toEqual([]);
-    expect(parsed?.reportFraming).toEqual({ template: "", audience: "", summaryPrompt: "" });
   });
 });
 

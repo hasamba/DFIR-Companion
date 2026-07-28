@@ -56,13 +56,8 @@
     "siem",
     "edr",
     "cloud-audit",
-    "m365"
-  ],
-  "huntBundles": [
-    "file-staging",
-    "cloud-sync",
-    "archive-creation",
-    "bulk-transfer"
+    "m365",
+    "endpoint-triage"
   ],
   "findingsSeeds": [
     "Exfiltration channel confirmed",
@@ -72,10 +67,5 @@
     "Insider vs. external actor distinguished",
     "Ongoing exfiltration stopped"
   ],
-  "reportFraming": {
-    "template": "exfiltration-executive",
-    "audience": "legal + DPO + executive",
-    "summaryPrompt": "Summarize the exfiltrated data, notification obligations, and containment for legal and the DPO."
-  },
   "synthesisHint": "This is a data-exfiltration case — prioritize T1567 Exfiltration to Cloud Service, T1048 Exfiltration Over Alternative Protocol, T1052 Exfiltration Over Physical Medium, and T1074 Data Staged."
 }
