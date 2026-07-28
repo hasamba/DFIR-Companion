@@ -657,6 +657,15 @@ export function isNoiseAccount(account: string): boolean {
   return false;
 }
 
+// Special-use / private-namespace TLDs (RFC 6761/6762 plus the conventional enterprise ones).
+// A host under one of these is never routable adversary infrastructure, so a domain/url IOC on
+// one is victim internal naming — the only IOC shape deriveKnownEntities can safely tokenize.
+const INTERNAL_TLDS = new Set(["local", "localdomain", "internal", "intranet", "lan", "corp", "home", "arpa", "private"]);
+function hasInternalTld(host: string): boolean {
+  const tld = host.slice(host.lastIndexOf(".") + 1);
+  return INTERNAL_TLDS.has(tld);
+}
+
 // Derive the victim entities to tokenize from the case state: hosts (event.asset), accounts
 // (DOMAIN\user / UPN in event text) and the internal domains those imply (NETBIOS name, UPN
 // domain, and the parent domain of any FQDN host). Pure + deterministic. Noise accounts/domains
@@ -675,16 +684,21 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
       else if (acct.includes("@")) internalDomains.add(acct.split("@")[1]);
     }
   }
+  for (const h of hosts) {
+    const i = h.indexOf(".");
+    if (i > 0) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
+  }
   // Also scan IOCs for victim FQDNs. The redacted-export anonymizer is built from this set; a
   // victim internal AD domain that appears ONLY as an IOC value (e.g. dc01.globaltech.local as
   // IOC ioc013) never contributed its parent (globaltech.local) to internalDomains, so the
-  // anonymizer's anonDomains had no entry and left it unredacted in the export. Domain + url +
-  // other IOCs are the reliable source: an analyst tags a victim FQDN as an IOC when it's
-  // central to the attack (a domain controller, a file server), even when it's not the event's
-  // `asset`. Adversary IOCs are NOT victim domains and are filtered out at the redactedExport
-  // layer (the customer store feeds in the analyst-confirmed victim list). Here we only ADD
-  // candidate victim hosts/domains; the anonymizer's anonDomains still matches them as
-  // internalDomains, and the downstream redactedExportBuilder composes with customerStore.
+  // anonymizer's anonDomains had no entry and left it unredacted in the export.
+  //
+  // But most domain/url IOCs are ADVERSARY infrastructure, and this whole module preserves those
+  // on purpose (see the public-IP note above: a redacted export is still shareable threat intel —
+  // tokenizing the C2 is what makes it worthless to the recipient). So only take an IOC host we
+  // can show is victim-side: one on a special-use/internal TLD that can never be reachable
+  // adversary infrastructure, or one already under a domain the accounts/assets pass established
+  // as internal. Everything else — c2.evil-apt.com, payload.badguys.net — stays in cleartext.
   for (const ioc of state.iocs) {
     if (ioc.type !== "domain" && ioc.type !== "url" && ioc.type !== "other") continue;
     const raw = ioc.value.trim().toLowerCase();
@@ -695,16 +709,12 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     }
     if (!host || !host.includes(".")) continue;
     if (isNoiseDomain(host)) continue;
+    const parent = host.slice(host.indexOf(".") + 1);
+    const victimSide = hasInternalTld(host)
+      || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
+    if (!victimSide) continue;
     hosts.add(host);
-    const i = host.indexOf(".");
-    if (i > 0) {
-      const parent = host.slice(i + 1);
-      if (!isNoiseDomain(parent)) internalDomains.add(parent);
-    }
-  }
-  for (const h of hosts) {
-    const i = h.indexOf(".");
-    if (i > 0) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
+    if (!isNoiseDomain(parent)) internalDomains.add(parent);
   }
   const byLenDesc = (a: string, b: string) => b.length - a.length || a.localeCompare(b);
   return {

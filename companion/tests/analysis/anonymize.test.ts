@@ -477,16 +477,31 @@ describe("deriveKnownEntities", () => {
     expect(k.internalDomains).toContain("globaltech.local");
   });
 
-  it("derives the host from a url IOC and excludes it from internalDomains when it's adversary", () => {
-    // A url IOC is an adversary C2; we still capture the host (so anonHosts can tokenize it),
-    // but whether it becomes an internalDomain depends on the downstream victim filter. Here
-    // we assert the host is captured — the redactedExportBuilder's customerStore supplies the
-    // victim list, so an adversary host won't be tokenized as ANON_DOMAIN (it's adversary IOC).
+  it("leaves an adversary domain/url IOC alone — a redacted export that hides the C2 is useless intel", () => {
+    // Most domain/url IOCs are attacker infrastructure. Taking them into hosts/internalDomains
+    // makes anonHosts/anonDomains tokenize the C2 to ANON_HOST_n in the redacted export, which
+    // strips out the very indicators the recipient needs (same reasoning as the public-IP rule).
     const s = emptyState("c1");
-    s.iocs = [{ id: "i1", type: "url", value: "https://c2.evil.example/path", firstSeen: "" }];
+    s.iocs = [
+      { id: "i1", type: "url", value: "https://c2.evil.example/path", firstSeen: "" },
+      { id: "i2", type: "domain", value: "payload.badguys.net", firstSeen: "" },
+    ];
     const k = deriveKnownEntities(s);
-    expect(k.hosts).toContain("c2.evil.example");
-    expect(k.internalDomains).toContain("evil.example");
+    expect(k.hosts).toEqual([]);
+    expect(k.internalDomains).toEqual([]);
+  });
+
+  it("takes an IOC host that sits under a domain the accounts pass already proved internal", () => {
+    // victim.com is established as internal by the UPN account, so fs01.victim.com is victim
+    // infrastructure even though its TLD is public.
+    const s = emptyState("c1");
+    s.forensicTimeline = [
+      { id: "e1", timestamp: "", description: "logon by jdoe@victim.com", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WS-1" },
+    ];
+    s.iocs = [{ id: "i1", type: "domain", value: "fs01.victim.com", firstSeen: "" }];
+    const k = deriveKnownEntities(s);
+    expect(k.hosts).toContain("fs01.victim.com");
+    expect(k.internalDomains).toContain("victim.com");
   });
 
   it("ignores IOC types that aren't host-shaped (hash, ip, file, process, sid)", () => {
