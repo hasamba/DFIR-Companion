@@ -25,6 +25,7 @@ import { registerThreatIntelRoutes } from "./routes/threatIntel.js";
 import { registerAnonymizationRoutes } from "./routes/anonymization.js";
 import { registerTimelineRoutes } from "./routes/timeline.js";
 import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
+import { registerSessionSegmentationRoutes } from "./routes/sessionSegmentation.js";
 import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerCustodyRoutes } from "./routes/custody.js";
@@ -943,6 +944,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerAnonymizationRoutes(app, ctx);
   registerTimelineRoutes(app, ctx);
   registerAnalysisGraphRoutes(app, ctx);
+  registerSessionSegmentationRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
   registerCustodyRoutes(app, ctx);
