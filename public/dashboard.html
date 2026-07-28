@@ -1481,7 +1481,7 @@
        active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
        (footer clipped) whenever the .stab-bar wrapped to two lines. */
     .settings-modal { width: min(820px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
-    .settings-modal > h3 { flex-shrink: 0; }
+    .settings-modal > h3 { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
     .stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--c-2a2f3a); margin: 8px 0 14px; flex-shrink: 0; }
     .stab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--c-9aa4b2);
       padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
@@ -1504,6 +1504,26 @@
     .settings-group-head { font-size: 11px; color: var(--c-6aa9ff); font-weight: 600; margin: 10px 0 4px; }
     .settings-hr { border: none; border-top: 1px solid var(--c-2a2f3a); margin: 12px 0; }
     .srestart-note { font-size: 11px; color: var(--c-ffd93b); margin-bottom: 10px; }
+    /* ── Simple / Advanced view ───────────────────────────────────────────────────────────────
+       `data-simple` on an element means "visible in Simple mode". Everything else is hidden when
+       the modal is in Simple, so a field, group heading, or whole tab is opted IN explicitly and a
+       newly added tuning knob is Advanced by default — the safe way round.
+
+       Hiding TOP-LEVEL pane children is what makes group headings and <hr>s vanish along with the
+       fields under them, with no runtime pass computing whether a heading still has visible
+       children. Scoping to direct children is also what makes a blanket :not() safe: it can never
+       reach inside a field or a panel's own markup.
+
+       `!important` beats the inline display that JS toggles on panels like #claude-code-status;
+       without it a JS-shown block would leak into the Simple view. It only ever applies to
+       elements we mean to hide — a marked element doesn't match these selectors at all. */
+    .settings-mode { display: flex; margin-left: auto; border: 1px solid var(--c-353c49); border-radius: 6px; overflow: hidden; }
+    .settings-mode button { background: none; border: none; color: var(--c-9aa4b2); font-size: 11px; font-weight: 500; padding: 3px 12px; cursor: pointer; }
+    .settings-mode button:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
+    .settings-mode button.active { background: var(--c-2d6cdf); color: #fff; }
+    .settings-modal[data-mode="simple"] .stab:not([data-simple]) { display: none !important; }
+    .settings-modal[data-mode="simple"] .stab-pane:not([data-simple="all"]) > *:not([data-simple]) { display: none !important; }
+    .settings-modal[data-mode="simple"] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-simple]) { display: none !important; }
     /* No inner scroll — the whole list expands and the single .stab-pane scrollbar handles overflow. */
     .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
     .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
@@ -2281,9 +2301,14 @@
   <!-- ── Settings modal ───────────────────────────────────────────────────── -->
   <div id="settingsOverlay" class="comment-overlay">
     <div class="comment-modal settings-modal">
-      <h3>Settings</h3>
+      <h3>Settings
+        <span class="settings-mode" role="group" aria-label="Settings detail level">
+          <button type="button" id="settingsModeSimple">Simple</button>
+          <button type="button" id="settingsModeAdvanced">Advanced</button>
+        </span>
+      </h3>
       <div class="stab-bar">
-        <button class="stab active" data-stab="general">General</button>
+        <button class="stab active" data-stab="general" data-simple>General</button>
         <button class="stab" data-stab="ai">AI</button>
         <button class="stab" data-stab="enrichment">Enrichment</button>
         <button class="stab" data-stab="exposure">Exposure</button>
@@ -2303,12 +2328,12 @@
 
       <!-- General -->
       <div class="stab-pane active" id="stab-general">
-        <div class="sfield">
+        <div class="sfield" data-simple>
           <label>Guided setup</label>
           <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 6px">Configure AI + integrations + enrichment in one guided flow, each with a built-in connection test (#181).</p>
           <button type="button" id="openSetupWizard" style="background:var(--c-2d6cdf);color:#fff;border:0;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer">⚙️ Open setup wizard</button>
         </div>
-        <div class="sfield">
+        <div class="sfield" data-simple>
           <label>Investigator name</label>
           <input id="settingsInvestigator" placeholder="your name" />
           <span class="sfield-hint">Used as author when posting comments. Saved in this browser.</span>
@@ -9583,7 +9608,7 @@
       badge.style.display = "";
       badge.style.color = errored && !active ? "#ff9f43" : "#ff5a5a";
       badge.textContent = `🔴 LIVE ${active}${errored ? ` · ⚠ ${errored}` : ""}`;
-      badge.onclick = () => { const b = document.getElementById("settingsBtn"); if (b) b.click(); const t = document.querySelector('.stab[data-stab="velociraptor"]'); if (t) t.click(); };
+      badge.onclick = () => openSettingsTab("velociraptor");
     }
     function renderVeloMonitors(monitors) {
       renderVeloMonitorBadge(monitors);
@@ -10375,8 +10400,7 @@
     const TOOL_LABELS = { hayabusa: "Hayabusa", velociraptor_cli: "Velociraptor CLI", suricata: "Suricata", snort: "Snort", yara: "YARA" };
     // Deep-link the Settings modal straight to the Tools tab (mirrors the velo badge link).
     function openToolsSettings() {
-      const b = document.getElementById("settingsBtn"); if (b) b.click();
-      const t = document.querySelector('.stab[data-stab="tools"]'); if (t) t.click();
+      openSettingsTab("tools");
     }
     // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
     function toolForExt(ext, status) {
@@ -19043,8 +19067,7 @@
       }));
     }
     function openDashViewEditor() {
-      const b = document.getElementById("settingsBtn"); if (b) b.click();
-      const t = document.querySelector('.stab[data-stab="dashboard-views"]'); if (t) t.click();
+      openSettingsTab("dashboard-views");
     }
     // Set the per-case report template to the active view's match, then fire the normal report export.
     async function generateViewReport() {
@@ -19351,6 +19374,47 @@
       return ok;
     }
 
+    // ── Simple / Advanced view ────────────────────────────────────────────────────────────────
+    // Simple shows only the controls a feature is dead without — API keys, service URLs, tool
+    // binaries. Everything with a working default is Advanced. Which fields those are is authored
+    // in the markup as `data-simple` and enforced by tests/settings/settingsSimpleAdvanced.test.ts;
+    // all this code does is set the mode. Stored per browser, like dfir.investigator.
+    const SETTINGS_MODE_KEY = "dfir.settingsMode";
+
+    function settingsMode() {
+      return localStorage.getItem(SETTINGS_MODE_KEY) === "advanced" ? "advanced" : "simple";
+    }
+
+    // Deliberately attribute-based, not offsetParent-based: this runs while the modal is still
+    // closed (openSettingsModal sets the mode before adding .open), when nothing has a layout box.
+    function stabHidden(btn, mode) {
+      return mode === "simple" && !btn.hasAttribute("data-simple");
+    }
+
+    function applySettingsMode(mode) {
+      const modal = document.querySelector(".settings-modal");
+      modal.dataset.mode = mode;
+      localStorage.setItem(SETTINGS_MODE_KEY, mode);
+      document.getElementById("settingsModeSimple").classList.toggle("active", mode === "simple");
+      document.getElementById("settingsModeAdvanced").classList.toggle("active", mode === "advanced");
+      // Switching to Simple can hide the tab you were on — fall back to the first one still shown.
+      const active = document.querySelector(".stab.active");
+      if (active && stabHidden(active, mode)) {
+        const first = [...document.querySelectorAll(".stab")].find(b => !stabHidden(b, mode));
+        if (first) first.click();
+      }
+    }
+
+    // Open Settings on a named tab. A tab hidden in Simple (Velociraptor, Dashboard Views, …)
+    // forces Advanced first, so an in-app deep link can never land on a tab that isn't there.
+    function openSettingsTab(name) {
+      document.getElementById("settingsBtn").click();
+      const tab = document.querySelector(`.stab[data-stab="${name}"]`);
+      if (!tab) return;
+      if (stabHidden(tab, settingsMode())) applySettingsMode("advanced");
+      tab.click();
+    }
+
     function openSettingsModal() {
       document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
       document.getElementById("kbdShortcutsChk").checked = kbdShortcutsEnabled();
@@ -19371,6 +19435,9 @@
       loadVeloMonitors(veloCaseId());
       loadPushToken(veloCaseId());
       loadUpdateCheck();
+      // After the reset-to-first-tab above, so the fallback in applySettingsMode sees a real
+      // active tab; before .open, so Simple mode never flashes the full Advanced list.
+      applySettingsMode(settingsMode());
       document.getElementById("settingsOverlay").classList.add("open");
     }
 
@@ -19381,6 +19448,8 @@
     document.getElementById("settingsBtn").onclick = openSettingsModal;
     document.getElementById("settingsSaveBtn").onclick = saveSettings;
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
+    document.getElementById("settingsModeSimple").onclick = () => applySettingsMode("simple");
+    document.getElementById("settingsModeAdvanced").onclick = () => applySettingsMode("advanced");
 
     // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
     // A multi-step onboarding overlay covering every config that has no default and won't work
@@ -21297,10 +21366,7 @@
           openBtn.type = 'button';
           openBtn.style.cssText = 'margin-left:10px';
           openBtn.textContent = 'Open Diagnostics';
-          openBtn.onclick = () => {
-            document.getElementById('settingsBtn')?.click();
-            document.querySelector('.stab[data-stab="diagnostics"]')?.click();
-          };
+          openBtn.onclick = () => openSettingsTab("diagnostics");
           const disableBtn = document.createElement('button');
           disableBtn.type = 'button';
           disableBtn.textContent = 'Disable checks';
