@@ -44,6 +44,17 @@ const SIMPLE_ENV_KEYS: Record<string, string[]> = {
     "DFIR_VELOCIRAPTOR_API_CONFIG", "DFIR_VELOCIRAPTOR_BINARY", "DFIR_VELOCIRAPTOR_GUI_URL",
     "DFIR_PUSH_TOKEN",
   ],
+  // Where the binary is, and the rules it needs. Run args, update commands, auto-run opt-ins,
+  // timeouts and output caps all have working defaults, so they stay Advanced.
+  tools: [
+    "DFIR_TOOL_HAYABUSA_BINARY",
+    "DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY", "DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS",
+    "DFIR_TOOL_SURICATA_BINARY",
+    "DFIR_TOOL_SNORT_BINARY", "DFIR_TOOL_SNORT_RULES",
+    "DFIR_TOOL_YARA_BINARY", "DFIR_TOOL_YARA_RULES",
+  ],
+  // Notifications contributes no env keys — its config lives behind the /notifications API, which
+  // is why that pane opts in whole with data-simple="all" rather than field by field.
 };
 
 const ALL_SIMPLE = Object.values(SIMPLE_ENV_KEYS).flat().sort();

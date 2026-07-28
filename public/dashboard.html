@@ -2314,14 +2314,14 @@
         <button class="stab" data-stab="exposure" data-simple>Exposure</button>
         <button class="stab" data-stab="integrations" data-simple>Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
-        <button class="stab" data-stab="tools">Tools</button>
+        <button class="stab" data-stab="tools" data-simple>Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
         <button class="stab" data-stab="nsrl">NSRL</button>
         <button class="stab" data-stab="importers">Importers</button>
         <button class="stab" data-stab="kev">KEV</button>
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="dashboard-views">Dashboard Views</button>
-        <button class="stab" data-stab="notifications">Notifications</button>
+        <button class="stab" data-stab="notifications" data-simple>Notifications</button>
         <button class="stab" data-stab="updates">Updates</button>
         <button class="stab" data-stab="diagnostics">Diagnostics</button>
       </div>
@@ -3199,7 +3199,7 @@
 
       <!-- External forensic tools (#211) -->
       <div class="stab-pane" id="stab-tools">
-        <div class="sfield-hint" style="display:block;margin-bottom:8px">
+        <div class="sfield-hint" data-simple style="display:block;margin-bottom:8px">
           Run your <strong>own locally-installed</strong> tools against raw evidence the Companion can't parse
           (EVTX, PCAP, files), then ingest their <strong>output</strong> through the normal importers — the tool does the
           detecting, the Companion ingests the verdict. The Companion never downloads or bundles a binary; you install and
@@ -3210,12 +3210,12 @@
         <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
           ⚠ The run/update commands you configure are executed on this machine (no shell — args are tokenized). Only point them at trusted binaries.
         </div>
-        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
-        <div id="toolsStatus" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:12px">—</div>
+        <div data-simple style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
+        <div data-simple id="toolsStatus" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:12px">—</div>
 
-        <div class="settings-group-head">Hayabusa <span style="color:var(--c-7e8aa0);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
-        <div class="sgrid">
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_HAYABUSA_BINARY — full path to hayabusa(.exe); blank = off</span></label><input id="env-DFIR_TOOL_HAYABUSA_BINARY" placeholder="(off)" /></div>
+        <div class="settings-group-head" data-simple>Hayabusa <span style="color:var(--c-7e8aa0);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid" data-simple>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_TOOL_HAYABUSA_BINARY — full path to hayabusa(.exe); blank = off</span></label><input id="env-DFIR_TOOL_HAYABUSA_BINARY" placeholder="(off)" /></div>
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_HAYABUSA_RUN_ARGS — &lt;target&gt;/&lt;output&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_HAYABUSA_RUN_ARGS" placeholder="csv-timeline -f <target> -o <output> -w" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_HAYABUSA_UPDATE_CMD — full command; blank = &lt;binary&gt; update-rules</span></label><input id="env-DFIR_TOOL_HAYABUSA_UPDATE_CMD" placeholder="(default: <binary> update-rules)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_HAYABUSA_AUTO_RUN — opt-in; default OFF (a raw drop asks first). Set "on" to run without asking</span></label><input id="env-DFIR_TOOL_HAYABUSA_AUTO_RUN" placeholder="off (opt-in)" /></div>
@@ -3224,21 +3224,21 @@
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="hayabusa" type="button">↻ Update rules</button></div>
 
-        <div class="settings-group-head">Velociraptor CLI <span style="color:var(--c-7e8aa0);font-weight:400">(offline EVTX → artifact JSON · <a href="https://github.com/Velocidex/velociraptor" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="settings-group-head" data-simple>Velociraptor CLI <span style="color:var(--c-7e8aa0);font-weight:400">(offline EVTX → artifact JSON · <a href="https://github.com/Velocidex/velociraptor" target="_blank" rel="noopener">repo</a>)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The default runs the <code>Windows.Hayabusa.Rules</code> artifact (not built in — loaded from the <strong>Definitions</strong> zip) against a <strong>folder</strong> of EVTX via <code>--ROOT &lt;targetdir&gt;</code>, with <code>--nobanner --no-debug</code>, redirecting the JSON results to a file (<code>&gt; &lt;output&gt;</code>) that the Companion imports. The Companion places the file in a temp folder under its <strong>original name</strong> (e.g. <code>Security.evtx</code>) so Velociraptor detects the channel from the filename — <strong>keep the original EVTX filenames</strong>. Placeholders: <code>&lt;targetdir&gt;</code> = the folder, <code>&lt;definitions&gt;</code> = the definitions path, <code>&lt;output&gt;</code> = the result file. (Don't add <code>-v</code> — verbose logs drown the results.)</p>
-        <div class="sgrid">
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY — local velociraptor(.exe); distinct from the Velociraptor API tab; blank = off</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY" placeholder="(off)" /></div>
-          <div class="sfield"><label>Definitions<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS — path to the artifact-definitions zip (e.g. Velociraptor.Sigma.Artifacts.zip) for &lt;definitions&gt;</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS" placeholder="C:\tools\Velociraptor.Sigma.Artifacts.zip" /></div>
+        <div class="sgrid" data-simple>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY — local velociraptor(.exe); distinct from the Velociraptor API tab; blank = off</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_BINARY" placeholder="(off)" /></div>
+          <div class="sfield" data-simple><label>Definitions<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS — path to the artifact-definitions zip (e.g. Velociraptor.Sigma.Artifacts.zip) for &lt;definitions&gt;</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_DEFINITIONS" placeholder="C:\tools\Velociraptor.Sigma.Artifacts.zip" /></div>
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS — &lt;targetdir&gt;/&lt;definitions&gt; substituted; blank = default</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_RUN_ARGS" placeholder="--definitions <definitions> -r Windows.Hayabusa.Rules --ROOT <targetdir> --nobanner --no-debug > <output>" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN — opt-in; default OFF</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_AUTO_RUN" placeholder="off (opt-in)" /></div>
           <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_TIMEOUT_MS" placeholder="300000" /></div>
           <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_VELOCIRAPTOR_CLI_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_VELOCIRAPTOR_CLI_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
 
-        <div class="settings-group-head">Suricata <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP → eve.json · <a href="https://suricata.io/download/" target="_blank" rel="noopener">download</a>)</span></div>
+        <div class="settings-group-head" data-simple>Suricata <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP → eve.json · <a href="https://suricata.io/download/" target="_blank" rel="noopener">download</a>)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Runs from the Suricata install dir so it finds <code>suricata.yaml</code>. <strong>Windows rules:</strong> <code>suricata-update</code> is a Linux/pip tool — on Windows, download <a href="https://rules.emergingthreats.net/open/" target="_blank" rel="noopener">emerging-all.rules (ET Open)</a> manually and point <code>suricata.yaml</code> at it (see this <a href="https://letsdefend.io/blog/how-to-install-and-configure-suricata-on-windows" target="_blank" rel="noopener">Suricata-on-Windows guide</a>). Leave the update command blank unless you have <code>suricata-update</code> installed.</p>
-        <div class="sgrid">
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SURICATA_BINARY — full path to suricata; blank = off</span></label><input id="env-DFIR_TOOL_SURICATA_BINARY" placeholder="(off)" /></div>
+        <div class="sgrid" data-simple>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_TOOL_SURICATA_BINARY — full path to suricata; blank = off</span></label><input id="env-DFIR_TOOL_SURICATA_BINARY" placeholder="(off)" /></div>
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SURICATA_RUN_ARGS — &lt;output&gt; is an output DIR; blank = default</span></label><input id="env-DFIR_TOOL_SURICATA_RUN_ARGS" placeholder="-r <target> -l <output>" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SURICATA_UPDATE_CMD — blank = no button (Windows: update rules manually, see above)</span></label><input id="env-DFIR_TOOL_SURICATA_UPDATE_CMD" placeholder="(none on Windows)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SURICATA_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SURICATA_AUTO_RUN" placeholder="off (opt-in)" /></div>
@@ -3247,10 +3247,10 @@
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="suricata" type="button">↻ Update rules</button> <span style="font-size:11px;color:var(--c-7e8aa0)">(only if you configured an update command above)</span></div>
 
-        <div class="settings-group-head">Snort <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP + your rules → alert_fast · <a href="https://github.com/snort3/snort3" target="_blank" rel="noopener">repo</a>)</span></div>
-        <div class="sgrid">
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_SNORT_BINARY — full path to snort; blank = off</span></label><input id="env-DFIR_TOOL_SNORT_BINARY" placeholder="(off)" /></div>
-          <div class="sfield"><label>Rules / config path<span class="sfield-hint">DFIR_TOOL_SNORT_RULES — substituted for &lt;rules&gt; (your snort.lua / .rules)</span></label><input id="env-DFIR_TOOL_SNORT_RULES" placeholder="(required to run)" /></div>
+        <div class="settings-group-head" data-simple>Snort <span style="color:var(--c-7e8aa0);font-weight:400">(PCAP + your rules → alert_fast · <a href="https://github.com/snort3/snort3" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid" data-simple>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_TOOL_SNORT_BINARY — full path to snort; blank = off</span></label><input id="env-DFIR_TOOL_SNORT_BINARY" placeholder="(off)" /></div>
+          <div class="sfield" data-simple><label>Rules / config path<span class="sfield-hint">DFIR_TOOL_SNORT_RULES — substituted for &lt;rules&gt; (your snort.lua / .rules)</span></label><input id="env-DFIR_TOOL_SNORT_RULES" placeholder="(required to run)" /></div>
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_SNORT_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_SNORT_RUN_ARGS" placeholder="-r <target> -c <rules> -A fast -q" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_SNORT_UPDATE_CMD — e.g. your PulledPork command; blank = no button</span></label><input id="env-DFIR_TOOL_SNORT_UPDATE_CMD" placeholder="(none — e.g. pulledpork)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SNORT_AUTO_RUN — on/off</span></label><input id="env-DFIR_TOOL_SNORT_AUTO_RUN" placeholder="off (opt-in)" /></div>
@@ -3259,10 +3259,10 @@
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="snort" type="button">↻ Update rules</button></div>
 
-        <div class="settings-group-head">YARA <span style="color:var(--c-7e8aa0);font-weight:400">(scan files/dirs → matches · <a href="https://github.com/VirusTotal/yara" target="_blank" rel="noopener">repo</a>)</span></div>
-        <div class="sgrid">
-          <div class="sfield"><label>Binary path<span class="sfield-hint">DFIR_TOOL_YARA_BINARY — full path to yara(64); blank = off</span></label><input id="env-DFIR_TOOL_YARA_BINARY" placeholder="(off)" /></div>
-          <div class="sfield"><label>Rules path<span class="sfield-hint">DFIR_TOOL_YARA_RULES — substituted for &lt;rules&gt; (your .yar/.yara)</span></label><input id="env-DFIR_TOOL_YARA_RULES" placeholder="(required to run)" /></div>
+        <div class="settings-group-head" data-simple>YARA <span style="color:var(--c-7e8aa0);font-weight:400">(scan files/dirs → matches · <a href="https://github.com/VirusTotal/yara" target="_blank" rel="noopener">repo</a>)</span></div>
+        <div class="sgrid" data-simple>
+          <div class="sfield" data-simple><label>Binary path<span class="sfield-hint">DFIR_TOOL_YARA_BINARY — full path to yara(64); blank = off</span></label><input id="env-DFIR_TOOL_YARA_BINARY" placeholder="(off)" /></div>
+          <div class="sfield" data-simple><label>Rules path<span class="sfield-hint">DFIR_TOOL_YARA_RULES — substituted for &lt;rules&gt; (your .yar/.yara)</span></label><input id="env-DFIR_TOOL_YARA_RULES" placeholder="(required to run)" /></div>
           <div class="sfield"><label>Run args<span class="sfield-hint">DFIR_TOOL_YARA_RUN_ARGS — output on stdout; blank = default</span></label><input id="env-DFIR_TOOL_YARA_RUN_ARGS" placeholder="-s -m -r <rules> <target>" /></div>
           <div class="sfield"><label>Update command<span class="sfield-hint">DFIR_TOOL_YARA_UPDATE_CMD — e.g. git -C &lt;rulesDir&gt; pull; blank = no button</span></label><input id="env-DFIR_TOOL_YARA_UPDATE_CMD" placeholder="(none — e.g. git -C ... pull)" /></div>
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_YARA_AUTO_RUN — on/off (no drop extension; manual run only by default)</span></label><input id="env-DFIR_TOOL_YARA_AUTO_RUN" placeholder="off (opt-in)" /></div>
@@ -3551,7 +3551,10 @@
 
       <!-- Notifications (issue #58) — Slack / MS Teams / SMTP email channels for critical findings,
            playbook updates, and investigation milestones. Global, shared across cases. -->
-      <div class="stab-pane" id="stab-notifications">
+      <!-- The only whole-pane opt-in: a channel is nothing without its webhook or credentials, and
+           there is no per-field split to make — the config lives behind the /notifications API,
+           not in .env. See tests/settings/settingsSimpleAdvanced.test.ts. -->
+      <div class="stab-pane" id="stab-notifications" data-simple="all">
         <div class="sfield-hint" style="display:block;margin-bottom:8px">
           Push <strong>new/escalated findings</strong>, <strong>playbook updates</strong>, <strong>investigation milestones</strong>, and
           <strong>@mentions</strong> in comments to Slack, MS Teams, Mattermost, Discord, Telegram, or email — with a per-channel severity threshold and per-event toggles. Global — shared across all cases.
