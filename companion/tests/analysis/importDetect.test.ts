@@ -216,6 +216,16 @@ describe("detectImportKind — CSV formats", () => {
   it("kape: Amcache header", () => {
     expect(detectImportKind("am.csv", "ApplicationName,FullPath,SHA1,FileKeyLastWriteTimestamp\na,c:/x,abc,t")).toBe("kape");
   });
+  it("kape: ShimCache WITH the executed/cacheentryposition discriminator", () => {
+    expect(detectImportKind("shim.csv", "Path,LastModifiedTimeUTC,executed\nx,t,true")).toBe("kape");
+    expect(detectImportKind("shim2.csv", "Path,LastModifiedTimeUTC,cacheentryposition\nx,t,0")).toBe("kape");
+  });
+  it("#28: a generic CSV with only path + lastmodifiedtimeutc (no ShimCache discriminator) falls through to the AI CSV importer, not kape", () => {
+    // Previously kapeSig's loose ShimCache branch claimed it as kape; parseKapeCsv found no
+    // matching profile and returned 0 events — silently dropping every row. It must reach the AI
+    // CSV analyzer (the `csv` fallback) so its rows are actually extracted into the timeline.
+    expect(detectImportKind("generic.csv", "path,lastmodifiedtimeutc,extra\n/foo/bar,t,hello")).toBe("csv");
+  });
   it("plaso: dynamic header", () => {
     expect(detectImportKind("tl.csv", "datetime,timestamp_desc,source,message,parser\n2023-01-01T00:00:00+00:00,ctime,FILE,hi,filestat")).toBe("plaso");
   });

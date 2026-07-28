@@ -364,7 +364,12 @@ function velociraptorElasticCsvSig(h: Set<string>): boolean {
 }
 function kapeSig(h: Set<string>): boolean {
   return has(h, "executablename", "runcount") || has(h, "fullpath", "sha1") || has(h, "fullpath", "filekeylastwritetimestamp") ||
-    (h.has("path") && h.has("lastmodifiedtimeutc")) || has(h, "updatereasons", "updatetimestamp") ||
+    // ShimCache: require the executed/cacheentryposition discriminator the real ShimCache PROFILE
+    // match in kapeImport.ts needs. Without it, a generic CSV with just path + lastmodifiedtimeutc
+    // (common column names) was claimed as KAPE, dispatched to parseKapeCsv, found NO matching
+    // profile, and returned 0 events — silently dropping every row. It never reached the AI CSV
+    // analyzer (the `csv` fallback) because `kape` is a "confident" deterministic kind (#28).
+    (h.has("path") && h.has("lastmodifiedtimeutc") && (h.has("executed") || h.has("cacheentryposition"))) || has(h, "updatereasons", "updatetimestamp") ||
     (has(h, "parentpath", "filename") && (h.has("created0x10") || h.has("lastmodified0x10"))) ||
     has(h, "bytessent", "bytesreceived") || has(h, "deletedon", "filename") ||
     (h.has("absolutepath") && (h.has("lastinteracted") || h.has("firstinteracted"))) ||
