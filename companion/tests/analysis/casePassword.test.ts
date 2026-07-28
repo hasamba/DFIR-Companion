@@ -116,6 +116,14 @@ describe("parseCookieHeader", () => {
   it("URL-decodes values", () => {
     expect(parseCookieHeader("tok=" + encodeURIComponent("a.b/c"))).toEqual({ tok: "a.b/c" });
   });
+  it("skips a cookie with a malformed percent-escape instead of throwing (#24)", () => {
+    // A %ZZ throws URIError from decodeURIComponent; previously that propagated out of the
+    // case-lock gate as a 500 + raw 'URIError: URI malformed' leak, and fired on ANY cookie name
+    // (a malformed cookie from any other origin blocked all access to a password-protected case).
+    expect(() => parseCookieHeader("session_id=%ZZ")).not.toThrow();
+    // The malformed cookie is dropped; a well-formed sibling survives.
+    expect(parseCookieHeader("good=ok; bad=%ZZ; other=x")).toEqual({ good: "ok", other: "x" });
+  });
 });
 
 describe("unlockCookieName", () => {
