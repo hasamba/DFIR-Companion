@@ -144,4 +144,30 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].id).toBe("f1");
   });
+
+  // The repair has to pick between "close the open string" and "cut back to the last complete
+  // pair" — doing both at once emits a stray quote onto an already-cut prefix (`{"a":1` + `"` →
+  // `{"a":1"}`), which parses nowhere. Each of these lands on a different candidate; all must
+  // produce VALID JSON, never a plausible-looking string that JSON.parse still rejects.
+  it("#4: every no-'}' truncation shape repairs to valid JSON, whichever candidate wins", () => {
+    const shapes: [string, unknown][] = [
+      // Truncated inside a later key's VALUE, with an earlier complete pair → close the string.
+      ['{"a":1,"b":"unterminated', { a: 1, b: "unterminated" }],
+      // Truncated inside a nested ARRAY's string element → close the string, balance [ and {.
+      ['{"summary":"ok","findings":["a","b', { summary: "ok", findings: ["a", "b"] }],
+      // Truncated inside a KEY — closing the string leaves a key with no value, so cut instead.
+      ['{"a":1,"bcd', { a: 1 }],
+      // Truncated right after a ':' — nothing to close; cut back to the last complete pair.
+      ['{"a":1,"b":', { a: 1 }],
+      // Truncated on the separator after a complete pair — drop the dangling comma.
+      ['{"observations":[{"summary":"x"}, ', { observations: [{ summary: "x" }] }],
+      // Nothing but the opening brace.
+      ["{", {}],
+    ];
+    for (const [truncated, expected] of shapes) {
+      const repaired = repairTruncatedJson(truncated);
+      expect(() => JSON.parse(repaired), `repair of ${truncated} → ${repaired}`).not.toThrow();
+      expect(JSON.parse(repaired)).toEqual(expected);
+    }
+  });
 });

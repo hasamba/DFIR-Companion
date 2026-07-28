@@ -57,9 +57,9 @@ export function repairTruncatedJson(s: string): string {
     // behavior returned the input unchanged, leaving an unterminated string; neededClosers() can
     // only emit structural closers (it never closes an open string), so JSON.parse failed on
     // "Unterminated string" and the whole response was thrown away. Recover a partial-but-valid
-    // object: cut back to the last complete key-value boundary (a comma at the object's top
-    // level, tracked via string state), close any open string, drop a dangling comma, then append
-    // the structural closers. A partial findings array (even []) is still useful — the
+    // object: close the open string (keeping the partial value), or — when that still doesn't
+    // parse, e.g. truncation landed inside a KEY or right after a ':' — cut back to the last
+    // complete key-value boundary. A partial findings array (even []) is still useful — the
     // deterministic high-severity backfill fills the truncated finding.
     return repairInsideFirstObject(s);
   }
@@ -67,15 +67,49 @@ export function repairTruncatedJson(s: string): string {
   return prefix + neededClosers(prefix);
 }
 
-// Cut back to the last top-level comma (or the opening brace if none), close an open string,
-// drop a dangling comma, and append structural closers. Used only when lastBrace === -1.
+// Repair a truncation that landed inside the FIRST object (no complete '}' anywhere). Used only
+// when lastBrace === -1.
+//
+// Two candidate repairs, tried most-informative first and validated by an actual JSON.parse —
+// closing the string and cutting back are BOTH wrong in the other's case, so picking blindly
+// produces invalid JSON. (Doing both at once, as an earlier version did, is wrong in every case
+// where a cut happened: `{"a":1,"b":"oops` cut to `{"a":1` then given a stray closing quote
+// became `{"a":1"}`, which parses nowhere.)
+//
+//  A. Close the open string in place — keeps the partial value, which is the common truncation
+//     (max_tokens mid-description). Fails when the cut landed inside a KEY, or right after a ':'.
+//  B. Cut back to the last comma that was NOT inside a string, dropping the whole incomplete
+//     key-value pair. Structurally sound whenever A isn't, at the cost of that one pair.
+//
+// Neither is tried when it can't apply; if nothing parses we return B (or A) so the caller's
+// error message still describes real input.
 function repairInsideFirstObject(s: string): string {
-  // Find the last top-level comma (depth 0 inside the root object, not inside a nested array
-  // or string) — that's the boundary after the last COMPLETE key-value pair.
-  let depth = 0;
+  const { inStr, lastCommaOutsideString } = scanStringState(s);
+  const candidates: string[] = [];
+  if (inStr) candidates.push(closeAndBalance(s + '"'));
+  if (lastCommaOutsideString >= 0) candidates.push(closeAndBalance(s.slice(0, lastCommaOutsideString)));
+  candidates.push(closeAndBalance(s));
+  for (const c of candidates) {
+    try {
+      JSON.parse(c);
+      return c;
+    } catch { /* try the next candidate */ }
+  }
+  return candidates[candidates.length - 1];
+}
+
+// Drop a dangling separator, then append the closers needed to balance still-open structures.
+function closeAndBalance(s: string): string {
+  const prefix = s.replace(/,\s*$/, "");
+  return prefix + neededClosers(prefix);
+}
+
+// Whether the string ends mid-literal, and the index of the last comma that sat OUTSIDE any
+// string literal (-1 when there is none). Commas inside a string are content, not separators.
+function scanStringState(s: string): { inStr: boolean; lastCommaOutsideString: number } {
   let inStr = false;
   let esc = false;
-  let lastTopComma = -1;
+  let lastCommaOutsideString = -1;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (inStr) {
@@ -85,18 +119,9 @@ function repairInsideFirstObject(s: string): string {
       continue;
     }
     if (c === '"') inStr = true;
-    else if (c === "{") depth++;
-    else if (c === "[") depth++;
-    else if (c === "}" || c === "]") depth--;
-    else if (c === "," && depth === 1) lastTopComma = i; // depth 1 = root object's direct children
+    else if (c === ",") lastCommaOutsideString = i;
   }
-  // Cut back to just after the last complete key-value (drop the dangling incomplete one).
-  let prefix = lastTopComma >= 0 ? s.slice(0, lastTopComma) : s;
-  // Close an open string (neededClosers won't, so do it here before structural closers).
-  if (inStr) prefix += '"';
-  // Drop a dangling comma / whitespace so the object doesn't end with a separator.
-  prefix = prefix.replace(/,\s*$/, "");
-  return prefix + neededClosers(prefix);
+  return { inStr, lastCommaOutsideString };
 }
 
 // JSON forbids raw control characters (U+0000–U+001F) inside string literals, but models

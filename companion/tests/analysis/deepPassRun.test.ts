@@ -182,7 +182,11 @@ describe("deepPass resilience", () => {
       if (/ONE SLICE/i.test(req.systemPrompt)) {
         this.observeCalls++;
         if (this.observeCalls <= this.failAttempts) {
-          return { rawText: '{"observations": [{"summary": "bad\ncontrol", ' };
+          // Prose with no JSON at all. The original fixture here was a control-char-plus-truncation
+          // response — parseJsonLoose now RECOVERS that shape (escape the control chars, close the
+          // open structure), which is the point of those repairs, so it no longer exercises the
+          // "batch failed" path. A refusal/prose reply has nothing to recover and still does.
+          return { rawText: "I'm unable to analyse this slice." };
         }
         return { rawText: OBSERVATIONS };
       }
