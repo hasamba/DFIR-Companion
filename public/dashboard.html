@@ -2310,8 +2310,8 @@
       <div class="stab-bar">
         <button class="stab active" data-stab="general" data-simple>General</button>
         <button class="stab" data-stab="ai" data-simple>AI</button>
-        <button class="stab" data-stab="enrichment">Enrichment</button>
-        <button class="stab" data-stab="exposure">Exposure</button>
+        <button class="stab" data-stab="enrichment" data-simple>Enrichment</button>
+        <button class="stab" data-stab="exposure" data-simple>Exposure</button>
         <button class="stab" data-stab="integrations">Integrations</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="tools">Tools</button>
@@ -2822,27 +2822,27 @@
 
       <!-- Enrichment -->
       <div class="stab-pane" id="stab-enrichment">
-        <div class="srestart-note">⚠ All enrichment settings require a server restart to take effect</div>
-        <div class="settings-group-head">VirusTotal</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-simple>⚠ All enrichment settings require a server restart to take effect</div>
+        <div class="settings-group-head" data-simple>VirusTotal</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>VirusTotal key<span class="sfield-hint">DFIR_VT_KEY</span></label><input id="env-DFIR_VT_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">AbuseIPDB</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>AbuseIPDB</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>AbuseIPDB key<span class="sfield-hint">DFIR_ABUSEIPDB_KEY</span></label><input id="env-DFIR_ABUSEIPDB_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">Hunting.ch (abuse.ch)</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Hunting.ch key<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>Hunting.ch (abuse.ch)</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Hunting.ch key<span class="sfield-hint">DFIR_HUNTINGCH_KEY — legacy alias DFIR_MB_KEY also works</span></label><input id="env-DFIR_HUNTINGCH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">RockyRaccoon</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>RockyRaccoon</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
-        <div class="settings-group-head">CrowdStrike Falcon Intelligence</div>
-        <div class="sfield-row3">
-          <div class="sfield"><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
-          <div class="sfield"><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>CrowdStrike Falcon Intelligence</div>
+        <div class="sfield-row3" data-simple>
+          <div class="sfield" data-simple><label>Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
+          <div class="sfield" data-simple><label>Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield">
             <label>Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_CLOUD</span></label>
             <select id="env-DFIR_CROWDSTRIKE_CLOUD"><option value="">— default (us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
@@ -2851,10 +2851,10 @@
         <div class="sfield-row">
           <div class="sfield"><label>Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_BASE_URL" placeholder="(optional)" /></div>
         </div>
-        <div class="settings-group-head">MISP</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
-          <div class="sfield"><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>MISP</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
+          <div class="sfield" data-simple><label>MISP key<span class="sfield-hint">DFIR_MISP_KEY</span></label><input id="env-DFIR_MISP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_MISP_CA</span></label><input id="env-DFIR_MISP_CA" placeholder="path/to/ca.pem" /></div>
@@ -2865,19 +2865,19 @@
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label>Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
-        <div class="settings-group-head">YETI</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
-          <div class="sfield"><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>YETI</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>YETI URL<span class="sfield-hint">DFIR_YETI_URL</span></label><input id="env-DFIR_YETI_URL" placeholder="https://yeti.example.org" /></div>
+          <div class="sfield" data-simple><label>YETI key<span class="sfield-hint">DFIR_YETI_KEY</span></label><input id="env-DFIR_YETI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label>Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
         </div>
-        <div class="settings-group-head">OpenCTI</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
-          <div class="sfield"><label>OpenCTI token<span class="sfield-hint">DFIR_OPENCTI_KEY</span></label><input id="env-DFIR_OPENCTI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="settings-group-head" data-simple>OpenCTI</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>OpenCTI URL<span class="sfield-hint">DFIR_OPENCTI_URL</span></label><input id="env-DFIR_OPENCTI_URL" placeholder="https://opencti.example.org" /></div>
+          <div class="sfield" data-simple><label>OpenCTI token<span class="sfield-hint">DFIR_OPENCTI_KEY</span></label><input id="env-DFIR_OPENCTI_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label>CA bundle<span class="sfield-hint">DFIR_OPENCTI_CA</span></label><input id="env-DFIR_OPENCTI_CA" placeholder="path/to/ca.pem" /></div>
@@ -2890,14 +2890,14 @@
         <div class="sfield-row">
           <div class="sfield"><label>Base URL<span class="sfield-hint">DFIR_HASHLOOKUP_URL — override for a self-hosted mirror (default https://hashlookup.circl.lu)</span></label><input id="env-DFIR_HASHLOOKUP_URL" placeholder="https://hashlookup.circl.lu" /></div>
         </div>
-        <div class="settings-group-head">IP infrastructure context (Reverse DNS / WHOIS / GeoIP / Shodan)</div>
+        <div class="settings-group-head" data-simple>IP infrastructure context (Reverse DNS / WHOIS / GeoIP / Shodan)</div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">These providers are keyless by default and always-on — they return infrastructure context (PTR hostnames, WHOIS netblock/country, GeoIP city/ASN) rather than a reputation verdict, so they never send IOCs to a third-party threat-intel service. Shodan (Exposed Hosts) requires an API key set on the Exposure tab.</p>
         <div class="sfield-row">
           <div class="sfield"><label>WHOIS / RDAP base URL<span class="sfield-hint">DFIR_RDAP_URL — WHOIS-over-RDAP endpoint (default https://rdap.org)</span></label><input id="env-DFIR_RDAP_URL" placeholder="https://rdap.org" /></div>
           <div class="sfield"><label>GeoIP URL template<span class="sfield-hint">DFIR_GEOIP_URL — {ip} is substituted; default uses ipinfo.io/{ip}/json (no key required); supports ip-api.com and ipwho.is shapes too</span></label><input id="env-DFIR_GEOIP_URL" placeholder="https://ipinfo.io/{ip}/json" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>GeoIP API key<span class="sfield-hint">DFIR_GEOIP_KEY — optional; appended as ?token= or substituted as {key} for paid / self-hosted backends</span></label><input id="env-DFIR_GEOIP_KEY" type="password" placeholder="(optional)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>GeoIP API key<span class="sfield-hint">DFIR_GEOIP_KEY — optional; appended as ?token= or substituted as {key} for paid / self-hosted backends</span></label><input id="env-DFIR_GEOIP_KEY" type="password" placeholder="(optional)" autocomplete="new-password" /></div>
         </div>
         <div class="settings-group-head">GeoIP map</div>
         <div class="sfield-row">
@@ -2944,21 +2944,21 @@
 
       <!-- Exposure -->
       <div class="stab-pane" id="stab-exposure">
-        <div class="srestart-note">⚠ All exposure settings require a server restart to take effect</div>
-        <div class="sfield-row">
-          <div class="sfield"><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="srestart-note" data-simple>⚠ All exposure settings require a server restart to take effect</div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>LeakCheck key<span class="sfield-hint">DFIR_LEAKCHECK_KEY</span></label><input id="env-DFIR_LEAKCHECK_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>LeakCheck domain limit<span class="sfield-hint">DFIR_LEAKCHECK_DOMAIN_LIMIT</span></label><input id="env-DFIR_LEAKCHECK_DOMAIN_LIMIT" placeholder="1000" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>HIBP key<span class="sfield-hint">DFIR_HIBP_KEY</span></label><input id="env-DFIR_HIBP_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>HIBP User-Agent<span class="sfield-hint">DFIR_HIBP_USER_AGENT</span></label><input id="env-DFIR_HIBP_USER_AGENT" placeholder="DFIR Companion" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>DeHashed key<span class="sfield-hint">DFIR_DEHASHED_KEY</span></label><input id="env-DFIR_DEHASHED_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>DeHashed base URL<span class="sfield-hint">DFIR_DEHASHED_BASE_URL</span></label><input id="env-DFIR_DEHASHED_BASE_URL" placeholder="https://api.dehashed.com/v2" /></div>
         </div>
-        <div class="sfield-row">
-          <div class="sfield"><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+        <div class="sfield-row" data-simple>
+          <div class="sfield" data-simple><label>Shodan key<span class="sfield-hint">DFIR_SHODAN_KEY — attack surface (domain → exposed hosts/ports/CVEs)</span></label><input id="env-DFIR_SHODAN_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
           <div class="sfield"><label>Exposure delay (ms)<span class="sfield-hint">DFIR_EXPOSURE_DELAY_MS</span></label><input id="env-DFIR_EXPOSURE_DELAY_MS" placeholder="1500" /></div>
         </div>
       </div>

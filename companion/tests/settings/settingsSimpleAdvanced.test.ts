@@ -24,6 +24,16 @@ const SIMPLE_ENV_KEYS: Record<string, string[]> = {
     "DFIR_AI_SECOND_OPINION_PROVIDER", "DFIR_AI_SECOND_OPINION_MODEL",
     "DFIR_AI_SECOND_OPINION_KEY", "DFIR_AI_SECOND_OPINION_BASE_URL",
   ],
+  // Credentials only. `_CA`/`_INSECURE` (the default trust store works), the keyless hashlookup/
+  // RDAP/GeoIP endpoint URLs, the GeoIP map limits, and every throttle delay stay Advanced.
+  enrichment: [
+    "DFIR_VT_KEY", "DFIR_ABUSEIPDB_KEY", "DFIR_HUNTINGCH_KEY", "DFIR_ROCKYRACCOON_KEY",
+    "DFIR_CROWDSTRIKE_CLIENT_ID", "DFIR_CROWDSTRIKE_CLIENT_SECRET",
+    "DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_YETI_URL", "DFIR_YETI_KEY",
+    "DFIR_OPENCTI_URL", "DFIR_OPENCTI_KEY", "DFIR_GEOIP_KEY",
+  ],
+  // Keys only. Domain limits, the HIBP user-agent, the DeHashed base URL and the delay all default.
+  exposure: ["DFIR_LEAKCHECK_KEY", "DFIR_HIBP_KEY", "DFIR_DEHASHED_KEY", "DFIR_SHODAN_KEY"],
 };
 
 const ALL_SIMPLE = Object.values(SIMPLE_ENV_KEYS).flat().sort();
@@ -32,7 +42,13 @@ async function dashboard(): Promise<string> {
   return readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
 }
 
-const hasClass = (attrs: string, c: string) => new RegExp(`class="[^"]*\\b${c}\\b`).test(attrs);
+/** Whole-token class match. A `\b`-based regex would read `class="sfield-row"` as having `sfield`
+ *  (the hyphen is a word boundary), which made every marked ROW look like a marked FIELD and swept
+ *  its unmarked Advanced siblings into the Simple set. */
+const hasClass = (attrs: string, c: string) => {
+  const m = /class="([^"]*)"/.exec(attrs);
+  return !!m && m[1].split(/\s+/).includes(c);
+};
 /** A bare `data-simple`. Deliberately excludes `data-simple="all"`, which is a pane-level opt-in. */
 const isMarked = (attrs: string) => /\bdata-simple\b(?!=)/.test(attrs);
 
@@ -108,8 +124,10 @@ describe("Settings Simple mode — structural invariants the CSS depends on", ()
 
   it("shows a tab in Simple exactly when its pane has Simple content", async () => {
     const html = await dashboard();
-    const tabs = new Map([...html.matchAll(/<button class="stab[^"]*" data-stab="([a-z-]+)"([^>]*)>/g)]
-      .map(m => [m[1], /\bdata-simple\b/.test(m[2])] as const));
+    // Attribute-order agnostic on purpose: where `data-simple` sits in the tag is a style choice,
+    // and a contributor who writes it in a different order deserves a real failure, not this one.
+    const tabs = new Map([...html.matchAll(/<button\b([^>]*\bdata-stab="([a-z-]+)"[^>]*)>/g)]
+      .map(m => [m[2], /\bdata-simple\b/.test(m[1])] as const));
     for (const { id, hasSimple } of paneInfo(html)) {
       expect({ tab: id, shown: tabs.get(id) }).toEqual({ tab: id, shown: hasSimple });
     }
