@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { parseImporterSpec, type ImporterSpec, type SpecParseError } from "./importerSpec.js";
+import { redactPaths } from "./redactPaths.js";
 import { buildImporter, type ExternalImporter } from "./declarativeImporter.js";
 
 export type ImporterPrecedence = "builtin-first" | "external-first";
@@ -40,7 +41,10 @@ export class ImporterStore {
       if (!file.endsWith(".json") || file === CONFIG_FILE) continue;
       let raw: unknown;
       try { raw = JSON.parse(await readFile(join(this.dir, file), "utf8")); }
-      catch (err) { errors.push({ file, errors: [{ path: "(file)", message: `not valid JSON: ${(err as Error).message}` }] }); continue; }
+      // /diagnostics ships these load errors to the client, so the message is redacted here (#250).
+      // A JSON.parse error carries no path, but the readFile in the same try can fail with an ENOENT
+      // or EACCES that quotes the spec's absolute path — `file` above is deliberately a bare name.
+      catch (err) { errors.push({ file, errors: [{ path: "(file)", message: `not valid JSON: ${redactPaths((err as Error).message, [this.dir])}` }] }); continue; }
       const parsed = parseImporterSpec(raw);
       if (!parsed.ok) { errors.push({ file, errors: parsed.errors }); continue; }
       if (importers.has(parsed.spec.id)) { errors.push({ file, errors: [{ path: "id", message: `duplicate id "${parsed.spec.id}"` }] }); continue; }

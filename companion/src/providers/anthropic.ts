@@ -1,4 +1,5 @@
 import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
 
@@ -26,6 +27,8 @@ export class AnthropicProvider implements AIProvider {
     this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://api.anthropic.com/v1";
+    const urlErr = validateBaseUrl(this.baseUrl);
+    if (urlErr) throw new ProviderError(urlErr, "transport");
   }
 
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {

@@ -4,6 +4,37 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 
 ---
 
+## Essential vs All
+
+Settings opens on **Essential**, which shows only the controls a feature is dead without — the AI
+models, enrichment and exposure API keys, and integration URLs and credentials — across six tabs.
+**All** shows everything: 16 tabs and every tuning knob. The choice is remembered per browser.
+
+The rule, for anyone adding a field:
+
+> A control is **Essential** if the feature behind it does nothing until you type something in.
+> Anything with a working default lives under **All**.
+
+So credentials and endpoint URLs are Essential; timeouts, retry counts, throttle delays, output
+caps, TLS trust overrides (`_CA`, `_INSECURE`), and prompt-file overrides are not. Tabs that manage
+content rather than configuration — IOC Whitelist, NSRL, Importers, KEV, Report Templates,
+Dashboard Views — sit under All too: they are empty and working out of the box.
+
+**Tools** is All-only in full. Every external binary it wires up (Hayabusa, the Velociraptor CLI,
+Suricata, Snort, YARA) is blank-means-off, so nothing is broken by leaving them unconfigured —
+setting one up is a deliberate trip to All rather than something a new install must face.
+
+In the markup an Essential control carries a `data-essential` attribute, so a newly added field
+stays out of Essential until someone opts it in.
+`companion/tests/settings/settingsEssentialAll.test.ts` pins the full Essential set; adding to it
+means editing that list.
+
+Hiding a field never changes what is saved. Save posts only the keys whose values you actually
+changed, so a field you cannot see cannot blank a `.env` key, and switching modes mid-edit keeps
+whatever you have typed.
+
+---
+
 ## General
 
 - Case root location
@@ -19,7 +50,8 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - **Evidence drop folder** — enable/disable the per-case auto-import watcher, poll interval, and per-file size cap (see [Importing Evidence](importing.md#evidence-drop-folder-auto-import-inbox))
 - **Vim-style timeline navigation** — toggle `j`/`k`/`f`/`i`/`p`/`n`/`?` keyboard shortcuts on the Forensic Timeline, default on (see [Dashboard → Forensic Timeline](dashboard.md#vim-style-keyboard-navigation))
 - **`DFIR_MAX_EVENTS`** (env var) — the per-import event ingestion cap, default 2000. Raise it for cases that need a full MFT/USN import; guarded against 0/negative/NaN silently reinstating the default.
-- **`DFIR_ALLOWED_ORIGINS`** (env var) — comma-separated CORS allowlist of extra trusted browser origins beyond loopback/extension/dashboard-host; every other origin gets a `403`. Only needed for a reverse proxy or split dashboard/API hosts — localhost/LAN/Docker setups need no configuration.
+- **`DFIR_ALLOWED_ORIGINS`** (env var) — comma-separated CORS allowlist of extra trusted browser origins beyond loopback, the extension, and any origin the companion itself served; every other origin gets a `403`. Only needed when the dashboard is reached through a hostname (reverse proxy, hosted deployment) — localhost/LAN/Docker setups need no configuration.
+- **`DFIR_ALLOWED_HOSTS`** / **`DFIR_ALLOWED_HOST_SUFFIXES`** (env vars) — comma-separated hostnames (or domain suffixes such as `.lab.example.com`) that this companion answers to. Loopback and bare IP addresses are always accepted, so localhost, Docker, and LAN access via `http://192.168.1.50:4773` need no configuration. An unrecognised **name** gets a `403` before any route runs: that is the DNS-rebinding defence, which stops a website you merely visit from pointing its own domain at your machine and reading your case data. Suffixes match on a label boundary, so `.acme.com` never matches `evilacme.com`.
 
 ---
 
@@ -30,7 +62,8 @@ Open Settings with the **⚙ Settings** button in the toolbar.
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
 - Timeout, max tokens, context window size
 - Chain-of-Thought (synthesis thinking tokens)
-- Anonymisation on/off and category settings
+- **Anonymisation** on/off and per-category toggles — IPs (internal *and* public), hostnames, usernames, domains, emails, paths, encoded commands, SIDs, credit cards, phone numbers, national ID numbers; see [AI Analysis → What the AI Sees](ai-analysis.md#what-the-ai-sees-anonymization) for exactly what each one catches, the redacted-export exception for public IPs, and known limitations (the narrow IPv4/IPv6 masking gaps, screenshot IP loss, national-ID false positives)
+- **Presidio** (optional external PII detector) — analyzer URL, confidence floor, and a **Test connection** button; see [Presidio & PII Masking](presidio.md)
 - Preflight diagnostics disable
 - **Re-run the setup wizard**
 - **Live AI test** — confirms the current key works right now
@@ -216,6 +249,28 @@ Each channel has:
 
 !!! info
     Notification configs are stored in a global config file (not `.env`) and webhook URLs are redacted in all API responses.
+
+---
+
+## War-Room Bot
+
+Inbound slash commands from Slack / Teams / Telegram — see [War-Room Slash-Command Bot](war-room-bot.md) for setup. Configured entirely in `.env`; each platform switches on when its secret is set.
+
+| Variable | Meaning |
+|---|---|
+| `DFIR_SLACK_SOCKET_MODE` | `=on` to receive Slack commands over an outbound WebSocket. **No tunnel, no Request URL.** Needs `DFIR_SLACK_APP_TOKEN` |
+| `DFIR_SLACK_APP_TOKEN` | App-level token, `xapp-…`, scope `connections:write`. Not a bot token |
+| `DFIR_TELEGRAM_POLL` | `=on` to receive Telegram commands by long polling. **No tunnel, no inbound URL.** Needs only `DFIR_TELEGRAM_BOT_TOKEN` |
+| `DFIR_TELEGRAM_BOT_TOKEN` | @BotFather token. Required for polling; in webhook mode it delivers `ask`/`hunt`/`synthesize` results |
+| `DFIR_ALLOWED_HOSTS` | Hostnames the Companion answers to. **Required in webhook mode** — the tunnel/proxy hostname must be listed, or requests are refused with 403. Not used by Socket Mode or polling |
+| `DFIR_SLACK_SIGNING_SECRET` | Slack app signing secret; enables `/integrations/slack/command`. Webhook mode only |
+| `DFIR_TEAMS_TOKEN` | Shared bearer token; enables `/integrations/teams/command` |
+| `DFIR_TELEGRAM_SECRET_TOKEN` | `setWebhook` secret; enables `/integrations/telegram/command`. Webhook mode only |
+| `DFIR_SLACK_ACTION_USERS`<br>`DFIR_TEAMS_ACTION_USERS`<br>`DFIR_TELEGRAM_ACTION_USERS` | Comma-separated user ids allowed to run `ask`/`hunt`/`synthesize`/`bind`. Unset = open to the whole channel; once set, everyone else is confined to the channel's bound case |
+| `DFIR_SLACK_RESPONSE_HOSTS`<br>`DFIR_TEAMS_RESPONSE_HOSTS` | Extra hosts an async result may be delivered to, for a self-hosted Slack-compatible server. Defaults cover the platforms' own hosts |
+| `DFIR_TELEGRAM_API_BASE` | Bot API base URL override (default `https://api.telegram.org`) |
+
+Channel-to-case bindings are stored alongside the notification config, not in `.env`.
 
 ---
 

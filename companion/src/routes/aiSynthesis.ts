@@ -2,10 +2,13 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { readPublicAsset } from "../serverAssets.js";
+import { withNonce } from "../http/securityHeaders.js";
 import { defaultReportTemplate, isReportSectionEnabled, type ReportSectionKey } from "../reports/reportTemplate.js";
 import { HYPOTHESIS_STATUSES, type HypothesisStatus, type HypothesisPatch, type NewHypothesis } from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
 import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
+import { PresidioApprovalRequired } from "../analysis/presidio.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -96,7 +99,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await getControl(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -117,7 +120,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       }
       return res.status(200).json(next);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -206,7 +209,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         return res.status(400).json({ error: message });
       }
       aiStatus("error", message);
-      return res.status(500).json({ error: message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -275,7 +278,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "synthesis", detail: (err as Error).message, outcome: "error",
       });
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -302,7 +305,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       return res.status(200).json(record);
     } catch (err) {
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -312,7 +315,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.secondOpinionStore.load(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -332,6 +335,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(record);
     } catch (err) {
+      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /unknown second-opinion delta/.test(msg) ? 404 : /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -351,6 +355,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(record);
     } catch (err) {
+      if (err instanceof PresidioApprovalRequired) return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
       const msg = (err as Error).message;
       const code = /no second opinion/.test(msg) ? 409 : 500;
       return res.status(code).json({ error: msg });
@@ -370,7 +375,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(answer);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -386,7 +391,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg.startsWith("event not found") || msg.startsWith("Case not found")) return res.status(404).json({ error: msg });
       errLine(`[explain] case=${req.params.id} event=${req.params.eid}: ${msg}`);
-      return res.status(500).json({ error: msg });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -404,7 +409,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -430,7 +435,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg === "no starred events") return res.status(400).json({ error: msg });
       errLine(`[starred-report] case=${req.params.id}: ${msg}`);
-      return res.status(500).json({ error: msg });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -443,7 +448,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       if (!saved) return res.status(404).json({ error: "no saved starred report" });
       return res.status(200).json(saved);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -459,7 +464,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(saved);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -505,7 +510,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const msg = (err as Error).message;
       if (msg === "no events match the current filters") return res.status(400).json({ error: msg });
       errLine(`[view-summary] case=${req.params.id}: ${msg}`);
-      return res.status(500).json({ error: msg });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -521,7 +526,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -538,7 +543,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -558,7 +563,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -573,7 +578,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       await options.stateStore.save(updated);
       return res.status(200).json({ narrativeTimeline: narrative });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -584,7 +589,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.synthMetaStore.load(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -594,7 +599,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.aiCostStore.load(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -622,7 +627,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       options.onState?.(next);
       return res.status(201).json(newQuestion);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -637,7 +642,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.hypothesisStore.load(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -663,7 +668,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       options.onHypotheses?.(req.params.id);
       return res.status(201).json(hypothesis);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -687,7 +692,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       options.onHypotheses?.(req.params.id);
       return res.status(200).json(updated);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -699,7 +704,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       options.onHypotheses?.(req.params.id);
       return res.status(204).end();
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -712,7 +717,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
       return res.status(200).json({ minConfidence });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -732,7 +737,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json({ minConfidence });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -744,7 +749,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.reportWriter.adversaryHints(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -762,7 +767,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       logLine(`[adversary] suggested ${suggestions.length} hunt(s) for technique ${techniqueId} (${req.params.id})`);
       return res.status(200).json({ suggestions });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -781,7 +786,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       return res.status(200).json({ suggestions });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 
@@ -793,7 +798,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       return res.status(200).json(await options.reportWriter.mobileSummary(req.params.id));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -806,7 +811,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const minSeverity = parseMinSeverity(req.query.minSeverity);
       return res.status(200).json(await options.reportWriter.presentation(req.params.id, { minSeverity }));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -820,14 +825,17 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
       const tpl = await readPublicAsset("present.html", "utf8");
       const safeJson = JSON.stringify(deck).replace(/</g, "\\u003c");
-      const html = tpl.replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
+      // Standalone offline deck: opened from the filesystem, where no CSP header exists and a nonce
+      // would mean nothing. Strip the placeholder rather than stamp it, so the downloaded file
+      // carries no dangling __CSP_NONCE__ markers and its inline scripts run unconditionally.
+      const html = withNonce(tpl, "").replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res
         .type("html")
         .set("Content-Disposition", `attachment; filename="${filename}"`)
         .send(html);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err);
     }
   });
 
@@ -837,6 +845,6 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // backs the offline standalone-HTML export (which just embeds the deck via window.__DECK__).
   app.get("/cases/:id/present", async (_req, res) => {
     const html = await readPublicAsset("present.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 }

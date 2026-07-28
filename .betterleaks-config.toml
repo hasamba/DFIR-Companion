@@ -30,6 +30,12 @@ regexes = [
   '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
+  # Presidio test fixtures. `presidio.local` is a deliberately unreachable URL in the client's
+  # error-path tests (nothing must resolve it), and `DC01.victim.local` is the synthetic victim
+  # host the ordering tests assert never reaches Presidio in the clear — i.e. the string is the
+  # assertion. Both exist only in companion/tests/analysis/presidio*.test.ts.
+  '''(?i)\bpresidio\.local\b''',
+  '''(?i)\bDC01\.victim\.local\b''',
 ]
 
 # The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe
@@ -45,6 +51,14 @@ regexes = [
   '''eyJabc12345\.eyJdef67890''',     # fake JWT fixture in anonymize.test.ts
   '''PsExec/WMI/WinRM''',             # DFIR tradecraft prose in attack-groups.json (false generic-api-key match)
 ]
+
+# The anonymizer's private-key redaction tests must contain PEM/PGP/SSH2 key headers as fixtures — that IS
+# what they assert gets redacted. The bodies are placeholder strings, not key material. Scoped to the one
+# rule and the one file, so a real key committed anywhere else still fails the scan.
+[[allowlists]]
+description = "Fake private-key armor fixtures in the anonymizer redaction tests"
+targetRules = ["private-key"]
+paths = ['''companion/tests/analysis/anonymize\.test\.ts''']
 
 # The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
 # own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.

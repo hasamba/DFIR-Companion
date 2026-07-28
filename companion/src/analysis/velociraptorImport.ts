@@ -67,6 +67,20 @@ type Row = Record<string, unknown>;
 // reverses that so the classifier/mappers below see the native nested shape. It is GATED (only runs
 // when a row has dotted keys or an `artifact_` index), so native Velociraptor JSON is untouched.
 
+// These rows originate from an untrusted, page-forgeable browser push (POST /cases/:id/import), so
+// their column names are attacker-controllable. A dotted key whose segments name __proto__/constructor/
+// prototype would let the walk below bracket-assign into Object.prototype and pollute this Node.js
+// process globally (CWE-1321) — the bare-`__proto__` case is already blocked by the `in out` guard, but
+// the DOTTED form ("__proto__.<x>") walks a step in before writing, so every segment must be checked.
+const DANGEROUS_SEGMENT = new Set(["__proto__", "constructor", "prototype"]);
+
+// Assign an OWN data property without invoking a setter. Plain `obj[key] = val` on the key
+// "__proto__" runs Object.prototype's prototype setter instead of storing anything, which hands an
+// attacker control of `obj`'s prototype; for every other key the observable result is identical.
+function safeSet(obj: Row, key: string, val: unknown): void {
+  Object.defineProperty(obj, key, { value: val, writable: true, enumerable: true, configurable: true });
+}
+
 // Expand dotted keys into nested objects: { "Detection.StringHit": x } → { Detection: { StringHit: x } }.
 // Collision-safe: a flat key is kept as-is when a needed branch already holds a leaf (or vice-versa).
 function unflattenDotted(row: Row): Row {
@@ -77,6 +91,9 @@ function unflattenDotted(row: Row): Row {
       continue;
     }
     const parts = key.split(".");
+    // Never walk INTO or write THROUGH a __proto__/constructor/prototype segment (would reach
+    // Object.prototype). The dotted key can't equal a bare "__proto__", so keeping it flat is safe.
+    if (parts.some((p) => DANGEROUS_SEGMENT.has(p))) { out[key] = val; continue; }
     let cur: Row = out;
     let ok = true;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -102,8 +119,8 @@ function normalizeElasticRow(row: Row): Row {
   const collapsed: Row = {};
   for (const [k, v] of Object.entries(row)) {
     const bare = k.replace(/\.(keyword|text|raw)$/i, "");
-    if (bare !== k) { if (!(bare in collapsed) && !(bare in row)) collapsed[bare] = v; }
-    else collapsed[k] = v;
+    if (bare !== k) { if (!(bare in collapsed) && !(bare in row)) safeSet(collapsed, bare, v); }
+    else safeSet(collapsed, k, v);
   }
   // 2) Un-flatten the remaining dotted keys to nested objects.
   const nested = unflattenDotted(collapsed);

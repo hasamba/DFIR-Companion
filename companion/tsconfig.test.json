@@ -1,0 +1,120 @@
+{
+  // Type-checks the TESTS as well as src. The main tsconfig.json is `"include": ["src"]` because it
+  // is the BUILD config — it emits to dist/ and must not compile tests into the artifact — so for
+  // the life of this repo NO test file was ever type-checked at all.
+  //
+  // That is not cosmetic. `AnonPolicy.categories` is a Record<AnonCategory, boolean>, so adding a
+  // category makes every object literal that omits it a type error. That is the tripwire meant to
+  // stop a new detector from being silently OFF in the tests that claim to cover it. With tests
+  // unchecked the tripwire never fired: CARD, PHONE and NATID were missing from four `categories`
+  // literals, so those three detectors were quietly disabled in every screenshot-redaction and
+  // anonymization test on this branch. Two of this plan's own defects reached review that way.
+  //
+  // Run it: `npm run typecheck`. `npm run build` is unchanged and still emits src only.
+  //
+  // WHAT THIS CATCHES TODAY: every file under src/ and scripts/, and 370 of the repo's 430 test
+  // files — every test file not named in `exclude` below. That includes the whole anonymizer
+  // surface this branch touches: anonymize, anonControl, anonEntities, anonDiscovered,
+  // anonPipeline, imageRedact, ocrRedact, redactedExport, presidio, presidioPipeline,
+  // presidioPending and presidioRoutes. A NEW test file is checked automatically, because the
+  // include is the whole `tests` tree and only the named legacy files are skipped — which is the
+  // point: the next AnonPolicy field addition cannot silently go missing in a test.
+  //
+  // WHAT IT DOES NOT CATCH: the 60 test files (plus one script) listed in `exclude`. Two of them
+  // are in the PII area and are therefore the first ones worth reclaiming —
+  // tests/server/presidioBroadcastCoverage.test.ts (7 errors, all "stub AIProvider is missing
+  // `model`") and tests/analysis/ocrPipeline.test.ts. The rest carry a PRE-EXISTING backlog of
+  // ~360 type errors that accumulated over the years tests went unchecked — missing `model` on
+  // stub AIProviders, incomplete Finding/IocEnrichment literals, `as` casts between structurally
+  // unrelated types, implicit `any` parameters. None of them currently causes a false pass, and
+  // burning them down is deliberately NOT part of this change; the list is a debt register meant
+  // to shrink. Deleting a line from it and making that file compile is the whole follow-up.
+  //
+  // It also does not catch anything OUTSIDE the type system: a test asserting the wrong thing, or
+  // a category that is present in a literal but set to `false`, still passes. This closes the
+  // "silently missing field" hole, not "the test is wrong".
+  //
+  // The list is exclusions BY FILE, not by rule, on purpose: a blanket loosening of `strict` would
+  // have let the AnonPolicy omission through everywhere, which is the failure this exists to stop.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // No emit, and no rootDir constraint — `tests` lives outside the build's rootDir and this
+    // config exists purely to check types.
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "tests", "scripts"],
+  "exclude": [
+    "scripts/ocr-redact-demo.ts",
+    // Arrived from master (#238, command palette) in the merge that brought in the settings-save
+    // fix — i.e. it is NOT part of this branch's work, and it is the newest entry on this list
+    // rather than part of the historical backlog. It fails for one root cause with seven
+    // knock-on effects: it imports `public/js/command-palette.js`, which has no declaration file
+    // (TS7016), so every callback parameter derived from that import is an implicit `any`
+    // (TS7006 x7). Reclaiming it means adding a `.d.ts` for that module — or enabling `allowJs`
+    // for `public/js` — and belongs to whoever owns the command palette, not to this PR.
+    // Worth noting the exclusion is proof the tripwire works: this file was checked
+    // automatically the moment it landed, exactly as the comment above promises.
+    "tests/analysis/commandPalette.test.ts",
+    "tests/analysis/achHypotheses.test.ts",
+    "tests/analysis/artifactBundleStore.test.ts",
+    "tests/analysis/askGraphRag.test.ts",
+    "tests/analysis/attackMitigations.test.ts",
+    "tests/analysis/chainsawImport.test.ts",
+    "tests/analysis/chainSignature.test.ts",
+    "tests/analysis/correlate.test.ts",
+    "tests/analysis/d3fendMap.test.ts",
+    "tests/analysis/diagnostics.test.ts",
+    "tests/analysis/explainEvent.test.ts",
+    "tests/analysis/falsePositiveSuggestAi.test.ts",
+    "tests/analysis/geoMap.test.ts",
+    "tests/analysis/graphView.test.ts",
+    "tests/analysis/highSeverityFindings.test.ts",
+    "tests/analysis/hypothesisStore.test.ts",
+    "tests/analysis/hypothesis.test.ts",
+    "tests/analysis/intelVerdictGate.test.ts",
+    "tests/analysis/iocProvenance.test.ts",
+    "tests/analysis/iocRepair.test.ts",
+    "tests/analysis/notifications.test.ts",
+    "tests/analysis/ocrPipeline.test.ts",
+    "tests/analysis/pipeline.test.ts",
+    "tests/analysis/reconsiderHypotheses.test.ts",
+    "tests/analysis/secondLook.test.ts",
+    "tests/analysis/sourceYield.test.ts",
+    "tests/analysis/starredReport.test.ts",
+    "tests/analysis/stateMerge.test.ts",
+    "tests/analysis/templateStore.test.ts",
+    "tests/enrichment/chainValidate.test.ts",
+    "tests/enrichment/hashlookup.test.ts",
+    "tests/enrichment/infraProviders.test.ts",
+    "tests/enrichment/opencti.test.ts",
+    "tests/enrichment/providers.test.ts",
+    "tests/enrichment/tlsFetch.test.ts",
+    "tests/integrations/customerExposureProviders.test.ts",
+    "tests/integrations/jiraPush.test.ts",
+    "tests/integrations/servicenowPush.test.ts",
+    "tests/integrations/velociraptor.test.ts",
+    "tests/providers/anthropic.test.ts",
+    "tests/providers/litellm.test.ts",
+    "tests/providers/ollama.test.ts",
+    "tests/providers/openai.test.ts",
+    "tests/providers/openrouter.test.ts",
+    "tests/reports/csv.test.ts",
+    "tests/reports/iocBlocklist.test.ts",
+    "tests/reports/markdown.test.ts",
+    "tests/server/diagnostics.test.ts",
+    "tests/server/explainEventRoute.test.ts",
+    "tests/server/falsePositiveSuggest.test.ts",
+    "tests/server/forensicGate.test.ts",
+    "tests/server/fpCascade.test.ts",
+    "tests/server/hypothesisReview.test.ts",
+    "tests/server/jiraServicenowPushRoute.test.ts",
+    "tests/server/preflight.test.ts",
+    "tests/server/presidioBroadcastCoverage.test.ts",
+    "tests/server/secondOpinion.test.ts",
+    "tests/server/sectionGatedGeneration.test.ts",
+    "tests/server/starredReport.test.ts",
+    "tests/server/superTimeline.test.ts",
+    "tests/server/veloImportExternal.test.ts"
+  ]
+}

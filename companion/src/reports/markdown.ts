@@ -23,6 +23,10 @@ import { buildD3fendResult, D3FEND_ACTION_INFO } from "../analysis/d3fendMap.js"
 import { loadD3fendDataset, d3fendEnvOptions } from "../analysis/d3fendData.js";
 import { buildMitigationsResult } from "../analysis/attackMitigations.js";
 import { loadMitigationsDataset } from "../analysis/attackMitigationsData.js";
+import { mapFindings, loadComplianceMap } from "../analysis/complianceMap.js";
+import { buildComplianceView, type ComplianceMappingView } from "../analysis/complianceView.js";
+import { segmentSessions, sessionEnvOptions, UNKNOWN_HOST } from "../analysis/sessionSegmentation.js";
+import type { ComplianceControl } from "../analysis/complianceControl.js";
 import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
@@ -239,15 +243,35 @@ function incidentTimeline(state: InvestigationState, lines: string[]): void {
     lines.push("_No dated forensic events extracted yet._", "");
     return;
   }
-  lines.push("| Time | Host | Count | Severity | Event | MITRE | Findings |", "| --- | --- | --- | --- | --- | --- | --- |");
+  // Clock-skew alignment (#228). If the analyst has it on, some times below are CORRECTED rather
+  // than recorded, which a reader must be told before they rely on them — so the report says so and
+  // carries the recorded time in its own column for every row that moved.
+  const aligned = state.forensicTimeline.filter((e) => e.originalTimestamp);
+  const alignedHosts = [...new Set(aligned.map((e) => e.asset).filter(Boolean))] as string[];
+  if (aligned.length > 0) {
+    lines.push(
+      `> **Clock-skew alignment is ON.** Times for ${alignedHosts.length} host(s) — ` +
+      `${alignedHosts.join(", ")} — have been shifted onto a common axis to correct a measured clock ` +
+      "offset. The **Recorded** column carries the time the artifact itself holds, which is the " +
+      "evidence; the **Time** column is a derived, corrected view.",
+      "",
+    );
+  }
+  const recordedCol = aligned.length > 0 ? " Recorded |" : "";
+  const recordedSep = aligned.length > 0 ? " --- |" : "";
+  lines.push(
+    `| Time |${recordedCol} Host | Count | Severity | Event | MITRE | Findings |`,
+    `| --- |${recordedSep} --- | --- | --- | --- | --- | --- |`,
+  );
   const ordered: ForensicEvent[] = [...state.forensicTimeline].sort(byEventTime);
   for (const e of ordered) {
     const time = e.endTimestamp && e.endTimestamp !== e.timestamp
       ? `${e.timestamp || "(undated)"} → ${e.endTimestamp}`
       : (e.timestamp || "(undated)");
     const count = e.count && e.count > 1 ? `×${e.count}` : "";
+    const recorded = aligned.length > 0 ? ` ${cellMd(e.originalTimestamp ?? "")} |` : "";
     lines.push(
-      `| ${cellMd(time)} | ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
+      `| ${cellMd(time)} |${recorded} ${cellMd(e.asset || "")} | ${count} | ${e.severity} | ${cellMd(e.description)} | ` +
       `${e.mitreTechniques.map(attackTechniqueMd).join(", ")} | ${cellMd(e.relatedFindingIds.join(", "))} |`,
     );
   }
@@ -898,6 +922,160 @@ function mitigationsReportBlock(state: InvestigationState, lines: string[]): voi
   }
 }
 
+// Attacker Sessions (#229 / #343) — the forensic timeline segmented into per-host sittings, so the
+// report reads as chapters ("Session 1: initial access at 14:02… Session 3: encryption at 03:15")
+// instead of one flat run of rows. Offline + deterministic (no AI).
+//
+// FILTERING: this segments `state.forensicTimeline`, and by the time renderMarkdownReport is called
+// that state has ALREADY been scope-projected and false-positive filtered by reportWriter. So the
+// sessions here cover exactly the events the rest of the report covers — a session can never cite
+// activity the findings section excludes. This is deliberately NOT the same set the /cases/:id/sessions
+// endpoint returns: that one runs on the raw timeline because an analyst browsing the story view wants
+// to see everything, including what filtering hides. Same algorithm, different input, both correct.
+//
+// Session ids are positional within one segmentation run, so the numbering in this section is
+// generated from the same run that renders it and is never resolved against a stored id.
+function sessionsSection(state: InvestigationState, lines: string[]): void {
+  lines.push("## Attacker Sessions", "");
+  const sessions = segmentSessions(state.forensicTimeline, sessionEnvOptions());
+  if (!sessions.length) {
+    lines.push("_No dated events in scope — attacker sessions are derived from the forensic timeline._", "");
+    return;
+  }
+
+  const hosts = new Set(sessions.map((s) => s.host));
+  lines.push(
+    `The timeline segments into ${sessions.length} session(s) across ${hosts.size} host(s). A session is a ` +
+      `contiguous run of activity on one host with no long gap inside it; a change of account also starts ` +
+      `a new one. Derived deterministically from the timeline — no AI.`,
+    "",
+  );
+
+  lines.push("| # | Host | Account | Window | Events | Dominant tactic | Severity |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const [i, s] of sessions.entries()) {
+    // The unknown-host bucket must not be presented as a machine name — it is a set of events whose
+    // host was never recorded, possibly from several different hosts.
+    const host = s.host === UNKNOWN_HOST ? "_(host not recorded)_" : cellMd(s.host);
+    lines.push(
+      `| ${i + 1} | ${host} | ${s.account ? cellMd(s.account) : "—"} | ${cellMd(s.startTime)} → ${cellMd(s.endTime)} ` +
+        `| ${s.eventCount} | ${s.dominantTactic ?? "—"} | ${s.severityRange.join(", ")} |`,
+    );
+  }
+  lines.push("");
+
+  if (sessions.some((s) => s.host === UNKNOWN_HOST)) {
+    lines.push(
+      "_Sessions marked “host not recorded” group events whose source tool did not report an affected " +
+        "asset. They are grouped by time alone and may span more than one machine._",
+      "",
+    );
+  }
+}
+
+// Compliance Impact (#234 / #336) — for each CONFIRMED finding, the control failures and
+// regulatory obligations its techniques map to, grouped by framework. Offline + deterministic
+// (no AI), resolved from the bundled compliance mapping.
+//
+// Two things this section must never do, both enforced here rather than left to the caller:
+//   - Render without the disclaimer. A report section gets copied out on its own; a list of
+//     control failures and notification deadlines with no "this is not legal advice" attached
+//     reads as a compliance determination. The disclaimer is printed inside the section.
+//   - Show a deadline the analyst did not ask for. The clocks start on a legal determination, so
+//     without a discovery date set on the case there are no countdowns at all — only the
+//     obligation text and the trigger each clock keys on.
+function complianceSection(
+  state: InvestigationState,
+  control: ComplianceControl,
+  lines: string[],
+): void {
+  lines.push("## Compliance Impact", "");
+  const dataset = loadComplianceMap();
+  if (!dataset.techniqueCount) {
+    lines.push("_Compliance mapping not available — `data/compliance-map.json` is missing or unreadable._", "");
+    return;
+  }
+
+  const confirmed = state.findings.filter((f) => f.status === "confirmed");
+  const view = buildComplianceView(mapFindings(state.findings), { control });
+  if (!view.length) {
+    lines.push(
+      confirmed.length
+        ? "_No confirmed finding's techniques map to a control failure in the bundled mapping._"
+        : "_No confirmed findings yet — compliance impact is derived from confirmed findings only._",
+      "",
+    );
+    lines.push(`_${dataset.note}_`, "");
+    return;
+  }
+
+  const editions = Object.entries(dataset.frameworkVersions)
+    .map(([name, version]) => `${name} ${version}`)
+    .join(" · ");
+  lines.push(
+    `Control failures and regulatory obligations for ${view.length} technique instance(s) across ` +
+      `${confirmed.length} confirmed finding(s). Derived offline from the bundled mapping — no AI.`,
+    "",
+  );
+  if (editions) lines.push(`_Control identifiers are drawn from: ${editions}._`, "");
+
+  // The disclaimer leads, before any obligation text — a reader who stops after the first
+  // paragraph must still have seen it.
+  lines.push(`> **Not legal advice.** ${dataset.note}`, "");
+
+  if (control.discoveredAt) {
+    lines.push(
+      `_Notification deadlines below are computed from an analyst-set incident-discovery date of ` +
+        `${control.discoveredAt}. Each clock actually starts on its own legal trigger (stated per ` +
+        `row); confirm the real start date with counsel._`,
+      "",
+    );
+  } else {
+    lines.push(
+      "_No incident-discovery date is set on this case, so no deadlines are computed. Each " +
+        "notification obligation below states the legal event its clock starts from._",
+      "",
+    );
+  }
+
+  for (const result of view) {
+    lines.push(`### ${result.technique} — finding \`${result.findingId}\``, "");
+    const byFramework = new Map<string, ComplianceMappingView[]>();
+    for (const row of result.frameworks) {
+      const key = String(row.framework);
+      const list = byFramework.get(key) ?? [];
+      list.push(row);
+      byFramework.set(key, list);
+    }
+    for (const [framework, rows] of byFramework) {
+      lines.push(`**${framework}**`, "");
+      for (const row of rows) {
+        lines.push(`- **${row.control}** — ${row.title}`);
+        lines.push(`  - ${row.obligation}`);
+        if (row.notification) {
+          const unit = row.notification.unit === "business" ? "business days" : "calendar time";
+          lines.push(
+            `  - _Notification clock:_ ${row.notification.within} (${unit}), from ${row.notification.from}.`,
+          );
+          if (row.deadline) {
+            const state =
+              row.deadline.status === "overdue"
+                ? "**OVERDUE**"
+                : row.deadline.status === "due-soon"
+                  ? "**due soon**"
+                  : "open";
+            lines.push(
+              `  - _Computed deadline:_ ${row.deadline.dueAt} — ${state} ` +
+                `(${row.deadline.remainingDays} day(s) remaining).`,
+            );
+          }
+        }
+      }
+      lines.push("");
+    }
+  }
+}
+
 // Defensive countermeasures (#178) — for each identified ATT&CK technique, the MITRE D3FEND
 // countermeasures that harden against / detect / isolate it. Offline + deterministic (no AI),
 // resolved from the bundled D3FEND mapping. Turns the incident's technique list into concrete
@@ -1070,6 +1248,7 @@ export function renderMarkdownReport(
   coverage?: SynthesisCoverage | null,   // #62: synthesis coverage footnote (opt-in via DFIR_REPORT_SYNTH_COVERAGE)
   lateralPaths?: LateralPath[],   // prebuilt with analyst dismissals applied; derived here when absent
   modelPerf?: ModelPerfSnapshot | null,  // #74: model-performance footnote (opt-in via DFIR_REPORT_MODEL_PERF)
+  complianceControl?: ComplianceControl,  // #336: analyst-set discovery date + framework filter
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -1116,6 +1295,8 @@ export function renderMarkdownReport(
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);
     },
     d3fend: () => d3fendSection(state, lines),
+    sessions: () => sessionsSection(state, lines),
+    compliance: () => complianceSection(state, complianceControl ?? {}, lines),
     notebook: () => {
       if (notebookEntries && notebookEntries.length > 0) analystNotebook(notebookEntries, lines);
     },

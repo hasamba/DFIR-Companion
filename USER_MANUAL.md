@@ -565,12 +565,16 @@ Configure via the Setup Wizard or in `.env`. All AI calls are made server-side �
 By default, the Companion **tokenizes identifying information** before sending anything to an external AI provider:
 - IP addresses → `ANON_IP_1`, `ANON_IP_2`, …
 - Hostnames → `ANON_HOST_1`, …
-- Usernames → `ANON_USER_1`, …
+- Usernames (`DOMAIN\user`, UPNs on an internal domain) → `ANON_USER_1`, … — **ASCII names only** (see below)
+- Email addresses → `ANON_EMAIL_1`, … — **ASCII local parts only** (see below)
 - Domain names → `ANON_DOMAIN_1`, …
-- File paths → `ANON_PATH_1`, …
-- Hashes → `ANON_HASH_1`, …
-- PowerShell encoded commands → decoded, then the decoded blob is anonymized
+- User profile paths (`C:\Users\<name>`, `/home/<name>`) → the username segment becomes `ANON_USER_1`, …; the rest of the path stays readable
+- PowerShell encoded commands → the base64 blob becomes `ANON_CMD_1`, …; the verb and flag stay visible
 - Windows SIDs → tokenized (well-known SIDs like SYSTEM are preserved)
+
+Hashes are deliberately **not** tokenized — they are IOCs that identify a file, not a victim.
+
+**The account and email detectors are ASCII-only.** A name in any other script — including any accented Latin name, e.g. `josé` — is not auto-detected: `CORP\יוסי` is missed entirely, and `CORP\josé` is worse, matching only the unaccented prefix and going out as `ANON_USER_1é`. User profile paths (`C:\Users\יוסי\…`) and anything on the case's known/custom entity lists work in every script. For a non-Latin name, use Presidio or add the value as a custom entity — nothing marks it "handled" behind your back, so Presidio keeps flagging it until you resolve it.
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
 
@@ -1304,6 +1308,37 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore (automatic backups taken before each synthesis and on a 1-hour timer)
 - **State backup configuration** (retention counts, interval)
+- **Host Clock Skew** — per-host clock offsets and the timeline alignment toggle (see below)
+
+#### Host Clock Skew
+
+When hosts disagree about the time — NTP drift, a wrong timezone, a tampered log — cross-host
+correlation silently breaks and the timeline tells the wrong story. This panel measures it.
+
+Offsets are measured during synthesis, from **anchors**: artifacts that two *different* tools
+recorded for the same event (a logon written by both the endpoint and the DC). Each host's offset is
+the median across anchors, expressed against the best-anchored host as the reference clock. Hosts
+past 60s are flagged with ⚠.
+
+An offset is only trusted — and only ever used to align — when it has at least 3 anchors that
+**agree** with each other. That consistency check is what separates a wrong clock (systematically
+off by the same amount) from a file that genuinely took time to travel between hosts (off by a
+different amount each time). A host whose anchors disagree is still listed, with its spread, but is
+never shifted.
+
+**Align timelines** projects every host onto a common axis. It affects the dashboard timeline,
+correlation windows, the evidence graph, lateral-movement paths and the report — but it is a *view*,
+never a rewrite:
+
+- The stored case keeps every recorded timestamp, untouched.
+- Each shifted row shows the recorded time beneath the corrected one.
+- An aligned report carries an explicit notice and a **Recorded** column, because the recorded time
+  is the evidence and the corrected time is a derivation.
+- Toggling it is written to the case activity log.
+
+Use the per-host box to enter an offset by hand (in seconds) when you know a host's clock better than
+the detector does — for example a documented timezone misconfiguration. A manual offset always wins
+over the measured one; `0` pins a host as correct; clearing the box restores the measurement.
 
 ---
 

@@ -20,17 +20,34 @@ export interface BackupSummary {
   totalBytes: number;
 }
 
+// Backups are full copies of investigation.json (hundreds of MB on large cases) and fire on every
+// synthesis plus an hourly timer, so "keep everything" fills the disk. When the operator asks for
+// unlimited (retain=0) we substitute this cap instead — raise DFIR_STATE_BACKUP_RETAIN for more.
+export const RETAIN_FALLBACK_CAP = 100;
+
 export interface BackupConfig {
-  /** Max total backups to keep per case (DFIR_STATE_BACKUP_RETAIN, default 24). 0 = unlimited. */
+  /**
+   * Max total backups to keep per case (DFIR_STATE_BACKUP_RETAIN, default 24). Always > 0: an
+   * unlimited request (0, or a negative value clamped to 0) resolves to RETAIN_FALLBACK_CAP so
+   * backups can never grow without bound.
+   */
   retain: number;
-  /** How many pre-synthesis backups to preserve within the total cap (DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN, default 10). */
+  /** How many pre-synthesis backups to preserve on top of the total cap (DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN, default 10). */
   preSynthRetain: number;
   /** Time-based backup interval in ms (DFIR_STATE_BACKUP_INTERVAL_MS, default 3 600 000 = 1 h). 0 = disabled. */
   intervalMs: number;
 }
 
 export function resolveBackupConfig(env: NodeJS.ProcessEnv = process.env): BackupConfig {
-  const retain = Math.max(0, Number(env.DFIR_STATE_BACKUP_RETAIN) || 24);
+  // Parse retain explicitly (as intervalMs does below) instead of leaning on `|| 24`, which swallows
+  // a literal "0" as falsy. 0 — and any negative value, which clamps to 0 — is the operator asking
+  // for unlimited; that resolves to the fallback cap. Blank or non-numeric still falls back to 24.
+  const rawRetain = env.DFIR_STATE_BACKUP_RETAIN;
+  const parsedRetain = rawRetain != null && rawRetain !== "" ? Number(rawRetain) : 24;
+  const requestedRetain = Math.max(0, Number.isFinite(parsedRetain) ? parsedRetain : 24);
+  // Normalise here, not at prune time, so config.retain is the effective cap everywhere it is read
+  // — including the /diagnostics report, which would otherwise show 0 while 100 were being kept.
+  const retain = requestedRetain === 0 ? RETAIN_FALLBACK_CAP : requestedRetain;
   const preSynthRetain = Math.max(0, Number(env.DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN) || 10);
   const rawInterval = env.DFIR_STATE_BACKUP_INTERVAL_MS;
   const intervalMs = Math.max(
@@ -203,12 +220,14 @@ export class BackupManager {
   }
 
   /**
-   * Prune the backup dir: keep at most `retain` backups per case. Within that cap, always
-   * preserve the newest `preSynthRetain` pre-synthesis backups so they are never crowded out
-   * by frequent scheduled or pre-import backups. If `retain` is 0, nothing is deleted.
+   * Prune the backup dir: keep the newest `retain` backups per case, plus the newest
+   * `preSynthRetain` pre-synthesis backups, which are preserved on top of that cap so frequent
+   * scheduled or pre-import backups can never crowd them out. The ceiling is therefore
+   * `retain + preSynthRetain`; `retain` is always > 0 (see resolveBackupConfig), so a case's
+   * backup dir is always bounded.
    */
   async pruneBackups(caseId: string): Promise<void> {
-    if (this.config.retain === 0) return;
+    if (this.config.retain <= 0) return; // defensive: hand-built configs bypass resolveBackupConfig
     const list = await this.listBackups(caseId); // newest first
     if (list.length <= this.config.retain) return;
 

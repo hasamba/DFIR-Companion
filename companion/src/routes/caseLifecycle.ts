@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId } from "../storage/caseStore.js";
+import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { milestoneEvent } from "../analysis/notifications.js";
@@ -15,13 +16,15 @@ import {
   dfircaseFilename,
 } from "../analysis/caseExportArchive.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
+import { getImportLimiter } from "../http/rateLimiter.js";
 import { computeCaseStats } from "../analysis/caseStats.js";
+import { projectAlignment } from "../analysis/clockSkew.js";
 import { logActivity, ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
-import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix } from "../settings/envManager.js";
+import { getEnvForSettings, updateEnv as updateEnvFile, reloadEnvPrefix, validateEnvUpdates } from "../settings/envManager.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { pushCaseToIris } from "../integrations/iris/irisPush.js";
@@ -30,6 +33,9 @@ import { pushCaseToMisp } from "../integrations/misp/mispPush.js";
 import { pushCaseToNotion, type NotionPushTarget } from "../integrations/notion/notionPush.js";
 import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
+import { pushFindingToJira } from "../integrations/jira/jiraPush.js";
+import { pushFindingToServiceNow } from "../integrations/servicenow/servicenowPush.js";
+import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
@@ -320,7 +326,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       const state = await options.stateStore.load(req.params.id);
-      return res.status(200).json(state);
+      // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
+      // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
+      // while state/state.json keeps the evidence exactly as imported.
+      const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
+      return res.status(200).json({ ...state, forensicTimeline: projectAlignment(skew, state.forensicTimeline) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -442,8 +452,26 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // codebase's existing convention for binary uploads elsewhere (no multipart/multer). 409 if the
   // target id already exists (the dashboard re-prompts with a new id), 400 on a wrong password,
   // corrupt archive, or malformed payload.
+  //
+  // Rate-limited like /unlock, and for a sharper reason: opening an archive costs a deliberate
+  // ~1s scrypt derivation (caseEncryption.ts) on the SYNCHRONOUS path, so an unauthenticated
+  // caller looping wrong-password imports holds the event loop — the whole server, not just this
+  // route — for as long as it cares to. The origin guard doesn't stop it (a caller with no Origin
+  // header is allowed by design, see http/originGuard.ts) and in container mode the port is on the
+  // network. Keyed by client IP because an import names no case until it has been decrypted; the
+  // key is coarse behind a reverse proxy that doesn't strip its own address, where every caller
+  // shares one bucket. That's the deliberate trade: a shared 30s import lockout is a far smaller
+  // failure than a wedged event loop, and refusing to trust a spoofable X-Forwarded-For is worth
+  // more than a per-caller bucket.
   app.post("/cases/import/encrypted", async (req: Request, res: Response) => {
+    const limiter = getImportLimiter();
+    const limiterKey = req.ip ?? "unknown";
     try {
+      const remaining = limiter.remainingLockout(limiterKey);
+      if (remaining > 0) {
+        res.setHeader("Retry-After", String(Math.ceil(remaining / 1000)));
+        return res.status(429).json({ error: "too many failed imports, try again later", retryAfterMs: remaining });
+      }
       const body = (req.body ?? {}) as Record<string, unknown>;
       const { data, password, targetCaseId } = body;
       if (typeof data !== "string" || !data.trim()) {
@@ -460,12 +488,20 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
       // the client, same as every other route that serializes a CaseMeta.
+      limiter.clear(limiterKey);
       return res.status(201).json({ ...sanitizeCaseMeta(meta), counts });
     } catch (err) {
+      // A conflict means the archive DID open — a real analyst re-importing, not an attacker
+      // burning CPU. Deliberately not counted as a failure.
       if (err instanceof CaseImportConflictError) {
         return res.status(409).json({ error: err.message, caseId: err.caseId });
       }
       if (err instanceof DecryptionError) {
+        const lockout = limiter.recordFailure(limiterKey);
+        if (lockout > 0) {
+          res.setHeader("Retry-After", String(Math.ceil(lockout / 1000)));
+          return res.status(429).json({ error: "too many failed imports, locked out", retryAfterMs: lockout });
+        }
         return res.status(400).json({ error: err.message });
       }
       const msg = (err as Error).message;
@@ -506,8 +542,29 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "filename is required" });
     }
     try {
-      const result = await options.backupManager.restoreBackup(caseId, filename.trim());
-      return res.status(200).json(result);
+      // A restore rewrites investigation.json wholesale, so it must not land on top of another
+      // writer (#251). Two guards, because they close different windows:
+      //   - runStateExclusive serializes against the short load→save critical sections (manual
+      //     event/IOC adds, enrichment saves) that hold the same per-case lock.
+      //   - Background jobs release that lock between their critical sections — synthesis holds it
+      //     to save, not across the AI call — so a restore can slot into a gap and then be
+      //     clobbered by the job's next save. No lock can serialize against that, so refuse while
+      //     any job is in flight for this case and let the operator cancel it or wait it out.
+      //     Every kind writes case state, hence the check is on all of them, not just synthesis.
+      const outcome = await runStateExclusive(caseId, async (): Promise<{ busy: Job } | { restored: string[] }> => {
+        const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
+        if (busy) return { busy };
+        return await options.backupManager!.restoreBackup(caseId, filename.trim());
+      });
+      if ("busy" in outcome) {
+        const { kind, id, label } = outcome.busy;
+        return res.status(409).json({
+          error: `a ${kind}${label ? ` (${label})` : ""} job is in progress for this case — cancel it or wait for it to finish, then restore`,
+          jobId: id,
+          kind,
+        });
+      }
+      return res.status(200).json(outcome);
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("not found") || msg.includes("invalid backup")) {
@@ -764,6 +821,93 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(502).json({ error: (err as Error).message });
     }
   });
+
+  // Jira status + finding push (issue #272).
+  app.get("/jira/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.jiraClient,
+      projectKey: options.jiraOptions?.projectKey ?? "",
+      issueType: options.jiraOptions?.issueType ?? "",
+    });
+  });
+
+  // Push one finding as a Jira issue. Body { findingId, projectKey?, issueType? } — the project
+  // falls back to DFIR_JIRA_PROJECT_KEY. Re-pushing the same finding UPDATES the issue it created
+  // (key remembered in `state/jira-export.json`) instead of filing a duplicate.
+  app.post("/cases/:id/push/jira", async (req: Request, res: Response) => {
+    if (!options.jiraClient) return res.status(501).json({ error: "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN)" });
+    if (!options.jiraExportStore) return res.status(501).json({ error: "jira export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
+      const finding = state.findings.find((f) => f.id === findingId);
+      if (!finding) return res.status(404).json({ error: `finding ${findingId} not found` });
+      const projectKey = typeof req.body?.projectKey === "string" && req.body.projectKey.trim()
+        ? req.body.projectKey.trim()
+        : options.jiraOptions?.projectKey;
+      if (!projectKey) return res.status(400).json({ error: "a Jira project key is required" });
+      logLine(`[jira] ${caseId} finding ${findingId} push START -> project ${projectKey}`);
+      const result = await pushFindingToJira(options.jiraClient, options.jiraExportStore, {
+        caseId,
+        projectKey,
+        issueType: typeof req.body?.issueType === "string" ? req.body.issueType : options.jiraOptions?.issueType,
+        finding,
+      });
+      logLine(`[jira] ${caseId} finding ${findingId} push DONE -> ${result.issue.key}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-jira", detail: `pushed finding ${findingId} to Jira ${result.issue.key}`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[jira] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // ServiceNow status + finding push (issue #272).
+  app.get("/servicenow/status", (_req: Request, res: Response) => {
+    res.status(200).json({
+      configured: !!options.servicenowClient,
+      caller: options.servicenowOptions?.caller ?? "",
+      category: options.servicenowOptions?.category ?? "",
+      subcategory: options.servicenowOptions?.subcategory ?? "",
+    });
+  });
+
+  // Push one finding as a ServiceNow incident. Body { findingId, caller?, category?, subcategory? }
+  // — each falls back to its DFIR_SERVICENOW_* default. Re-pushing the same finding UPDATES the
+  // incident it opened (sys_id remembered in `state/servicenow-export.json`), never a duplicate.
+  app.post("/cases/:id/push/servicenow", async (req: Request, res: Response) => {
+    if (!options.servicenowClient) return res.status(501).json({ error: "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD)" });
+    if (!options.servicenowExportStore) return res.status(501).json({ error: "servicenow export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    try {
+      const state = await options.stateStore.load(caseId);
+      const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
+      const finding = state.findings.find((f) => f.id === findingId);
+      if (!finding) return res.status(404).json({ error: `finding ${findingId} not found` });
+      logLine(`[servicenow] ${caseId} finding ${findingId} push START`);
+      const result = await pushFindingToServiceNow(options.servicenowClient, options.servicenowExportStore, {
+        caseId,
+        finding,
+        caller: typeof req.body?.caller === "string" ? req.body.caller : options.servicenowOptions?.caller,
+        category: typeof req.body?.category === "string" ? req.body.category : options.servicenowOptions?.category,
+        subcategory: typeof req.body?.subcategory === "string" ? req.body.subcategory : options.servicenowOptions?.subcategory,
+      });
+      logLine(`[servicenow] ${caseId} finding ${findingId} push DONE -> ${result.incident.number}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-servicenow", detail: `pushed finding ${findingId} to ServiceNow ${result.incident.number}`,
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      logLine(`[servicenow] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // Manually add a forensic event the AI didn't catch. Appended to the timeline (kept sorted by
   // event time), then re-synthesized so it weaves into findings/MITRE (a high-severity manual
   // event earns a finding via the backfill). Synthesis preserves the timeline, so it survives.
@@ -889,6 +1033,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
       }
+      const rejected = validateEnvUpdates(updates as Record<string, string>);
+      if (rejected.length > 0) {
+        // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
+        // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.
+        errLine(`POST /settings/env rejected ${rejected.length} key(s) not on the writable allowlist: ${rejected.join(", ")}`);
+        return res.status(400).json({ error: `rejected keys (not on the writable allowlist): ${rejected.join(", ")}` });
+      }
       await updateEnvFile(updates as Record<string, string>);
       return res.json({ ok: true });
     } catch (err) {
@@ -986,10 +1137,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     res.redirect("/dashboard");
   });
 
-  // Serve the dashboard.
+  // Serve the dashboard. withNonce stamps this response's CSP nonce into the inline <script>
+  // blocks — without it they carry a placeholder the browser won't match, and none of them run.
   app.get("/dashboard", async (_req, res) => {
     const html = await readPublicAsset("dashboard.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 
   // Mobile companion (#59): a read-only, phone-optimized view (timeline / findings / IOCs / status)
@@ -998,7 +1150,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // public/; the SW is served at root so its default control scope covers /mobile.
   app.get("/mobile", async (_req, res) => {
     const html = await readPublicAsset("mobile.html", "utf8");
-    res.type("html").send(html);
+    res.type("html").send(withNonce(html, String(res.locals.cspNonce ?? "")));
   });
 
   app.get("/manifest.webmanifest", async (_req, res) => {

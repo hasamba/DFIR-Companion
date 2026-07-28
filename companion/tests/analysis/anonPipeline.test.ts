@@ -14,6 +14,7 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 // host token the anonymizer will have assigned (ALCLIENT07 is the only known host → ANON_HOST_1).
 class CapturingProvider implements AIProvider {
   readonly name = "capture";
+  readonly model = "capture-model";
   lastReq?: AnalyzeRequest;
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.lastReq = req;
@@ -51,7 +52,7 @@ describe("pipeline anonymization (default on)", () => {
 
   it("when disabled, sends the real host (no tokenization)", async () => {
     const { pipeline, provider, anonStore } = await makePipeline();
-    await anonStore.save("c1", { enabled: false, categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true }, redactSecrets: true });
+    await anonStore.save("c1", { enabled: false, categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true }, redactSecrets: true });
     await pipeline.synthesize("c1", { force: true });
     expect(provider.lastReq!.userPrompt).toContain("ALCLIENT07");
     expect(provider.lastReq!.userPrompt).not.toContain("ANON_HOST_1");
@@ -73,7 +74,9 @@ describe("pipeline anonymization — custom entities", () => {
     await customEntitiesStore.save("c1", [{ value: "203.0.113.50", category: "IP" }]);
     const pipeline = new AnalysisPipeline({ provider, stateStore, anonStore, customEntitiesStore, imageLoader: async () => ({ base64: "", mimeType: "image/webp" }) });
     await pipeline.synthesize("c1", { force: true });
-    // A public IP is NOT tokenized by the internal-IP detector — so if it's gone, the custom-entity wiring worked.
+    // On the AI wire maskPublicIps is on, so the IP detector alone would already tokenize this as
+    // ANON_EXTIP_n. The custom entry pins it to the IP category instead, and anonCustom runs first
+    // — so the ANON_IP_ token (not ANON_EXTIP_) is what proves the custom-entity wiring worked.
     expect(provider.lastReq!.userPrompt).not.toContain("203.0.113.50");
     expect(provider.lastReq!.userPrompt).toMatch(/ANON_IP_/);
   });

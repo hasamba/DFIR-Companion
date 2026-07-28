@@ -45,6 +45,14 @@ jobs:
         working-directory: companion
         run: npm run build
 
+      # `npm run build` only covers src/ — it is the emit config. Without this step no test file
+      # is ever type-checked, which is how CARD/PHONE/NATID went missing from four AnonPolicy
+      # `categories` literals and silently disabled those detectors in the tests covering them.
+      # See companion/tsconfig.test.json for what is and is not in scope.
+      - name: Type-check tests (tsc)
+        working-directory: companion
+        run: npm run typecheck
+
       - name: Test (vitest)
         working-directory: companion
         run: npm test

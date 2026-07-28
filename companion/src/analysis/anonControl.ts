@@ -14,7 +14,10 @@ export interface AnonControl {
   redactSecrets: boolean;
 }
 
-const ALL_ON: Record<AnonCategory, boolean> = { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true };
+const ALL_ON: Record<AnonCategory, boolean> = {
+  IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
+  CARD: true, PHONE: true, NATID: true,
+};
 
 function defaultControl(): AnonControl {
   const off = /^(0|false|no|off)$/i.test(process.env.DFIR_ANONYMIZE ?? "");
@@ -24,11 +27,12 @@ function defaultControl(): AnonControl {
 // Resolve a stored control (or null) into the policy the anonymizer consumes. A missing control
 // (store not wired) → disabled, so nothing is tokenized unless explicitly configured.
 export function toAnonPolicy(control: AnonControl | null): AnonPolicy {
-  if (!control) return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true };
+  if (!control) return { enabled: false, categories: { ...ALL_ON }, redactSecrets: true, maskPublicIps: true };
   return {
     enabled: control.enabled,
     categories: { ...ALL_ON, ...control.categories },
     redactSecrets: control.redactSecrets !== false,
+    maskPublicIps: true,
   };
 }
 

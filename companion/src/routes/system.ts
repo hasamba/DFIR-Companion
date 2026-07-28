@@ -22,6 +22,7 @@ import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import { HUNT_PLATFORMS } from "../analysis/huntPlatforms.js";
 import { ProviderError } from "../providers/provider.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { HttpPresidioClient, PRESIDIO_SAMPLE_TEXT } from "../analysis/presidio.js";
 import type { RouteContext } from "./context.js";
 
 // Recursively collect files (path relative to `baseDir`, size in bytes) under `dir` for the
@@ -81,7 +82,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     const irisClient = ctx.irisClient();
     const dropWatchEnabled = ctx.dropWatchEnabled();
     const importerRegistry = ctx.importerRegistry();
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), pushTokenGlobal: !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, toolsEnabled: !!options.toolRunner, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
+    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, jiraEnabled: !!options.jiraClient, servicenowEnabled: !!options.servicenowClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, toolsEnabled: !!options.toolRunner, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -230,7 +231,6 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       const report: DiagnosticsReport = {
         generatedAt: new Date(now).toISOString(),
         uptimeMs: now - appStartedAt,
-        casesRoot: store.casesRoot,
         disk,
         cases: { count: cases.length, open, closed: cases.length - open - archived, archived },
         queue: {
@@ -272,18 +272,27 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   // Per-case sizes + top-N largest evidence files. SEPARATE from /diagnostics because it walks the
   // whole cases tree (compute-on-demand, behind the dashboard's "Compute sizes" button) so the
   // default diagnostics load stays cheap. Bounded to DFIR_DIAG_MAX_FILES files (default 100k).
+  //
+  // This route spans ALL cases, so it cannot sit behind the /cases/:id lock gate — there is no single
+  // id to gate on. It enforces the same rule per case instead: a password-protected case that this
+  // caller has not unlocked contributes its bytes but not its filenames (#250). An unprotected case
+  // is as open here as it already is at /cases/:id/*, which is the app's existing security model.
   app.get("/diagnostics/sizes", async (req: Request, res: Response) => {
     try {
       const topN = Math.min(50, Math.max(1, Number(req.query.top) || 10));
       const budget = { n: Number(process.env.DFIR_DIAG_MAX_FILES) || 100_000 };
       const cases = await store.listCases();
       const files: ScannedFile[] = [];
+      const withheld = new Set<string>();
       for (const c of cases) {
         if (budget.n <= 0) break;
+        // listCases returns the raw meta (password included) — read the salt straight off it rather
+        // than re-reading each case.json just to learn whether it is locked.
+        if (c.password && !ctx.readUnlockState(req, c.caseId, c.password.salt).unlocked) withheld.add(c.caseId);
         const dir = store.caseDir(c.caseId);
         await walkCaseFiles(dir, dir, c.caseId, files, budget);
       }
-      const report = aggregateCaseSizes(files, topN);
+      const report = aggregateCaseSizes(files, topN, withheld);
       return res.status(200).json({ ...report, truncated: budget.n <= 0, scannedFiles: files.length });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -318,6 +327,20 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       const kind = err instanceof ProviderError ? err.kind : "other";
       serverLogger.info(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
       return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
+    }
+  });
+
+  // Settings "Test connection": run the fixed sample string through the Presidio URL the analyst
+  // has typed (not the saved one) so they can tune the confidence floor before saving. The sample
+  // is synthetic — nothing from the case is sent.
+  app.post("/system/presidio-test", async (req: Request, res: Response) => {
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!url) return res.status(400).json({ error: "url is required" });
+    try {
+      const findings = await new HttpPresidioClient(url, 5_000).analyze(PRESIDIO_SAMPLE_TEXT);
+      return res.json({ sample: PRESIDIO_SAMPLE_TEXT, findings });
+    } catch (err) {
+      return res.json({ sample: PRESIDIO_SAMPLE_TEXT, error: (err as Error).message });
     }
   });
 

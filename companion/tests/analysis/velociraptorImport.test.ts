@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { parseVelociraptorJson, parseVelociraptorJsonProgress } from "../../src/analysis/velociraptorImport.js";
 
 // ── A Velociraptor Sigma detection row (parsed evtx event + matched rule).
@@ -180,6 +180,70 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     expect(e.description).toContain("Mimikatz Tools");
     expect(e.sources).toEqual(["Velociraptor"]);
     expect(r.iocs.some((i) => i.type === "file" && i.value.toLowerCase().endsWith(".yms"))).toBe(false);
+  });
+});
+
+// The Elastic-indexed push arrives from the browser over POST /cases/:id/import, so its column names
+// are untrusted and page-forgeable. normalizeElasticRow → unflattenDotted must never walk a dotted
+// "__proto__.<x>"/"constructor.<x>"/"prototype.<x>" segment into this Node process's Object.prototype
+// (CWE-1321), while benign dotted Elastic columns still unflatten to the same nested shape.
+describe("parseVelociraptorJson — prototype-pollution hardening (forged dotted column names)", () => {
+  afterEach(() => {
+    for (const k of ["isAdmin", "polluted", "pollutedF3"]) delete (Object.prototype as Record<string, unknown>)[k];
+  });
+
+  it("a dotted '__proto__.isAdmin' column does not pollute Object.prototype during import", () => {
+    const row = {
+      _index: "artifact_custom_windows_detection_x",
+      "@timestamp": "2026-05-07T16:31:04.000Z",
+      "__proto__.isAdmin": true,        // forged, dotted — must NOT walk into Object.prototype
+      "constructor.polluted": true,      // ditto via constructor
+      "prototype.pollutedF3": true,      // ditto via prototype
+      "Detection.StringHit": "mimikatz.exe",
+      EntryPath: "c:\\tools\\mimikatz.exe",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    // The Node process's global prototype is untouched — nothing leaked onto a fresh object.
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).pollutedF3).toBeUndefined();
+    // The benign part of the row is still classified/mapped normally.
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("mimikatz.exe");
+  });
+
+  it("a benign dotted column still unflattens to its nested shape (Detection.StringHit → verdict)", () => {
+    const row = {
+      _index: "artifact_detectraptor_windows_detection_mft",
+      "@timestamp": "2026-05-07T16:03:56.000Z",
+      "Detection.StringHit": "PsExec.exe",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT",
+      "SITimestamps.LastRecordChange0x10": "2026-01-28T09:47:39.493Z",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.detections).toBe(1);
+    expect(r.events[0].severity).toBe("High");             // "psexec" keyword — proves Detection.StringHit unflattened into the verdict
+    expect(r.events[0].description).toContain("PsExec.exe");
+  });
+
+  // The multi-field collapse in normalizeElasticRow runs BEFORE unflattenDotted and does its own
+  // bracket assignment plus `bare in collapsed` membership tests. A forged bare "__proto__" column
+  // carrying an object would set that accumulator's prototype, so every subsequent `in` test consults
+  // the attacker's object — silently discarding the real ".keyword" columns whose bare names it names.
+  it("a forged bare '__proto__' column cannot suppress a benign '.keyword' column via the collapse step", () => {
+    const row = JSON.parse(String.raw`{
+      "__proto__": { "Artifact": "attacker-suppressed", "EntryPath": "attacker-suppressed" },
+      "_index": "artifact_detectraptor_windows_detection_mft",
+      "@timestamp": "2026-05-07T16:03:56.000Z",
+      "Detection.StringHit": "PsExec.exe",
+      "Artifact.keyword": "DetectRaptor.Windows.Detection.MFT",
+      "EntryPath.keyword": "c:\\tools\\psexec.exe"
+    }`);
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    // The real Artifact/EntryPath values still reach the event — not dropped by a poisoned `in` test.
+    expect(r.events[0].description).toContain("DetectRaptor MFT detection:");
+    expect(r.events[0].description).toContain("PsExec.exe");
+    expect(r.events[0].description).not.toContain("attacker-suppressed");
   });
 });
 

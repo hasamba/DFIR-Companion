@@ -30,9 +30,11 @@ export const REPORT_SECTION_DEFS = [
   { key: "timeline", label: "3 · Timeline of events" },
   { key: "investigation", label: "4 · Investigation (findings, IOCs, MITRE, chain of evidence)" },
   { key: "conclusions", label: "5 · Conclusions & recommendations" },
+  { key: "sessions", label: "Attacker Sessions (the timeline as per-host chapters)" },
   { key: "hypotheses", label: "Hypotheses (what we investigated & concluded)" },
   { key: "playbook", label: "Response Playbook" },
   { key: "d3fend", label: "Mitigation & defensive countermeasures (ATT&CK + D3FEND)" },
+  { key: "compliance", label: "Compliance Impact (control failures & notification obligations)" },
   { key: "notebook", label: "Analyst Notebook" },
 ] as const;
 
@@ -160,7 +162,8 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
   normalizeReportTemplate({
     id: "executive-brief",
     name: "Executive Brief",
-    description: "A short client-facing brief: cover, executive summary, and conclusions only.",
+    description:
+      "A short client-facing brief: cover, executive summary, compliance impact, and conclusions.",
     accentColor: "#0b6e4f",
     coverTitle: "Incident Report — Executive Brief",
     coverSubtitle: "{{organization}}{{#if incidentId}} · {{incidentId}}{{/if}}",
@@ -176,9 +179,13 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "timeline", enabled: false },
       { key: "investigation", enabled: false },
       { key: "conclusions", enabled: true },
+      // Off with the timeline and investigation sections: a per-host session table is operator
+      // detail, and this template exists to keep the client-facing brief short.
+      { key: "sessions", enabled: false },
       { key: "hypotheses", enabled: false },
       { key: "playbook", enabled: false },
       { key: "d3fend", enabled: false },
+      { key: "compliance", enabled: true },
       { key: "notebook", enabled: false },
     ],
   }),
@@ -202,9 +209,11 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "timeline", enabled: true },
       { key: "investigation", enabled: true },
       { key: "conclusions", enabled: true },
+      { key: "sessions", enabled: true },
       { key: "hypotheses", enabled: true },
       { key: "playbook", enabled: true },
       { key: "d3fend", enabled: true },
+      { key: "compliance", enabled: true },
       { key: "notebook", enabled: true },
     ],
   }),

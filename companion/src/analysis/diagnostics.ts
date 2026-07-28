@@ -211,14 +211,25 @@ export interface SizeReport {
   totalBytes: number;
   cases: CaseSize[]; // largest first
   largestFiles: Array<{ caseId: string; path: string; bytes: number }>; // largest first
+  lockedCases: number; // cases whose filenames were withheld because the case is locked (#250)
 }
 
 /**
  * Aggregate a flat list of scanned files into total bytes, per-case sizes (largest first),
  * and the top-N largest individual files. Pure — the recursive walk that produces the file
  * list lives in the route (compute-on-demand, so the default diagnostics load stays cheap).
+ *
+ * `withheldCaseIds` names cases that are password-protected and NOT unlocked for this caller: their
+ * bytes still count toward the totals (an aggregate, and the case ids are already public via
+ * GET /cases) but their per-file entries are dropped from `largestFiles`. Evidence FILENAMES are
+ * case content — victim names, malware names, the shape of the investigation — so they belong
+ * behind the same lock as the case itself (#250).
  */
-export function aggregateCaseSizes(files: readonly ScannedFile[], topN = 10): SizeReport {
+export function aggregateCaseSizes(
+  files: readonly ScannedFile[],
+  topN = 10,
+  withheldCaseIds: ReadonlySet<string> = new Set(),
+): SizeReport {
   const byCase = new Map<string, number>();
   let totalBytes = 0;
   for (const f of files) {
@@ -230,11 +241,14 @@ export function aggregateCaseSizes(files: readonly ScannedFile[], topN = 10): Si
     .map(([caseId, bytes]) => ({ caseId, bytes }))
     .sort((a, b) => b.bytes - a.bytes);
   const largestFiles = [...files]
-    .filter((f) => Number.isFinite(f.bytes) && f.bytes > 0)
+    .filter((f) => Number.isFinite(f.bytes) && f.bytes > 0 && !withheldCaseIds.has(f.caseId))
     .sort((a, b) => b.bytes - a.bytes)
     .slice(0, Math.max(0, topN))
     .map((f) => ({ caseId: f.caseId, path: f.path, bytes: f.bytes }));
-  return { totalBytes, cases, largestFiles };
+  // Count only cases that actually contributed bytes — a withheld id with nothing scanned under it
+  // would otherwise inflate the "n locked" note the dashboard shows.
+  const lockedCases = [...withheldCaseIds].filter((id) => byCase.has(id)).length;
+  return { totalBytes, cases, largestFiles, lockedCases };
 }
 
 // ── The full diagnostics report ─────────────────────────────────────────────────────────
@@ -251,10 +265,12 @@ export interface DiskDiagnostics extends DiskStats {
   thresholds: DiskWarnThresholds;
 }
 
+// NOTE: deliberately carries NO casesRoot / absolute filesystem path (#250). /diagnostics is an
+// unauthenticated route, so the cases-root path would be free reconnaissance for any file-targeting
+// attack. The operator configured DFIR_CASES_ROOT and already knows it; the client never needs it.
 export interface DiagnosticsReport {
   generatedAt: string; // ISO-8601
   uptimeMs: number;
-  casesRoot: string;
   disk: DiskDiagnostics;
   cases: { count: number; open: number; closed: number; archived: number };
   queue: QueueDiagnostics;
@@ -284,7 +300,6 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
   lines.push("=== DFIR Companion — Diagnostics ===");
   lines.push(`generated:   ${r.generatedAt}`);
   lines.push(`uptime:      ${formatAge(r.uptimeMs)}`);
-  lines.push(`cases root:  ${r.casesRoot}`);
   lines.push("");
   lines.push("-- Disk --");
   lines.push(

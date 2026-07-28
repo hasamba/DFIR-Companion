@@ -67,3 +67,41 @@ describe("declarativeImporter parse", () => {
     expect(r.dropped).toBe(0);
   });
 });
+
+// A user regex reaches this code straight off POST /importers, so a ReDoS pattern is remotely
+// triggerable: it would be persisted and then re-run on every detect() call for every upload.
+describe("declarativeImporter — user regex is ReDoS-vetted (#249)", () => {
+  const withMatch = (match: Record<string, unknown>) => ({
+    ...EXAMPLE_IMPORTER_SPEC,
+    id: "redos-probe",
+    match: { format: "csv", priority: 50, ...match },
+  });
+
+  it("rejects a catastrophic filenamePattern at validation time, naming the field", () => {
+    const r = parseImporterSpec(withMatch({ filenamePattern: "((a+))+$" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors).toContainEqual(expect.objectContaining({ path: "match.filenamePattern" }));
+    expect(r.errors[0].message).toMatch(/ReDoS/);
+  });
+
+  it("rejects a catastrophic keyEquals pattern, naming the key", () => {
+    const r = parseImporterSpec(withMatch({ requireHeaders: ["Timestamp"], keyEquals: { ActionType: "(a|a)+$" } }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors).toContainEqual(expect.objectContaining({ path: "match.keyEquals.ActionType" }));
+  });
+
+  it("still accepts an ordinary filenamePattern", () => {
+    expect(parseImporterSpec(withMatch({ filenamePattern: "^mde-.*\\.csv$" })).ok).toBe(true);
+  });
+
+  it("fails CLOSED when a filenamePattern could not be compiled", () => {
+    // Skipping an uncompilable filename test would widen the importer instead of narrowing it:
+    // filenamePattern is the only discriminator here, so every other check passes and the importer
+    // would claim every upload.
+    const imp = buildImporter({ ...spec(), match: { format: "auto", priority: 50, filenamePattern: "((a+))+$" } } as never);
+    expect(imp.detect(csvCtx(["Timestamp", "DeviceName"], "anything.csv"))).toBe(false);
+    expect(imp.detect({ filename: "a".repeat(64) + ".csv", text: "", root: {}, sample: { x: 1 }, csvHeaders: null })).toBe(false);
+  });
+});

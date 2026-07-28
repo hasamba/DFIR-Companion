@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { toTimesketchJsonlFromList } from "../integrations/timesketch/timesketchMap.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
+import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -76,7 +77,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       });
       return res.status(200).json(result);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }
   });
 

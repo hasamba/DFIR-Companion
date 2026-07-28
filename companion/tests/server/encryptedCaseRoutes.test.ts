@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,6 +83,10 @@ describe("POST /cases/:id/export/encrypted", () => {
 });
 
 describe("POST /cases/import/encrypted", () => {
+  // The import limiter is a module-level singleton keyed by client IP, so every test in this
+  // block would otherwise share one counter (and supertest gives them all the same address).
+  beforeEach(() => resetLimiters());
+
   it("round-trips an encrypted archive into a new case, including evidence", async () => {
     const { app, stateStore, store } = await harness();
     await seedCase(app, stateStore, store);
@@ -128,6 +133,50 @@ describe("POST /cases/import/encrypted", () => {
     const data = await exportArchive(app, "INC-1");
     const imp = await request(app).post("/cases/import/encrypted").send({ data, password: "totally-wrong", targetCaseId: "INC-3" });
     expect(imp.status).toBe(400);
+  });
+
+  // Opening an archive costs a deliberate ~1s scrypt derivation on the synchronous path, so an
+  // unauthenticated caller looping failed imports can hold the event loop — the whole server —
+  // for as long as it likes. The limiter has to cut in BEFORE the derivation.
+  it("locks the caller out after repeated failed decrypts, and refuses even a valid archive while locked", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    // Drive the counter with cheap failures — a buffer that fails the magic check costs no
+    // derivation at all, and the limiter counts every failed decrypt alike. Using five
+    // wrong-password attempts against the real archive would burn five ~1s derivations to
+    // prove exactly the same thing.
+    const junk = Buffer.from("nowhere near a .dfircase container").toString("base64");
+    for (let i = 0; i < 4; i++) {
+      expect((await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status).toBe(400);
+    }
+    const tripped = await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" });
+    expect(tripped.status).toBe(429);
+    expect(tripped.headers["retry-after"]).toBeDefined();
+    expect(tripped.body.retryAfterMs).toBeGreaterThan(0);
+
+    // The lockout is what protects the CPU: the correct password no longer buys a derivation.
+    const locked = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD, targetCaseId: "INC-9" });
+    expect(locked.status).toBe(429);
+    expect((await request(app).get("/cases/INC-9/state")).status).toBe(404); // and nothing was imported
+  });
+
+  it("does not count a successful decrypt against the caller — a re-import conflict is not an attack", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    // Two 409s: the archive opened both times, so neither is a failed attempt.
+    for (let i = 0; i < 2; i++) {
+      expect((await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD })).status).toBe(409);
+    }
+    // Four genuine failures then still fit under the 5-attempt threshold — they would not if the
+    // two conflicts had been counted. (Two conflicts, not six: each one costs a real derivation.)
+    const junk = Buffer.from("nowhere near a .dfircase container").toString("base64");
+    for (let i = 0; i < 4; i++) {
+      expect((await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status).toBe(400);
+    }
   });
 
   it("400s on a malformed payload", async () => {

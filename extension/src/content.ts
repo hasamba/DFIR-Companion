@@ -1,10 +1,11 @@
 import { initArtifactCapture } from "./artifactCapture.js";
 import { initContextMenuCapture } from "./contextMenuCapture.js";
+import { browserApi } from "./browser.js";
 
 let lastKeyNotify = 0;
 
 function notify(reason: "click" | "keydown") {
-  chrome.runtime.sendMessage({ kind: "user_event", reason }).catch(() => {});
+  browserApi.runtime.sendMessage({ kind: "user_event", reason }).catch(() => {});
 }
 
 document.addEventListener("click", () => notify("click"), { capture: true, passive: true });

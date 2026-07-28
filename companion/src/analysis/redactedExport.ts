@@ -11,13 +11,18 @@ import type { ZipEntry } from "./zipArchive.js";
 
 const ALL_CATEGORIES: Record<AnonCategory, boolean> = {
   IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true,
+  CARD: true, PHONE: true, NATID: true,
 };
 
 // The export always uses MAXIMUM redaction, independent of the per-case AI-anonymization toggle:
 // every entity category is tokenized and secrets are one-way redacted. The package is meant to
 // leave the analyst's machine, so it must never depend on the wire-anonymization setting being on.
+//
+// maskPublicIps is FALSE here on purpose. This package is shared with a third party to describe
+// an incident; tokenizing the adversary's infrastructure would make it unactionable. The export
+// strips the VICTIM's identity, not the attacker's.
 export function redactedExportPolicy(): AnonPolicy {
-  return { enabled: true, categories: { ...ALL_CATEGORIES }, redactSecrets: true };
+  return { enabled: true, categories: { ...ALL_CATEGORIES }, redactSecrets: true, maskPublicIps: false };
 }
 
 export interface RedactedExportOptions {
@@ -216,9 +221,16 @@ export function buildRedactionNotes(summary: RedactionSummary): string {
     "-----------------",
     "- Internal/victim indicators in all text (report, CSVs, state JSON) are replaced with",
     "  consistent typed tokens: internal IPv4 (RFC1918/loopback/CGNAT) -> ANON_IP_n, hostnames ->",
-    "  ANON_HOST_n, accounts -> ANON_USER_n, internal email/domains -> ANON_EMAIL_n/ANON_DOMAIN_n,",
-    "  user profile paths -> ANON_PATH_n. The SAME real value always maps to the SAME token within",
-    "  this package, so the narrative still reads coherently.",
+    "  ANON_HOST_n, accounts -> ANON_USER_n, internal email/domains -> ANON_EMAIL_n/ANON_DOMAIN_n.",
+    "  In a user profile path (C:\\Users\\<name>, /home/<name>) only the username segment is",
+    "  tokenized, as ANON_USER_n; the rest of the path stays readable. The SAME real value always",
+    "  maps to the SAME token within this package, so the narrative still reads coherently.",
+    "- CAVEAT: the ACCOUNT and EMAIL patterns are ASCII-only, so a name in another script — including",
+    "  any accented Latin name — is NOT auto-detected (CORP\\<hebrew> is missed; CORP\\jose-with-accent",
+    "  matches only its unaccented prefix and leaves a stray character beside the token). Names caught",
+    "  by the optional Presidio layer, added by the analyst as custom entities, or appearing in a user",
+    "  profile path ARE tokenized in any script. Review this package before sharing if the case",
+    "  involves non-ASCII personal names.",
     `- Credentials / API keys / tokens are one-way redacted to "${SECRET_PLACEHOLDER}" (NOT reversible).`,
     "- Adversary indicators (public IPs, malware hashes, attacker domains/URLs) are PRESERVED on",
     "  purpose so the threat signal survives — they are not victim PII.",

@@ -1,4 +1,5 @@
 import { type AIProvider, type AnalyzeRequest, type AnalyzeResult, type ProviderUsage, ProviderError, httpErrorKind, httpErrorMessage, requestSignal } from "./provider.js";
+import { validateBaseUrl } from "./urlValidation.js";
 
 type FetchFn = typeof fetch;
 
@@ -38,6 +39,8 @@ export class OpenAIProvider implements AIProvider {
     this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
+    const urlErr = validateBaseUrl(this.baseUrl);
+    if (urlErr) throw new ProviderError(urlErr, "transport");
   }
 
   // Human-friendly name for error messages — subclasses share this OpenAI-compatible
