@@ -39,6 +39,7 @@ import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
 import { registerIncidentTypeRoutes } from "./routes/incidentTypes.js";
+import { registerCollectionPlanRoutes } from "./routes/collectionPlan.js";
 import { registerClockSkewRoutes } from "./routes/clockSkew.js";
 import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
@@ -168,6 +169,7 @@ import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { IncidentTypeStore } from "./analysis/incidentTypeStore.js";
+import { CollectionPlanStore } from "./analysis/collectionPlanStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
@@ -578,6 +580,9 @@ export interface AppOptions {
   // per-case chosen-type record. Applies a type's auto-configuration (key questions, next steps,
   // expected-finding seeds) at case creation or on demand, and feeds the synthesis hint.
   incidentTypeStore?: IncidentTypeStore;
+  // Collection plan (#347): per-case analyst overrides for the incident type's evidence checklist.
+  // The plan itself is derived on read from the timeline — only the overrides are stored.
+  collectionPlanStore?: CollectionPlanStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
   mispPushClient?: MispPushClient;
@@ -1005,6 +1010,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
   registerIncidentTypeRoutes(app, ctx);
+  registerCollectionPlanRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
@@ -3391,6 +3397,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
   // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
   const incidentTypeStore = new IncidentTypeStore(store, join(dirname(casesRoot), "incident-types"));
+  // Collection plan (#347): per-case only — the plan is derived from the timeline, so nothing global.
+  const collectionPlanStore = new CollectionPlanStore(store);
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -3782,6 +3790,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
     incidentTypeStore,
+    collectionPlanStore,
     mispPushClient: buildMispPushClient(),
     mispPushOptions: mispPushOptions(),
     notionClient: buildNotionClient(),
