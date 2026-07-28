@@ -52,16 +52,11 @@
   ],
   "recommendedImportOrder": [
     "edr",
-    "windows-evtx",
-    "velociraptor",
+    "memory",
+    "windows-event-logs",
+    "endpoint-triage",
     "network",
     "siem"
-  ],
-  "huntBundles": [
-    "vss-delete",
-    "mimikatz",
-    "lateral-movement",
-    "ransomware-note"
   ],
   "findingsSeeds": [
     "Initial access vector confirmed",
@@ -71,10 +66,5 @@
     "Persistence mechanism established",
     "Double-extortion leak-site listing"
   ],
-  "reportFraming": {
-    "template": "ransomware-executive",
-    "audience": "board + insurer + legal",
-    "summaryPrompt": "Summarize the ransomware impact, scope, and notification obligations for the board and insurer."
-  },
   "synthesisHint": "This is a ransomware case — prioritize T1486 Data Encrypted for Impact, T1490 Inhibit System Recovery (VSS deletion), T1021 Remote Services / lateral movement, and T1567 Exfiltration to Cloud Service (double extortion)."
 }

@@ -27,6 +27,11 @@ Picking one seeds the case with:
 - **Expected findings** as open *confirm or deny* questions, badged `[type-seed]`, so you work
   through what this incident type usually involves instead of starting from a blank page. Dismiss any
   that don't apply.
+- **A collection plan** — the evidence this incident type calls for, in order, shown in its own
+  dashboard panel. Each item ticks itself off once matching evidence is imported, whichever tool
+  produced it, so "Windows event logs" is satisfied by Chainsaw, Hayabusa, or raw event logs alike.
+  Mark an item *N/A* when your environment can't provide it (no EDR, no badge system) and it stops
+  being proposed.
 - **AI framing** — synthesis is told which incident type this is, so it prioritizes the relevant
   ATT&CK techniques. This is prompt context only; it never appears in your report.
 

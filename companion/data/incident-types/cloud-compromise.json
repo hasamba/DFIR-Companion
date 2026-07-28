@@ -52,16 +52,10 @@
   ],
   "recommendedImportOrder": [
     "cloud-audit",
-    "aws",
+    "identity",
     "m365",
     "siem",
     "edr"
-  ],
-  "huntBundles": [
-    "iam-abuse",
-    "new-access-keys",
-    "unauthorized-instances",
-    "key-leak"
   ],
   "findingsSeeds": [
     "Cloud account/tenant compromise confirmed",
@@ -71,10 +65,5 @@
     "Resources accessed or exfiltrated",
     "Unauthorized compute instances"
   ],
-  "reportFraming": {
-    "template": "cloud-executive",
-    "audience": "cloud-ops + security + executive",
-    "summaryPrompt": "Summarize the cloud compromise, IAM abuse, and containment for cloud-ops and executive."
-  },
   "synthesisHint": "This is a cloud-compromise case — prioritize T1078 Valid Accounts (cloud), T1098 Account Manipulation (new IAM principals), T1136 Create Account, and T1530 Data from Cloud Storage."
 }

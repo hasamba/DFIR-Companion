@@ -26,9 +26,14 @@ import {
 //                              analyst-facing case summary and the report's executive-summary
 //                              fallback, so a prompt hint written there would print as the executive
 //                              summary of a forensic report.
-//   - recommendedImportOrder — ordered import checklist for the Import panel.  ─┐ defined and served
-//   - huntBundles            — pre-selected Velociraptor bundle ids.            ├─ over the API, not
-//   - reportFraming          — report template + exec-summary audience.        ─┘ yet consumed (#347).
+//   - recommendedImportOrder — the ordered collection-plan step ids for this incident type, read by
+//                              the Collection Plan panel (#347). Step ids come from
+//                              COLLECTION_STEPS in collectionPlan.ts and name EVIDENCE, not tools.
+//
+// #236 also shipped `huntBundles` and `reportFraming`. Both were removed in #347: their identifiers
+// referred to Velociraptor bundles and report templates that do not exist (27 and 8 invented ids
+// against 3 real of each), and nothing consumed them. Older custom-type files may still carry them;
+// the schema strips unknown keys, so those files keep loading.
 
 export type IncidentTypeId =
   | "ransomware"
@@ -53,18 +58,10 @@ export const BUILT_IN_INCIDENT_TYPE_IDS: readonly IncidentTypeId[] = [
   "malware-outbreak",
 ];
 
-export interface IncidentTypeReportFraming {
-  template: string;          // report template id/name to pre-select
-  audience: string;          // executive-summary audience, e.g. "board + insurer"
-  summaryPrompt: string;     // a one-line framing prompt for the exec summary
-}
-
 // An incident type IS a case template plus the type-specific guidance fields.
 export interface IncidentType extends CaseTemplate {
-  recommendedImportOrder: string[];   // ordered importer labels, e.g. ["edr","dc-logs","network"]
-  huntBundles: string[];              // pre-selected Velociraptor bundle ids
+  recommendedImportOrder: string[];   // ordered collection-plan step ids (#347)
   findingsSeeds: string[];            // expected finding categories, pre-seeded as open questions
-  reportFraming: IncidentTypeReportFraming;
   synthesisHint: string;              // one-line context for the synthesis prompt
 }
 
@@ -91,13 +88,7 @@ export const incidentTypeSchema = z.object({
   severityFloor: severitySchema.nullable().catch(null),
   huntPlatforms: z.array(z.string()).catch([]),
   recommendedImportOrder: z.array(z.string()).catch([]),
-  huntBundles: z.array(z.string()).catch([]),
   findingsSeeds: z.array(z.string()).catch([]),
-  reportFraming: z.object({
-    template: z.string().catch(""),
-    audience: z.string().catch(""),
-    summaryPrompt: z.string().catch(""),
-  }).catch({ template: "", audience: "", summaryPrompt: "" }),
   synthesisHint: z.string().catch(""),
 });
 

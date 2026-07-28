@@ -53,16 +53,11 @@
   ],
   "recommendedImportOrder": [
     "siem",
-    "edr",
+    "endpoint-triage",
+    "super-timeline",
     "m365",
     "cloud-audit",
-    "badge-access"
-  ],
-  "huntBundles": [
-    "usb-devices",
-    "file-access",
-    "cloud-sync",
-    "email-exfil"
+    "physical-access"
   ],
   "findingsSeeds": [
     "Subject identified and scoped",
@@ -72,10 +67,5 @@
     "Post-resignation access",
     "Credential / account sharing"
   ],
-  "reportFraming": {
-    "template": "insider-executive",
-    "audience": "HR + legal + executive",
-    "summaryPrompt": "Summarize the insider activity, policy violations, and evidence for HR and legal."
-  },
   "synthesisHint": "This is an insider-threat case — prioritize T1052 Exfiltration Over Physical Medium (USB), T1567 Exfiltration to Cloud Service, T1078 Valid Accounts (the insider's own), and T1056 Input Capture."
 }

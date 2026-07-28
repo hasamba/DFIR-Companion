@@ -50,15 +50,9 @@
   ],
   "recommendedImportOrder": [
     "m365",
-    "entra-audit",
+    "identity",
     "siem",
-    "email-gateway"
-  ],
-  "huntBundles": [
-    "mailbox-rules",
-    "mfa-bypass",
-    "conditional-access",
-    "oauth-app-grants"
+    "network"
   ],
   "findingsSeeds": [
     "Mailbox account takeover confirmed",
@@ -68,10 +62,5 @@
     "Wire transfer / payment fraud initiated",
     "Mailbox data exfiltrated"
   ],
-  "reportFraming": {
-    "template": "bec-executive",
-    "audience": "finance + legal + executive",
-    "summaryPrompt": "Summarize the BEC compromise, funds-at-risk, and recovery actions for finance and legal."
-  },
   "synthesisHint": "This is a BEC case — prioritize T1566 Phishing (initial access), T1098 Account Manipulation (inbox rules / OAuth grants), T1078 Valid Accounts, and T1567 Exfiltration to Cloud Service."
 }

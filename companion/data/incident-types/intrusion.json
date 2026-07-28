@@ -54,15 +54,9 @@
   "recommendedImportOrder": [
     "network",
     "edr",
-    "windows-evtx",
-    "siem",
-    "velociraptor"
-  ],
-  "huntBundles": [
-    "persistence",
-    "lateral-movement",
-    "c2-callback",
-    "credential-theft"
+    "windows-event-logs",
+    "endpoint-triage",
+    "siem"
   ],
   "findingsSeeds": [
     "Initial access vector confirmed",
@@ -72,10 +66,5 @@
     "Privilege escalation observed",
     "Attacker objective determined"
   ],
-  "reportFraming": {
-    "template": "intrusion-executive",
-    "audience": "IR team + IT operations + executive",
-    "summaryPrompt": "Summarize the intrusion scope, patient zero, and containment status for the IR team and executive."
-  },
   "synthesisHint": "This is a network intrusion case — prioritize TA0001 Initial Access, TA0003 Persistence, TA0008 Lateral Movement, and TA0011 Command and Control."
 }
