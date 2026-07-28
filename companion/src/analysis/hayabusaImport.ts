@@ -105,9 +105,14 @@ function hayaTime(s: string): string {
 
 // Parse a Hayabusa CSV `Details`/`ExtraFieldInfo` cell ("Proc: x ¦ CmdLine: y ¦ …") into a
 // field map. JSON timelines already give an object, handled separately.
+// The separator is the BROKEN BAR ¦ (U+00A6) — Hayabusa's actual field separator. The previous
+// regex `[¦|]` ALSO matched the ASCII pipe | (U+007C), a legitimate character in shell command
+// lines (e.g. `echo hello | grep foo`), so a detail value containing a pipe was over-split: the
+// tail became an orphan fragment with no `Key:` prefix and was silently dropped, truncating the
+// captured command line and any IOCs embedded in the lost tail (#27).
 function parseDetailCell(cell: string): Row {
   const out: Row = {};
-  for (const part of cell.split(/\s*[¦|]\s*/)) {
+  for (const part of cell.split(/\s*¦\s*/)) {
     const idx = part.indexOf(":");
     if (idx <= 0) continue;
     const k = part.slice(0, idx).trim();

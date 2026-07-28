@@ -100,6 +100,18 @@ describe("parseHayabusaTimeline — csv-timeline", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
   });
+
+  it("#27: preserves an ASCII pipe inside a Cmd value (doesn't split on |, only on ¦)", () => {
+    // A shell pipeline in a CmdLine value: `echo hello | grep foo`. The previous regex `[¦|]`
+    // split on the ASCII pipe too, truncating the command line and dropping IOCs in the tail.
+    const text = csvTimeline([
+      ["2021-12-12 09:00:00.000 +00:00", "WS02", "Sec", "1", "high", "Pipe Test", "Cmd: ls ¦ Args: echo hello | grep foo", "t1059"],
+    ]);
+    const r = parseHayabusaTimeline(text);
+    expect(r.events).toHaveLength(1);
+    // The full command line survives — the ASCII pipe is part of the value, not a separator.
+    expect(r.events[0].description).toContain("echo hello | grep foo");
+  });
 });
 
 // Velociraptor's `Windows.Hayabusa.Rules` artifact emits Hayabusa verdict rows in NDJSON with
