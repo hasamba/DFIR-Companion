@@ -3932,9 +3932,12 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // Optional override for the GLOBAL session-log directory (per-case logs always live in the
   // case dir). Relative paths anchor to companion/ like DFIR_CASES_ROOT; unset → logs/ beside
   // the cases root.
-  const rawLogDir = process.env.DFIR_LOG_DIR;
-  const logDir = rawLogDir && rawLogDir.trim() !== ""
-    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, expandHome(rawLogDir)))
+  // Expand before the isAbsolute test, not after: "~/logs" is not absolute, so testing the raw
+  // value sends it down the relative branch and only resolve()'s absolute-second-argument rule
+  // saves it. Same reason as the cases root above — dotenv does not expand "~".
+  const rawLogDir = process.env.DFIR_LOG_DIR?.trim() ? expandHome(process.env.DFIR_LOG_DIR) : undefined;
+  const logDir = rawLogDir
+    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
     : undefined;
 
   startServer(casesRoot, port, host, logDir);
