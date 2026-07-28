@@ -119,13 +119,12 @@ export async function pushCaseToNotion(
       const existing = await client.retrieveBlock(remembered.containerBlockId);
       if (existing && !existing.archived) containerBlockId = existing.id;
     }
-    // Defend a lost/replaced store: adopt a previous container recognizable by its title.
-    if (!containerBlockId) {
-      const adopted = (await client.listChildren(pageId)).find(
-        (b) => b.type === "toggle" && (b.plainText ?? "") === containerTitle && !b.archived,
-      );
-      if (adopted) containerBlockId = adopted.id;
-    }
+    // When the remembered container is gone (store lost/deleted, or a different page), do NOT
+    // adopt a same-titled toggle by name — that could be an analyst's own toggle with their own
+    // notes, and the export would archive its children and repurpose it as the Companion container
+    // (analyst content destruction). Instead, leave containerBlockId empty so a fresh toggle is
+    // created below, same as the first-export path. The remembered id is the only ownership marker
+    // the Companion has; title alone is not a strong enough signal.
   } else {
     const db = target.databaseId ?? options.databaseId;
     const parent = target.parentPageId ?? options.parentPageId;
