@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildEnrichmentProviders, setServerLogger, getServerLogger } from "../../src/server.js";
+import { buildEnrichmentProviders, tlsFetchFor, setServerLogger, getServerLogger } from "../../src/server.js";
 import type { Logger } from "../../src/logging/logger.js";
 
 // #246's insecureSkipVerify guard is unreachable from the real server unless tlsFetchFor() passes
@@ -7,7 +7,7 @@ import type { Logger } from "../../src/logging/logger.js";
 // (buildEnrichmentProviders, the same function server.ts calls at boot and on live reload), not
 // buildTlsFetch in isolation, so a regression in the wiring itself would fail here.
 
-const ENV_KEYS = ["DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_MISP_INSECURE", "DFIR_TLS_ALLOW_INSECURE_EXTERNAL"];
+const ENV_KEYS = ["DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_MISP_INSECURE", "DFIR_TLS_ALLOW_INSECURE_EXTERNAL", "DFIR_NOTIFY_INSECURE"];
 const saved: Record<string, string | undefined> = {};
 let originalLogger: Logger;
 
@@ -54,5 +54,31 @@ describe("tlsFetchFor wiring — insecureSkipVerify guard (#246)", () => {
     process.env.DFIR_MISP_URL = "https://misp.example.com";
     process.env.DFIR_MISP_KEY = "key123";
     expect(() => buildEnrichmentProviders()).not.toThrow();
+  });
+});
+
+// A notification webhook's host is only known at send time, so there is no env var for
+// tlsFetchFor to read — which meant hostUrl was undefined, the guard defaulted to "loopback",
+// and DFIR_NOTIFY_INSECURE turned off certificate verification for every Slack/Teams/Mattermost
+// webhook with nothing to stop it (#7).
+describe("tlsFetchFor(NOTIFY) — the guard must apply to webhooks too", () => {
+  it("refuses to skip verification on DFIR_NOTIFY_INSECURE alone, and says why", () => {
+    process.env.DFIR_NOTIFY_INSECURE = "1";
+    const warn = vi.fn();
+    setServerLogger({ ...originalLogger, warn });
+
+    // undefined = no custom TLS trust → createNotifier falls back to the verified global fetch.
+    expect(tlsFetchFor("NOTIFY")).toBeUndefined();
+    expect(warn.mock.calls.some(([m]) => /non-loopback/i.test(m as string))).toBe(true);
+  });
+
+  it("honours DFIR_NOTIFY_INSECURE once the operator also opts in to external insecure TLS", () => {
+    process.env.DFIR_NOTIFY_INSECURE = "1";
+    process.env.DFIR_TLS_ALLOW_INSECURE_EXTERNAL = "true";
+    expect(tlsFetchFor("NOTIFY")).toBeTypeOf("function");
+  });
+
+  it("builds no custom fetch at all when insecure is not requested", () => {
+    expect(tlsFetchFor("NOTIFY")).toBeUndefined();
   });
 });
