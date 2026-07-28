@@ -1,6 +1,7 @@
 import { mkdir, writeFile, appendFile, readFile, stat, readdir, rename, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
@@ -20,6 +21,24 @@ export function isValidCaseId(caseId: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(caseId) && !caseId.includes("..");
 }
 
+/** What the caller knows about where an artifact came from; only the capture path has all of it. */
+export interface ArtifactProvenance {
+  source?: string;
+  trigger?: string;
+  collectedBy?: string;
+}
+
+/** An artifact that has just been written to disk, announced to the artifact-stored listener. */
+export interface StoredArtifact {
+  caseId: string;
+  path: string;
+  sha256: string;
+  kind: "screenshot" | "import";
+  provenance?: ArtifactProvenance;
+}
+
+export type ArtifactStoredListener = (artifact: StoredArtifact) => void | Promise<void>;
+
 export class CaseStore {
   // Serializes evidence-sequence allocation per case+kind (#214). Reading "audit-log length + 1"
   // is a read-modify-write: two ingestions racing for the same case both read the same length and
@@ -38,9 +57,29 @@ export class CaseStore {
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
 
+  // Notified after every artifact write below, so chain-of-custody is recorded for ALL stored
+  // evidence rather than only where a caller remembered to ask (#231). It lives here, at the two
+  // methods that actually write evidence, because saveImport alone has 25 call sites — instrumenting
+  // them individually would guarantee a gap, and every future one would start life uncovered.
+  // Injected rather than imported so storage/ keeps knowing nothing about custody.
+  private artifactStoredListener: ArtifactStoredListener | null = null;
+
   constructor(private readonly root: string) {}
 
   get casesRoot(): string { return this.root; }
+
+  /** Register the (single) listener notified after each artifact write. */
+  onArtifactStored(listener: ArtifactStoredListener): void {
+    this.artifactStoredListener = listener;
+  }
+
+  // Called only AFTER the bytes are safely on disk, and deliberately not caught here: an artifact
+  // whose custody record silently failed to append is exactly the gap this feature exists to close,
+  // so it surfaces to the caller the same way saveScreenshot's `wx` collision does. The evidence
+  // itself is already written, so a raised error costs the caller its response, never the artifact.
+  private async announceArtifact(artifact: StoredArtifact): Promise<void> {
+    await this.artifactStoredListener?.(artifact);
+  }
 
   /** Reserve the next never-yet-used sequence number for this case+kind. */
   private reserveSequence(kind: "capture" | "import", caseId: string, countOnDisk: () => Promise<number>): Promise<number> {
@@ -207,9 +246,12 @@ export class CaseStore {
   // `wx` = create-exclusive: fail if the file exists rather than overwrite it (#214). Sequence
   // numbers are unique now, so a collision should be impossible — which is exactly why hitting one
   // must raise instead of destroying evidence that is already on disk.
-  async saveScreenshot(caseId: string, filename: string, bytes: Buffer): Promise<string> {
+  async saveScreenshot(caseId: string, filename: string, bytes: Buffer, provenance?: ArtifactProvenance): Promise<string> {
     const path = join(this.screenshotsDir(caseId), filename);
     await writeFile(path, bytes, { flag: "wx" });
+    // Hash the buffer we just wrote rather than re-reading the file: same bytes, no second pass
+    // over evidence that can run to hundreds of megabytes.
+    await this.announceArtifact({ caseId, path, sha256: createHash("sha256").update(bytes).digest("hex"), kind: "screenshot", provenance });
     return path;
   }
 
@@ -234,11 +276,13 @@ export class CaseStore {
 
   // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
   // the imports/ dir existed). Returns the stored absolute path.
-  async saveImport(caseId: string, filename: string, text: string): Promise<string> {
+  async saveImport(caseId: string, filename: string, text: string, provenance?: ArtifactProvenance): Promise<string> {
     await mkdir(this.importsDir(caseId), { recursive: true });
     const path = join(this.importsDir(caseId), filename);
     // Create-exclusive, for the same reason as saveScreenshot above (#214).
     await writeFile(path, text, { encoding: "utf8", flag: "wx" });
+    // utf8 in, utf8 on disk — so this matches what a later re-read hashes during verification.
+    await this.announceArtifact({ caseId, path, sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"), kind: "import", provenance });
     return path;
   }
 

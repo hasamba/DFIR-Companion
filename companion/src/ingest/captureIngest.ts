@@ -101,8 +101,14 @@ export async function ingestCapture(
     ? `${seq}_${tsSafe}_${titleSlug}.webp`
     : `${seq}_${tsSafe}.webp`;
 
-  // Evidence first: write the image before recording metadata.
-  await store.saveScreenshot(payload.caseId, screenshotFile, bytes);
+  // Evidence first: write the image before recording metadata. The provenance goes with the write
+  // because this is the only layer that still knows where the frame came from — the store below
+  // sees bytes and a filename, and custody wants the origin URL and what triggered the shot (#231).
+  await store.saveScreenshot(payload.caseId, screenshotFile, bytes, {
+    source: payload.url,
+    trigger: payload.triggerType,
+    collectedBy: "browser-extension",
+  });
 
   const metadata: CaptureMetadata = {
     caseId: payload.caseId,
