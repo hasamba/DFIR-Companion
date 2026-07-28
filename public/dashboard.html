@@ -2073,9 +2073,9 @@
         <input id="ncName" placeholder="short description" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <label style="display:block; font-size:12px; margin-bottom:8px;">Investigator
         <input id="ncInvestigator" placeholder="your name" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
-      <label style="display:block; font-size:12px; margin-bottom:8px;">Template (optional)
+      <label style="display:block; font-size:12px; margin-bottom:8px;">Incident type (optional)
         <select id="ncTemplate" style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--c-1e2330); color:var(--c-c9d1d9); border:1px solid #444;">
-          <option value="">No template — blank case</option>
+          <option value="">No incident type — blank case</option>
         </select></label>
       <div id="ncTemplateDesc" style="color:var(--c-9aa4b2); font-size:11px; margin:-4px 0 8px; padding:6px 8px; background:var(--c-1a1f2e); border-radius:4px; display:none;"></div>
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
@@ -16635,27 +16635,68 @@
       } catch { _cachedTemplates = []; }
       return _cachedTemplates;
     }
+    // Incident types (#236) are a strict superset of the five BUILT-IN case templates — same
+    // incidents, plus the expected-finding seeds and the synthesis hint. So the New Case dialog
+    // offers ONE picker: every incident type, then any template the analyst saved themselves.
+    // Listing the built-in templates too would show "Ransomware" twice, differing only in which one
+    // does more. Option values are prefixed so the create call knows which field to send.
+    let _cachedIncidentTypes = null;
+    async function loadIncidentTypes() {
+      if (_cachedIncidentTypes) return _cachedIncidentTypes;
+      try {
+        const r = await fetch("/incident-types");
+        _cachedIncidentTypes = r.ok ? await r.json() : [];
+      } catch { _cachedIncidentTypes = []; }
+      return _cachedIncidentTypes;
+    }
     async function populateTemplateSelect() {
       const sel = document.getElementById("ncTemplate");
-      const templates = await loadTemplates();
-      // Remove all options except the first ("No template")
+      const [types, templates] = await Promise.all([loadIncidentTypes(), loadTemplates()]);
+      // Remove all options except the first ("No incident type")
       while (sel.options.length > 1) sel.remove(1);
-      for (const t of templates) {
-        const opt = document.createElement("option");
-        opt.value = t.id;
-        opt.textContent = (t.builtIn ? "" : "★ ") + t.name;
-        sel.appendChild(opt);
+      const addGroup = (label, items, prefix) => {
+        if (!items.length) return;
+        const group = document.createElement("optgroup");
+        group.label = label;
+        for (const t of items) {
+          const opt = document.createElement("option");
+          opt.value = prefix + t.id;
+          opt.textContent = (t.builtIn ? "" : "★ ") + t.name;
+          group.appendChild(opt);
+        }
+        sel.appendChild(group);
+      };
+      addGroup("Incident types", types, "type:");
+      addGroup("Your saved templates", templates.filter(t => !t.builtIn), "tpl:");
+    }
+    // Resolve the picker's prefixed value back to { kind, def } against the right cache.
+    function selectedNewCasePlaybook() {
+      const raw = document.getElementById("ncTemplate").value || "";
+      if (raw.startsWith("type:")) {
+        const id = raw.slice(5);
+        return { kind: "type", id, def: (_cachedIncidentTypes || []).find(t => t.id === id) };
       }
+      if (raw.startsWith("tpl:")) {
+        const id = raw.slice(4);
+        return { kind: "tpl", id, def: (_cachedTemplates || []).find(t => t.id === id) };
+      }
+      return { kind: "", id: "", def: undefined };
     }
     function onTemplateSelectChange() {
-      const sel = document.getElementById("ncTemplate");
       const descEl = document.getElementById("ncTemplateDesc");
-      const templates = _cachedTemplates || [];
-      const t = templates.find(t => t.id === sel.value);
+      const { kind, def: t } = selectedNewCasePlaybook();
       if (t && t.description) {
         const hints = [];
-        if (t.recommendedImports?.length) hints.push("Imports: " + esc(t.recommendedImports.join(", ")));
+        // For an incident type, the import ORDER is the guidance ("EDR first, then DC logs") —
+        // show it instead of the unordered recommended-imports list a plain template carries.
+        const imports = kind === "type" && t.recommendedImportOrder?.length
+          ? { label: "Import order", value: t.recommendedImportOrder.join(" → ") }
+          : t.recommendedImports?.length
+            ? { label: "Imports", value: t.recommendedImports.join(", ") }
+            : null;
+        if (imports) hints.push(esc(imports.label) + ": " + esc(imports.value));
         if (t.huntPlatforms?.length) hints.push("Platforms: " + esc(t.huntPlatforms.join(", ")));
+        if (t.findingsSeeds?.length) hints.push(t.findingsSeeds.length + " expected findings to confirm/deny");
         const hintText = hints.length ? " · " + hints.join(" · ") : "";
         descEl.innerHTML = esc(t.description) + hintText;
         descEl.style.display = "block";
@@ -17070,14 +17111,18 @@
       const caseId = document.getElementById("ncCaseId").value.trim();
       const name = document.getElementById("ncName").value.trim();
       const investigator = document.getElementById("ncInvestigator").value.trim();
-      const templateId = document.getElementById("ncTemplate").value || undefined;
+      const picked = selectedNewCasePlaybook();
       const msg = document.getElementById("ncMsg");
       if (!caseId || !name) { msg.textContent = "case id and name are required"; return; }
       msg.textContent = "creating…";
       try {
         const res = await fetch("/cases", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ caseId, name, investigator: investigator || "unknown", aiProvider: null, templateId }),
+          body: JSON.stringify({
+            caseId, name, investigator: investigator || "unknown", aiProvider: null,
+            templateId: picked.kind === "tpl" ? picked.id : undefined,
+            incidentTypeId: picked.kind === "type" ? picked.id : undefined,
+          }),
         });
         if (res.status === 201) {
           closeNewCase();

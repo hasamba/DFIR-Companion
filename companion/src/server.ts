@@ -37,6 +37,7 @@ import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerIncidentTypeRoutes } from "./routes/incidentTypes.js";
 import { registerClockSkewRoutes } from "./routes/clockSkew.js";
 import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
@@ -165,6 +166,7 @@ import {
 import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { TemplateStore } from "./analysis/templateStore.js";
+import { IncidentTypeStore } from "./analysis/incidentTypeStore.js";
 import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
 import { diffIocs } from "./analysis/iocsDiff.js";
 import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
@@ -571,6 +573,10 @@ export interface AppOptions {
   rebuildTimesketchClient?: () => TimesketchClient | undefined;
   // Case templates: built-in + user-saved templates selectable at case creation.
   templateStore?: TemplateStore;
+  // Incident-type auto-playbooks (#236): the built-in + custom incident-type library plus the
+  // per-case chosen-type record. Applies a type's auto-configuration (key questions, next steps,
+  // expected-finding seeds) at case creation or on demand, and feeds the synthesis hint.
+  incidentTypeStore?: IncidentTypeStore;
   // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
   // (distribution, analysis state, base URL for the event link).
   mispPushClient?: MispPushClient;
@@ -970,6 +976,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerIncidentTypeRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
@@ -3253,6 +3260,9 @@ export interface RuntimePipelineParams {
   // Clock-skew store (#228): synthesis measures per-host offsets from the PRE-merge timeline (the
   // correlation that follows collapses the anchors) and stores them here.
   clockSkewStore?: ClockSkewStore;
+  // Incident-type store (#236): synthesis reads the case's chosen type for its one-line hint.
+  // Passed in rather than built here — it needs the custom-types dir, not just the case store.
+  incidentTypeStore?: IncidentTypeStore;
   // Second LLM opinion (issue #116): a different model + its persistence store, plus the model
   // labels for the comparison header. Absent → the feature is disabled (route 501).
   secondOpinionProvider?: AnalyzeProvider;
@@ -3289,6 +3299,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     learnedPatternStore: new LearnedPatternStore(params.store), // #65 feed learned dismissal patterns into synthesis
     sourceTrustStore: new SourceTrustStore(params.store),   // #66 per-source trust weights for merge + confidence
     clockSkewStore: params.clockSkewStore,                  // #228 measure clock skew on the PRE-merge timeline
+    incidentTypeStore: params.incidentTypeStore,            // #236 frame synthesis with the case's incident type
     playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
     importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
@@ -3328,6 +3339,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     warnLine(`[state] ${caseId}: investigation.json save needed ${retries} rename retr${retries === 1 ? "y" : "ies"} — the state dir is contended (antivirus / search indexer / sync client). Consider excluding the cases root from real-time scanning, or raise DFIR_ATOMIC_WRITE_RETRIES.`),
   );
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
+  // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
+  // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
+  const incidentTypeStore = new IncidentTypeStore(store, join(dirname(casesRoot), "incident-types"));
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -3544,7 +3558,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     : undefined;
   if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
   const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore,
+    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore, incidentTypeStore,
     presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
@@ -3714,6 +3728,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     timesketchOptions: timesketchPushOptions(),
     rebuildTimesketchClient: buildTimesketchClient,
     templateStore,
+    incidentTypeStore,
     mispPushClient: buildMispPushClient(),
     mispPushOptions: mispPushOptions(),
     notionClient: buildNotionClient(),

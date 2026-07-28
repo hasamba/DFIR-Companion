@@ -6,6 +6,45 @@ Toolbar → **+ New case**. Fill in Case ID, name, and investigator.
 
 Cases live in the `cases/` folder (location configured by `DFIR_CASES_ROOT`).
 
+## Incident Types
+
+The **Incident type** dropdown on the New case dialog pre-configures the investigation for a
+recurring incident pattern, so the first thirty minutes are not spent rebuilding the same checklist
+under pressure. Eight types ship built in:
+
+| Type | Type |
+|---|---|
+| Ransomware | Insider Threat |
+| BEC / Email Compromise | Cloud Compromise |
+| Data Exfiltration | Web App Intrusion |
+| Network Intrusion | Malware Outbreak |
+
+Picking one seeds the case with:
+
+- **Key questions** tailored to the incident — a BEC case asks about inbox rules and OAuth grants; a
+  ransomware case asks about VSS deletion and double extortion.
+- **Recommended next steps**, priority-ordered, each with its rationale and where to look.
+- **Expected findings** as open *confirm or deny* questions, badged `[type-seed]`, so you work
+  through what this incident type usually involves instead of starting from a blank page. Dismiss any
+  that don't apply.
+- **AI framing** — synthesis is told which incident type this is, so it prioritizes the relevant
+  ATT&CK techniques. This is prompt context only; it never appears in your report.
+
+The dropdown also lists any **templates you saved yourself** (Case lifecycle → Save as template).
+
+!!! tip "Changing your mind"
+    Re-picking a type from the API (`POST /cases/<id>/incident-type`) *merges* — your own questions
+    and answers survive, and nothing is duplicated. Send `{"replace": true}` to start that case's
+    questions over from the new type.
+
+### Custom incident types
+
+Drop a `.json` file into the `incident-types/` folder beside your cases root and it appears in the
+dropdown, marked ★. Copy any built-in from `companion/data/incident-types/` as a starting point and
+edit the questions, next steps, and expected findings for how your organization actually runs that
+incident. A file with a broken definition is skipped rather than breaking the dropdown, and a custom
+file cannot override a built-in type of the same name.
+
 ## Switching Between Cases
 
 The case selector dropdown (top-left of dashboard) lists all cases, newest first. Select one to load it.

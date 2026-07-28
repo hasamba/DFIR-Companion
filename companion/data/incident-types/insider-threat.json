@@ -1,0 +1,81 @@
+{
+  "id": "insider-threat",
+  "name": "Insider Threat",
+  "description": "Malicious or negligent insider — data theft, sabotage, policy violation.",
+  "builtIn": true,
+  "recommendedImports": [
+    "siem",
+    "kape",
+    "plaso",
+    "m365",
+    "aws"
+  ],
+  "initialKeyQuestions": [
+    "Who is the subject of investigation and what is their role?",
+    "What data or systems did the subject access outside their normal scope?",
+    "Were large file copies, USB transfers, or cloud uploads observed?",
+    "Did the subject access systems after a resignation or termination notice?",
+    "Are there signs of data staging or collection before departure?",
+    "What communication channels (email, Teams, Slack) were used?",
+    "Was account or credentials sharing observed?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Preserve all relevant logs before the subject's access is revoked or systems are modified",
+      "rationale": "Evidence destruction risk is highest while the subject is active",
+      "pointer": "SIEM, DLP, proxy, badge-access, M365 UAL, endpoint logs"
+    },
+    {
+      "priority": "high",
+      "action": "Pull full DLP and data-loss alerts for the subject's accounts over the investigation window",
+      "rationale": "DLP alerts are the primary signal for data staging and exfiltration",
+      "pointer": "DLP console, Microsoft Purview, CASB file-activity report"
+    },
+    {
+      "priority": "high",
+      "action": "Collect endpoint forensic triage (KAPE or Plaso) from the subject's workstation",
+      "rationale": "Surfaces file access history, USB device connections, recent files",
+      "pointer": "KAPE targets: USB, LNK files, JumpLists, MFT, SRUM"
+    },
+    {
+      "priority": "medium",
+      "action": "Establish the subject's normal access baseline for the 3 months before the window",
+      "rationale": "Anomalous access is only meaningful relative to a baseline",
+      "pointer": "SIEM query: same user, same resource types, prior quarter"
+    }
+  ],
+  "severityFloor": "Medium",
+  "huntPlatforms": [
+    "Microsoft 365",
+    "Velociraptor",
+    "Elastic SIEM"
+  ],
+  "recommendedImportOrder": [
+    "siem",
+    "edr",
+    "m365",
+    "cloud-audit",
+    "badge-access"
+  ],
+  "huntBundles": [
+    "usb-devices",
+    "file-access",
+    "cloud-sync",
+    "email-exfil"
+  ],
+  "findingsSeeds": [
+    "Subject identified and scoped",
+    "Out-of-scope data access confirmed",
+    "USB / cloud / email exfiltration channel",
+    "Staging before departure",
+    "Post-resignation access",
+    "Credential / account sharing"
+  ],
+  "reportFraming": {
+    "template": "insider-executive",
+    "audience": "HR + legal + executive",
+    "summaryPrompt": "Summarize the insider activity, policy violations, and evidence for HR and legal."
+  },
+  "synthesisHint": "This is an insider-threat case — prioritize T1052 Exfiltration Over Physical Medium (USB), T1567 Exfiltration to Cloud Service, T1078 Valid Accounts (the insider's own), and T1056 Input Capture."
+}

@@ -1,0 +1,81 @@
+{
+  "id": "intrusion",
+  "name": "Network Intrusion",
+  "description": "External attacker gained a foothold — initial access, persistence, lateral movement.",
+  "builtIn": true,
+  "recommendedImports": [
+    "network",
+    "siem",
+    "chainsaw",
+    "hayabusa",
+    "velociraptor"
+  ],
+  "initialKeyQuestions": [
+    "What was the initial access vector?",
+    "What persistence mechanisms were established?",
+    "Did the attacker move laterally, and to which hosts?",
+    "What privileges/accounts did the attacker obtain?",
+    "What C2 infrastructure was contacted?",
+    "What was the attacker's objective (data theft, persistence, staging)?",
+    "Is the attacker still active in the environment?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Isolate compromised hosts and block known C2 infrastructure",
+      "rationale": "Contain the foothold before scoping",
+      "pointer": "EDR isolation + firewall egress block"
+    },
+    {
+      "priority": "high",
+      "action": "Identify patient zero and the initial access vector",
+      "rationale": "Root-cause the entry to prevent re-entry and scope the investigation",
+      "pointer": "Web/proxy/email/SMB-share logs + EDR first-observed"
+    },
+    {
+      "priority": "high",
+      "action": "Map persistence across all touched hosts (services, scheduled tasks, registry, WMI)",
+      "rationale": "Persistence is what makes an intrusion durable across reboots",
+      "pointer": "Velociraptor Windows.Sysinternals.Autoruns / KAPE persistence targets"
+    },
+    {
+      "priority": "high",
+      "action": "Trace lateral movement from patient zero via RDP/SMB/WMI/WinRM",
+      "rationale": "Determines the full set of hosts to rebuild",
+      "pointer": "Windows Security 4624/4625/4688, Sysmon EID 3, 4624 logon type"
+    }
+  ],
+  "severityFloor": "High",
+  "huntPlatforms": [
+    "Velociraptor",
+    "Security Onion",
+    "Elastic SIEM"
+  ],
+  "recommendedImportOrder": [
+    "network",
+    "edr",
+    "windows-evtx",
+    "siem",
+    "velociraptor"
+  ],
+  "huntBundles": [
+    "persistence",
+    "lateral-movement",
+    "c2-callback",
+    "credential-theft"
+  ],
+  "findingsSeeds": [
+    "Initial access vector confirmed",
+    "Persistence mechanism identified",
+    "Lateral movement path mapped",
+    "C2 infrastructure attributed",
+    "Privilege escalation observed",
+    "Attacker objective determined"
+  ],
+  "reportFraming": {
+    "template": "intrusion-executive",
+    "audience": "IR team + IT operations + executive",
+    "summaryPrompt": "Summarize the intrusion scope, patient zero, and containment status for the IR team and executive."
+  },
+  "synthesisHint": "This is a network intrusion case — prioritize TA0001 Initial Access, TA0003 Persistence, TA0008 Lateral Movement, and TA0011 Command and Control."
+}

@@ -1,0 +1,77 @@
+{
+  "id": "bec",
+  "name": "BEC / Email Compromise",
+  "description": "Business Email Compromise — account takeover, mail-rule manipulation, wire fraud.",
+  "builtIn": true,
+  "recommendedImports": [
+    "m365",
+    "siem",
+    "chainsaw"
+  ],
+  "initialKeyQuestions": [
+    "Which mailboxes were compromised?",
+    "How was initial access achieved (phishing, password spray, OAuth grant)?",
+    "Were mail-forwarding rules or inbox rules created by the attacker?",
+    "Were financial transactions or wire transfers initiated?",
+    "What external IP addresses and user-agents accessed the account?",
+    "Was MFA present and, if so, how was it bypassed?",
+    "What data was accessed or exfiltrated from the mailbox?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Revoke all active sessions and reset the compromised account's password and MFA",
+      "rationale": "Terminates attacker's active access",
+      "pointer": "Entra ID → Revoke sessions, reset MFA, reset password"
+    },
+    {
+      "priority": "critical",
+      "action": "Export the Unified Audit Log (UAL) for all affected mailboxes (past 90 days)",
+      "rationale": "Primary evidence source for all mailbox and sign-in activity",
+      "pointer": "Microsoft Purview compliance portal → Audit search"
+    },
+    {
+      "priority": "high",
+      "action": "Review and immediately delete any attacker-created inbox rules",
+      "rationale": "Inbox rules hide replies and forward mail to attacker-controlled addresses",
+      "pointer": "Exchange Admin Center → mailbox rules"
+    },
+    {
+      "priority": "high",
+      "action": "Audit OAuth app grants and newly consented applications on the compromised account",
+      "rationale": "OAuth grants survive password resets and provide persistent mailbox access",
+      "pointer": "Entra ID → Enterprise Applications → User consent"
+    }
+  ],
+  "severityFloor": "Medium",
+  "huntPlatforms": [
+    "Microsoft 365",
+    "Entra ID / Azure AD"
+  ],
+  "recommendedImportOrder": [
+    "m365",
+    "entra-audit",
+    "siem",
+    "email-gateway"
+  ],
+  "huntBundles": [
+    "mailbox-rules",
+    "mfa-bypass",
+    "conditional-access",
+    "oauth-app-grants"
+  ],
+  "findingsSeeds": [
+    "Mailbox account takeover confirmed",
+    "Attacker-created inbox/forwarding rules",
+    "OAuth app grant persistence",
+    "MFA bypass mechanism",
+    "Wire transfer / payment fraud initiated",
+    "Mailbox data exfiltrated"
+  ],
+  "reportFraming": {
+    "template": "bec-executive",
+    "audience": "finance + legal + executive",
+    "summaryPrompt": "Summarize the BEC compromise, funds-at-risk, and recovery actions for finance and legal."
+  },
+  "synthesisHint": "This is a BEC case — prioritize T1566 Phishing (initial access), T1098 Account Manipulation (inbox rules / OAuth grants), T1078 Valid Accounts, and T1567 Exfiltration to Cloud Service."
+}

@@ -1,0 +1,79 @@
+{
+  "id": "web-app-intrusion",
+  "name": "Web App Intrusion",
+  "description": "Web application attack — SQLi, RCE, webshell, server compromise.",
+  "builtIn": true,
+  "recommendedImports": [
+    "network",
+    "siem",
+    "chainsaw",
+    "hayabusa"
+  ],
+  "initialKeyQuestions": [
+    "What web application or endpoint was targeted?",
+    "What was the attack technique (SQLi, RCE, file upload, SSRF)?",
+    "Was a webshell or backdoor installed?",
+    "What OS commands were executed by the web process?",
+    "Did the attacker pivot from the web server to internal systems?",
+    "What data was accessed or exfiltrated?",
+    "Has the vulnerability been patched or the system isolated?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "critical",
+      "action": "Snapshot the compromised web server, then isolate it from the network",
+      "rationale": "Preserve evidence before isolation; prevent further exploitation",
+      "pointer": "VM snapshot or disk image first, then firewall/EDR isolation"
+    },
+    {
+      "priority": "critical",
+      "action": "Search for webshells across the web root and all upload/temp directories",
+      "rationale": "Webshells provide persistent backdoor access",
+      "pointer": "find /var/www -name '*.php' -newer <install_date> / Velociraptor Windows.Detection.Webshell"
+    },
+    {
+      "priority": "high",
+      "action": "Collect and archive web server access logs (Apache/Nginx/IIS/WAF) for the full attack window",
+      "rationale": "Access logs are the primary evidence source",
+      "pointer": "/var/log/apache2/access.log, IIS C:\\inetpub\\logs, WAF audit log"
+    },
+    {
+      "priority": "high",
+      "action": "Review OS process execution for suspicious child processes spawned by the web worker",
+      "rationale": "RCE/webshell activity appears as the web process spawning cmd/bash/python",
+      "pointer": "Sysmon EID 1, Auditd execve, Security EID 4688 filtered by ParentImage"
+    }
+  ],
+  "severityFloor": "Medium",
+  "huntPlatforms": [
+    "Security Onion",
+    "Elastic SIEM"
+  ],
+  "recommendedImportOrder": [
+    "web-logs",
+    "network",
+    "edr",
+    "siem",
+    "waf"
+  ],
+  "huntBundles": [
+    "webshell",
+    "suspicious-children",
+    "c2-callback",
+    "data-staging"
+  ],
+  "findingsSeeds": [
+    "Exploitation technique confirmed (SQLi/RCE/upload/SSRF)",
+    "Webshell or backdoor installed",
+    "OS commands executed by web process",
+    "Pivot from web server to internal systems",
+    "Data accessed or exfiltrated",
+    "Vulnerability patched / system isolated"
+  ],
+  "reportFraming": {
+    "template": "webapp-executive",
+    "audience": "app-team + security + executive",
+    "summaryPrompt": "Summarize the web-app intrusion, exploited vulnerability, and remediation for the app team and executive."
+  },
+  "synthesisHint": "This is a web-app-intrusion case — prioritize T1190 Exploit Public-Facing Application, T1505.003 Server Software Component: Web Shell, T1059 Command and Scripting Interpreter, and T1071 Application Layer Protocol (C2)."
+}

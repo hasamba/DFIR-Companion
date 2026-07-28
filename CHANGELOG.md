@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Incident-type auto-playbooks** (#236) — the New case dialog's *Incident type* picker pre-configures a case for a recurring incident pattern: eight built-in types (ransomware, BEC, data exfiltration, intrusion, insider threat, cloud compromise, web-app intrusion, malware outbreak) seed type-specific key questions, priority-ordered next steps, and that incident's expected findings as open confirm/deny questions. Synthesis is told which type the case is so it prioritizes the relevant ATT&CK techniques — prompt context only, it never reaches the report. Types are editable JSON in `companion/data/incident-types/`, analysts can drop their own into an `incident-types/` folder beside the cases root, and re-picking a type merges rather than overwriting analyst edits.
+
 ### Fixed
 - **Correlation no longer merges one artifact across hosts** (#345) — the same binary hash or file path seen on two machines was collapsed into a single event, which erased the lateral-movement edge the evidence graph derives from it, left the surviving row holding one host's name and the other's timestamp, and could drop a host from the case entirely. The hash, path and exact-duplicate steps now correlate within a host (as the host+pid and command-line steps already did); an event with no recorded host still joins a host's group when the artifact was seen on exactly one. Note: timelines correlated by an earlier build stay merged — the fix applies as new evidence is correlated, and cannot un-merge what was already persisted.
 

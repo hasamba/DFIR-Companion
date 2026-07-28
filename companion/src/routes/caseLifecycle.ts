@@ -5,6 +5,7 @@ import { isValidCaseId } from "../storage/caseStore.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
+import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { seedDemoCase } from "../analysis/seedDemoCase.js";
 import { archiveCase } from "../analysis/caseArchive.js";
@@ -105,9 +106,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // `npm run`-style tooling call it); the extension no longer creates cases. Rejects a
   // duplicate id so the form can't silently clobber an existing case's metadata/evidence.
   // Optional `templateId`: pre-populates key questions from the named template.
+  // Optional `incidentTypeId` (#236): additionally applies an incident type's auto-playbook —
+  // type-specific key questions, next steps, and expected-finding confirm/deny seeds.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
-      const { caseId, name, investigator, aiProvider, templateId } = req.body ?? {};
+      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
       if (!caseId || !name) return res.status(400).json({ error: "caseId and name are required" });
       if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
       if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
@@ -122,6 +125,22 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           if (template.initialNextSteps?.length) state.nextSteps = buildInitialNextSteps(template);
           state.updatedAt = new Date().toISOString();
           await options.stateStore.save(state);
+        }
+      }
+      // Incident-type auto-configuration (#236): when an incident type is picked at creation, apply
+      // its key questions, next steps, and findings seeds to the fresh state, and persist the
+      // per-case chosen-type record (which the synthesis prompt reads for the type's hint).
+      //
+      // Runs AFTER the template apply and MERGES rather than replaces. The dashboard offers a single
+      // picker, so in practice only one of the two arrives — but an API caller may send both, and
+      // silently discarding the questions the template just seeded loses what it asked for.
+      if (incidentTypeId && options.incidentTypeStore && options.stateStore) {
+        const type = await options.incidentTypeStore.get(String(incidentTypeId));
+        if (type) {
+          const state = await options.stateStore.load(caseId);
+          const { state: next } = applyIncidentTypeToState(state, type);
+          await options.stateStore.save(next);
+          await options.incidentTypeStore.saveRecord(caseId, String(incidentTypeId));
         }
       }
       dispatchNotify(milestoneEvent(caseId, `Investigation opened: ${name}`, [`Investigator: ${investigator ?? "unknown"}`], new Date().toISOString()));

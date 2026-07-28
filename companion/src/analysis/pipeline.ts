@@ -181,6 +181,8 @@ import {
 import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
+import type { IncidentTypeStore } from "./incidentTypeStore.js";
+import { renderIncidentTypeBlock } from "./incidentTypes.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { flagContradictedAnswers } from "./answerContradiction.js";
 import { detectSatisfiedCollections, buildSatisfiedCollectionsBlock } from "./collectSatisfaction.js";
@@ -1643,6 +1645,10 @@ export interface PipelineOptions {
   // Per-case import-meta store. When set, synthesis + the evidence-gap panel flag a zero-yield AI
   // import (a source read as "clean" that actually dropped everything — investigation-guidance #10).
   importMetaStore?: ImportMetaStore;
+  // Per-case incident-type store (#236). When set, synthesis prepends the chosen type's one-line
+  // hint so the model prioritizes the techniques that matter for a ransomware / BEC / exfil case.
+  // Absent → no hint (CLI/tests).
+  incidentTypeStore?: IncidentTypeStore;
 }
 
 // Keep analyst-pinned questions across a synthesis. The model is told about them and may
@@ -5452,6 +5458,14 @@ export class AnalysisPipeline {
     const playbookTasks = this.opts.playbookStore ? await this.opts.playbookStore.load(caseId) : [];
     const playbookProgressBlock = renderPlaybookProgressBlock(playbookTasks);
 
+    // Incident-type framing (#236): the one-line hint for the type the analyst picked at case
+    // creation, so the model prioritizes ransomware / BEC / exfil techniques. A pure INPUT synthesis
+    // never rewrites, and cheap (one short line) — but changing the type must re-synthesize, so it
+    // joins the skip-if-unchanged hash below.
+    const incidentTypeBlock = renderIncidentTypeBlock(
+      this.opts.incidentTypeStore ? await this.opts.incidentTypeStore.loadType(caseId) : null,
+    );
+
     // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
     // the IOCs (value + intel verdicts), the scope, the legitimate markers, and (when opted
     // in) the notebook entries. NOT the findings / MITRE / threads / summary, which synthesis
@@ -5468,6 +5482,9 @@ export class AnalysisPipeline {
       // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
       // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
       pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
+      // Re-picking the incident type reframes what the model should prioritize — an otherwise
+      // identical timeline must re-synthesize rather than skip.
+      it: incidentTypeBlock,
       // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
       // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
       ob: observationsBlock,
@@ -5590,7 +5607,7 @@ export class AnalysisPipeline {
       return `${ctx}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
     };
     const synthOverhead = estimateTokens(getSynthesisPrompt())
-      + estimateTokens(scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + observationsBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
+      + estimateTokens(incidentTypeBlock + scopeNote + contextBlock + graphBlock + beaconBlock + attackPhaseBlock + knownUnknownsBlock + adversaryBlock + notebookBlock + analystHypothesesBlock + refutedHypothesesBlock + priorHuntsBlock + playbookProgressBlock + satisfiedBlock + pinnedBlock + reanswerBlock + observationsBlock + existingFindings + openThreads + falsePositiveBlock + authorizedContextBlock + learnedPatternsBlock + (state.lastSummary || "")) + 400;
     const fit = fitItemsToBudget(promptEvents, renderEvent, Math.max(0, inputTokenBudget() - synthOverhead));
     if (fit < promptEvents.length) { selection = selectSynthesisEventsAnnotated(collapsedEvents, fit, rarityOf); promptEvents = selection.events; }
 
@@ -5636,6 +5653,7 @@ export class AnalysisPipeline {
       ? " Rows prefixed \"~\" are SUPPORTING CONTEXT (pulled in to explain a nearby anchor), not primary findings — weight them as background."
       : "";
     const userPrompt =
+      incidentTypeBlock +
       scopeNote +
       contextBlock +
       graphBlock +
