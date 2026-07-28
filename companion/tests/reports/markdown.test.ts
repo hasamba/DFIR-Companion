@@ -346,6 +346,23 @@ describe("renderMarkdownReport", () => {
     expect(md).toContain("OS Credential Dumping \\| LSASS");
   });
 
+  it("#12: neutralizes newlines in table cells so a multi-line value doesn't break the table into spurious rows", () => {
+    // A multi-line revision comment reaches cellMd via the revisions table. The \n ends the GFM
+    // row; the text after becomes bogus extra rows with empty trailing cells. The fix collapses
+    // \r\n into a space so the row stays a single row.
+    const state = emptyState("c2");
+    const meta = emptyReportMeta();
+    meta.revisions = [{ version: "1.0", date: "2026-05-22", author: "Analyst", comments: "Initial\r\ndraft\nwith newlines" }];
+    const md = renderMarkdownReport(state, meta);
+    // The revisions row must be a single line; the newlines collapsed to a space.
+    const row = md.split("\n").find((l) => l.includes("Initial") && l.includes("draft"));
+    expect(row).toBeDefined();
+    expect(row!).toContain("Initial draft with newlines");
+    // No spurious extra rows from the newlines.
+    const bogus = md.split("\n").filter((l) => /^\| draft \|/.test(l) || /^\| with newlines/.test(l));
+    expect(bogus).toHaveLength(0);
+  });
+
   it("sorts findings by severity (Critical first)", () => {
     const state = emptyState("c1");
     const mk = (id: string, sev: "Critical" | "Low") => ({ id, severity: sev, title: id, description: "",

@@ -51,7 +51,13 @@ import {
 // human value nor derivable data exists, a clearly marked placeholder shows what to fill.
 
 function cellMd(value: string): string {
-  return value.replace(/\|/g, "\\|");
+  // Escape the pipe (GFM table cell separator) AND neutralize newlines. A \n or \r inside a GFM
+  // table cell ends the row; the text after the newline becomes spurious rows with empty trailing
+  // cells, corrupting the table structure. The corrupted Markdown flows to the HTML export (marked
+  // parses the broken table) and the DOCX export, producing broken tables in all three deliverables.
+  // Newlines reach here from report-meta free-text fields (revisions[].comments, distribution[].name,
+  // glossary entries) and from AI-generated descriptions that contain a literal newline (#12).
+  return value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
 }
 
 const SEVERITY_ORDER: Record<Severity, number> = {

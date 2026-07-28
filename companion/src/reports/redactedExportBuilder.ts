@@ -35,6 +35,12 @@ export interface RedactedExportDeps {
   // Optional: the victim org's own domains/emails (analyst-entered for the exposure check). These
   // are PII and are merged into the anonymizer's known entities so they're tokenized everywhere.
   customerStore?: CustomerStore;
+  // Optional: report metadata (for the victim organization NAME). The anonymizer's detectors match
+  // structured indicators (IP/email/host/domain) but NOT a free-text org name, so without feeding
+  // it here as a custom OTHER entity the victim org name (e.g. "GlobalTech Industries") survived
+  // unredacted on the title page and throughout the report while the same org's DOMAINS were
+  // tokenized (#13). The org's domains come in via customerStore; the org NAME comes in here.
+  reportMetaStore?: { load(caseId: string): Promise<{ organization?: string }> };
   ocrRunner: OcrRunner;
   // Injectable for tests; default is the real sharp-backed redactor + fs readers.
   redactImage?: (buf: Buffer, opts: ScreenshotRedactOptions) => Promise<ScreenshotRedactResult>;
@@ -64,11 +70,22 @@ export async function buildRedactedExport(
   // domain in the exposure section is not otherwise in deriveKnownEntities) and their emails too.
   const targets = deps.customerStore ? await deps.customerStore.load(caseId) : { domains: [], emails: [] };
   const targetEmails: CustomEntity[] = targets.emails.map((value) => ({ value, category: "EMAIL" as const }));
+  // Victim organization NAME: the anonymizer's anonCustom does a word-boundary exact-match on every
+  // custom entity, so a multi-word org name is matched and tokenized wherever it appears. Without
+  // this, "GlobalTech Industries" survived unredacted while globaltech.com was tokenized (#13).
+  let orgEntity: CustomEntity[] = [];
+  if (deps.reportMetaStore) {
+    try {
+      const meta = await deps.reportMetaStore.load(caseId);
+      const org = meta.organization?.trim();
+      if (org) orgEntity = [{ value: org, category: "OTHER" as const }];
+    } catch { /* no meta or corrupt — skip; the org name stays as-is */ }
+  }
   const known: KnownEntities = {
     hosts: derived.hosts,
     accounts: derived.accounts,
     internalDomains: [...derived.internalDomains, ...targets.domains.map((d) => d.toLowerCase())],
-    custom: [...custom, ...disc.discovered, ...targetEmails],
+    custom: [...custom, ...disc.discovered, ...targetEmails, ...orgEntity],
     suppressed: disc.suppressed,
   };
   const policy = redactedExportPolicy();

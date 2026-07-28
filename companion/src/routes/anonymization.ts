@@ -278,6 +278,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           // Victim org domains/emails the analyst entered for the exposure check are PII too —
           // feed them to the anonymizer so they're tokenized even when absent from the timeline.
           customerStore: new CustomerStore(store),
+          // Victim org NAME: the anonymizer has no free-text detector, so feed meta.organization
+          // as a custom OTHER entity so it's tokenized to ANON_OTHER_n wherever it appears (#13).
+          reportMetaStore: options.reportMetaStore,
           ocrRunner: options.ocrRunner ?? new TesseractOcrRunner(),
         },
         req.params.id,

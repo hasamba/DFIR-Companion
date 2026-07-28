@@ -115,6 +115,25 @@ describe("buildRedactedExport", () => {
     expect(paths).toEqual(["REDACTION-NOTES.txt", "export-manifest.json", "report/report.html", "report/report.md"]);
   });
 
+  it("#13: tokenizes the victim org NAME (from report-meta) as ANON_OTHER_n, not just its domains", async () => {
+    // The anonymizer has no free-text detector; the org name must be fed in as a custom OTHER
+    // entity. Without it, "GlobalTech Industries" survived unredacted while globaltech.com was
+    // tokenized to ANON_DOMAIN_n.
+    const d = deps({
+      reportMetaStore: { load: async () => ({ organization: "GlobalTech Industries" }) } as RedactedExportDeps["reportMetaStore"],
+      reportWriter: {
+        redactedReportContents: async (_caseId: string, redact: (s: string) => string) => ({
+          markdown: redact("Incident at GlobalTech Industries involving GlobalTech Industries servers"),
+          html: "<h1>r</h1>", findingsCsv: "f", iocsCsv: "i", timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
+        }),
+      },
+    });
+    const { zip } = await buildRedactedExport(d, "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
+    const md = new Map(readZip(zip).map((e) => [e.path, e.data])).get("report/report.md")!.toString("utf8");
+    expect(md).not.toContain("GlobalTech Industries");
+    expect(md).toContain("ANON_OTHER_1");
+  });
+
   it("ships an export-manifest.json with a correct sha256/bytes for every other file (#79)", async () => {
     const { zip } = await buildRedactedExport(deps(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
     const entries = readZip(zip);
