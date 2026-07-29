@@ -1,82 +1,76 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
-import { McpClient } from "../integrations/mcp/mcpClient.js";
-import { createMcpHttpTransport } from "../integrations/mcp/mcpHttpTransport.js";
+import { listServers, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
 import { spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
 import { runMcpAgent } from "../integrations/mcp/mcpAgentRunner.js";
 import { mergeDelta } from "../analysis/stateMerge.js";
 import { deltaSchema, type AnalysisDelta } from "../analysis/responseSchema.js";
-import { tokenEnvKey, type McpServer } from "../integrations/mcp/mcpServerStore.js";
+import type { McpServer } from "../integrations/mcp/mcpServerStore.js";
 import { resolveContainedPath } from "../integrations/tools/runToolImport.js";
 import { logActivity } from "../analysis/activityLog.js";
-import type { McpToolInfo } from "../integrations/mcp/mcpProtocol.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
 /**
- * MCP server registry + probe routes (#296, phase 1). Mirrors the external-tool surface rather than
- * inventing a new one — an MCP server is another place an analyst's tooling lives, so it is
- * configured the way custom tools are: /mcp/status parallels /tools/status, the /mcp/servers CRUD
- * parallels /tools/custom, and /mcp/reconnect parallels /tools/reconnect.
+ * MCP policy + run routes (#296).
  *
- * Phase 1 is registry + reachability only. Running a tool against case evidence needs the delivery
- * layer (§6) and a JobManager job (§7), and lands in phase 3.
+ * The Companion does not speak MCP and stores no server URL or token: Claude Code is configured with
+ * the operator's servers and holds their credentials, and every call goes through it. What lives
+ * here is policy — of the servers Claude Code has, which the Companion may point case evidence at,
+ * which tools they may run, which binaries those tools may invoke, and how evidence reaches them.
+ *
+ * /mcp/status therefore reports two things side by side: what Claude Code is configured with, and
+ * what the Companion has policy for. A name in one and not the other is visible rather than
+ * mysterious.
  */
 export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, recordImportFailure, ingestStreamed, pushImportCheckpoint } = ctx;
 
   /**
-   * Last known reachability per server. Domain-local rather than on RouteContext: nothing outside
-   * this module needs it, and it is cache, not state — an empty map after a restart just means the
-   * next /mcp/status reports "never checked" until something probes.
+   * What Claude Code last reported. Domain-local rather than on RouteContext: nothing outside this
+   * module needs it, and it is cache, not state — empty after a restart just means /mcp/status says
+   * "not checked" until something refreshes it.
    */
-  const probes = new Map<string, { ok: boolean; at: string; error?: string; tools: McpToolInfo[] }>();
+  let discovered: { at: string; servers: McpBridgeServer[]; error?: string } | null = null;
 
-  // Injected in tests so no route test opens a socket; the real one is undici (see mcpHttpTransport).
-  const transport = options.mcpTransport ?? createMcpHttpTransport();
-  // Likewise for the file push — tests inject rather than spawning scp.
+  // Injected in tests so no route test spawns the CLI or scp.
   const transferRunner = options.mcpTransferRunner ?? spawnTransferRunner();
+  const claudeBin = process.env.DFIR_AI_CLAUDE_CODE_BIN;
+  const claudeModel = process.env.DFIR_MCP_MODEL;
 
-  const clientFor = (server: McpServer): McpClient => new McpClient({
-    url: server.url,
-    transport,
-    // Read live from env rather than captured at registration, so POST /mcp/reconnect applies a
-    // token saved in Settings without a restart.
-    token: process.env[tokenEnvKey(server.id)] || undefined,
-    timeoutMs: server.timeoutMs,
-  });
-
-  // Configured servers and what is known about them. Never touches the network — reachability comes
-  // from the probe cache, so opening the Settings tab cannot hang on an unreachable lab host.
+  // Policy plus whatever Claude Code last reported. Never spawns anything: discovery is a cached
+  // `claude mcp list`, so opening the Settings tab cannot hang behind a slow MCP server starting up.
   app.get("/mcp/status", async (_req: Request, res: Response) => {
-    if (!options.mcpServerStore) return res.status(501).json({ enabled: false, servers: [] });
+    if (!options.mcpServerStore) return res.status(501).json({ enabled: false, servers: [], claudeCode: null });
     const servers = await options.mcpServerStore.load();
+    const byName = new Map((discovered?.servers ?? []).map((d) => [d.name, d]));
     return res.status(200).json({
       enabled: true,
+      // What Claude Code has, so the dashboard can offer real names instead of asking for free text
+      // and can show a policy entry whose server has since disappeared.
+      claudeCode: discovered
+        ? { at: discovered.at, error: discovered.error ?? null, servers: discovered.servers }
+        : null,
       servers: servers.map((s) => {
-        const probe = probes.get(s.id);
+        const seen = byName.get(s.id);
         return {
           id: s.id,
           label: s.label,
-          url: s.url,
           enabled: s.enabled,
+          agentEnabled: s.agentEnabled,
           allowedTools: s.allowedTools,
           allowedCommands: s.allowedCommands,
-          // A server whose permitted tools take a command argument grants execution of whatever
-          // that command names, so the UI can warn before the first run rather than after.
           timeoutMs: s.timeoutMs,
-          // How evidence reaches it (§6). No secrets in here — an ssh key is a path, never a value.
+          // How evidence reaches it (§6). No secrets — an ssh key is a path, never a value.
           delivery: s.delivery,
-          // The KEY, never the value — the token itself stays in .env behind envManager's redaction.
-          tokenEnvKey: tokenEnvKey(s.id),
-          hasToken: !!process.env[tokenEnvKey(s.id)],
-          reachable: probe ? probe.ok : null,   // null = never probed
-          checkedAt: probe?.at ?? null,
-          error: probe?.error ?? null,
-          tools: (probe?.tools ?? []).map((t) => ({ name: t.name, description: t.description })),
+          // null = Claude Code has not been asked yet; false = asked, and it has no such server.
+          knownToClaudeCode: discovered ? !!seen : null,
+          connected: seen ? seen.connected : null,
+          status: seen ? seen.status : null,
         };
       }),
     });
@@ -91,7 +85,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
     try {
       const server = await options.mcpServerStore.add(req.body ?? {});
-      return res.status(201).json({ ok: true, server, tokenEnvKey: tokenEnvKey(server.id) });
+      return res.status(201).json({ ok: true, server });
     } catch (err) {
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
@@ -102,8 +96,6 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     try {
       const server = await options.mcpServerStore.update(req.params.id, req.body ?? {});
       if (!server) return res.status(404).json({ error: `MCP server "${req.params.id}" not found` });
-      // The endpoint or token key may have moved; what was known about the old one no longer holds.
-      probes.delete(req.params.id);
       return res.status(200).json({ ok: true, server });
     } catch (err) {
       return res.status(400).json({ ok: false, error: (err as Error).message });
@@ -113,39 +105,33 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   app.delete("/mcp/servers/:id", async (req: Request, res: Response) => {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
     const removed = await options.mcpServerStore.remove(req.params.id);
-    probes.delete(req.params.id);
     return res.status(200).json({ ok: true, removed });
   });
 
   /**
-   * Handshake with one server and list what it offers — phase 1's verifiable outcome (§12), and how
-   * an analyst finds the tool names to put in `allowedTools`.
+   * Ask Claude Code which MCP servers it is configured with, and whether each is answering.
    *
-   * A disabled server is still probeable on purpose: checking that a URL and token work before
-   * turning it on is exactly when this is most useful.
+   * This is the whole of discovery: the Companion has no URL to connect to and no token to present,
+   * so "is it reachable" is a question only Claude Code can answer. The reply carries names and
+   * health and nothing else — `claude mcp list` prints each server's full command line, which for an
+   * mcp-remote entry contains a bearer token, and mcpBridge drops that portion before it gets here.
    *
-   * An unreachable server answers 200 with `ok: false`, not 5xx — the request succeeded, and the
-   * answer is "that host is not talking to us", which the UI renders. Same posture as
-   * /tools/reconnect, which is likewise always 200.
+   * A failure answers 200 with `ok: false`, not 5xx: the request succeeded and the answer is "Claude
+   * Code could not tell us", which the UI renders. Same posture as /tools/reconnect.
    */
-  app.post("/mcp/servers/:id/probe", async (req: Request, res: Response) => {
+  app.post("/mcp/discover", async (_req: Request, res: Response) => {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
-    const server = await options.mcpServerStore.get(req.params.id);
-    if (!server) return res.status(404).json({ error: `MCP server "${req.params.id}" not found` });
-
-    const client = clientFor(server);
     try {
-      const info = await client.initialize();
-      const tools = await client.listTools();
-      probes.set(server.id, { ok: true, at: new Date().toISOString(), tools });
-      return res.status(200).json({ ok: true, server: server.id, info, tools });
+      const found = await listServers({
+        ...(options.mcpClaudeRunner ? { runner: options.mcpClaudeRunner } : {}),
+        ...(claudeBin ? { bin: claudeBin } : {}),
+      });
+      discovered = { at: new Date().toISOString(), servers: found };
+      return res.status(200).json({ ok: true, servers: found });
     } catch (err) {
       const error = (err as Error).message;
-      probes.set(server.id, { ok: false, at: new Date().toISOString(), error, tools: [] });
-      return res.status(200).json({ ok: false, server: server.id, error });
-    } finally {
-      // Best-effort inside the client; a dangling session must not fail an otherwise fine probe.
-      await client.close();
+      discovered = { at: new Date().toISOString(), servers: [], error };
+      return res.status(200).json({ ok: false, error });
     }
   });
 
@@ -235,13 +221,21 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const isJobId = (v: string): boolean => /^job_\d+$/.test(v);
   const previewDir = (caseId: string): string => join(store.caseDir(caseId), ".mcpwork", "preview");
 
-  interface StagedPreview { server: string; tool: string; label: string; kind: string; outName: string }
+  interface StagedPreview { server: string; tool: string; label: string; kind: string; outName: string; runId?: string }
+
+  /**
+   * Identifies THIS process. JobManager numbers jobs from 1 on every start, and a preview is named
+   * after its job, so without this a restart makes job_1's stale file answer for a brand-new job_1 —
+   * observed in testing, serving a previous run's output as if it were the current one.
+   */
+  const RUN_ID = randomUUID();
 
   async function stagePreview(caseId: string, jobId: string, p: StagedPreview & { text: string }): Promise<void> {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
     await mkdir(dir, { recursive: true });
-    const { text, ...meta } = p;
+    const { text, ...rest } = p;
+    const meta: StagedPreview = { ...rest, runId: RUN_ID };
     await writeFile(join(dir, `${jobId}.out`), text, "utf8");
     await writeFile(join(dir, `${jobId}.json`), JSON.stringify(meta), "utf8");
   }
@@ -251,6 +245,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const dir = previewDir(caseId);
     try {
       const meta = JSON.parse(await readFile(join(dir, `${jobId}.json`), "utf8")) as StagedPreview;
+      // A preview from a previous process is not this job's — drop it rather than serve it.
+      if (meta.runId !== RUN_ID) { await dropPreview(caseId, jobId); return null; }
       return { ...meta, text: await readFile(join(dir, `${jobId}.out`), "utf8") };
     } catch {
       return null;
@@ -284,7 +280,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       try {
         const outcome = await runMcpTool({
           server,
-          client: clientFor(server),
+          ...(options.mcpClaudeRunner ? { claudeRunner: options.mcpClaudeRunner } : {}),
+          ...(claudeBin ? { claudeBin } : {}),
+          ...(claudeModel ? { model: claudeModel } : {}),
           transferRunner,
           signal: job?.signal,
           onProgress: (detail) => { if (job) options.jobManager?.progress(job.jobId, 0, 1, detail); },
@@ -538,13 +536,10 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
     void (async () => {
       try {
-        const tokens: Record<string, string | undefined> = {};
-        for (const s of servers) tokens[s.id] = process.env[tokenEnvKey(s.id)];
         const result = await runMcpAgent({
-          servers, tokens, prompt,
-          workDir: join(store.caseDir(caseId), ".mcpwork"),
-          bin: process.env.DFIR_AI_CLAUDE_CODE_BIN,
-          model: process.env.DFIR_MCP_AGENT_MODEL,
+          servers, prompt,
+          ...(claudeBin ? { bin: claudeBin } : {}),
+          ...(process.env.DFIR_MCP_AGENT_MODEL ? { model: process.env.DFIR_MCP_AGENT_MODEL } : {}),
           ...(options.mcpAgentRunner ? { runner: options.mcpAgentRunner } : {}),
           ...(job?.signal ? { signal: job.signal } : {}),
         });
@@ -580,13 +575,13 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     return res.status(202).json({ ok: true, jobId: job?.jobId ?? null, servers: servers.map((s) => s.id), preview });
   });
 
-  // Re-read DFIR_MCP_* from .env so a token saved via the dashboard applies WITHOUT a restart —
-  // the same #1-gotcha fix /tools/reconnect provides. Tokens are read per call, so there is nothing
-  // to rebuild; the cached reachability is dropped because a new token may change the answer.
+  // Kept as the dashboard's "refresh" affordance. There is no token to reload any more — Claude Code
+  // holds those — so this re-reads DFIR_MCP_* (model/flag settings) and drops the cached discovery so
+  // the next status reflects a server added to Claude Code since.
   app.post("/mcp/reconnect", async (_req: Request, res: Response) => {
     try {
       const applied = await reloadEnvPrefix("DFIR_MCP_");
-      probes.clear();
+      discovered = null;
       return res.status(200).json({ ok: true, enabled: !!options.mcpServerStore, applied });
     } catch (err) {
       return res.status(500).json({ ok: false, error: (err as Error).message });

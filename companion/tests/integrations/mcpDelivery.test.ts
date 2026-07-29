@@ -16,7 +16,7 @@ const runner: TransferRunner = async (binary, args, opts) => {
 };
 
 const server = (delivery: Partial<McpDelivery> = {}): McpServer => ({
-  id: "sift", label: "SIFT", url: "http://192.168.1.50:8080/mcp", enabled: true,
+  id: "sift-mcp", label: "SIFT", enabled: true,
   allowedTools: [], allowedCommands: [], agentEnabled: false, timeoutMs: 300_000,
   delivery: { ...DEFAULT_DELIVERY, ...delivery },
 });

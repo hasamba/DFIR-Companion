@@ -3,9 +3,8 @@ import { inspectCommand, areCommandsAllowed, assertCallAllowed } from "../../src
 import { DEFAULT_DELIVERY, type McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
 
 const server = (over: Partial<McpServer> = {}): McpServer => ({
-  id: "sift",
+  id: "sift-mcp",
   label: "SIFT",
-  url: "http://192.168.1.50:8080/mcp",
   enabled: true,
   allowedTools: [],
   allowedCommands: [],

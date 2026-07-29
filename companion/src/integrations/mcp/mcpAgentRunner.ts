@@ -1,25 +1,25 @@
-import { writeFile, rm, mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { defaultClaudeRunner, type ClaudeRunner } from "../../providers/claudeRunner.js";
+import { claudeMissingMessage, finalText } from "./mcpBridge.js";
 import { deltaSchema, stripAiExtractedFrom, type AnalysisDelta } from "../../analysis/responseSchema.js";
 import type { McpServer } from "./mcpServerStore.js";
 
 // Agentic MCP mode (#296 §7, Mode 2). "Investigate this dump" genuinely wants a loop — pslist,
 // notice something, pivot to malfind, follow the thread — which a single tools/call cannot do.
 //
-// This module spawns `claude -p` with a generated --mcp-config scoped to the chosen servers and
-// lets IT drive the loop. It lives apart from ClaudeCodeProvider on purpose and does NOT relax that
+// This module spawns `claude -p` and lets IT drive the loop against the servers Claude Code is
+// ALREADY configured with. It generates no config and handles no token — the Companion is not an
+// MCP client and holds no credentials. It lives apart from ClaudeCodeProvider on purpose and does
+// NOT relax that
 // provider's ISOLATION_ARGS: the empty tool allowlist there strips ~15k input tokens of tool schemas
 // from every vision and synthesis call the product makes, and guarantees a single-turn call cannot
 // hang on a permission prompt. Relaxing it to enable this feature would tax every unrelated AI call.
 //
 // ── What this mode gives up, stated plainly ──────────────────────────────────────────────────────
-// In Mode 1 the companion IS the MCP client, so every call passes assertCallAllowed and the argv
-// allowlist bounds what a command-runner server may execute. Here the companion is not in the loop:
-// `claude` talks to the servers directly, so ONLY the tool allowlist survives (as --allowed-tools).
-// The command allowlist CANNOT be enforced. Permitting a command-runner tool in this mode therefore
-// grants an autonomous loop the ability to choose its own command lines on that host.
+// On the single-call path the Companion still decides the arguments, so assertCallAllowed can vet
+// them before asking. Here it cannot: the loop chooses its own calls, so ONLY the tool allowlist
+// survives (as --allowed-tools) and the command allowlist CANNOT be enforced at all. Permitting a
+// command-runner tool in this mode grants an autonomous loop the ability to choose its own command
+// lines on that host.
 //
 // That is why it takes two independent opt-ins — DFIR_MCP_AGENT_ENABLED for the feature and
 // `agentEnabled` per server — and why the README says so in those words. It is not a default, it is
@@ -31,11 +31,7 @@ export const DEFAULT_MAX_TURNS = 20;
 export interface McpAgentOptions {
   /** Servers to expose. Callers pass only agent-enabled ones — this module does not re-check. */
   servers: McpServer[];
-  /** Bearer token per server id, read live from env by the caller. */
-  tokens: Record<string, string | undefined>;
   prompt: string;
-  /** A directory the caller owns; the config file is written here and removed before returning. */
-  workDir: string;
   bin?: string;
   model?: string;
   timeoutMs?: number;
@@ -51,25 +47,6 @@ export interface McpAgentResult {
 }
 
 /**
- * The --mcp-config document. Streamable HTTP with the bearer token as a header, which is the shape
- * these servers expose and the same one the companion's own client uses.
- */
-export function buildMcpConfig(servers: McpServer[], tokens: Record<string, string | undefined>): {
-  mcpServers: Record<string, { type: "http"; url: string; headers?: Record<string, string> }>;
-} {
-  const mcpServers: Record<string, { type: "http"; url: string; headers?: Record<string, string> }> = {};
-  for (const s of servers) {
-    const token = tokens[s.id];
-    mcpServers[s.id] = {
-      type: "http",
-      url: s.url,
-      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-    };
-  }
-  return { mcpServers };
-}
-
-/**
  * The --allowed-tools value: every permitted tool, fully qualified as `mcp__<server>__<tool>`.
  *
  * Enumerated rather than wildcarded per server. `mcp__sift__*` would hand the agent whatever the
@@ -77,14 +54,6 @@ export function buildMcpConfig(servers: McpServer[], tokens: Record<string, stri
  */
 export function allowedToolPatterns(servers: McpServer[]): string[] {
   return servers.flatMap((s) => s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
-}
-
-/** Whether a server's permitted tools include one that takes a command — see the note above. */
-export function grantsCommandExecution(server: McpServer, toolSchemas: Record<string, unknown>): boolean {
-  return server.allowedTools.some((t) => {
-    const props = (toolSchemas[t] as { properties?: Record<string, unknown> } | undefined)?.properties;
-    return !!props && ["command", "cmd", "argv"].some((k) => k in props);
-  });
 }
 
 const SYSTEM_PROMPT = [
@@ -154,12 +123,7 @@ export function normalizeAgentDelta(raw: unknown): unknown {
   };
 }
 
-/**
- * Run the agentic loop and return a validated delta.
- *
- * The config file carries a bearer token, so it is written under a random name, removed in a
- * `finally`, and never passed as an argument — argv is readable by any process on the box.
- */
+/** Run the agentic loop and return a validated delta. */
 export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult> {
   const runner = opts.runner ?? defaultClaudeRunner;
   const allowed = allowedToolPatterns(opts.servers);
@@ -167,80 +131,38 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
     throw new Error("no MCP tools are allowed on the selected server(s) — name the tools each may run first");
   }
 
-  await mkdir(opts.workDir, { recursive: true });
-  const configPath = join(opts.workDir, `mcp-agent-${randomBytes(8).toString("hex")}.json`);
-  await writeFile(configPath, JSON.stringify(buildMcpConfig(opts.servers, opts.tokens)), { encoding: "utf8", mode: 0o600 });
+  const args = [
+    "-p",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    ...(opts.model ? ["--model", opts.model] : []),
+    "--system-prompt", SYSTEM_PROMPT,
+    // NOT --strict-mcp-config: the servers come from Claude Code's own configuration, which is the
+    // point. The cost is that it starts every server it is configured with, not only the ones named
+    // here — --allowed-tools bounds what may be CALLED, not what gets launched.
+    // Project and local sources stay off: no repo CLAUDE.md, hooks or settings in a run over evidence.
+    // "user" and NOT "" — MCP servers ARE a user setting, so blanking every source leaves Claude
+    // Code with no servers at all. Found by running it: the call came back "no sift-mcp server is
+    // connected". Project and local sources stay off, so no repo CLAUDE.md, hooks or settings.
+    "--setting-sources", "user",
+    "--allowed-tools", allowed.join(","),
+    "--max-turns", String(opts.maxTurns ?? DEFAULT_MAX_TURNS),
+  ];
+  const stdin = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: opts.prompt }] } }) + "\n";
 
-  try {
-    const args = [
-      "-p",
-      "--input-format", "stream-json",
-      "--output-format", "stream-json",
-      "--verbose",
-      ...(opts.model ? ["--model", opts.model] : []),
-      "--system-prompt", SYSTEM_PROMPT,
-      "--mcp-config", configPath,
-      // Only the generated config: never the operator's own MCP servers, whatever they are.
-      "--strict-mcp-config",
-      // No CLAUDE.md, no hooks, no settings — this loop reads evidence, not the developer's config.
-      "--setting-sources", "",
-      "--allowed-tools", allowed.join(","),
-      "--max-turns", String(opts.maxTurns ?? DEFAULT_MAX_TURNS),
-    ];
-    const stdin = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: opts.prompt }] } }) + "\n";
+  const run = await runner({
+    bin: opts.bin?.trim() || "claude",
+    args, stdin,
+    timeoutMs: opts.timeoutMs ?? 900_000,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
 
-    const run = await runner({
-      bin: opts.bin?.trim() || "claude",
-      args, stdin,
-      timeoutMs: opts.timeoutMs ?? 900_000,
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+  if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
+  if (run.timedOut) throw new Error(`the agent run exceeded ${opts.timeoutMs ?? 900_000}ms and was stopped`);
 
-    if (run.spawnError) {
-      if (run.spawnError.code === "ENOENT") {
-        throw new Error(
-          `Claude Code CLI not found (tried "${opts.bin || "claude"}"). Agentic MCP mode needs Claude Code ` +
-          `installed and authenticated ON THIS HOST; the non-agentic run path does not.`,
-        );
-      }
-      throw new Error(`Claude Code failed to start: ${run.spawnError.message}`);
-    }
-    if (run.timedOut) throw new Error(`the agent run exceeded ${opts.timeoutMs ?? 900_000}ms and was stopped`);
-
-    const rawText = finalText(run.stdout, run.stderr, run.code);
-    return { rawText, delta: parseDelta(rawText) };
-  } finally {
-    await rm(configPath, { force: true }).catch(() => { /* best-effort; it holds a token */ });
-  }
-}
-
-/**
- * The agent's final message out of the stream-json events.
- *
- * Takes the terminal `result` verbatim rather than stitching assistant messages the way
- * ClaudeCodeProvider does. That stitch is correct THERE because tools are disabled, so more than one
- * assistant message can only be a max_tokens continuation. Here tools drive a loop and several
- * assistant messages are the normal case — one per turn — so stitching them would splice the
- * agent's intermediate reasoning into its answer.
- */
-export function finalText(stdout: string, stderr: string, code: number | null): string {
-  let result: { result?: string; is_error?: boolean; subtype?: string } | undefined;
-  for (const line of stdout.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    let evt: unknown;
-    try { evt = JSON.parse(t); } catch { continue; }
-    if ((evt as { type?: string }).type === "result") result = evt as typeof result;
-  }
-  if (!result) {
-    const snip = (stderr || stdout).replace(/\s+/g, " ").trim().slice(0, 200);
-    throw new Error(`the agent produced no result (exit ${code ?? "null"})${snip ? ` — ${snip}` : ""}`);
-  }
-  if (result.is_error || (result.subtype && result.subtype !== "success")) {
-    throw new Error(`the agent failed: ${result.result?.trim() || result.subtype || "unknown error"}`);
-  }
-  if (!result.result?.trim()) throw new Error("the agent returned no content");
-  return result.result;
+  const rawText = finalText(run.stdout, run.stderr, run.code);
+  return { rawText, delta: parseDelta(rawText) };
 }
 
 /**

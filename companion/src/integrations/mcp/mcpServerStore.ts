@@ -1,27 +1,30 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, basename } from "node:path";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { atomicWrite } from "../../storage/atomicWrite.js";
-import { validateBaseUrl } from "../../providers/urlValidation.js";
 
-// Analyst-registered MCP servers (#296) — the SIFT / REMnux / windows-triage boxes an operator
-// already runs on their own network, so case evidence can be pointed at them from inside the
-// companion. GLOBAL + shared across cases, exactly like CustomToolStore: a variable-length list
-// belongs in a JSON store rather than fixed .env keys.
+// POLICY for the MCP servers Claude Code is configured with (#296).
 //
-// Same ownership rule as the external-tool runner: the analyst owns the tooling. The companion
-// does not bundle, install, host or update any MCP server, it only calls the ones it is told about.
+// Deliberately NOT a place to configure a server. There is no URL here and no token: the operator
+// configures their MCP servers once, in Claude Code, and Claude Code holds the credentials. This
+// store answers a different question — of the servers Claude Code already has, which may the
+// Companion point case evidence at, what may they run, and how does the evidence reach them.
 //
-// Deliberately NOT here yet: the §6 delivery block (how a multi-gigabyte image gets onto the
-// analysis host). Every field below is re-validated on read with a `.catch()` default, so adding
-// `delivery` in phase 2 reads old files without a migration.
+// `id` is therefore the server's name AS CLAUDE CODE KNOWS IT ("sift-mcp"), not a slug of a label
+// the analyst invented. That is what `claude mcp list` reports and what `mcp__<name>__<tool>` is
+// built from, so anything else would need a mapping that could silently go stale.
+//
+// An entry here for a server Claude Code does not have is harmless — it simply never resolves. The
+// dashboard shows both lists side by side so the mismatch is visible rather than mysterious.
 
 /**
  * How evidence reaches this server's host (§6). Flat with a `mode` discriminator rather than a
  * union, so a hand-edited file with a half-filled block still reads back with defaults instead of
  * collapsing the whole server entry.
+ *
+ * This stays the Companion's job even though the calls do not: Claude Code cannot move a 16 GB
+ * memory image onto an analysis box, and MCP has no file-transfer primitive.
  */
 export const mcpDeliverySchema = z.object({
   mode: z.enum(["remote-path", "scp"]).catch("remote-path"),
@@ -76,9 +79,10 @@ export function validateDelivery(d: McpDelivery): string | null {
 }
 
 export const mcpServerSchema = z.object({
+  /** The server's name in Claude Code — the key `claude mcp list` reports and `mcp__<id>__` uses. */
   id: z.string(),
-  label: z.string(),
-  url: z.string(),
+  /** Display only; defaults to the id. */
+  label: z.string().catch(""),
   enabled: z.boolean().catch(true),
   // The tools this server may be asked to RUN. See isToolAllowed for why an empty list denies.
   allowedTools: z.array(z.string()).catch([]),
@@ -90,16 +94,16 @@ export const mcpServerSchema = z.object({
   // deliberately not implied by it: the agent path cannot enforce allowedCommands (see
   // mcpAgentRunner's header), so exposing a server to it grants strictly more than a manual run.
   agentEnabled: z.boolean().catch(false),
-  // Matches ToolConfig's default. A real Volatility run outlives it, which is why the call is a
-  // JobManager job rather than a request (§7) — this bounds the individual HTTP round-trip.
+  /** Bounds one tool call. A real Volatility run outlives it, which is why the call is a job (§7). */
   timeoutMs: z.number().catch(300_000),
   delivery: mcpDeliverySchema.catch(DEFAULT_DELIVERY),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;
 
 export interface McpServerInput {
-  label: string;
-  url: string;
+  /** The Claude Code server name. Required — this is the join key, not a free-text label. */
+  id: string;
+  label?: string;
   enabled?: boolean;
   allowedTools?: string[] | string;      // array or a comma/space-separated string
   allowedCommands?: string[] | string;   // likewise
@@ -108,23 +112,11 @@ export interface McpServerInput {
   delivery?: Partial<McpDelivery>;
 }
 
-/** Stable slug id from the server label, so re-adding the same name updates rather than duplicates. */
-export function slugifyServerLabel(label: string): string {
-  const s = String(label ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
-  return s || `server-${randomUUID().slice(0, 8)}`;
-}
-
 /**
- * Where this server's bearer token lives. Tokens are NOT stored in the registry JSON: that file is
- * ordinary case-adjacent config an analyst may copy or commit, whereas .env is already the
- * companion's secret store. Deriving the key from the id rather than storing it means the registry
- * cannot be edited to point at some OTHER key's value.
- *
- * `_TOKEN` is already in envManager's SECRET_SUFFIXES, so redaction in GET /settings/env is free.
+ * Claude Code server names are used verbatim in `mcp__<name>__<tool>` and reach a shell nowhere,
+ * but they do become filenames and JSON keys, so keep them to a sane shape.
  */
-export function tokenEnvKey(id: string): string {
-  return `DFIR_MCP_${String(id ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN`;
-}
+const SAFE_SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,80}$/;
 
 /**
  * Whether this server may be asked to run `toolName`.
@@ -134,8 +126,8 @@ export function tokenEnvKey(id: string): string {
  * advertising new tools after the fact and thereby widening its own reach. "Empty means allow all"
  * would leave exactly that threat unmitigated, so a tool has to be named before it can be run.
  *
- * tools/list is deliberately NOT gated by this — an analyst has to be able to see what a server
- * offers in order to choose what to allow.
+ * Listing a server's tools is deliberately NOT gated by this — an analyst has to be able to see what
+ * a server offers in order to choose what to allow.
  */
 export function isToolAllowed(server: McpServer, toolName: string): boolean {
   return server.allowedTools.includes(toolName);
@@ -154,17 +146,14 @@ function normalizeNames(input: string[] | string | undefined): string[] {
 function fromInput(input: McpServerInput, id: string): McpServer {
   return {
     id,
-    label: String(input.label ?? "").trim().slice(0, 120),
-    url: String(input.url ?? "").trim().replace(/\/+$/, ""),
+    label: String(input.label ?? "").trim().slice(0, 120) || id,
     enabled: input.enabled !== false,
-    agentEnabled: input.agentEnabled === true,
     allowedTools: normalizeNames(input.allowedTools),
     // Stored by basename, the same form mcpGuard compares against, so "/usr/bin/grep" and "grep"
     // are not two different rules.
     allowedCommands: normalizeNames(input.allowedCommands).map((c) => basename(c)),
+    agentEnabled: input.agentEnabled === true,
     timeoutMs: Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 300_000,
-    // Parsed through the schema so a partial block from the dashboard gets every default filled,
-    // and a garbage one falls back rather than being stored half-formed.
     delivery: mcpDeliverySchema.catch(DEFAULT_DELIVERY).parse({ ...DEFAULT_DELIVERY, ...(input.delivery ?? {}) }),
   };
 }
@@ -176,10 +165,10 @@ export class McpServerStore {
     try {
       const raw = JSON.parse(await readFile(this.file, "utf8")) as unknown;
       if (!Array.isArray(raw)) return [];
-      // Re-validate on read so a hand-edited file cannot inject a malformed server into the client.
+      // Re-validate on read so a hand-edited file cannot inject a malformed entry into the runner.
       return raw
         .map((r) => { const p = mcpServerSchema.safeParse(r); return p.success ? p.data : null; })
-        .filter((s): s is McpServer => s !== null && !!s.id && !!s.label && !!s.url);
+        .filter((s): s is McpServer => s !== null && !!s.id);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;
@@ -196,30 +185,17 @@ export class McpServerStore {
     await atomicWrite(this.file, JSON.stringify(list, null, 2));
   }
 
-  /**
-   * Add (or, when the label slugifies to an existing id, replace) a server.
-   *
-   * The URL goes through the same validateBaseUrl every AI provider base URL does. That already
-   * permits http:// to an RFC1918 host — precisely the LAN deployment these servers use — while
-   * rejecting cleartext to a public one. Its top-of-file note on what URL validation can and cannot
-   * prevent applies here unchanged: this stops the accidental case, not a deliberately hostile URL.
-   */
+  /** Add policy for a Claude Code server, or replace what is already there for that name. */
   async add(input: McpServerInput): Promise<McpServer> {
-    const label = String(input.label ?? "").trim();
-    const url = String(input.url ?? "").trim();
-    if (!label) throw new Error("a server label is required");
-    if (!url) throw new Error("a server URL is required");
-    const urlError = validateBaseUrl(url);
-    if (urlError) throw new Error(urlError);
-
-    const id = slugifyServerLabel(label);
+    const id = String(input.id ?? "").trim();
+    if (!id) throw new Error("a Claude Code server name is required");
+    if (!SAFE_SERVER_ID.test(id)) throw new Error(`"${id}" is not a valid Claude Code server name`);
     const server = fromInput(input, id);
     const deliveryError = validateDelivery(server.delivery);
     if (deliveryError) throw new Error(deliveryError);
+
     const list = await this.load();
-    const next = list.some((s) => s.id === id)
-      ? list.map((s) => (s.id === id ? server : s))
-      : [...list, server];
+    const next = list.some((s) => s.id === id) ? list.map((s) => (s.id === id ? server : s)) : [...list, server];
     await this.save(next);
     return server;
   }
@@ -228,20 +204,17 @@ export class McpServerStore {
     const list = await this.load();
     const cur = list.find((s) => s.id === id);
     if (!cur) return null;
-    const url = patch.url !== undefined ? String(patch.url).trim() : cur.url;
-    const urlError = validateBaseUrl(url);
-    if (urlError) throw new Error(urlError);
     const merged = fromInput({
+      id,
       label: patch.label ?? cur.label,
-      url,
       enabled: patch.enabled ?? cur.enabled,
-      agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
       allowedTools: patch.allowedTools ?? cur.allowedTools,
       allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
+      agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
       timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
       // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
       delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
-    }, id);   // keep the same id — a label change does not re-slug an existing server
+    }, id);
     const deliveryError = validateDelivery(merged.delivery);
     if (deliveryError) throw new Error(deliveryError);
     await this.save(list.map((s) => (s.id === id ? merged : s)));

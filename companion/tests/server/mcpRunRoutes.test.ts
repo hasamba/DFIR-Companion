@@ -10,33 +10,21 @@ import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
-import type { McpHttpResponse, McpHttpTransport } from "../../src/integrations/mcp/mcpClient.js";
 import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
 import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
 
-const LAN_URL = "http://192.168.1.50:8080/mcp";
 // Output the existing importers recognize, so the run exercises the real ingest chain.
 const YARA_OUT = "EvilRule /x/a.bin\n0x10:$s: 4d 5a";
 
-function fakeTransport(opts: { text?: string; isError?: boolean } = {}): McpHttpTransport {
-  return {
-    async send(req): Promise<McpHttpResponse> {
-      if (req.method === "DELETE") return { status: 204, headers: {}, body: "" };
-      const msg = JSON.parse(req.body ?? "{}") as { id?: number; method?: string };
-      if (msg.id === undefined) return { status: 202, headers: {}, body: "" };
-      const result = msg.method === "initialize"
-        ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "sift-mcp", version: "1" } }
-        : { content: [{ type: "text", text: opts.text ?? YARA_OUT }], isError: opts.isError === true };
-      return {
-        status: 200,
-        headers: { "content-type": "application/json", "mcp-session-id": "s1" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }),
-      };
-    },
-  };
+/** A Claude Code that reports whatever the tool "returned". */
+function fakeClaude(opts: { text?: string } = {}): ClaudeRunner {
+  return async () => ({
+    code: 0, stderr: "",
+    stdout: JSON.stringify({ type: "result", subtype: "success", result: opts.text ?? YARA_OUT }) + "\n",
+  });
 }
 
-async function harness(opts: { text?: string; isError?: boolean } = {}) {
+async function harness(opts: { text?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-mcprun-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -57,7 +45,7 @@ async function harness(opts: { text?: string; isError?: boolean } = {}) {
   const app = createApp(store, {
     pipeline, stateStore, importUndoStore,
     mcpServerStore, custodyStore, jobManager,
-    mcpTransport: fakeTransport(opts), mcpTransferRunner,
+    mcpClaudeRunner: fakeClaude(opts), mcpTransferRunner,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
@@ -65,7 +53,7 @@ async function harness(opts: { text?: string; isError?: boolean } = {}) {
   await writeFile(evidence, "MZ evidence bytes\n", "utf8");
 
   await mcpServerStore.add({
-    label: "SIFT", url: LAN_URL,
+    id: "sift-mcp",
     allowedTools: ["run_command"], allowedCommands: ["vol.py"],
     delivery: { mode: "scp", host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" },
   });
@@ -94,9 +82,9 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   it("delivers, runs, and ingests the result into the case", async () => {
     const { app, jobManager, transfers } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     expect(res.status).toBe(202);
-    expect(res.body).toMatchObject({ ok: true, server: "sift", tool: "run_command" });
+    expect(res.body).toMatchObject({ ok: true, server: "sift-mcp", tool: "run_command" });
 
     const job = await settle(jobManager, res.body.jobId);
     expect(job.status).toBe("done");
@@ -110,14 +98,14 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   it("records a custody transferred event naming where the evidence went", async () => {
     const { app, jobManager, custodyStore } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     await settle(jobManager, res.body.jobId);
 
     const transferred = (await custodyStore.load("c1")).filter((r) => r.event === "transferred");
     expect(transferred).toHaveLength(1);
     expect(transferred[0]).toMatchObject({
       source: "analyst@sift.lab:/cases/incoming/mem.raw",
-      trigger: "mcp:sift",
+      trigger: "mcp:sift-mcp",
     });
     expect(transferred[0].artifactPath).toContain("mem.raw");
   });
@@ -125,10 +113,10 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   it("registers a cancellable job of kind mcp", async () => {
     const { app, jobManager } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = jobManager.get(res.body.jobId);
 
-    expect(job).toMatchObject({ kind: "mcp", caseId: "c1", cancellable: true, label: "sift/run_command" });
+    expect(job).toMatchObject({ kind: "mcp", caseId: "c1", cancellable: true, label: "sift-mcp/run_command" });
     await settle(jobManager, res.body.jobId);
   });
 
@@ -136,11 +124,11 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   it("fails with a message naming the server and tool when the server returns nothing", async () => {
     const { app, jobManager } = await harness({ text: "   " });
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = await settle(jobManager, res.body.jobId);
 
     expect(job.status).toBe("error");
-    expect(job.error).toMatch(/sift\/run_command: returned no output/);
+    expect(job.error).toMatch(/sift-mcp\/run_command: returned no output/);
   });
 
   // Detection routes unstructured prose to the generic "log" kind rather than refusing it, so a
@@ -150,25 +138,15 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   it("ingests prose through the generic log path rather than refusing it", async () => {
     const { app, jobManager } = await harness({ text: "Sample drops a payload and beacons to 10.2.3.4" });
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = await settle(jobManager, res.body.jobId);
 
     expect(job.status).toBe("done");
   });
 
-  it("fails the job when the tool reports its own failure", async () => {
-    const { app, jobManager } = await harness({ text: "unsupported profile", isError: true });
-
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
-    const job = await settle(jobManager, res.body.jobId);
-
-    expect(job.status).toBe("error");
-    expect(job.error).toMatch(/reported a failure: unsupported profile/);
-  });
-
   it("400s a target path outside the case directory", async () => {
     const { app } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run")
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run")
       .send({ ...RUN_BODY, targetPath: "../../../etc/passwd" });
 
     expect(res.status).toBe(400);
@@ -177,7 +155,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
 
   it("400s a command the server is not allowed to run", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run")
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run")
       .send({ ...RUN_BODY, args: { command: ["curl", "http://x", "<target>"] } });
 
     // The guard runs inside the job, so the refusal lands there — and nothing was transferred.
@@ -190,19 +168,19 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
     const { app, mcpServerStore } = await harness();
     expect((await request(app).post("/cases/c1/mcp/ghost/run").send(RUN_BODY)).status).toBe(400);
 
-    await mcpServerStore.update("sift", { enabled: false });
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send(RUN_BODY);
+    await mcpServerStore.update("sift-mcp", { enabled: false });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/is disabled/);
   });
 
   it("400s without a tool, 404s an unknown case, 501s when unconfigured", async () => {
     const { app, store } = await harness();
-    expect((await request(app).post("/cases/c1/mcp/sift/run").send({ args: {} })).status).toBe(400);
-    expect((await request(app).post("/cases/nope/mcp/sift/run").send(RUN_BODY)).status).toBe(404);
+    expect((await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ args: {} })).status).toBe(400);
+    expect((await request(app).post("/cases/nope/mcp/sift-mcp/run").send(RUN_BODY)).status).toBe(404);
 
     const bare = createApp(store, {});
-    expect((await request(bare).post("/cases/c1/mcp/sift/run").send(RUN_BODY)).status).toBe(501);
+    expect((await request(bare).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY)).status).toBe(501);
   });
 });
 
@@ -212,7 +190,7 @@ describe("preview before import", () => {
   it("fetches the output without touching the case", async () => {
     const { app, jobManager } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     expect(res.body.preview).toBe(true);
     const job = await settle(jobManager, res.body.jobId);
     expect(job.status).toBe("done");
@@ -224,26 +202,26 @@ describe("preview before import", () => {
 
   it("labels the job as a preview", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
-    expect(jobManager.get(res.body.jobId)?.label).toBe("sift/run_command (preview)");
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
+    expect(jobManager.get(res.body.jobId)?.label).toBe("sift-mcp/run_command (preview)");
     await settle(jobManager, res.body.jobId);
   });
 
   it("returns the output and the kind it would import as", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
     expect(p.status).toBe(200);
-    expect(p.body).toMatchObject({ server: "sift", tool: "run_command", kind: "yara", bytes: YARA_OUT.length, truncated: false });
+    expect(p.body).toMatchObject({ server: "sift-mcp", tool: "run_command", kind: "yara", bytes: YARA_OUT.length, truncated: false });
     expect(p.body.text).toBe(YARA_OUT);
   });
 
   it("caps a large body so the point is the shape, not the volume", async () => {
     const big = "EvilRule /x/a.bin\n" + "0x10:$s: 4d 5a\n".repeat(2000);
     const { app, jobManager } = await harness({ text: big });
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
@@ -254,7 +232,7 @@ describe("preview before import", () => {
 
   it("imports exactly the fetched bytes on approval, without re-running the tool", async () => {
     const { app, jobManager, transfers } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
     const transfersAfterPreview = transfers.length;
 
@@ -270,17 +248,17 @@ describe("preview before import", () => {
 
   it("makes an approved import undoable", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
     await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
 
     const undo = await request(app).get("/cases/c1/import/undo-stack");
-    expect(undo.body.undo?.[0]?.label ?? undo.body.entries?.[0]?.label).toBe("MCP: sift/run_command");
+    expect(undo.body.undo?.[0]?.label ?? undo.body.entries?.[0]?.label).toBe("MCP: sift-mcp/run_command");
   });
 
   it("is consumed by importing, so it cannot be imported twice", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(200);
@@ -289,7 +267,7 @@ describe("preview before import", () => {
 
   it("discards a preview and leaves the case untouched", async () => {
     const { app, jobManager } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
     const del = await request(app).delete(`/cases/c1/mcp/preview/${res.body.jobId}`);
@@ -325,12 +303,12 @@ describe("POST /cases/:id/mcp/agent", () => {
     const h = await harness();
     if (opts.flag === undefined) process.env.DFIR_MCP_AGENT_ENABLED = "on";
     else delete process.env.DFIR_MCP_AGENT_ENABLED;
-    await h.mcpServerStore.update("sift", { agentEnabled: opts.agentEnabled ?? true });
+    await h.mcpServerStore.update("sift-mcp", { agentEnabled: opts.agentEnabled ?? true });
     // Rebuild the app so it picks up the injected agent runner.
     const app = createApp(h.store, {
       pipeline: h.pipeline, stateStore: h.stateStore, importUndoStore: h.importUndoStore,
       mcpServerStore: h.mcpServerStore, custodyStore: h.custodyStore, jobManager: h.jobManager,
-      mcpTransport: fakeTransport(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: agentRunner,
+      mcpClaudeRunner: fakeClaude(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: agentRunner,
     });
     return { ...h, app };
   }
@@ -358,7 +336,7 @@ describe("POST /cases/:id/mcp/agent", () => {
 
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate the dump" });
     expect(res.status).toBe(202);
-    expect(res.body.servers).toEqual(["sift"]);
+    expect(res.body.servers).toEqual(["sift-mcp"]);
     const job = await settle(jobManager, res.body.jobId);
     expect(job.status).toBe("done");
 
@@ -373,7 +351,7 @@ describe("POST /cases/:id/mcp/agent", () => {
     await settle(jobManager, res.body.jobId);
 
     const undo = await request(app).get("/cases/c1/import/undo-stack");
-    expect((undo.body.undo || [])[0]?.label).toBe("MCP agent: sift");
+    expect((undo.body.undo || [])[0]?.label).toBe("MCP agent: sift-mcp");
   });
 
   it("previews the delta without merging it", async () => {
@@ -401,7 +379,7 @@ describe("POST /cases/:id/mcp/agent", () => {
 
   it("400s when the opted-in server has no allowed tools", async () => {
     const { app, mcpServerStore } = await agentHarness();
-    await mcpServerStore.update("sift", { allowedTools: [] });
+    await mcpServerStore.update("sift-mcp", { allowedTools: [] });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/no allowed tools/);
@@ -412,7 +390,7 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", () => {
   it("stages uploaded bytes, runs against them, and ingests", async () => {
     const { app, jobManager, transfers } = await harness();
 
-    const res = await request(app).post("/cases/c1/mcp/sift/run-upload").send({
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run-upload").send({
       ...RUN_BODY,
       targetPath: undefined,
       filename: "sample.bin",
@@ -428,7 +406,7 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", () => {
 
   it("400s without filename or bytes", async () => {
     const { app } = await harness();
-    const res = await request(app).post("/cases/c1/mcp/sift/run-upload").send({ ...RUN_BODY, filename: "x.bin" });
+    const res = await request(app).post("/cases/c1/mcp/sift-mcp/run-upload").send({ ...RUN_BODY, filename: "x.bin" });
     expect(res.status).toBe(400);
   });
 });

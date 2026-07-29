@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
-  runMcpAgent, buildMcpConfig, allowedToolPatterns, parseDelta, finalText, DEFAULT_MAX_TURNS,
+  runMcpAgent, allowedToolPatterns, parseDelta, DEFAULT_MAX_TURNS,
 } from "../../src/integrations/mcp/mcpAgentRunner.js";
+import { finalText } from "../../src/integrations/mcp/mcpBridge.js";
 import { DEFAULT_DELIVERY, type McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
 import type { ClaudeRunner, ClaudeRunOptions } from "../../src/providers/claudeRunner.js";
 
 const server = (over: Partial<McpServer> = {}): McpServer => ({
-  id: "sift", label: "SIFT", url: "http://192.168.1.50:8080/mcp", enabled: true,
+  id: "sift-mcp", label: "SIFT", enabled: true,
   allowedTools: ["run_command"], allowedCommands: ["vol.py"], agentEnabled: true,
   timeoutMs: 1000, delivery: DEFAULT_DELIVERY, ...over,
 });
@@ -23,46 +21,21 @@ const stdoutWith = (text: string, turns: string[] = []): string =>
 
 const DELTA = '{"findings":[{"title":"Injected process","detail":"malfind hit","severity":"High","confidence":70}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
 
-let workDir: string;
 let seen: ClaudeRunOptions[];
-let configAtRunTime: { text: string; mode: number } | null;
 
 function runnerReturning(stdout: string, extra: Partial<Awaited<ReturnType<ClaudeRunner>>> = {}): ClaudeRunner {
   return async (opts) => {
     seen.push(opts);
-    // Read the config while the process would be running — it must be gone by the time we return.
-    const i = opts.args.indexOf("--mcp-config");
-    if (i >= 0) {
-      const p = opts.args[i + 1];
-      configAtRunTime = { text: await readFile(p, "utf8"), mode: (await stat(p)).mode & 0o777 };
-    }
     return { code: 0, stdout, stderr: "", ...extra };
   };
 }
 
-beforeEach(async () => {
-  workDir = await mkdtemp(join(tmpdir(), "dfir-mcpagent-"));
-  seen = [];
-  configAtRunTime = null;
-});
-
-describe("buildMcpConfig", () => {
-  it("describes each server as streamable HTTP with its bearer token", () => {
-    const cfg = buildMcpConfig([server()], { sift: "lab-token" });
-    expect(cfg).toEqual({
-      mcpServers: { sift: { type: "http", url: "http://192.168.1.50:8080/mcp", headers: { Authorization: "Bearer lab-token" } } },
-    });
-  });
-
-  it("omits the header entirely when there is no token", () => {
-    expect(buildMcpConfig([server()], {}).mcpServers.sift).toEqual({ type: "http", url: "http://192.168.1.50:8080/mcp" });
-  });
-});
+beforeEach(() => { seen = []; });
 
 describe("allowedToolPatterns", () => {
   it("qualifies each allowed tool with its server", () => {
     expect(allowedToolPatterns([server({ allowedTools: ["run_command", "check_tools"] })]))
-      .toEqual(["mcp__sift__run_command", "mcp__sift__check_tools"]);
+      .toEqual(["mcp__sift-mcp__run_command", "mcp__sift-mcp__check_tools"]);
   });
 
   // A wildcard would hand the agent whatever the server advertises NEXT, which is the widening the
@@ -144,69 +117,56 @@ describe("parseDelta", () => {
 
 describe("runMcpAgent", () => {
   it("returns the parsed delta and the agent's own text", async () => {
-    const r = await runMcpAgent({ servers: [server()], tokens: { sift: "t" }, prompt: "investigate", workDir, runner: runnerReturning(stdoutWith(DELTA)) });
+    const r = await runMcpAgent({ servers: [server()], prompt: "investigate", runner: runnerReturning(stdoutWith(DELTA)) });
     expect(r.rawText).toBe(DELTA);
     expect(r.delta.iocs).toHaveLength(1);
   });
 
-  it("scopes the CLI to the generated config and the allowed tools only", async () => {
-    await runMcpAgent({ servers: [server()], tokens: {}, prompt: "go", workDir, runner: runnerReturning(stdoutWith(DELTA)) });
+  it("scopes the CLI to the allowed tools only", async () => {
+    await runMcpAgent({ servers: [server()], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
     const args = seen[0].args;
-    expect(args).toContain("--strict-mcp-config");            // never the operator's own MCP servers
     expect(args).toContain("--setting-sources");              // no CLAUDE.md, hooks or settings
-    expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
-    expect(args[args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift__run_command");
+    expect(args[args.indexOf("--setting-sources") + 1]).toBe("user");
+    expect(args[args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command");
     expect(args[args.indexOf("--max-turns") + 1]).toBe(String(DEFAULT_MAX_TURNS));
   });
 
-  // The config holds a bearer token: argv is readable by any process on the box.
-  it("passes the token in a file, never on the command line", async () => {
-    await runMcpAgent({ servers: [server()], tokens: { sift: "super-secret" }, prompt: "go", workDir, runner: runnerReturning(stdoutWith(DELTA)) });
-    expect(seen[0].args.join(" ")).not.toContain("super-secret");
-    expect(configAtRunTime?.text).toContain("super-secret");
-  });
-
-  it("writes that file owner-only and removes it afterwards", async () => {
-    await runMcpAgent({ servers: [server()], tokens: { sift: "t" }, prompt: "go", workDir, runner: runnerReturning(stdoutWith(DELTA)) });
-    expect(configAtRunTime?.mode).toBe(0o600);
-    expect(await readdir(workDir)).toEqual([]);
-  });
-
-  it("removes the config even when the run fails", async () => {
-    await expect(runMcpAgent({
-      servers: [server()], tokens: { sift: "t" }, prompt: "go", workDir,
-      runner: runnerReturning("", { code: 1 }),
-    })).rejects.toThrow();
-    expect(await readdir(workDir)).toEqual([]);
+  // The whole point of the change: the Companion holds no credentials and writes no config, because
+  // Claude Code is already configured with these servers.
+  it("generates no config and passes no token", async () => {
+    await runMcpAgent({ servers: [server()], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
+    const args = seen[0].args;
+    expect(args).not.toContain("--mcp-config");
+    expect(args).not.toContain("--strict-mcp-config");
+    expect(args.join(" ")).not.toMatch(/Bearer|token/i);
   });
 
   it("refuses to run when no tool is allowed on any selected server", async () => {
     await expect(runMcpAgent({
-      servers: [server({ allowedTools: [] })], tokens: {}, prompt: "go", workDir,
+      servers: [server({ allowedTools: [] })], prompt: "go",
       runner: runnerReturning(stdoutWith(DELTA)),
     })).rejects.toThrow(/no MCP tools are allowed/);
     expect(seen).toHaveLength(0);
   });
 
-  it("says that agentic mode needs Claude Code on this host when the binary is missing", async () => {
+  it("says the whole feature needs Claude Code on this host when the binary is missing", async () => {
     const enoent = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }) as NodeJS.ErrnoException;
     await expect(runMcpAgent({
-      servers: [server()], tokens: {}, prompt: "go", workDir,
+      servers: [server()], prompt: "go",
       runner: async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }),
-    })).rejects.toThrow(/needs Claude Code installed and authenticated ON THIS HOST/);
+    })).rejects.toThrow(/installed and authenticated on THIS host.*configured in it/s);
   });
 
   it("reports a timeout as one", async () => {
     await expect(runMcpAgent({
-      servers: [server()], tokens: {}, prompt: "go", workDir, timeoutMs: 5000,
+      servers: [server()], prompt: "go", timeoutMs: 5000,
       runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }),
     })).rejects.toThrow(/exceeded 5000ms/);
   });
 
   it("exposes several servers at once", async () => {
-    const two = [server(), server({ id: "remnux", url: "http://192.168.1.60:3000/mcp", allowedTools: ["run_tool"] })];
-    await runMcpAgent({ servers: two, tokens: { sift: "a", remnux: "b" }, prompt: "go", workDir, runner: runnerReturning(stdoutWith(DELTA)) });
-    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift__run_command,mcp__remnux__run_tool");
-    expect(JSON.parse(configAtRunTime!.text).mcpServers).toHaveProperty("remnux");
+    const two = [server(), server({ id: "remnux", allowedTools: ["run_tool"] })];
+    await runMcpAgent({ servers: two, prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
+    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command,mcp__remnux__run_tool");
   });
 });

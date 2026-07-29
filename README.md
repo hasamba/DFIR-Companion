@@ -40,7 +40,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
-- [Registering an MCP server](#registering-an-mcp-server)
+- [Using your MCP servers](#using-your-mcp-servers)
 - [Repository layout](#repository-layout)
 - [How the pieces fit](#how-the-pieces-fit)
 - [Environment variables (`companion/.env`)](#environment-variables-companionenv)
@@ -239,7 +239,7 @@ list of known compromised hosts and users.
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications; every outcome (imported/failed/pending, with reason) is appended to a running `drop-log.txt` in the same folder
 - **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
-- **MCP server registry** (Settings → Tools) — register **your own** MCP servers (SIFT, REMnux, windows-triage) so case evidence can be pointed at them; the Companion never bundles, installs or hosts one. Bearer tokens live in `.env` as `DFIR_MCP_<ID>_TOKEN` (never in the registry JSON, redacted in Settings); `http://` is permitted to a private-network host and rejected to a public one. Each server carries a **tool allowlist** (empty = nothing may run) and a **command allowlist**. Read [Registering an MCP server](#registering-an-mcp-server) before adding one that exposes a command runner — doing so grants command execution on that host
+- **MCP through Claude Code** (Settings → Tools) — point case evidence at the MCP servers **you already configured in Claude Code** (SIFT, REMnux, windows-triage). The Companion does not speak MCP, stores no server URL or token, and spawns no `npx`: it asks Claude Code, which holds the credentials, to make the call. **Requires Claude Code installed and authenticated on the Companion host.** What you configure here is policy — a **tool allowlist** (empty = nothing may run) and a **command allowlist** per server, plus how evidence reaches it. Read [Using your MCP servers](#using-your-mcp-servers) before allowing one that exposes a command runner: doing so grants command execution on that host
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
@@ -432,14 +432,38 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Demo case** — one-click load or `npm run seed-demo` to seed GlobalTech scenario
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`
 
-## Registering an MCP server
+## Using your MCP servers
 
-The Companion can call MCP servers **you** run — a SIFT workstation, a REMnux box, a Windows triage
-baseline service — so case evidence can be analysed on a machine that has the tooling. It never
-bundles, installs, hosts or updates one. Same rule as the external tool runner: you own the tooling.
+The Companion can point case evidence at MCP servers **you** run — a SIFT workstation, a REMnux box,
+a Windows triage baseline service — so evidence is analysed on a machine that has the tooling.
 
-Register a server in **Settings → Tools**, or `POST /mcp/servers` with a label and URL. Then
-`POST /mcp/servers/<id>/probe` to handshake and list what it offers.
+**It reaches them only through Claude Code.** The Companion is not an MCP client: it holds no server
+URL, no bearer token, and starts no `npx` or `uvx` of its own. Claude Code is already configured with
+your servers and already holds their credentials, so it does the talking and the Companion asks it
+to.
+
+### Prerequisites
+
+This whole feature works **only if**:
+
+1. **Claude Code is installed and authenticated on the machine running the Companion** — not on your
+   laptop, on the Companion host. Set `DFIR_AI_CLAUDE_CODE_BIN` if `claude` is not on its `PATH`.
+2. **Your MCP servers are configured in Claude Code** (`claude mcp add …`, or its config file), and
+   `claude mcp list` shows them connected.
+
+There is no fallback. If you run the Companion in Docker, from the AppImage, or from the portable
+Windows build without Claude Code alongside it, the MCP routes will tell you so and nothing else.
+
+Two consequences worth knowing before you rely on it. Every MCP call goes through a model, so it
+spends tokens and is not the bit-for-bit deterministic call a direct JSON-RPC request would be — the
+prompt makes it a transport (one tool, exact arguments, verbatim output) but a model is still in the
+middle. And because the servers come from Claude Code's own configuration rather than a generated
+one, Claude Code starts *every* server it is configured with on each run, not just the one being
+used; the allowlist bounds what may be *called*, not what gets launched.
+
+In **Settings → Tools**, press **Refresh from Claude Code** to load its server list, then allow one
+and say what it may do. There is nothing to type but policy — the server names come from Claude Code
+itself, so a typo cannot leave you with an entry that silently matches nothing.
 
 ### Running a tool against case evidence
 
@@ -525,8 +549,9 @@ describe its own tools honestly.
 
 ### Getting evidence to the server
 
-MCP has no file-transfer primitive and a multi-gigabyte memory image cannot travel inside a JSON-RPC
-argument, so the file has to already be somewhere the server can open it. Each server picks one of
+MCP has no file-transfer primitive and a multi-gigabyte memory image cannot travel inside a tool
+argument, so the file has to already be somewhere the server can open it. This part stays the
+Companion's job — Claude Code cannot move an image onto an analysis box. Each server picks one of
 two routes:
 
 **`remote-path`** (default) — the evidence is already visible to the analysis host over a shared
@@ -561,11 +586,10 @@ nothing — the chain never claims a copy that did not happen.
 ### Agentic mode (off by default)
 
 A single tool call cannot follow a thread. "Investigate this dump" wants a loop — run pslist, notice
-something, pivot to malfind — and that is what agentic mode does: it spawns the Claude Code CLI with
-an MCP config scoped to the servers you chose and lets it drive, then merges what it reports.
+something, pivot to malfind — and that is what agentic mode does: it lets Claude Code drive against
+the servers you allowed, then merges what it reports.
 
-`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, preview? }`. It needs **Claude Code installed
-and authenticated on the Companion host**, which nothing else here does.
+`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, preview? }`.
 
 **Read this before turning it on.** In a normal run the Companion is the MCP client, so every call
 passes the tool *and* command allowlists. In agentic mode it is not: `claude` talks to the servers
@@ -579,26 +603,24 @@ That is why it takes two separate opt-ins, neither implying the other:
 2. **Agent use** on each server — which servers it may reach
 
 What the mode still guarantees: tools are enumerated, never wildcarded, so a server cannot widen its
-own reach by advertising new ones; `--strict-mcp-config` means only the generated config is used,
-never your own MCP servers; `--setting-sources ""` means no `CLAUDE.md`, hooks or settings; the run
-is turn-limited; and the bearer token is written to an owner-only file that is deleted afterwards,
-never passed on the command line where any process could read it.
+own reach by advertising new ones; `--setting-sources ""` means no `CLAUDE.md`, hooks or settings;
+and the run is turn-limited.
 
 The agent's reply is schema-validated and stripped of provenance claims before it is merged —
 everything it saw came from tool output, which is untrusted. It is never asked for a case summary,
 so a run adds findings, IOCs and events without rewriting your conclusions. Preview works here too,
 and matters more: an autonomous loop decides for itself what to report.
 
-### Tokens
+### Credentials
 
-Bearer tokens are **not** stored in the registry JSON. They live in `.env` as
-`DFIR_MCP_<ID>_TOKEN` — e.g. a server with id `sift` reads `DFIR_MCP_SIFT_TOKEN` — which keeps them
-out of git and behind the same redaction every other secret gets in Settings. Save one and
-`POST /mcp/reconnect` applies it without a restart.
+There are none to configure here. Bearer tokens, headers and transports all live in Claude Code's own
+MCP configuration, which is the only place that holds them. The Companion stores a server *name*, an
+allowlist and a delivery block — nothing that would let it connect to anything on its own.
 
-Server URLs are validated the way AI provider URLs are: `http://` is permitted to a loopback or
-private-network host (the deployment these servers actually use) and rejected to a public one, where
-the token and evidence would cross the internet in the clear.
+One caveat if you go looking: `claude mcp list` prints each server's full command line, which for an
+`mcp-remote` entry includes the bearer token in cleartext. The Companion parses only the name and the
+health verdict out of that output and never stores, logs or renders the rest — but be careful where
+you run that command yourself.
 
 ## Repository layout
 
@@ -1031,7 +1053,7 @@ survives a server restart; results appear on the dashboard timeline/IOCs.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DFIR_MCP_<ID>_TOKEN` | — | Bearer token for the registered MCP server with that id — e.g. `DFIR_MCP_SIFT_TOKEN` for a server whose id is `sift`. The server list itself lives in `tools/mcp-servers.json` beside `cases/`; only the token belongs in `.env`, where it is redacted in Settings like every other secret. Save one and `POST /mcp/reconnect` applies it without a restart. |
+| `DFIR_MCP_MODEL` | (CLI default) | Model used for single MCP tool calls, passed to `claude --model`. |
 | `DFIR_MCP_AGENT_ENABLED` | `off` | Enables agentic mode. Off by default, and on its own it exposes nothing — each server must also opt in. Requires Claude Code authenticated on this host. Read [Agentic mode](#agentic-mode-off-by-default) first: the command allowlist cannot be enforced in that mode. |
 | `DFIR_MCP_AGENT_MODEL` | (CLI default) | Model for the agentic loop, passed to `claude --model`. |
 

@@ -1,14 +1,23 @@
 import { deliver, type TransferRunner } from "./mcpDelivery.js";
 import { assertCallAllowed } from "./mcpGuard.js";
-import type { McpClient } from "./mcpClient.js";
+import { callTool } from "./mcpBridge.js";
+import type { ClaudeRunner } from "../../providers/claudeRunner.js";
 import type { McpServer } from "./mcpServerStore.js";
 
-// One MCP run, end to end (#296 phase 3): get the evidence where the server can read it, check the
-// call is permitted, make it, tidy up. Deliberately knows nothing about cases, storage or ingest —
-// the route composes this with ingestStreamed, exactly as routes/tools.ts composes the tool runner.
+// One MCP run, end to end (#296): get the evidence where the server can read it, check the call is
+// permitted, ask Claude Code to make it, tidy up. Deliberately knows nothing about cases, storage or
+// ingest — the route composes this with ingestStreamed, exactly as routes/tools.ts composes the
+// tool runner.
 //
-// Everything it needs is injected (client, transfer runner, custody hook), so the whole sequence
-// tests without a socket, an ssh key or a case on disk.
+// The Companion does not call the server itself; mcpBridge asks Claude Code to. What survives that
+// is the guard: the Companion still decides the tool and the arguments, so assertCallAllowed vets
+// both before anything is asked for. What it cannot do is guarantee the model passes them through
+// unchanged — the prompt demands it and --allowed-tools bounds the reachable surface, but the
+// argument-level check is advice to a model rather than a wire-level constraint. That is the price
+// of the Companion not being an MCP client, and it is why the agent path is gated separately.
+//
+// Everything it needs is injected (the Claude runner, the transfer runner, the custody hook), so the
+// whole sequence tests without spawning anything, an ssh key or a case on disk.
 
 /** The placeholder standing in for the delivered evidence, matching the tool runner's `<target>`. */
 export const TARGET_PLACEHOLDER = "<target>";
@@ -22,7 +31,10 @@ export interface McpRunInput {
 
 export interface McpRunDeps {
   server: McpServer;
-  client: McpClient;
+  /** Drives the `claude` CLI. Injected so tests never spawn it. */
+  claudeRunner?: ClaudeRunner;
+  claudeBin?: string;
+  model?: string;
   transferRunner: TransferRunner;
   signal?: AbortSignal;
   recordTransfer?: (destination: string) => Promise<void>;
@@ -63,7 +75,7 @@ export function mentionsTarget(value: unknown): boolean {
 }
 
 export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<McpRunOutcome> {
-  const { server, client } = deps;
+  const { server } = deps;
 
   // Checked BEFORE anything is delivered, so a call that was never going to be permitted does not
   // first ship a memory image across the network. Checked again after substitution below, because
@@ -98,15 +110,16 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
     }
 
     deps.onProgress?.(`running ${input.tool} on ${server.label}`);
-    const result = await client.callTool(input.tool, args, deps.signal);
+    const text = await callTool({
+      server: server.id, tool: input.tool, args,
+      ...(deps.claudeRunner ? { runner: deps.claudeRunner } : {}),
+      ...(deps.claudeBin ? { bin: deps.claudeBin } : {}),
+      ...(deps.model ? { model: deps.model } : {}),
+      timeoutMs: server.timeoutMs,
+      ...(deps.signal ? { signal: deps.signal } : {}),
+    });
 
-    // The tool ran and reported its own failure. That is a diagnostic, not evidence — ingesting it
-    // would file an error message in the case timeline as if it were an artifact.
-    if (result.isError) {
-      throw new Error(`${server.id}/${input.tool} reported a failure: ${result.text.trim().slice(0, 400) || "no detail given"}`);
-    }
-
-    return { text: result.text, structured: result.structured, destination, remotePath };
+    return { text, structured: undefined, destination, remotePath };
   } finally {
     // Always, including on failure: a copy left behind after a crashed run is evidence sitting on a
     // machine nobody is tracking. Best-effort inside deliver's cleanup.
@@ -114,6 +127,5 @@ export async function runMcpTool(deps: McpRunDeps, input: McpRunInput): Promise<
       deps.onProgress?.("removing the staged copy");
       await cleanup();
     }
-    await client.close().catch(() => { /* the server expires its own sessions */ });
   }
 }

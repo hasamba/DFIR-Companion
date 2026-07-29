@@ -168,7 +168,6 @@ import {
 import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
 import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
-import type { McpHttpTransport } from "./integrations/mcp/mcpClient.js";
 import type { TransferRunner } from "./integrations/mcp/mcpDelivery.js";
 import type { ClaudeRunner } from "./providers/claudeRunner.js";
 import {
@@ -527,13 +526,14 @@ export interface AppOptions {
   // User-defined custom tools (#211) — a GLOBAL JSON store of analyst-added tools (name/binary/command/
   // extensions), merged into the tool set alongside the built-ins. Absent → only built-ins.
   customToolStore?: CustomToolStore;
-  // Analyst-registered MCP servers (#296) — the SIFT/REMnux/windows-triage boxes on the operator's
-  // own network that case evidence can be pointed at. Same ownership rule as the tool runner: the
-  // analyst owns the servers, the companion only calls them. Absent → the /mcp routes answer 501.
+  // Policy for the MCP servers CLAUDE CODE is configured with (#296) — which of them case evidence
+  // may be pointed at, what they may run, how it gets there. No URLs and no tokens: the analyst
+  // configures servers in Claude Code, and the companion asks Claude Code to call them.
+  // Absent → the /mcp routes answer 501.
   mcpServerStore?: McpServerStore;
-  // How the MCP client reaches those servers. Defaults to undici; tests inject a fake so no route
-  // test opens a socket (same discipline as toolRunner).
-  mcpTransport?: McpHttpTransport;
+  // Drives the `claude` CLI for MCP discovery and single tool calls. Tests inject; absent = a real
+  // spawn. The Companion speaks no MCP itself, so this is the only route to a server.
+  mcpClaudeRunner?: ClaudeRunner;
   // How evidence is pushed to an analysis host (scp). Defaults to a real spawn; tests inject.
   mcpTransferRunner?: TransferRunner;
   // Drives agentic MCP mode (spawns the claude CLI). Tests inject; absent = the real spawn.
@@ -3648,8 +3648,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
   // Custom external tools (#211) — a global JSON store in its own subdir beside cases/ (drive-root-safe).
   const customToolStore = new CustomToolStore(join(dirname(casesRoot), "tools", "custom-tools.json"));
-  // Registered MCP servers (#296) — global and shared across cases, beside the custom-tool list for
-  // the same reason: a variable-length list belongs in a JSON store, not fixed .env keys.
+  // MCP policy (#296) — global and shared across cases, beside the custom-tool list for the same
+  // reason: a variable-length list belongs in a JSON store, not fixed .env keys.
   const mcpServerStore = new McpServerStore(join(dirname(casesRoot), "tools", "mcp-servers.json"));
   const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
   if (nsrlFiles.length > 0) {
@@ -4002,8 +4002,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
-    // Registered MCP servers (#296). No gating client either — a server is off until it is added,
-    // and its bearer token is read live from DFIR_MCP_<ID>_TOKEN on each call.
+    // MCP policy (#296). No gating client: the companion holds no credentials and reaches every
+    // server through Claude Code, which must be installed and configured on this host.
     mcpServerStore,
     // Extra browser origins permitted past the origin guard (#211), beyond the extension and
     // loopback. Comma-separated, e.g. "https://soc.example.com".
