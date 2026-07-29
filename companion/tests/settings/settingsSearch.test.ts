@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
 // The module lives outside companion/, next to command-palette.js and graph-view.js. Its pure
 // exports touch no DOM, so importing them in node works — same arrangement as commandPalette.test.ts,
 // but with a .d.ts alongside so this file stays inside `npm run typecheck` instead of joining the
@@ -90,5 +91,47 @@ describe("searchMessage", () => {
 
   it("names the query when nothing matched", () => {
     expect(searchMessage({ tabs: 0, fields: 0, query: " nope " })).toBe('No settings match "nope"');
+  });
+});
+
+const dashboard = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+describe("dashboard.html search markup", () => {
+  it("carries the input and message span the module binds to", async () => {
+    const h = await dashboard();
+    expect(h).toContain('id="settingsSearch"');
+    expect(h).toContain('aria-label="Search settings"');
+    expect(h).toContain('id="settingsSearchMsg"');
+  });
+});
+
+describe("dashboard.html search CSS", () => {
+  it("hides tabs, pane children and row siblings that are not hits", async () => {
+    const h = await dashboard();
+    expect(h).toContain('.settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }');
+    expect(h).toContain('.settings-modal[data-searching] .stab-pane:not([data-hit="pane"]) > *:not([data-hit]) { display: none !important; }');
+    expect(h).toContain('.settings-modal[data-searching] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-hit]) { display: none !important; }');
+  });
+
+  it("renders the tab match count from the attribute", async () => {
+    const h = await dashboard();
+    expect(h).toContain('.settings-modal[data-searching] .stab[data-hit-count]::after');
+    expect(h).toContain("content: attr(data-hit-count)");
+  });
+
+  it("steps the Essential/All toggle aside while searching", async () => {
+    const h = await dashboard();
+    expect(h).toContain('.settings-modal[data-searching] .settings-mode { display: none; }');
+  });
+
+  // THE REGRESSION GUARD. Search spans All by suspending Essential wholesale, which only works
+  // while EVERY Essential rule opts out of it. A fourth rule added later without the opt-out would
+  // keep hiding fields mid-search and silently re-break cross-tab search — with no failing test
+  // anywhere else, because Essential mode itself would still look perfect.
+  it("suspends every Essential rule while a search is active", async () => {
+    const h = await dashboard();
+    const rules = h.match(/^\s*\.settings-modal\[data-mode="essential"\].*$/gm) ?? [];
+    expect(rules.length).toBeGreaterThanOrEqual(3);
+    for (const rule of rules) expect(rule).toContain(":not([data-searching])");
   });
 });
