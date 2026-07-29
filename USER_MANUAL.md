@@ -883,6 +883,16 @@ A read-only audit table of every security-relevant action on the case (timestamp
 
 *No smart buttons* (the category dropdown is a plain filter).
 
+### Chain of Custody
+
+Every artifact this case has stored, with its SHA-256 and each event that touched it — who collected it, when, from where, and every later transfer or export. Records are created automatically as screenshots and imports land; nothing is entered by hand. Each row expands to that artifact's full chain.
+
+- 🔒 **Verify now** — re-hash every artifact in this case and re-walk the custody log. Anything that no longer matches is marked ⚠ FAILED in red. Slow on a case holding disk images; the button stays disabled until it answers.
+- ↻ **Refresh** — reload the records without re-hashing.
+- ⬇ **Signed manifest** — download `custody-manifest.json`, the signed record of the whole chain.
+
+The case is also verified in the background whenever you open it (at most once every four hours). See Section 12 for the report appendix and Section 16 for the settings.
+
 ### Case Details (for report)
 
 The human-authored sections of the incident report (company/org, incident ID, investigators, executive summary, business impact, limitations, goals, conclusions, recommendations, revisions, distribution, glossary, logo, and the report-template selector). Values are saved per case and merged into the report at generation time; blank fields fall back to auto-derived values or "to be completed" placeholders.
@@ -994,6 +1004,14 @@ Click **Export** in the toolbar to see all options:
 | **Presentation deck** | Slide-by-slide offline HTML file (see Section 13) |
 | **Encrypted case archive** | Password-protected archive of the ENTIRE case, evidence included |
 | **Redacted case package** | The full case with anonymized AI input — shareable for model debugging without exposing evidence |
+
+### Chain of Custody appendix
+
+The report carries an **Appendix — Chain of Custody**: every artifact with its SHA-256 and the full sequence of events that touched it. It is a normal report section — reorder or switch it off in **Settings → Report Templates** like any other. On in the Standard template, off in the Executive Brief (a per-artifact table is operator detail, not client-facing content).
+
+Generating a report also writes `custody-manifest.json` beside it, and the encrypted case archive carries one inside: the same chain, signed with this installation's secret so tampering is detectable. The signature proves the manifest has not been altered since *this* installation signed it; it cannot prove *which* installation signed it to someone who does not hold the secret.
+
+**In a redacted case package**, custody records pass through the anonymizer with everything else — and it does not distinguish a hash from a hostname, so the redacted appendix shows the *structure* of the chain but not verifiable hashes. Use the normal report or the signed manifest when the hashes are the point.
 
 ### Report customization
 
@@ -1308,6 +1326,14 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore (automatic backups taken before each synthesis and on a 1-hour timer)
 - **State backup configuration** (retention counts, interval)
+- **Evidence integrity** — the result of the last chain-of-custody verification: which triggers are active, how long ago a case was last checked, how many artifacts verified clean, and any case whose evidence or custody log failed
+
+Two environment variables control when evidence is re-verified:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DFIR_CUSTODY_VERIFY_ON_OPEN_MS` | `14400000` (4h) | How long a case's verification stays fresh. Opening a case re-verifies it in the background unless it was checked within this window. `0` turns on-open verification off |
+| `DFIR_CUSTODY_VERIFY_INTERVAL_MS` | `0` (off) | Interval for a sweep of **every** case, archived included. Off by default so an idle install does no background hashing. On-open verification cannot see corruption in a case nobody opens — set this if you want unattended assurance across the whole store |
 - **Host Clock Skew** — per-host clock offsets and the timeline alignment toggle (see below)
 
 #### Host Clock Skew

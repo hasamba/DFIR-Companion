@@ -298,6 +298,16 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore
 - **State backup configuration** (retention counts, interval)
+- **Evidence integrity** — the result of the last chain-of-custody verification: which triggers are
+  active, how long ago a case was last checked, how many artifacts verified clean, and any case whose
+  evidence or custody log failed. See [Chain of Custody](chain-of-custody.md)
+
+### Evidence integrity environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DFIR_CUSTODY_VERIFY_ON_OPEN_MS` | `14400000` (4h) | How long a case's verification stays fresh. Opening a case re-verifies it in the background unless it was checked within this window. `0` turns on-open verification off |
+| `DFIR_CUSTODY_VERIFY_INTERVAL_MS` | `0` (off) | Interval for a sweep of **every** case, archived included. Off by default so an idle install does no background hashing — set it if you want unattended assurance across the whole store |
 - **Case Statistics** — per-case totals, per-source event breakdown, and import velocity
 - **Large-import reliability** — atomic state-save retry count for big imports is tunable via `DFIR_ATOMIC_WRITE_RETRIES` (default 20, ~8.4s of retries) for setups where antivirus/search indexing can outlast the default retry budget on a large USN/MFT import
 

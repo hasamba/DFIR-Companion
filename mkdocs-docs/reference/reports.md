@@ -15,6 +15,10 @@ Click **Export** in the toolbar to see all options:
 | **Encrypted case archive** | Password-protected archive of the ENTIRE case, evidence included |
 | **Redacted case package** | The full case with anonymized AI input — shareable for model debugging without exposing evidence |
 
+Generating a report also writes `custody-manifest.json` beside it, and the encrypted case archive
+carries one inside — a signed record of every artifact's chain of custody. See
+[Chain of Custody](chain-of-custody.md).
+
 ---
 
 ## Report Customisation
