@@ -420,7 +420,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — overrides the default 2000-event-per-import safety cap
 - **Prompt regression / eval harness** — CI-safe and real-provider golden-output testing for AI extraction/synthesis quality
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
-- **Chrome extension** — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf); connects to the local server, no standalone function
+- **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or a Firefox 128+ build from source (`npm run build:firefox`); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
@@ -435,7 +435,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 ```
 52.43-DFIR-Companion/
 ├── companion/         Node/TS localhost server (the core). See companion/README.md.
-├── extension/         Chrome/Comet MV3 capture extension. See extension/README.md.
+├── extension/         MV3 capture extension (Chrome/Comet + Firefox). See extension/README.md.
 ├── public/
 │   └── dashboard.html Live dashboard, served by the companion at /dashboard.
 ├── docs/
@@ -489,8 +489,13 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
    ```
    cd DFIR-Companion/extension
    npm install
-   npm run build             # then load extension/dist as an unpacked extension
+   npm run build             # Chrome/Comet → load extension/dist as an unpacked extension
+   npm run build:firefox     # Firefox 128+ → load extension/dist-firefox/manifest.json
    ```
+
+   On Firefox, load it from `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**
+   and pick the `manifest.json` **file** (Chrome asks for the folder; Firefox does not). Firefox
+   drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet.
 
    The popup only **attaches** to an existing case — you create cases in the dashboard.
 

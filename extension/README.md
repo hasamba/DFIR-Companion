@@ -8,11 +8,38 @@ CrowdStrike) into the case timeline.
 
 Listed publication is set up via CI (see [Publishing](#publishing-chrome-web-store)); once the
 listing is live, install it from the Chrome Web Store for one-click setup and automatic updates.
-Until then (and for development), use the unpacked load below.
+Until then (and for development), use the unpacked load below. Firefox has no AMO listing yet, so
+there it is always the local load.
 
 ## Build & load (development / unpacked)
-    cd extension && npm install && npm run build
-Load `extension/dist` as an unpacked extension in Comet/Chrome.
+
+    cd extension && npm install
+
+**Chrome / Comet**
+
+    npm run build
+
+`chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the
+`extension/dist` **folder**.
+
+**Firefox 128+**
+
+    npm run build:firefox
+
+`about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → select
+`extension/dist-firefox/manifest.json` — the manifest **file**, not the folder Chrome asks for.
+
+> Firefox removes a temporary add-on when the browser restarts, so repeat the load each session.
+> That is how unsigned local add-ons work, not something this one does; a signed AMO build would
+> install permanently. Captures are unaffected either way — evidence is POSTed to the companion,
+> never held in the browser.
+
+Both targets emit the same bundles from the same sources; only the manifest differs. There is no
+`manifest-firefox.json` on disk — [`scripts/manifest-firefox.mjs`](./scripts/manifest-firefox.mjs)
+derives it from `manifest.json` at build time, so every shared field has one source (#300). Firefox
+128 is the floor because it is where `scripting.executeScript` gained `world: "MAIN"`, which the
+API-interception hook below depends on; on anything older the hook installs into the isolated world
+and silently captures nothing (#298).
 
 ## Test
     npm test
@@ -83,3 +110,20 @@ account can be created independently of merging:
 upload + fill the listing (name/description/icon/screenshots/privacy policy) + data-use disclosures,
 and submit for review. With `<all_urls>` host access, expect a manual review (days) on first
 submission. After that, tagged releases publish new versions automatically.
+
+## Publishing (Firefox / AMO)
+
+Not submitted yet, and CI does not package the Firefox build — `release-artifacts.yml` builds and
+attaches the Chrome zip only, so `dist-firefox/` is a local build for now.
+
+Two values in [`scripts/manifest-firefox.mjs`](./scripts/manifest-firefox.mjs) are already settled
+and should not be changed casually:
+
+- **`GECKO_ID`** (`dfir-companion@hasamba.github.io`) — the add-on's permanent identity, decided
+  before the first submission on purpose (#301). AMO ties updates to it and `storage.local` is
+  scoped to it, so changing it after publication ships what Firefox treats as a *different* add-on:
+  existing installs stop receiving updates, and every analyst's saved settings (companion URL,
+  active case, dragged button position) are orphaned. `tests/firefox.test.ts` fails if it is ever
+  set back to a reserved documentation domain.
+- **`MIN_FIREFOX_VERSION`** (`128.0`) — the MAIN-world floor described under
+  [Build & load](#build--load-development--unpacked). Lowering it makes capture fail silently.

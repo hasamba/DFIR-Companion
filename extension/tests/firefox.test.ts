@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { resolve, dirname, relative } from "path";
 import { fileURLToPath } from "url";
 
-import { toFirefoxManifest, FIREFOX_ONLY_KEYS, MIN_FIREFOX_VERSION } from "../scripts/manifest-firefox.mjs";
+import { toFirefoxManifest, FIREFOX_ONLY_KEYS, MIN_FIREFOX_VERSION, GECKO_ID } from "../scripts/manifest-firefox.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (name: string) => JSON.parse(readFileSync(resolve(__dirname, "..", name), "utf-8"));
@@ -16,6 +16,18 @@ describe("the generated Firefox manifest", () => {
   it("has browser_specific_settings with a gecko id", () => {
     expect(firefoxManifest.browser_specific_settings).toBeDefined();
     expect(firefoxManifest.browser_specific_settings.gecko.id).toMatch(/.+@.+/);
+  });
+
+  it("ships a real add-on ID, not a documentation placeholder", () => {
+    // The one manifest field with no second chance. AMO ties updates to this ID and storage.local
+    // is scoped to it, so shipping a placeholder and correcting it later is not a fix: Firefox
+    // treats the corrected add-on as a different one, existing installs stop updating, and every
+    // analyst's saved settings (companion URL, active case, button position) are orphaned (#301).
+    // These are the IANA-reserved names — none of them is a domain any project can control, so any
+    // ID under them is by definition still a placeholder.
+    const id = firefoxManifest.browser_specific_settings.gecko.id;
+    expect(id).not.toMatch(/@(example\.(com|net|org)|(.+\.)?(test|invalid|localhost))$/);
+    expect(id).toBe(GECKO_ID);
   });
 
   it("uses background.scripts instead of service_worker", () => {
