@@ -39,7 +39,7 @@ In plain terms, it does three things:
 
 2. **Analyzes the evidence with AI.** The server reads the evidence and builds a structured **forensic timeline** of real events with real timestamps. It then runs a second AI pass to produce **findings** (what the attacker did), **MITRE ATT&CK technique mappings**, and an **attacker-path narrative** (the story of the intrusion from first foothold to last known activity).
 
-3. **Helps you understand and communicate.** It surfaces the timeline in a dashboard with filters, graphs, and derived panels (kill chain, asset graph, adversary hints, defensive countermeasures, hunting leads). It generates a Word/HTML/Markdown/CSV report, a presentation slide deck, and can push the findings to your SIEM, Notion, ClickUp, or DFIR-IRIS.
+3. **Helps you understand and communicate.** It surfaces the timeline in a dashboard with filters, graphs, and derived panels (kill chain, asset graph, adversary hints, defensive countermeasures, hunting leads). It generates a Word/HTML/Markdown/CSV report, a presentation slide deck, and can push the findings to your SIEM, Notion, ClickUp, Jira, ServiceNow, or DFIR-IRIS.
 
 Everything runs on your machine. Evidence never leaves your network unless you explicitly opt in to a third-party enrichment service.
 
@@ -1141,6 +1141,30 @@ Push the Response Playbook as tasks to a ClickUp list.
 - **Re-push:** updates existing tasks (by saved task ID) instead of duplicating
 
 Toolbar → Export → Push playbook to ClickUp.
+
+### Jira
+
+File a **finding** as a Jira issue. Works with Jira Cloud (email + API token) and Server / Data Center (username + password).
+
+- Severity maps to the issue priority (critical → Highest, high → High, medium → Medium, low → Low)
+- Every issue is labelled `dfir-companion` and the case ID, and links straight to the browse page
+- **Re-push:** updates the issue it created (by saved issue key) instead of filing a duplicate
+
+Findings panel → the **Jira** chip on a finding row. To file several at once, tick the findings and use **🎫 Push to Jira** in the bulk bar — a finding Jira refuses is reported and the rest still go.
+
+**Set up:** `DFIR_JIRA_URL`, `DFIR_JIRA_USER` and `DFIR_JIRA_TOKEN` (all three required), plus optional `DFIR_JIRA_PROJECT_KEY` and `DFIR_JIRA_ISSUE_TYPE` defaults. The buttons stay hidden until Jira is configured.
+
+### ServiceNow
+
+Open a **finding** as a ServiceNow incident.
+
+- Severity maps to urgency and impact (critical/high → 1, medium → 2, low → 3)
+- Caller, category and subcategory fall back to the configured defaults
+- **Re-push:** updates the incident it opened (by saved sys_id) instead of opening a duplicate
+
+Findings panel → the **SNow** chip on a finding row, or **🎫 Push to ServiceNow** in the bulk bar for the whole selection.
+
+**Set up:** `DFIR_SERVICENOW_URL`, `DFIR_SERVICENOW_USER` and `DFIR_SERVICENOW_PASSWORD` (all three required), plus optional `DFIR_SERVICENOW_CALLER`, `DFIR_SERVICENOW_CATEGORY` and `DFIR_SERVICENOW_SUBCATEGORY` defaults. The buttons stay hidden until ServiceNow is configured.
 
 ---
 

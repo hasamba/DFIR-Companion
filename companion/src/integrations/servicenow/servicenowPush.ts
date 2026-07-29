@@ -99,3 +99,56 @@ export async function pushFindingToServiceNow(
   await store.save(input.caseId, { ...existing.incidentRefs, [input.finding.id]: incident });
   return { created: true, updated: false, incident, warnings };
 }
+
+export interface ServiceNowBulkPushInput {
+  caseId: string;
+  findings: Finding[];
+  caller?: string;
+  category?: string;
+  subcategory?: string;
+}
+
+export interface ServiceNowBulkPushResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  incidents: Array<ServiceNowIncidentRef & { findingId: string }>;
+  incidentUrl?: string;       // first incident url, for an "Open in ServiceNow" link on the batch
+  warnings: string[];
+}
+
+// Push a batch of findings, one incident each. Sequential on purpose: every push loads and rewrites
+// the same per-case export store, so overlapping writes would lose sys_ids. A finding the API
+// refuses is counted as skipped with the reason kept — the batch never aborts on one bad ticket,
+// the same contract as the ClickUp playbook push.
+export async function pushFindingsToServiceNow(
+  client: ServiceNowClientLike,
+  store: ServiceNowExportStoreLike,
+  input: ServiceNowBulkPushInput,
+): Promise<ServiceNowBulkPushResult> {
+  const warnings: string[] = [];
+  const incidents: Array<ServiceNowIncidentRef & { findingId: string }> = [];
+  let created = 0, updated = 0, skipped = 0;
+  let incidentUrl: string | undefined;
+
+  for (const finding of input.findings) {
+    try {
+      const result = await pushFindingToServiceNow(client, store, {
+        caseId: input.caseId,
+        finding,
+        caller: input.caller,
+        category: input.category,
+        subcategory: input.subcategory,
+      });
+      if (result.created) created += 1; else updated += 1;
+      incidents.push({ ...result.incident, findingId: finding.id });
+      incidentUrl ??= result.incident.url;
+      warnings.push(...result.warnings);
+    } catch (err) {
+      skipped += 1;
+      warnings.push(`finding "${finding.title}": ${(err as Error).message}`);
+    }
+  }
+
+  return { created, updated, skipped, incidents, incidentUrl, warnings };
+}

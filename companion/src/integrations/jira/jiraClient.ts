@@ -116,15 +116,23 @@ export class JiraClient {
     };
   }
 
+  // The issue as a HUMAN opens it. Deliberately NOT the create response's `self`, which is the REST
+  // resource (…/rest/api/3/issue/10001) — an analyst clicking that gets raw JSON.
+  private browseUrl(key: string): string | undefined {
+    return key ? `${this.base}/browse/${encodeURIComponent(key)}` : undefined;
+  }
+
   async createIssue(body: JiraIssueBody): Promise<JiraIssueRef> {
-    const data = await this.request<{ id?: string; key?: string; self?: string }>("POST", "/rest/api/3/issue", { fields: this.issueFields(body, false) });
-    return { id: String(data.id ?? ""), key: String(data.key ?? ""), url: typeof data.self === "string" ? data.self : undefined };
+    const data = await this.request<{ id?: string; key?: string }>("POST", "/rest/api/3/issue", { fields: this.issueFields(body, false) });
+    const key = String(data.key ?? "");
+    return { id: String(data.id ?? ""), key, url: this.browseUrl(key) };
   }
 
   // Jira answers a successful edit with 204 No Content, so the ref is rebuilt from what we already
   // knew (the caller merges it over the remembered ref to keep the id/url).
   async updateIssue(idOrKey: string, body: JiraIssueBody): Promise<JiraIssueRef> {
-    const data = await this.request<{ id?: string; key?: string; self?: string }>("PUT", `/rest/api/3/issue/${encodeURIComponent(idOrKey)}`, { fields: this.issueFields(body, true) });
-    return { id: String(data.id ?? ""), key: String(data.key ?? idOrKey), url: typeof data.self === "string" ? data.self : undefined };
+    const data = await this.request<{ id?: string; key?: string }>("PUT", `/rest/api/3/issue/${encodeURIComponent(idOrKey)}`, { fields: this.issueFields(body, true) });
+    const key = String(data.key ?? idOrKey);
+    return { id: String(data.id ?? ""), key, url: this.browseUrl(key) };
   }
 }

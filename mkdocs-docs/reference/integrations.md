@@ -86,6 +86,34 @@ Toolbar → Export → Push playbook to ClickUp.
 
 ---
 
+## Jira
+
+File a **finding** as a Jira issue. Works with Jira Cloud (email + API token) and Server / Data Center (username + password).
+
+- Severity maps to the issue priority (critical → Highest, high → High, medium → Medium, low → Low)
+- Every issue is labelled `dfir-companion` and the case ID, and links to the **browse page**, not the REST API
+- **Re-push:** updates the issue it created (by saved issue key) instead of filing a duplicate
+
+Findings panel → the **Jira** chip on a finding row. Select several findings and use **🎫 Push to Jira** in the bulk bar to file them in one call; a finding Jira refuses is reported and the rest still go.
+
+**Configure:** `DFIR_JIRA_URL`, `DFIR_JIRA_USER`, `DFIR_JIRA_TOKEN` (all three required), plus optional `DFIR_JIRA_PROJECT_KEY` and `DFIR_JIRA_ISSUE_TYPE` defaults. The buttons stay hidden until it is configured.
+
+---
+
+## ServiceNow
+
+Open a **finding** as a ServiceNow incident.
+
+- Severity maps to urgency and impact (critical/high → 1, medium → 2, low → 3)
+- Caller, category and subcategory fall back to the configured defaults
+- **Re-push:** updates the incident it opened (by saved sys_id) instead of opening a duplicate
+
+Findings panel → the **SNow** chip on a finding row, or **🎫 Push to ServiceNow** in the bulk bar for the whole selection.
+
+**Configure:** `DFIR_SERVICENOW_URL`, `DFIR_SERVICENOW_USER`, `DFIR_SERVICENOW_PASSWORD` (all three required), plus optional `DFIR_SERVICENOW_CALLER`, `DFIR_SERVICENOW_CATEGORY` and `DFIR_SERVICENOW_SUBCATEGORY` defaults. The buttons stay hidden until it is configured.
+
+---
+
 ## War-Room Slash-Command Bot
 
 Two-way Slack / Teams / Telegram: run `/dfir findings`, `/dfir iocs malicious` or `/dfir ask <question>` from the incident channel. Needs an inbound URL (a tunnel) rather than just outbound access — see [War-Room Slash-Command Bot](war-room-bot.md).

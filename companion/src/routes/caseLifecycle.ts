@@ -35,10 +35,10 @@ import { pushCaseToMisp } from "../integrations/misp/mispPush.js";
 import { pushCaseToNotion, type NotionPushTarget } from "../integrations/notion/notionPush.js";
 import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
-import { pushFindingToJira } from "../integrations/jira/jiraPush.js";
-import { pushFindingToServiceNow } from "../integrations/servicenow/servicenowPush.js";
+import { pushFindingToJira, pushFindingsToJira } from "../integrations/jira/jiraPush.js";
+import { pushFindingToServiceNow, pushFindingsToServiceNow } from "../integrations/servicenow/servicenowPush.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
-import type { Severity } from "../analysis/stateTypes.js";
+import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
 import type { RouteContext } from "./context.js";
@@ -919,6 +919,49 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
+  // Push SEVERAL findings as Jira issues in one call (issue #297). Body { findingIds, projectKey?,
+  // issueType? }. A finding id the case doesn't have, or one the API refuses, is counted as skipped
+  // with the reason kept — the batch runs to the end either way, so a single bad ticket can't cost
+  // the analyst the other twenty. Re-push UPDATES, same as the single-finding route.
+  app.post("/cases/:id/push/jira/bulk", async (req: Request, res: Response) => {
+    if (!options.jiraClient) return res.status(501).json({ error: "Jira not configured (set DFIR_JIRA_URL, DFIR_JIRA_USER, and DFIR_JIRA_TOKEN)" });
+    if (!options.jiraExportStore) return res.status(501).json({ error: "jira export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const findingIds: string[] = Array.isArray(req.body?.findingIds) ? req.body.findingIds.filter((v: unknown): v is string => typeof v === "string" && !!v.trim()) : [];
+    if (!findingIds.length) return res.status(400).json({ error: "findingIds is required (a non-empty array of finding ids)" });
+    try {
+      const state = await options.stateStore.load(caseId);
+      const byId = new Map(state.findings.map((f) => [f.id, f]));
+      const findings = findingIds.map((fid) => byId.get(fid)).filter((f): f is Finding => !!f);
+      const missing = findingIds.filter((fid) => !byId.has(fid));
+      const projectKey = typeof req.body?.projectKey === "string" && req.body.projectKey.trim()
+        ? req.body.projectKey.trim()
+        : options.jiraOptions?.projectKey;
+      if (!projectKey) return res.status(400).json({ error: "a Jira project key is required" });
+      logLine(`[jira] ${caseId} bulk push START -> project ${projectKey} (${findings.length} finding(s))`);
+      const result = await pushFindingsToJira(options.jiraClient, options.jiraExportStore, {
+        caseId,
+        projectKey,
+        issueType: typeof req.body?.issueType === "string" ? req.body.issueType : options.jiraOptions?.issueType,
+        findings,
+      });
+      const body = {
+        ...result,
+        skipped: result.skipped + missing.length,
+        warnings: [...result.warnings, ...missing.map((fid) => `finding ${fid}: not found in this case`)],
+      };
+      logLine(`[jira] ${caseId} bulk push DONE: +${body.created} created, ${body.updated} updated, ${body.skipped} skipped, warnings ${body.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-jira", detail: `pushed ${findings.length} finding(s) to Jira ${projectKey} — +${body.created} created, ${body.updated} updated`,
+      });
+      return res.status(200).json(body);
+    } catch (err) {
+      logLine(`[jira] ${caseId} bulk push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   // ServiceNow status + finding push (issue #272).
   app.get("/servicenow/status", (_req: Request, res: Response) => {
     res.status(200).json({
@@ -957,6 +1000,46 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[servicenow] ${caseId} push ERROR: ${(err as Error).message}`);
+      return res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Push SEVERAL findings as ServiceNow incidents in one call (issue #297). Body { findingIds,
+  // caller?, category?, subcategory? }. Same batch contract as the Jira bulk route above: an unknown
+  // or refused finding is skipped with the reason kept, the rest still go, and a re-push UPDATES the
+  // incidents already opened.
+  app.post("/cases/:id/push/servicenow/bulk", async (req: Request, res: Response) => {
+    if (!options.servicenowClient) return res.status(501).json({ error: "ServiceNow not configured (set DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD)" });
+    if (!options.servicenowExportStore) return res.status(501).json({ error: "servicenow export store not configured" });
+    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    const caseId = req.params.id;
+    const findingIds: string[] = Array.isArray(req.body?.findingIds) ? req.body.findingIds.filter((v: unknown): v is string => typeof v === "string" && !!v.trim()) : [];
+    if (!findingIds.length) return res.status(400).json({ error: "findingIds is required (a non-empty array of finding ids)" });
+    try {
+      const state = await options.stateStore.load(caseId);
+      const byId = new Map(state.findings.map((f) => [f.id, f]));
+      const findings = findingIds.map((fid) => byId.get(fid)).filter((f): f is Finding => !!f);
+      const missing = findingIds.filter((fid) => !byId.has(fid));
+      logLine(`[servicenow] ${caseId} bulk push START (${findings.length} finding(s))`);
+      const result = await pushFindingsToServiceNow(options.servicenowClient, options.servicenowExportStore, {
+        caseId,
+        findings,
+        caller: typeof req.body?.caller === "string" ? req.body.caller : options.servicenowOptions?.caller,
+        category: typeof req.body?.category === "string" ? req.body.category : options.servicenowOptions?.category,
+        subcategory: typeof req.body?.subcategory === "string" ? req.body.subcategory : options.servicenowOptions?.subcategory,
+      });
+      const body = {
+        ...result,
+        skipped: result.skipped + missing.length,
+        warnings: [...result.warnings, ...missing.map((fid) => `finding ${fid}: not found in this case`)],
+      };
+      logLine(`[servicenow] ${caseId} bulk push DONE: +${body.created} created, ${body.updated} updated, ${body.skipped} skipped, warnings ${body.warnings.length}`);
+      logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "export", action: "push-servicenow", detail: `pushed ${findings.length} finding(s) to ServiceNow — +${body.created} created, ${body.updated} updated`,
+      });
+      return res.status(200).json(body);
+    } catch (err) {
+      logLine(`[servicenow] ${caseId} bulk push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
     }
   });

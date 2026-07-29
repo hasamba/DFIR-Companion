@@ -847,6 +847,17 @@
     .sigma-export-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
     .sigma-export-btn:hover { color: var(--c-6bcb77); border-color: var(--c-1f5a35); }
+    /* Per-finding "push to Jira / ServiceNow" chips (#297) — match the other row-action chips, but
+       stay hidden until GET /jira/status | /servicenow/status says the integration is configured.
+       The switch is a class on <body> rather than a render-time branch: the status answer usually
+       lands AFTER the first findings render, and those already-rendered rows must still get chips. */
+    .jira-push-btn, .snow-push-btn, #findingBulkJiraBtn, #findingBulkSnowBtn { display: none; }
+    .jira-push-btn, .snow-push-btn { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280);
+      border-radius: 10px; padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+    .jira-push-btn:hover { color: var(--c-6aa9ff); border-color: var(--c-6aa9ff); }
+    .snow-push-btn:hover { color: var(--c-6bcb77); border-color: var(--c-1f5a35); }
+    body.has-jira .jira-push-btn, body.has-jira #findingBulkJiraBtn { display: inline-block; }
+    body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { display: inline-block; }
     /* Super-timeline ⌖ context button + its inline ±window chips — match the other row-action chips. */
     .st-ctx { background: transparent; border: 1px solid var(--c-2a2f3a); color: var(--c-6b7280); border-radius: 10px;
       padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
@@ -4048,7 +4059,7 @@
     <section id="sec-attack-path" style="grid-column: 1 / -1"><h2>Attack Path</h2><div id="attackerPath">—</div></section>
     <section id="sec-narrative" style="grid-column: 1 / -1"><h2><span title="Takes the Attack Path and rewrites it into client-readable prose, on-demand, and lets a human polish the wording by hand before it goes in a report">Narrative Timeline</span><button id="genNarrativeBtn" type="button" title="Generate a prose narrative of the incident for stakeholders (saved automatically)" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Generate</button><span id="genNarrativeMsg" style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--c-9aa4b2)"></span><button id="editNarrativeBtn" type="button" title="Edit the narrative before export" style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✏ Edit</button></h2><div id="narrativeView">—</div><div id="narrativeEditWrap" style="display:none"><textarea id="narrativeText" style="width:100%;min-height:200px;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:6px"></textarea><div style="margin-top:6px;display:flex;gap:6px"><button id="saveNarrativeBtn" type="button">Save</button><button id="cancelNarrativeBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Cancel</button><span id="saveNarrativeMsg" style="align-self:center;font-size:11px;color:var(--c-9aa4b2)"></span></div></div></section>
     <section id="sec-findings" style="grid-column: 1 / -1"><h2>Findings<span id="findingsCount" title="Total findings in scope; updates in real time"></span><select class="corrob-sel" id="corrobFindings" title="Corroboration lens — show only findings backed by events from ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2><div id="pinnedStrip" class="pinned-strip"><div class="pinned-strip-head">📌 Pinned<span id="pinnedCount" style="color:var(--c-9aa4b2);font-size:12px;font-weight:normal"></span><span class="ev-sub" style="font-weight:400">the analyst-curated shortlist — pin a finding with 📌, drag to reorder, click to jump</span></div><div id="pinnedList" class="pinned-list"><div class="pinned-empty">No findings pinned yet — click 📌 on a finding to keep it here.</div></div></div><div id="synthMeta" class="synth-meta" style="display:none"></div><div id="secondOpinionPanel" class="so-panel" style="display:none"></div><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--c-9aa4b2)"><label for="confFilter" title="Hide findings below this confidence level (0 = show all)">Min confidence:</label><input type="number" id="confFilter" min="0" max="100" value="0" style="width:56px;padding:3px 6px;font-size:12px" title="0–100; findings without a confidence score always shown"><span id="confFilterLabel" style="color:var(--c-9aa4b2)">% (0 = all)</span></div>
-      <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
+      <div class="finding-bulk-bar" id="findingBulkBar"><span id="findingBulkCount" style="font-weight:600;color:var(--c-6aa9ff)"></span> <span>Actions:</span> <button class="finding-bulk-btn" id="findingBulkTagBtn" title="Add a tag to all selected findings">🏷 Modify Tags</button> <button class="finding-bulk-btn" id="findingBulkFpBtn" title="Mark all selected findings as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="finding-bulk-btn" id="findingBulkJiraBtn" title="File a Jira issue for every selected finding in one call. Re-pushing UPDATES the issues already created instead of duplicating; a finding Jira refuses is reported, the rest still go.">🎫 Push to Jira</button> <button class="finding-bulk-btn" id="findingBulkSnowBtn" title="Open a ServiceNow incident for every selected finding in one call. Re-pushing UPDATES the incidents already opened instead of duplicating; a finding ServiceNow refuses is reported, the rest still go.">🎫 Push to ServiceNow</button> <button class="finding-bulk-btn" id="findingBulkClearBtn" style="color:var(--c-9aa4b2)">✕ Clear</button></div>
       <div id="findings">—</div></section>
     <!-- Deep pass (#204). Sits between the conclusions it rewrites and the timeline it reads. -->
     <section id="sec-deep-pass" style="grid-column: 1 / -1" class="collapsed">
@@ -8603,6 +8614,51 @@
         if (lastState) render(lastState);
       });
     }
+    // --- Push findings to a ticket system (#297) -------------------------------------
+    // `target` is the route segment — "jira" or "servicenow". Both routes are idempotent per
+    // finding: a re-push UPDATES the ticket the Companion already opened rather than duplicating it.
+    function ticketLabel(target) { return target === "jira" ? "Jira" : "ServiceNow"; }
+    function pushFindingToTicket(target, findingId) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !findingId) { showToast("connect to a case first", "warn"); return; }
+      const label = ticketLabel(target);
+      showToast(`pushing finding to ${label}…`);
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/${target}`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ findingId }),
+      })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          const ref = (target === "jira" ? res.issue : res.incident) || {};
+          const name = ref.key || ref.number || "ticket";
+          showToast(`${label} ${name} ${res.created ? "created" : "updated"}`);
+          if (ref.url) document.getElementById("reportLinks").innerHTML =
+            `<a href="${escAttr(ref.url)}" target="_blank" rel="noopener">Open ${esc(label)} ${esc(name)}</a>`;
+        })
+        .catch((err) => showToast(`${label} push failed: ` + err.message, "warn"));
+    }
+    // The bulk route answers 200 even when it could not file some of the batch, so the summary has
+    // to name the skipped ones — otherwise a half-pushed selection reads as a clean success.
+    function bulkPushFindingsToTicket(target) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId || !selectedFindings.size) return;
+      const findingIds = [...selectedFindings];
+      const label = ticketLabel(target);
+      showToast(`pushing ${findingIds.length} finding(s) to ${label}…`);
+      fetch(`/cases/${encodeURIComponent(caseId)}/push/${target}/bulk`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ findingIds }),
+      })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then((res) => {
+          const skipped = res.skipped || 0;
+          showToast(`${label}: +${res.created} created, ${res.updated} updated` + (skipped ? `, ${skipped} skipped — see the browser console` : ""),
+            skipped ? "warn" : undefined);
+          const url = target === "jira" ? res.issueUrl : res.incidentUrl;
+          if (url) document.getElementById("reportLinks").innerHTML =
+            `<a href="${escAttr(url)}" target="_blank" rel="noopener">Open in ${esc(label)}</a>`;
+          if (res.warnings && res.warnings.length) console.warn(`${target} bulk push warnings:`, res.warnings);
+        })
+        .catch((err) => showToast(`${label} push failed: ` + err.message, "warn"));
+    }
     // One-click exclude for the offending IOC rows the analyst already has selected: adds an
     // exact-match exclude rule per selected value (one POST per value — mirrors how bulk mark-FP
     // has no dedicated batch route either). The server purges + pushes updated state per call.
@@ -8956,6 +9012,14 @@
     // finding carries no structured indicator (nothing for the deterministic templates to seed from).
     function sigmaExportChip(id) {
       return `<button class="sigma-export-btn" data-sigma-fid="${escAttr(String(id))}" title="Export this finding as a Sigma detection-rule draft (.yml)">${ICON_DOWNLOAD}</button>`;
+    }
+    // Per-finding ticket-push chips (#297). Always emitted; CSS keeps each one hidden until the
+    // matching integration reports itself configured, so a late /jira/status answer still reveals
+    // the chips on rows that rendered before it arrived.
+    function ticketPushChips(id) {
+      const fid = escAttr(String(id));
+      return `<button class="jira-push-btn" data-jira-fid="${fid}" title="File this finding as a Jira issue. Re-pushing UPDATES the issue it created instead of filing a duplicate.">Jira</button>` +
+        `<button class="snow-push-btn" data-snow-fid="${fid}" title="Open this finding as a ServiceNow incident. Re-pushing UPDATES the incident it opened instead of opening a duplicate.">SNow</button>`;
     }
     // Transient viewport-anchored message. The #status line lives in the toolbar, so for anything
     // triggered from a row further down the page it is scrolled out of sight — a refusal then reads
@@ -16489,7 +16553,7 @@
               (tagPillsHtml ? `<span class="finding-tagline">${tagPillsHtml}</span>` : "") +
             `</span>` +
             `<span class="finding-conf-cell">${confMeter}</span>` +
-            `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${fpBtn("finding", f.title)}</span>` +
+            `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
             (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
             `</div>`;
         }).join("")) || (searchTerm && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span style="color:var(--c-9aa4b2)">No findings above ${minConf}% confidence.</span>` : (activeView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span style="color:var(--c-9aa4b2)">No findings match the “${esc(activeView.name)}” view filter.</span>` : "—");
@@ -17551,6 +17615,8 @@
       // Bulk action bar buttons (Findings)
       if (e.target.id === "findingBulkTagBtn") { bulkTagFindings(); return; }
       if (e.target.id === "findingBulkFpBtn") { bulkMarkFindingsFalsePositive(); return; }
+      if (e.target.id === "findingBulkJiraBtn") { bulkPushFindingsToTicket("jira"); return; }
+      if (e.target.id === "findingBulkSnowBtn") { bulkPushFindingsToTicket("servicenow"); return; }
       if (e.target.id === "findingBulkClearBtn") { clearFindingSelection(); return; }
       // Attacker Sessions collapse-all (#341): collapse every card to its one-line header for a
       // high-level read of the intrusion, expand for the detail. Purely visual, no refetch.
@@ -17680,6 +17746,10 @@
       }
       const sigmaExport = e.target.closest && e.target.closest(".sigma-export-btn");
       if (sigmaExport) { e.stopPropagation(); exportFindingSigma(sigmaExport.getAttribute("data-sigma-fid")); return; }
+      const jiraPush = e.target.closest && e.target.closest(".jira-push-btn");
+      if (jiraPush) { e.stopPropagation(); pushFindingToTicket("jira", jiraPush.getAttribute("data-jira-fid")); return; }
+      const snowPush = e.target.closest && e.target.closest(".snow-push-btn");
+      if (snowPush) { e.stopPropagation(); pushFindingToTicket("servicenow", snowPush.getAttribute("data-snow-fid")); return; }
     });
     // Row checkboxes + select-all (change, not click, so we read the post-toggle checked state)
     document.querySelector("main").addEventListener("change", (e) => {
@@ -18794,6 +18864,11 @@
     fetch("/clickup/status").then((r) => r.json()).then((s) => {
       if (s && s.configured) { addPushOption("clickup", "Push to ClickUp"); clickupDefaultList = s.defaultListId || ""; }
     }).catch(() => {});
+    // Jira / ServiceNow (#297): these push a FINDING, not the whole case, so they live on the finding
+    // rows and the finding bulk bar rather than in this case-level Push menu. All a configured target
+    // does here is reveal those controls — see the .jira-push-btn / .snow-push-btn CSS switch.
+    fetch("/jira/status").then((r) => r.json()).then((s) => { if (s && s.configured) document.body.classList.add("has-jira"); }).catch(() => {});
+    fetch("/servicenow/status").then((r) => r.json()).then((s) => { if (s && s.configured) document.body.classList.add("has-servicenow"); }).catch(() => {});
     pushSelect.onchange = (e) => {
       const sel = e.target;
       const target = sel.value;
