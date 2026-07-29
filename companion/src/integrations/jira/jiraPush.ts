@@ -91,3 +91,54 @@ export async function pushFindingToJira(
   await store.save(input.caseId, { ...existing.issueRefs, [input.finding.id]: issue });
   return { created: true, updated: false, issue, warnings };
 }
+
+export interface JiraBulkPushInput {
+  caseId: string;
+  projectKey: string;
+  issueType?: string;
+  findings: Finding[];
+}
+
+export interface JiraBulkPushResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  issues: Array<JiraIssueRef & { findingId: string }>;
+  issueUrl?: string;          // first issue url, for an "Open in Jira" link on the batch
+  warnings: string[];
+}
+
+// Push a batch of findings, one issue each. Sequential on purpose: every push loads and rewrites
+// the same per-case export store, so overlapping writes would lose issue keys. A finding the API
+// refuses is counted as skipped with the reason kept — the batch never aborts on one bad ticket,
+// the same contract as the ClickUp playbook push.
+export async function pushFindingsToJira(
+  client: JiraClientLike,
+  store: JiraExportStoreLike,
+  input: JiraBulkPushInput,
+): Promise<JiraBulkPushResult> {
+  const warnings: string[] = [];
+  const issues: Array<JiraIssueRef & { findingId: string }> = [];
+  let created = 0, updated = 0, skipped = 0;
+  let issueUrl: string | undefined;
+
+  for (const finding of input.findings) {
+    try {
+      const result = await pushFindingToJira(client, store, {
+        caseId: input.caseId,
+        projectKey: input.projectKey,
+        issueType: input.issueType,
+        finding,
+      });
+      if (result.created) created += 1; else updated += 1;
+      issues.push({ ...result.issue, findingId: finding.id });
+      issueUrl ??= result.issue.url;
+      warnings.push(...result.warnings);
+    } catch (err) {
+      skipped += 1;
+      warnings.push(`finding "${finding.title}": ${(err as Error).message}`);
+    }
+  }
+
+  return { created, updated, skipped, issues, issueUrl, warnings };
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
-import { pushFindingToJira, type JiraClientLike, type JiraExportStoreLike } from "../../src/integrations/jira/jiraPush.js";
+import { pushFindingToJira, pushFindingsToJira, type JiraClientLike, type JiraExportStoreLike } from "../../src/integrations/jira/jiraPush.js";
 
 function makeFinding(partial: Partial<Finding> = {}): Finding {
   return {
@@ -96,5 +96,72 @@ describe("pushFindingToJira", () => {
     await pushFindingToJira(client, store, { caseId: "case-a", projectKey: "IR", finding: makeFinding() });
     const saved = await store.load("case-a");
     expect(saved.issueRefs["finding-1"]).toEqual({ id: "issue-100", key: "IR-42", url: "https://jira.example.com/browse/IR-42" });
+  });
+});
+
+// A client that files one issue per finding and can be told to reject specific ones, so a batch
+// can be checked for "the failure is reported, the rest still go".
+function bulkClient(failTitles: string[] = []): JiraClientLike {
+  let n = 0;
+  return {
+    me: async () => ({ id: "user-1", displayName: "Analyst" }),
+    createIssue: async (body) => {
+      if (failTitles.some((t) => body.summary.includes(t))) throw new Error("Jira rejected the request: summary too long");
+      n += 1;
+      return { id: `issue-${n}`, key: `IR-${n}`, url: `https://jira.example.com/browse/IR-${n}` };
+    },
+    updateIssue: async (idOrKey) => ({ id: "", key: idOrKey, url: `https://jira.example.com/browse/${idOrKey}` }),
+  };
+}
+
+describe("pushFindingsToJira", () => {
+  it("files one issue per finding and counts them", async () => {
+    const store = inMemoryStore();
+    const findings = [makeFinding(), makeFinding({ id: "finding-2", title: "Persistence via Run key" })];
+    const result = await pushFindingsToJira(bulkClient(), store, { caseId: "case-a", projectKey: "IR", findings });
+
+    expect(result).toMatchObject({ created: 2, updated: 0, skipped: 0 });
+    expect(result.issues.map((i) => i.findingId)).toEqual(["finding-1", "finding-2"]);
+    expect(result.issues.map((i) => i.key)).toEqual(["IR-1", "IR-2"]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("keeps going when one finding fails, and reports which one", async () => {
+    const store = inMemoryStore();
+    const findings = [
+      makeFinding(),
+      makeFinding({ id: "finding-2", title: "Persistence via Run key" }),
+      makeFinding({ id: "finding-3", title: "Exfil over DNS" }),
+    ];
+    const result = await pushFindingsToJira(bulkClient(["Persistence via Run key"]), store, { caseId: "case-a", projectKey: "IR", findings });
+
+    expect(result).toMatchObject({ created: 2, updated: 0, skipped: 1 });
+    expect(result.issues.map((i) => i.findingId)).toEqual(["finding-1", "finding-3"]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("Persistence via Run key");
+    expect(result.warnings[0]).toContain("summary too long");
+  });
+
+  it("UPDATES the findings already pushed and creates only the new ones", async () => {
+    const store = inMemoryStore({ issueRefs: { "finding-1": { id: "issue-9", key: "IR-9", url: "https://jira.example.com/browse/IR-9" } }, lastExportedAt: "" });
+    const findings = [makeFinding(), makeFinding({ id: "finding-2", title: "Persistence via Run key" })];
+    const result = await pushFindingsToJira(bulkClient(), store, { caseId: "case-a", projectKey: "IR", findings });
+
+    expect(result).toMatchObject({ created: 1, updated: 1, skipped: 0 });
+    const saved = await store.load("case-a");
+    expect(Object.keys(saved.issueRefs).sort()).toEqual(["finding-1", "finding-2"]);
+  });
+
+  it("offers the first issue url so the dashboard can link the batch", async () => {
+    const store = inMemoryStore();
+    const result = await pushFindingsToJira(bulkClient(), store, { caseId: "case-a", projectKey: "IR", findings: [makeFinding()] });
+    expect(result.issueUrl).toBe("https://jira.example.com/browse/IR-1");
+  });
+
+  it("does nothing on an empty batch", async () => {
+    const store = inMemoryStore();
+    const result = await pushFindingsToJira(bulkClient(), store, { caseId: "case-a", projectKey: "IR", findings: [] });
+    expect(result).toMatchObject({ created: 0, updated: 0, skipped: 0, warnings: [] });
+    expect(result.issues).toEqual([]);
   });
 });

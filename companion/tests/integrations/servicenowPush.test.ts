@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
-import { pushFindingToServiceNow, type ServiceNowClientLike, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
+import { pushFindingToServiceNow, pushFindingsToServiceNow, type ServiceNowClientLike, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
 
 function makeFinding(partial: Partial<Finding> = {}): Finding {
   return {
@@ -90,5 +90,72 @@ describe("pushFindingToServiceNow", () => {
     expect(mock.created).toBe(1);            // no duplicate incident
     expect(mock.updated).toEqual(["sys-100"]);
     expect(second.incident.number).toBe("INC0012345");
+  });
+});
+
+// One incident per finding, with the option to reject specific ones, so a batch can be checked for
+// "the failure is reported, the rest still go".
+function bulkClient(failTitles: string[] = []): ServiceNowClientLike {
+  let n = 0;
+  return {
+    me: async () => ({ userId: "admin", userName: "admin" }),
+    createIncident: async (body) => {
+      if (failTitles.some((t) => body.shortDescription.includes(t))) throw new Error("ServiceNow permission denied");
+      n += 1;
+      return { id: `sys-${n}`, number: `INC000000${n}`, url: `https://snow.example.com/incident.do?sys_id=sys-${n}` };
+    },
+    updateIncident: async (sysId) => ({ id: sysId, number: "INC0012345", url: `https://snow.example.com/incident.do?sys_id=${sysId}` }),
+  };
+}
+
+describe("pushFindingsToServiceNow", () => {
+  it("opens one incident per finding and counts them", async () => {
+    const store = inMemoryStore();
+    const findings = [makeFinding(), makeFinding({ id: "finding-2", title: "Persistence via Run key" })];
+    const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings });
+
+    expect(result).toMatchObject({ created: 2, updated: 0, skipped: 0 });
+    expect(result.incidents.map((i) => i.findingId)).toEqual(["finding-1", "finding-2"]);
+    expect(result.incidents.map((i) => i.number)).toEqual(["INC0000001", "INC0000002"]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("keeps going when one finding fails, and reports which one", async () => {
+    const store = inMemoryStore();
+    const findings = [
+      makeFinding(),
+      makeFinding({ id: "finding-2", title: "Persistence via Run key" }),
+      makeFinding({ id: "finding-3", title: "Exfil over DNS" }),
+    ];
+    const result = await pushFindingsToServiceNow(bulkClient(["Persistence via Run key"]), store, { caseId: "case-b", findings });
+
+    expect(result).toMatchObject({ created: 2, updated: 0, skipped: 1 });
+    expect(result.incidents.map((i) => i.findingId)).toEqual(["finding-1", "finding-3"]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("Persistence via Run key");
+    expect(result.warnings[0]).toContain("permission denied");
+  });
+
+  it("UPDATES the findings already pushed and opens incidents only for the new ones", async () => {
+    const store = inMemoryStore({ incidentRefs: { "finding-1": { id: "sys-9", number: "INC0009", url: "https://snow.example.com/incident.do?sys_id=sys-9" } }, lastExportedAt: "" });
+    const findings = [makeFinding(), makeFinding({ id: "finding-2", title: "Persistence via Run key" })];
+    const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings });
+
+    expect(result).toMatchObject({ created: 1, updated: 1, skipped: 0 });
+    const saved = await store.load("case-b");
+    expect(Object.keys(saved.incidentRefs).sort()).toEqual(["finding-1", "finding-2"]);
+  });
+
+  it("offers the first incident url so the dashboard can link the batch", async () => {
+    const store = inMemoryStore();
+    const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings: [makeFinding()] });
+    expect(result.incidentUrl).toBe("https://snow.example.com/incident.do?sys_id=sys-1");
+  });
+
+  it("does nothing on an empty batch", async () => {
+    const store = inMemoryStore();
+    const result = await pushFindingsToServiceNow(bulkClient(), store, { caseId: "case-b", findings: [] });
+    expect(result).toMatchObject({ created: 0, updated: 0, skipped: 0, warnings: [] });
+    expect(result.incidents).toEqual([]);
   });
 });

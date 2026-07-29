@@ -14,7 +14,7 @@ In plain terms, it does three things:
 
 **2. Analyzes the evidence with AI.** The server reads the evidence and builds a structured **forensic timeline** of real events with real timestamps. It then runs a second AI pass to produce **findings** (what the attacker did), **MITRE ATT&CK technique mappings**, and an **attacker-path narrative** (the story of the intrusion from first foothold to last known activity).
 
-**3. Helps you understand and communicate.** It surfaces the timeline in a dashboard with filters, graphs, and derived panels (kill chain, asset graph, adversary hints, defensive countermeasures, hunting leads). It generates a Word/HTML/Markdown/CSV report, a presentation slide deck, and can push the findings to your SIEM, Notion, ClickUp, or DFIR-IRIS.
+**3. Helps you understand and communicate.** It surfaces the timeline in a dashboard with filters, graphs, and derived panels (kill chain, asset graph, adversary hints, defensive countermeasures, hunting leads). It generates a Word/HTML/Markdown/CSV report, a presentation slide deck, and can push the findings to your SIEM, Notion, ClickUp, Jira, ServiceNow, or DFIR-IRIS.
 
 !!! info "Privacy"
     Everything runs on your machine. Evidence never leaves your network unless you explicitly opt in to a third-party enrichment service.
