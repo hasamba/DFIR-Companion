@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
+import { redactCustodyRecords } from "../../src/analysis/redactedExport.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 
 let cases: CaseStore;
@@ -61,5 +62,68 @@ describe("chain of custody in the REDACTED export", () => {
     expect(markdown).toContain("ANON_HOST_1");
     expect(markdown).not.toContain("WORKSTATION-7");
     expect(markdown).not.toContain("0001_evidence.csv");
+  });
+});
+
+describe("what survives redaction in the custody appendix (#362)", () => {
+  const SHA = "a".repeat(64);
+
+  // A hash is not PII: a SHA-256 reveals nothing about the file's contents, its name, or the host
+  // it came from. Tokenizing it leaves the recipient a chain they cannot check against the evidence
+  // they hold, which is most of the appendix's value to an external party.
+  it("keeps the artifact hash intact", async () => {
+    const redact = (s: string) => s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/[0-9a-f]{64}/g, "ANON_HASH");
+
+    const { markdown } = await writer.redactedReportContents("c1", redact);
+
+    expect(markdown).toContain(SHA);
+    expect(markdown).not.toContain("ANON_HASH");
+  });
+
+  it("keeps prevHash intact, without which the chain cannot be walked at all", async () => {
+    const second = join(cases.importsDir("c1"), "0002_more.csv");
+    await writeFile(second, "more\n", "utf8");
+    await custody.record("c1", {
+      artifactPath: second, sha256: "b".repeat(64), collectedBy: "alice",
+      collectedAt: "2026-07-28T11:00:00.000Z", source: "WORKSTATION-7", trigger: "import", caseId: "c1",
+    });
+    const before = (await custody.load("c1"))[1].prevHash;
+    expect(before).toMatch(/^[0-9a-f]{64}$/);
+
+    const redactAll = (s: string) => `ANON(${s})`;
+    const records = redactCustodyRecords(await custody.load("c1"), redactAll);
+
+    expect(records[1].prevHash).toBe(before);
+  });
+
+  it("still redacts the path, the source host and the collector", async () => {
+    const redactAll = (s: string) => `ANON(${s})`;
+
+    const [record] = redactCustodyRecords(await custody.load("c1"), redactAll);
+
+    expect(record.artifactPath).toContain("ANON(");
+    expect(record.source).toBe("ANON(WORKSTATION-7)");
+    expect(record.collectedBy).toBe("ANON(alice)");
+    expect(record.trigger).toContain("ANON(");
+  });
+
+  it("keeps the ordinal and the event name, which carry no case data", async () => {
+    const redactAll = (s: string) => `ANON(${s})`;
+
+    const [record] = redactCustodyRecords(await custody.load("c1"), redactAll);
+
+    expect(record.seq).toBe(1);
+    expect(record.event).toBe("collected");
+  });
+
+  it("redacts a field it has never heard of, rather than letting it through", async () => {
+    // A field added to CustodyRecord later must be redacted by DEFAULT — leaking by default is the
+    // failure mode worth engineering against here.
+    const withExtra = { ...(await custody.load("c1"))[0], custodianNotes: "handed over by Bob at ACME-DC01" } as Record<string, unknown>;
+    const redactAll = (s: string) => `ANON(${s})`;
+
+    const [record] = redactCustodyRecords([withExtra as never], redactAll) as unknown as Record<string, unknown>[];
+
+    expect(record.custodianNotes).toBe("ANON(handed over by Bob at ACME-DC01)");
   });
 });

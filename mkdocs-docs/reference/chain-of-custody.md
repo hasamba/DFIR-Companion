@@ -118,8 +118,8 @@ You get it in three places:
 
 The **Chain of Custody** appendix lists each artifact with its hash and every event that touched it. It is a normal report section: reorder or switch it off in **Settings → Report Templates**, like any other. It is on in the Standard template and off in the Executive Brief, where a per-artifact table is operator detail rather than client-facing content.
 
-!!! warning "Redacted exports tokenize hashes"
-    In a **redacted case package**, custody records go through the anonymizer along with everything else — and the anonymizer does not distinguish a hash from a hostname. The redacted appendix therefore shows the *structure* of the chain but not verifiable hashes. Use the normal report or the signed manifest when the hashes are the point.
+!!! info "What a redacted export keeps"
+    In a **redacted case package** the appendix is redacted field by field rather than wholesale. Artifact hashes (`sha256`, `prevHash`), the ordinal and the event name survive intact, so a recipient can still check the chain against the evidence they hold — a SHA-256 reveals nothing about a file's contents, name or origin. Paths, source hosts and collector names are tokenized, and so is any field added to the record in future: only the four named above are exempt, so a new field is redacted by default rather than leaking by default.
 
 ---
 
