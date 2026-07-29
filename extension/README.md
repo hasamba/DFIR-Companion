@@ -9,7 +9,8 @@ CrowdStrike) into the case timeline.
 Listed publication is set up via CI (see [Publishing](#publishing-chrome-web-store)); once the
 listing is live, install it from the Chrome Web Store for one-click setup and automatic updates.
 Until then (and for development), use the unpacked load below. Firefox has no AMO listing yet, so
-there it is always the local load.
+there it is always a temporary add-on — but you no longer have to build it: every release attaches
+`dfir-capture-extension-firefox-<tag>.zip` (see [Releases](https://github.com/hasamba/DFIR-Companion/releases/latest)).
 
 ## Build & load (development / unpacked)
 
@@ -28,6 +29,12 @@ there it is always the local load.
 
 `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → select
 `extension/dist-firefox/manifest.json` — the manifest **file**, not the folder Chrome asks for.
+
+Not developing? Unzip `dfir-capture-extension-firefox-<tag>.zip` from the
+[latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and point the same
+**Load Temporary Add-on…** dialog at the `manifest.json` inside it — the archive holds exactly what
+`npm run build:firefox` emits. It is unsigned either way, so it is still a temporary load, not a
+permanent install; that needs the AMO listing below.
 
 > Firefox removes a temporary add-on when the browser restarts, so repeat the load each session.
 > That is how unsigned local add-ons work, not something this one does; a signed AMO build would
@@ -113,8 +120,15 @@ submission. After that, tagged releases publish new versions automatically.
 
 ## Publishing (Firefox / AMO)
 
-Not submitted yet, and CI does not package the Firefox build — `release-artifacts.yml` builds and
-attaches the Chrome zip only, so `dist-firefox/` is a local build for now.
+Not submitted to AMO yet, but the build is packaged: `release-artifacts.yml`'s **`extension-zip`**
+job now builds both targets and attaches `dfir-capture-extension-firefox-<tag>.zip` — zipped from
+inside `dist-firefox/`, so `manifest.json` sits at the archive root — alongside the Chrome zip on
+every `v*` tag (#366). The job's `sha256` output stays the *Chrome* zip's, because the Chocolatey
+package downloads and verifies that specific asset.
+
+What is still missing is the listing itself: AMO upload/publish needs API credentials and a first
+manual submission, exactly as the Chrome listing did. Until then the release zip is an unsigned
+temporary add-on, not a permanent install.
 
 Two values in [`scripts/manifest-firefox.mjs`](./scripts/manifest-firefox.mjs) are already settled
 and should not be changed casually:

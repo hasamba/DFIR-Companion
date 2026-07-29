@@ -109,16 +109,16 @@ The capture extension lets you screenshot any browser tab with a keyboard shortc
 
 === "Firefox"
 
-    Needs **Firefox 128 or later**. There is no Mozilla Add-ons listing yet, so build it from source:
+    Needs **Firefox 128 or later**. There is no Mozilla Add-ons listing yet, so it loads as a temporary add-on:
 
-    1. Run `npm run build:firefox` inside `extension/` — this writes `extension/dist-firefox/`.
+    1. Download `dfir-capture-extension-firefox-*.zip` from the [latest GitHub release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it. (Building from source instead? Run `npm run build:firefox` inside `extension/` — it writes the same files to `extension/dist-firefox/`.)
     2. In Firefox, go to `about:debugging#/runtime/this-firefox`.
-    3. Click **Load Temporary Add-on…** and select `extension/dist-firefox/manifest.json` — the manifest **file**, not the folder. (Chrome asks for a folder here; Firefox asks for the manifest inside it.)
+    3. Click **Load Temporary Add-on…** and select the `manifest.json` inside the unzipped folder — the manifest **file**, not the folder. (Chrome asks for a folder here; Firefox asks for the manifest inside it.)
     4. The extension icon appears in the toolbar.
 
     !!! note "Temporary add-ons don't survive a restart"
 
-        Firefox removes a temporary add-on when the browser restarts, so repeat step 3 each session. Nothing you captured is lost: evidence is sent to the Companion server as you capture it and lives in the case, not in the browser.
+        Firefox removes a temporary add-on when the browser restarts, so repeat step 3 each session. That is how unsigned add-ons work — the release zip is not signed by Mozilla, so it cannot be installed permanently until there is an AMO listing. Nothing you captured is lost either way: evidence is sent to the Companion server as you capture it and lives in the case, not in the browser.
 
 **Keyboard shortcut:** `Ctrl+Shift+S` (Windows/Linux) toggles capture mode on/off. When capture is active, a floating push button appears on the page.
 
