@@ -13,6 +13,7 @@
   <script defer src="/vendor/cytoscape/cytoscape-dagre.js"></script>
   <script type="module" src="/js/graph-view.js"></script>
   <script type="module" src="/js/command-palette.js"></script>
+  <script type="module" src="/js/settings-search.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
@@ -1568,9 +1569,35 @@
     .settings-mode button { background: none; border: none; color: var(--c-9aa4b2); font-size: 11px; font-weight: 500; padding: 3px 12px; cursor: pointer; }
     .settings-mode button:hover { color: var(--c-cbd3df); background: var(--hover-wash); }
     .settings-mode button.active { background: var(--c-2d6cdf); color: #fff; }
-    .settings-modal[data-mode="essential"] .stab:not([data-essential]) { display: none !important; }
-    .settings-modal[data-mode="essential"] .stab-pane:not([data-essential="pane"]) > *:not([data-essential]) { display: none !important; }
-    .settings-modal[data-mode="essential"] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential]) { display: none !important; }
+    .settings-modal[data-mode="essential"]:not([data-searching]) .stab:not([data-essential]) { display: none !important; }
+    .settings-modal[data-mode="essential"]:not([data-searching]) .stab-pane:not([data-essential="pane"]) > *:not([data-essential]) { display: none !important; }
+    .settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential]) { display: none !important; }
+    /* ── Search ─────────────────────────────────────────────────────────────────────────────
+       `data-searching` on the modal means a non-empty query is active. The three Essential rules
+       above opt OUT of it rather than these rules out-specificing three `!important` declarations —
+       one uniform edit, and it is what lets a search reach a tab Essential hides entirely. A test
+       in tests/settings/settingsSearch.test.ts pins that opt-out onto every Essential rule.
+
+       Marking the ancestor chain in JS is what keeps these selectors this simple: no :has(), and no
+       runtime pass working out whether a container still has visible children. The last two mirror
+       the Essential pair exactly — hide unmarked top-level pane children, then unmarked fields
+       inside a marked row — so there is one shape to learn, not two. */
+    .settings-search { flex: 0 1 220px; min-width: 110px; background: var(--c-242a35); color: var(--c-cbd3df);
+      border: 1px solid var(--c-353c49); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit; font-weight: 400; }
+    .settings-search::placeholder { color: var(--c-5a6475); }
+    .settings-search:focus { outline: none; border-color: var(--c-2d6cdf); }
+    .settings-search-msg { font-size: 11px; font-weight: 400; color: var(--c-9aa4b2); margin-left: auto; }
+    .settings-search-msg[hidden] { display: none; }
+    /* The mode toggle steps aside while searching. Leaving it live would be a dead control: search
+       has suspended Essential, so clicking it would rewrite the stored preference to no visible
+       effect. It returns, unchanged, when the box is cleared. */
+    .settings-modal[data-searching] .settings-mode { display: none; }
+    .settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }
+    .settings-modal[data-searching] .stab-pane:not([data-hit="pane"]) > *:not([data-hit]) { display: none !important; }
+    .settings-modal[data-searching] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-hit]) { display: none !important; }
+    .settings-modal[data-searching] .stab[data-hit-count]::after { content: attr(data-hit-count);
+      margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--c-2a2f3a); color: var(--c-9aa4b2); font-size: 10px; }
+    .settings-modal[data-searching] .stab.active[data-hit-count]::after { background: var(--c-2d6cdf); color: #fff; }
     /* No inner scroll — the whole list expands and the single .stab-pane scrollbar handles overflow. */
     .sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
     .sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
@@ -2349,6 +2376,8 @@
   <div id="settingsOverlay" class="comment-overlay">
     <div class="comment-modal settings-modal">
       <h3>Settings
+        <input id="settingsSearch" class="settings-search" type="search" placeholder="Search settings…" aria-label="Search settings" autocomplete="off" />
+        <span id="settingsSearchMsg" class="settings-search-msg" hidden></span>
         <span class="settings-mode" role="group" aria-label="Settings detail level">
           <button type="button" id="settingsModeEssential">Essential</button>
           <button type="button" id="settingsModeAll">All</button>
@@ -20204,6 +20233,7 @@
       loadUpdateCheck();
       // After the reset-to-first-tab above, so the fallback in applySettingsMode sees a real
       // active tab; before .open, so Essential mode never flashes the full list.
+      window.DfirSettingsSearch?.reset();
       applySettingsMode(settingsMode());
       document.getElementById("settingsOverlay").classList.add("open");
     }
@@ -20217,6 +20247,12 @@
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
     document.getElementById("settingsModeEssential").onclick = () => applySettingsMode("essential");
     document.getElementById("settingsModeAll").onclick = () => applySettingsMode("all");
+
+    // Live references, not snapshots — the search module calls applyMode() when the box is cleared
+    // so a tab Essential hides falls back through the code above rather than a duplicate of it.
+    // Set at inline-script top level, read by the module at call time: module scripts run after
+    // classic inline ones, so there is no ordering handshake to get wrong in either direction.
+    window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };
 
     // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
     // A multi-step onboarding overlay covering every config that has no default and won't work

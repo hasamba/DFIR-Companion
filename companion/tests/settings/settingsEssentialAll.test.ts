@@ -159,10 +159,14 @@ describe("Settings Essential mode — structural invariants the CSS depends on",
 describe("Settings Essential mode — wiring", () => {
   it("hides everything unmarked, beating the inline display JS sets on panels", async () => {
     const html = await dashboard();
+    // The `:not([data-searching])` on each is what suspends Essential while the search box has a
+    // query, so a search can reach the tabs and fields this mode hides. Keeping it here means
+    // dropping it is a failure in BOTH suites; tests/settings/settingsSearch.test.ts additionally
+    // pins it onto every Essential rule, including ones added after this list.
     for (const rule of [
-      '.settings-modal[data-mode="essential"] .stab:not([data-essential])',
-      '.settings-modal[data-mode="essential"] .stab-pane:not([data-essential="pane"]) > *:not([data-essential])',
-      '.settings-modal[data-mode="essential"] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential])',
+      '.settings-modal[data-mode="essential"]:not([data-searching]) .stab:not([data-essential])',
+      '.settings-modal[data-mode="essential"]:not([data-searching]) .stab-pane:not([data-essential="pane"]) > *:not([data-essential])',
+      '.settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential])',
     ]) {
       const at = html.indexOf(rule);
       expect(at, `missing CSS rule: ${rule}`).toBeGreaterThan(-1);

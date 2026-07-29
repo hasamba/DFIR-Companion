@@ -3008,7 +3008,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
   // cytoscape+dagre for the graphs) plus first-party browser modules (the shared graph-view module
-  // used by the Login/Assets/Evidence graphs, and the command palette, #238). Whitelisted paths only.
+  // used by the Login/Assets/Evidence graphs, the command palette #238, and the Settings search
+  // filter). Whitelisted paths only — a new module under public/js/ is NOT served until it is
+  // named here, and the browser's only symptom is a silent 404 with the feature simply absent.
+  // tests/settings/settingsSearch.test.ts pins every /js/ module dashboard.html loads to an entry
+  // in this map, so the next one cannot ship half-wired.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
     "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
@@ -3018,6 +3022,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
     "/js/graph-view.js": "application/javascript; charset=utf-8",
     "/js/command-palette.js": "application/javascript; charset=utf-8",
+    "/js/settings-search.js": "application/javascript; charset=utf-8",
   };
   for (const [route, type] of Object.entries(vendorFiles)) {
     app.get(route, async (_req, res) => {
