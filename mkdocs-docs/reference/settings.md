@@ -35,6 +35,27 @@ whatever you have typed.
 
 ---
 
+## Search
+
+The box beside the Settings title filters every field as you type. Tokens are ANDed and matched as
+substrings, against a field's label, its hint, and its env key: `max events`, `DFIR_MAX_EVENTS` and
+`dfir-max-events` all find the same control, so a key copied out of `.env` or the docs works as-is.
+Select options are searchable too — `ollama` finds the AI provider dropdown.
+
+**Search always spans All, whichever mode you are in.** You search precisely because you cannot find
+something, so a search confined to Essential would report "no results" for a field that exists. Tabs
+Essential hides — Velociraptor, Tools, Dashboard Views and the rest — appear in the tab bar while a
+search is active, each badged with the number of fields it will show. Typing a tab's own name (`kev`,
+`whitelist`, `nsrl`) matches the tab and shows its pane unfiltered, which is how the tabs that manage
+content rather than configuration stay reachable.
+
+The Essential / All toggle steps aside while a search is active, because search has suspended the
+Essential filter and the toggle would have no visible effect. Clear the box — empty it, use the ⨯, or
+press Escape in it — and the toggle returns with your choice unchanged. Searching never rewrites the
+remembered Essential/All preference, and closing Settings clears the box.
+
+---
+
 ## General
 
 - Case root location

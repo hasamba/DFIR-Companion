@@ -135,3 +135,38 @@ describe("dashboard.html search CSS", () => {
     for (const rule of rules) expect(rule).toContain(":not([data-searching])");
   });
 });
+
+describe("dashboard.html search wiring", () => {
+  it("loads the module", async () => {
+    const h = await dashboard();
+    expect(h).toContain('<script type="module" src="/js/settings-search.js"></script>');
+  });
+
+  // The server serves public/js by an EXACT-PATH whitelist (`vendorFiles` in src/server.ts), not a
+  // static directory. A module that is not named there 404s, and the only symptom in the browser is
+  // the feature silently not existing — no console error the dashboard surfaces, nothing failing in
+  // any other suite. Written as "every module the dashboard loads" rather than naming this one file,
+  // so the next /js/ module is covered the day it is added.
+  it("whitelists every /js/ module the dashboard loads", async () => {
+    const [h, server] = await Promise.all([
+      dashboard(),
+      readFile(new URL("../../src/server.ts", import.meta.url), "utf8"),
+    ]);
+    const loaded = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+    expect(loaded).toContain("/js/settings-search.js");
+    for (const path of loaded) {
+      expect(server, `${path} is loaded by dashboard.html but not whitelisted in server.ts vendorFiles`)
+        .toContain(`"${path}": "application/javascript; charset=utf-8"`);
+    }
+  });
+
+  it("publishes the config the module reads, and resets the box on open", async () => {
+    const h = await dashboard();
+    // Live references, not snapshots: the module calls applyMode() on clear so a tab Essential
+    // hides falls back through the inline script's own path rather than a copy of it.
+    expect(h).toContain("window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };");
+    // Optional chaining: openSettingsModal is defined in a classic inline script, which runs
+    // BEFORE the module that publishes window.DfirSettingsSearch.
+    expect(h).toContain("window.DfirSettingsSearch?.reset();");
+  });
+});

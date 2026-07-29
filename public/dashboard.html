@@ -13,6 +13,7 @@
   <script defer src="/vendor/cytoscape/cytoscape-dagre.js"></script>
   <script type="module" src="/js/graph-view.js"></script>
   <script type="module" src="/js/command-palette.js"></script>
+  <script type="module" src="/js/settings-search.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference. */
@@ -20137,6 +20138,7 @@
       loadUpdateCheck();
       // After the reset-to-first-tab above, so the fallback in applySettingsMode sees a real
       // active tab; before .open, so Essential mode never flashes the full list.
+      window.DfirSettingsSearch?.reset();
       applySettingsMode(settingsMode());
       document.getElementById("settingsOverlay").classList.add("open");
     }
@@ -20150,6 +20152,12 @@
     document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
     document.getElementById("settingsModeEssential").onclick = () => applySettingsMode("essential");
     document.getElementById("settingsModeAll").onclick = () => applySettingsMode("all");
+
+    // Live references, not snapshots — the search module calls applyMode() when the box is cleared
+    // so a tab Essential hides falls back through the code above rather than a duplicate of it.
+    // Set at inline-script top level, read by the module at call time: module scripts run after
+    // classic inline ones, so there is no ordering handshake to get wrong in either direction.
+    window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };
 
     // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
     // A multi-step onboarding overlay covering every config that has no default and won't work
