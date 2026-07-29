@@ -477,6 +477,41 @@ accepted limit: the control exists so an operator does not *under-estimate* the 
 not to contain a server that is actively hostile. Do not register a server you would not trust to
 describe its own tools honestly.
 
+### Getting evidence to the server
+
+MCP has no file-transfer primitive and a multi-gigabyte memory image cannot travel inside a JSON-RPC
+argument, so the file has to already be somewhere the server can open it. Each server picks one of
+two routes:
+
+**`remote-path`** (default) — the evidence is already visible to the analysis host over a shared
+mount. Set a local prefix and a remote prefix and the path is rewritten (`/srv/cases/…` →
+`/mnt/dfir/…`); leave both empty when the mount is at the same path on both sides. Nothing is
+copied.
+
+**`scp`** — the Companion pushes the file to a staging directory, the tool runs, and the staged copy
+is deleted afterwards. Configure `host`, `remoteDir`, optionally `user`, `port` and `identityFile`.
+
+Four things to know before choosing `scp`:
+
+- **The host key must already be trusted.** `BatchMode` is on and `StrictHostKeyChecking` is *not*
+  disabled, so an unknown host fails with `Host key verification failed` rather than trusting
+  whatever answered the address. Connect once by hand (or add the key to `known_hosts`) first. This
+  is deliberate: silently accepting an unverified key would hand evidence to anyone holding the IP.
+- **Authentication is key-based only.** `BatchMode` means ssh never prompts, so a password-only host
+  cannot work. Point `identityFile` at a key with no passphrase, or load it into an agent the server
+  process can reach.
+- **There is no progress and no resume.** A 16 GB copy is opaque until it finishes or fails, and a
+  dropped connection means starting over. The transfer is cancellable and has its own hour-long
+  timeout, separate from the tool-call timeout.
+- **Host, user and remote directory are restricted to a conservative charset** (letters, digits,
+  dot, dash, underscore, and `/` for the directory). `user@host` reaches ssh unquoted, so anything
+  with shell meaning is refused when you save it rather than at transfer time. The staged filename
+  is derived from the evidence name and sanitized the same way.
+
+Either route records a **chain-of-custody `transferred` event** naming the destination, so a case
+file shows that evidence left this machine, when, and to where. A transfer that fails records
+nothing — the chain never claims a copy that did not happen.
+
 ### Tokens
 
 Bearer tokens are **not** stored in the registry JSON. They live in `.env` as

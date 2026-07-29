@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { inspectCommand, areCommandsAllowed, assertCallAllowed } from "../../src/integrations/mcp/mcpGuard.js";
-import type { McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
+import { DEFAULT_DELIVERY, type McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
 
 const server = (over: Partial<McpServer> = {}): McpServer => ({
   id: "sift",
@@ -10,6 +10,7 @@ const server = (over: Partial<McpServer> = {}): McpServer => ({
   allowedTools: [],
   allowedCommands: [],
   timeoutMs: 1000,
+  delivery: DEFAULT_DELIVERY,
   ...over,
 });
 

@@ -18,6 +18,63 @@ import { validateBaseUrl } from "../../providers/urlValidation.js";
 // analysis host). Every field below is re-validated on read with a `.catch()` default, so adding
 // `delivery` in phase 2 reads old files without a migration.
 
+/**
+ * How evidence reaches this server's host (§6). Flat with a `mode` discriminator rather than a
+ * union, so a hand-edited file with a half-filled block still reads back with defaults instead of
+ * collapsing the whole server entry.
+ */
+export const mcpDeliverySchema = z.object({
+  mode: z.enum(["remote-path", "scp"]).catch("remote-path"),
+  // scp
+  host: z.string().catch(""),
+  user: z.string().catch(""),
+  port: z.number().catch(22),
+  identityFile: z.string().catch(""),
+  remoteDir: z.string().catch(""),
+  // Its own timeout, an hour by default: a disk image copy is not a 300-second operation, and
+  // bounding it by the call timeout would kill every transfer that mattered.
+  timeoutMs: z.number().catch(3_600_000),
+  // remote-path
+  localPrefix: z.string().catch(""),
+  remotePrefix: z.string().catch(""),
+});
+export type McpDelivery = z.infer<typeof mcpDeliverySchema>;
+
+export const DEFAULT_DELIVERY: McpDelivery = {
+  mode: "remote-path", host: "", user: "", port: 22, identityFile: "", remoteDir: "",
+  timeoutMs: 3_600_000, localPrefix: "", remotePrefix: "",
+};
+
+/**
+ * A conservative charset for the parts of an scp/ssh invocation that are NOT shell-quoted.
+ *
+ * `user@host` reaches ssh unquoted, and scp's `host:path` destination is historically expanded by a
+ * shell on the far side (modern OpenSSH uses SFTP and does not, but the registry should not depend
+ * on the remote version). Restricting these to characters with no shell meaning removes the question
+ * entirely, at the cost of rejecting exotic-but-legal values a staging host will not have.
+ */
+const SAFE_HOSTPART = /^[A-Za-z0-9._-]+$/;
+const SAFE_REMOTE_DIR = /^\/[A-Za-z0-9._\-/]*$/;
+
+/** Validate a delivery block. Returns an error message when unusable, null when fine. */
+export function validateDelivery(d: McpDelivery): string | null {
+  if (d.mode === "scp") {
+    if (!d.host.trim()) return "scp delivery needs a host";
+    if (!SAFE_HOSTPART.test(d.host)) return `delivery host "${d.host}" may only contain letters, digits, dot, dash and underscore`;
+    if (d.user && !SAFE_HOSTPART.test(d.user)) return `delivery user "${d.user}" may only contain letters, digits, dot, dash and underscore`;
+    if (!d.remoteDir.trim()) return "scp delivery needs a remote staging directory";
+    if (!SAFE_REMOTE_DIR.test(d.remoteDir)) return `remote directory "${d.remoteDir}" must be an absolute POSIX path of letters, digits, dot, dash, underscore and slash`;
+    if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return `delivery port ${d.port} is not a valid port`;
+    return null;
+  }
+  // remote-path: a rewrite needs both halves or neither. One alone silently maps everything to the
+  // wrong place, which is worse than refusing to save it.
+  if (Boolean(d.localPrefix) !== Boolean(d.remotePrefix)) {
+    return "a shared-path rewrite needs both a local prefix and a remote prefix, or neither";
+  }
+  return null;
+}
+
 export const mcpServerSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -32,6 +89,7 @@ export const mcpServerSchema = z.object({
   // Matches ToolConfig's default. A real Volatility run outlives it, which is why the call is a
   // JobManager job rather than a request (§7) — this bounds the individual HTTP round-trip.
   timeoutMs: z.number().catch(300_000),
+  delivery: mcpDeliverySchema.catch(DEFAULT_DELIVERY),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;
 
@@ -42,6 +100,7 @@ export interface McpServerInput {
   allowedTools?: string[] | string;      // array or a comma/space-separated string
   allowedCommands?: string[] | string;   // likewise
   timeoutMs?: number;
+  delivery?: Partial<McpDelivery>;
 }
 
 /** Stable slug id from the server label, so re-adding the same name updates rather than duplicates. */
@@ -98,6 +157,9 @@ function fromInput(input: McpServerInput, id: string): McpServer {
     // are not two different rules.
     allowedCommands: normalizeNames(input.allowedCommands).map((c) => basename(c)),
     timeoutMs: Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 300_000,
+    // Parsed through the schema so a partial block from the dashboard gets every default filled,
+    // and a garbage one falls back rather than being stored half-formed.
+    delivery: mcpDeliverySchema.catch(DEFAULT_DELIVERY).parse({ ...DEFAULT_DELIVERY, ...(input.delivery ?? {}) }),
   };
 }
 
@@ -146,6 +208,8 @@ export class McpServerStore {
 
     const id = slugifyServerLabel(label);
     const server = fromInput(input, id);
+    const deliveryError = validateDelivery(server.delivery);
+    if (deliveryError) throw new Error(deliveryError);
     const list = await this.load();
     const next = list.some((s) => s.id === id)
       ? list.map((s) => (s.id === id ? server : s))
@@ -168,7 +232,11 @@ export class McpServerStore {
       allowedTools: patch.allowedTools ?? cur.allowedTools,
       allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
       timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
+      // Merged field-wise so changing one delivery setting does not reset the rest to defaults.
+      delivery: { ...cur.delivery, ...(patch.delivery ?? {}) },
     }, id);   // keep the same id — a label change does not re-slug an existing server
+    const deliveryError = validateDelivery(merged.delivery);
+    if (deliveryError) throw new Error(deliveryError);
     await this.save(list.map((s) => (s.id === id ? merged : s)));
     return merged;
   }

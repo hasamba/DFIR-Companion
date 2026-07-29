@@ -56,6 +56,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           // A server whose permitted tools take a command argument grants execution of whatever
           // that command names, so the UI can warn before the first run rather than after.
           timeoutMs: s.timeoutMs,
+          // How evidence reaches it (§6). No secrets in here — an ssh key is a path, never a value.
+          delivery: s.delivery,
           // The KEY, never the value — the token itself stays in .env behind envManager's redaction.
           tokenEnvKey: tokenEnvKey(s.id),
           hasToken: !!process.env[tokenEnvKey(s.id)],

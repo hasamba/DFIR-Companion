@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import {
-  McpServerStore, isToolAllowed, tokenEnvKey, slugifyServerLabel, type McpServer,
+  McpServerStore, isToolAllowed, tokenEnvKey, slugifyServerLabel, DEFAULT_DELIVERY, type McpServer,
 } from "../../src/integrations/mcp/mcpServerStore.js";
 
 let store: McpServerStore;
@@ -149,6 +149,77 @@ describe("McpServerStore file handling", () => {
   });
 });
 
+describe("McpServerStore delivery config", () => {
+  const SCP = { mode: "scp" as const, host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" };
+
+  it("defaults to remote-path with nothing configured", async () => {
+    const added = await store.add({ label: "SIFT", url: LAN_URL });
+    expect(added.delivery).toMatchObject({ mode: "remote-path", port: 22, timeoutMs: 3_600_000 });
+  });
+
+  it("stores an scp block", async () => {
+    const added = await store.add({ label: "SIFT", url: LAN_URL, delivery: SCP });
+    expect(added.delivery).toMatchObject({ mode: "scp", host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" });
+  });
+
+  it("fills defaults around a partial block", async () => {
+    const added = await store.add({ label: "SIFT", url: LAN_URL, delivery: { mode: "scp", host: "sift.lab", remoteDir: "/tmp/x" } });
+    expect(added.delivery).toMatchObject({ port: 22, user: "", identityFile: "" });
+  });
+
+  it("requires a host and a remote directory for scp", async () => {
+    await expect(store.add({ label: "a", url: LAN_URL, delivery: { mode: "scp", remoteDir: "/x" } }))
+      .rejects.toThrow(/needs a host/);
+    await expect(store.add({ label: "b", url: LAN_URL, delivery: { mode: "scp", host: "sift.lab" } }))
+      .rejects.toThrow(/needs a remote staging directory/);
+  });
+
+  // user@host reaches ssh unquoted, so anything with shell meaning is refused at save time.
+  it("refuses a host or user that could carry shell meaning", async () => {
+    await expect(store.add({ label: "a", url: LAN_URL, delivery: { ...SCP, host: "sift.lab; rm -rf /" } }))
+      .rejects.toThrow(/host .* may only contain/);
+    await expect(store.add({ label: "b", url: LAN_URL, delivery: { ...SCP, user: "an$(whoami)" } }))
+      .rejects.toThrow(/user .* may only contain/);
+  });
+
+  it("requires the remote directory to be an absolute POSIX path", async () => {
+    await expect(store.add({ label: "a", url: LAN_URL, delivery: { ...SCP, remoteDir: "relative/dir" } }))
+      .rejects.toThrow(/must be an absolute POSIX path/);
+    await expect(store.add({ label: "b", url: LAN_URL, delivery: { ...SCP, remoteDir: "/cases/$(x)" } }))
+      .rejects.toThrow(/must be an absolute POSIX path/);
+  });
+
+  it("rejects an impossible port", async () => {
+    await expect(store.add({ label: "a", url: LAN_URL, delivery: { ...SCP, port: 70000 } }))
+      .rejects.toThrow(/not a valid port/);
+  });
+
+  // One prefix alone silently maps everything to the wrong place.
+  it("requires both halves of a shared-path rewrite, or neither", async () => {
+    await expect(store.add({ label: "a", url: LAN_URL, delivery: { mode: "remote-path", localPrefix: "/srv" } }))
+      .rejects.toThrow(/both a local prefix and a remote prefix/);
+    await expect(store.add({ label: "b", url: LAN_URL, delivery: { mode: "remote-path", localPrefix: "/srv", remotePrefix: "/mnt" } }))
+      .resolves.toBeTruthy();
+  });
+
+  it("merges a delivery update field-wise instead of resetting the rest", async () => {
+    await store.add({ label: "SIFT", url: LAN_URL, delivery: { ...SCP, identityFile: "/home/dfir/.ssh/lab" } });
+
+    const updated = await store.update("sift", { delivery: { remoteDir: "/cases/staging" } });
+
+    expect(updated?.delivery).toMatchObject({
+      mode: "scp", host: "sift.lab", identityFile: "/home/dfir/.ssh/lab", remoteDir: "/cases/staging",
+    });
+  });
+
+  it("validates on update, leaving the stored block untouched when it fails", async () => {
+    await store.add({ label: "SIFT", url: LAN_URL, delivery: SCP });
+
+    await expect(store.update("sift", { delivery: { host: "evil;host" } })).rejects.toThrow(/may only contain/);
+    expect((await store.load())[0].delivery.host).toBe("sift.lab");
+  });
+});
+
 describe("tokenEnvKey", () => {
   it("derives the env key from the server id", () => {
     expect(tokenEnvKey("sift")).toBe("DFIR_MCP_SIFT_TOKEN");
@@ -171,7 +242,10 @@ describe("slugifyServerLabel", () => {
 
 describe("isToolAllowed", () => {
   const server = (allowedTools: string[]): McpServer =>
-    ({ id: "sift", label: "SIFT", url: LAN_URL, enabled: true, allowedTools, allowedCommands: [], timeoutMs: 1000 });
+    ({
+      id: "sift", label: "SIFT", url: LAN_URL, enabled: true,
+      allowedTools, allowedCommands: [], timeoutMs: 1000, delivery: DEFAULT_DELIVERY,
+    });
 
   it("allows a tool that was named", () => {
     expect(isToolAllowed(server(["pslist"]), "pslist")).toBe(true);
