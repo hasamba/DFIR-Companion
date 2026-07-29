@@ -132,6 +132,10 @@ export interface RouteContext {
     input: { data: Buffer; filename: string; zipPassword?: string },
   ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }>;
   socratesJobStore: SocratesJobStore;
+  // Run a raw drop-folder file through whichever transport its tool uses (spawn → runToolAndIngest,
+  // http → startSocratesAnalysis). Shared with the drop poller so the "Run pending" batch behaves
+  // identically to auto-run.
+  runDropToolAndIngest(caseId: string, toolId: string, fullPath: string, name: string): Promise<void>;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
   // the drop-folder poller reuses moveDropFile, and the push/tool paths reuse the whitelist/NSRL/

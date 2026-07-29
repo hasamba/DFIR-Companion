@@ -155,7 +155,7 @@ import {
 } from "./analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
 import {
-  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, type ToolId, type ToolConfig,
+  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, SOCRATES_EXTS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
@@ -870,6 +870,19 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // `const` is not hoisted the way the surrounding function declarations are.
   const socratesJobs = new SocratesJobStore(store);
 
+  // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
+  // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
+  // once — piles them all onto that lock. Chain them per case so verdicts land one at a time, in
+  // completion order. The chain never rejects (each link swallows), so one bad import cannot wedge
+  // every later one behind it.
+  const socratesIngestChain = new Map<string, Promise<unknown>>();
+  const queueSocratesIngest = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => {
+    const prev = socratesIngestChain.get(caseId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    socratesIngestChain.set(caseId, next.catch(() => { /* keep the chain alive after a failure */ }));
+    return next;
+  };
+
   const ctx: RouteContext = {
     store,
     options,
@@ -907,6 +920,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     reloadCustomTools,
     startSocratesAnalysis,
     socratesJobStore: socratesJobs,
+    runDropToolAndIngest,
     resolveImportKind: () => resolveImportKind,
     captureBuffers: () => buffers,
     synthInFlight: () => synthInFlight,
@@ -1566,9 +1580,28 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const custom = customTools.find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
     return custom ? custom.id : null;
   };
-  // Every file extension claimed by a built-in raw type OR a defined custom tool (for drop routing).
+  // Every file extension claimed by a built-in raw type, SO-CRATES, OR a defined custom tool (for drop
+  // routing). SOCRATES_EXTS is included unconditionally — even when SO-CRATES is not configured — so a
+  // dropped .exe is recognized as RAW and surfaces as pending ("configure a tool") instead of falling
+  // through to the text path, which would read the binary as UTF-8 and ingest garbage.
   const rawExtClaimed = (ext: string): boolean =>
-    RAW_TOOL_EXTS.has(ext.toLowerCase()) || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
+    RAW_TOOL_EXTS.has(ext.toLowerCase()) || SOCRATES_EXTS.includes(ext.toLowerCase())
+    || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
+
+  // Run a raw on-disk file through whichever transport its tool uses, and ingest the result. Spawn
+  // tools go through runToolAndIngest (synchronous); HTTP tools hand off to startSocratesAnalysis and
+  // return immediately, with the poller landing the verdicts later. Shared by the drop-folder auto-run
+  // and the "Run pending" batch so both behave identically.
+  async function runDropToolAndIngest(caseId: string, toolId: string, fullPath: string, name: string): Promise<void> {
+    const cfg = liveToolConfigs().get(toolId);
+    if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
+    if (cfg.transport === "http") {
+      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name });
+      return;
+    }
+    const r = await runToolAndIngest(caseId, toolId, fullPath);
+    if (!r.analyzed) throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
+  }
 
   // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
   // output through the SAME chain as the Import button (ingestStreamed). Shared by the drop-folder
@@ -1666,10 +1699,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         store: socratesJobs,
         checkStatus: (m) => checkStatus(baseUrl, m),
         fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
-        ingest: async (cid, text, name) => {
+        ingest: (cid, text, name) => queueSocratesIngest(cid, async () => {
           const r = await ingestStreamed(cid, "socrates", text, name);
           return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
-        },
+        }),
       }, { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) })
         .catch(() => { /* pollUntilImported already records failures on the job */ });
     }
@@ -1786,16 +1819,34 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
       // <tool>". Auto-run is gated per-tool (#211). Images always go to the capture path, not here.
       const ext = extname(file.relpath).toLowerCase();
-      if (options.toolRunner && classifyDropFile(file.relpath) !== "image" && rawExtClaimed(ext)) {
+      // Sniff the head so an EXTENSIONLESS or hash-named sample (routine for malware) is still seen as
+      // raw rather than read as text. Only the first 8 KB — the file may be gigabytes.
+      let head: Buffer | undefined;
+      try {
+        const fh = await open(full, "r");
+        try {
+          const buf = Buffer.alloc(Math.min(8192, Math.max(0, file.size)));
+          if (buf.length) await fh.read(buf, 0, buf.length, 0);
+          head = buf;
+        } finally { await fh.close(); }
+      } catch { /* unreadable head → fall back to extension-only classification */ }
+
+      // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
+      // NOT gated on options.toolRunner — that is the PROCESS SPAWNER, and SO-CRATES needs no spawner.
+      // Gating here would drop a binary into the text path on a box with no local forensic binaries.
+      if (classifyDropFile(file.relpath, head) === "raw-tool-input" || rawExtClaimed(ext)) {
         const configured = liveToolConfigs();
-        const toolId = resolveToolForExt(ext, configured);
+        // An extensionless binary is claimed by nobody, but SO-CRATES YARA-scans anything, so it is the
+        // fallback whenever it is configured.
+        const toolId = resolveToolForExt(ext, configured) ?? (configured.has("socrates") ? "socrates" : null);
         const cfg = toolId ? configured.get(toolId) : undefined;
-        if (!toolId || !cfg || !cfg.autoRun) {
+        // A spawn tool additionally needs the process spawner; an HTTP tool does not.
+        const runnable = !!cfg && cfg.autoRun && (cfg.transport === "http" || !!options.toolRunner);
+        if (!toolId || !cfg || !runnable) {
           // Not runnable now → pending (banner). Do NOT move the file so a manual run can still act on it.
           return { ok: false, pending: { relpath: file.relpath, ext, suggestedTool: toolId ?? suggestedToolForExtension(ext), configured: !!toolId } };
         }
-        const r = await runToolAndIngest(caseId, toolId, full);
-        if (!r.analyzed) return { ok: false, reason: `${toolId} ran but AI is off — output saved as evidence but not analyzed` };
+        await runDropToolAndIngest(caseId, toolId, full, name);
         return { ok: true };
       }
       if (isOversize(file.size, dropMaxBytes)) {

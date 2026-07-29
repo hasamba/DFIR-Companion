@@ -133,7 +133,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         const toolId = resolveToolForExt(p.ext, configured);
         if (!toolId) { skipped++; stillPending.push({ ...p, configured: false, suggestedTool: suggestedToolForExtension(p.ext) }); continue; }
         try {
-          await runToolAndIngest(caseId, toolId, join(dropDir, p.relpath));
+          // Dispatch by transport: a spawn tool runs and imports inline; SO-CRATES hands off to its
+          // background poller and the verdicts land when the analysis finishes.
+          await ctx.runDropToolAndIngest(caseId, toolId, join(dropDir, p.relpath), basename(p.relpath));
           await moveDropFile(dropDir, p.relpath, true).catch(() => { /* best-effort */ });
           resolvedEntries.push({ status: "IMPORTED", relpath: p.relpath, reason: `via ${toolId} (tool run)` });
           ran++;
