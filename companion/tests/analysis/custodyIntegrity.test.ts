@@ -35,14 +35,12 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
   custody = new CustodyStore(cases);
   alerts = [];
-  monitor = new EvidenceIntegrityMonitor(cases, custody, { intervalMs: 86_400_000 }, (sweep) => { alerts.push(sweep); });
+  monitor = new EvidenceIntegrityMonitor(cases, custody, { intervalMs: 86_400_000, onOpenThrottleMs: 0 }, (sweep) => { alerts.push(sweep); });
 });
 
+// The all-cases sweep interval. Its DEFAULT (off) and the on-open trigger are covered in
+// custodyIntegrityScope.test.ts, which owns the trigger model.
 describe("resolveIntegrityConfig", () => {
-  it("verifies once a day by default", () => {
-    expect(resolveIntegrityConfig({}).intervalMs).toBe(86_400_000);
-  });
-
   it("takes the operator's interval", () => {
     expect(resolveIntegrityConfig({ DFIR_CUSTODY_VERIFY_INTERVAL_MS: "60000" }).intervalMs).toBe(60_000);
   });
@@ -51,8 +49,8 @@ describe("resolveIntegrityConfig", () => {
     expect(resolveIntegrityConfig({ DFIR_CUSTODY_VERIFY_INTERVAL_MS: "0" }).intervalMs).toBe(0);
   });
 
-  it("falls back to the default on a non-numeric value", () => {
-    expect(resolveIntegrityConfig({ DFIR_CUSTODY_VERIFY_INTERVAL_MS: "soon" }).intervalMs).toBe(86_400_000);
+  it("falls back to off on a non-numeric value", () => {
+    expect(resolveIntegrityConfig({ DFIR_CUSTODY_VERIFY_INTERVAL_MS: "soon" }).intervalMs).toBe(0);
   });
 });
 
@@ -163,7 +161,7 @@ describe("EvidenceIntegrityMonitor.status", () => {
   });
 
   it("reports itself disabled when the interval is 0", () => {
-    const off = new EvidenceIntegrityMonitor(cases, custody, { intervalMs: 0 });
+    const off = new EvidenceIntegrityMonitor(cases, custody, { intervalMs: 0, onOpenThrottleMs: 0 });
     expect(off.status().enabled).toBe(false);
   });
 });

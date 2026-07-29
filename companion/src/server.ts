@@ -3654,7 +3654,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // must not sit in the startup path.
     const firstSweep = setTimeout(() => { void integrityMonitor.runSweepIfIdle(); }, INITIAL_INTEGRITY_SWEEP_DELAY_MS);
     firstSweep.unref();
-    logLine(`[custody] evidence integrity sweep every ${integrityConfig.intervalMs / 1000}s`);
+    logLine(`[custody] all-cases evidence integrity sweep every ${integrityConfig.intervalMs / 1000}s`);
+  }
+  if (integrityConfig.onOpenThrottleMs > 0) {
+    logLine(`[custody] cases verified on open (re-checked after ${integrityConfig.onOpenThrottleMs / 1000}s)`);
   }
 
   const provider = buildProvider();

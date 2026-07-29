@@ -20,24 +20,32 @@ function report(evidenceIntegrity: EvidenceIntegrityStatus): DiagnosticsReport {
 }
 
 const base: EvidenceIntegrityStatus = {
-  enabled: true, intervalMs: 86_400_000, lastRunAt: null, lastDurationMs: null,
+  enabled: false, intervalMs: 0, verifyOnOpen: true, onOpenThrottleMs: 14_400_000,
+  lastRunAt: null, lastDurationMs: null, casesVerified: 0,
   artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
 };
 
 describe("evidence integrity in the diagnostics text", () => {
-  it("says it has not run yet before the first sweep", () => {
+  it("names the triggers, and says plainly that nothing has been verified yet", () => {
     const text = buildDiagnosticsText(report(base));
 
     expect(text).toContain("-- Evidence integrity --");
-    expect(text).toContain("not verified yet");
+    expect(text).toContain("on case open");
+    expect(text).toContain("no case verified yet");
+  });
+
+  it("mentions the all-cases sweep only when the operator opted in", () => {
+    expect(buildDiagnosticsText(report(base))).not.toContain("scheduled sweep");
+    expect(buildDiagnosticsText(report({ ...base, enabled: true, intervalMs: 86_400_000 })))
+      .toContain("scheduled sweep of all cases every 1d");
   });
 
   it("reports an all-clear with the artifact count", () => {
     const text = buildDiagnosticsText(report({
-      ...base, lastRunAt: "2026-07-28T10:00:00.000Z", lastDurationMs: 4200, artifacts: 1247,
+      ...base, lastRunAt: "2026-07-28T10:00:00.000Z", lastDurationMs: 4200, artifacts: 1247, casesVerified: 3,
     }));
 
-    expect(text).toContain("all 1247 artifacts OK");
+    expect(text).toContain("all 1247 artifacts OK across 3 case(s)");
   });
 
   it("leads with the failure count when artifacts fail", () => {
@@ -58,9 +66,9 @@ describe("evidence integrity in the diagnostics text", () => {
     expect(text).toContain("2 custody-log chain break(s)");
   });
 
-  it("says so when the sweep is switched off", () => {
-    const text = buildDiagnosticsText(report({ ...base, enabled: false, intervalMs: 0 }));
+  it("says so when every trigger is switched off", () => {
+    const text = buildDiagnosticsText(report({ ...base, enabled: false, intervalMs: 0, verifyOnOpen: false, onOpenThrottleMs: 0 }));
 
-    expect(text).toContain("disabled");
+    expect(text).toContain("verification is switched off");
   });
 });

@@ -16520,6 +16520,14 @@
       hideCaseLoadingOverlay();
     }
 
+    // Ask the server to re-verify THIS case's stored evidence now that an analyst is looking at it
+    // (#231). Fire-and-forget: the server returns 202 immediately and hashes in the background, and
+    // throttles internally so flipping between cases re-hashes nothing. A 501 (no monitor wired) or
+    // any transport error is ignored — verification is assurance, never a blocker on opening a case.
+    function verifyCustodyOnOpen(caseId) {
+      fetch(`/cases/${caseId}/custody/verify`, { method: "POST" }).catch(() => {});
+    }
+
     function proceedConnect(caseId) {
       // Abandon the previous case's in-flight state/lifecycle load (#174): aborts its fetches (frees
       // the browser's connection slots and lets the server bail out early if it hasn't started the
@@ -16535,6 +16543,7 @@
       localStorage.setItem("dfir.caseId", caseId);
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
       const stateLoadPromise = fetch(`/cases/${caseId}/state`, { signal: loadSignal }).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
+      verifyCustodyOnOpen(caseId);
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);

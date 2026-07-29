@@ -265,7 +265,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         // Reported from the last completed sweep, never computed here: re-hashing every artifact
         // is far too heavy for a route the dashboard polls (#231).
         evidenceIntegrity: options.integrityMonitor?.status() ?? {
-          enabled: false, intervalMs: 0, lastRunAt: null, lastDurationMs: null,
+          enabled: false, intervalMs: 0, verifyOnOpen: false, onOpenThrottleMs: 0,
+          lastRunAt: null, lastDurationMs: null, casesVerified: 0,
           artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
         },
       };
