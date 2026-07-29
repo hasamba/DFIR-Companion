@@ -175,7 +175,9 @@ export async function listTools(opts: McpBridgeOptions & { server: string; model
       ...baseArgs(opts.model),
       "--system-prompt", LIST_TOOLS_PROMPT,
       // Server-wide, so the model can see everything it offers rather than a subset we picked.
-      "--allowed-tools", `mcp__${opts.server}`,
+      // Use the explicit wildcard permission form: this call is non-interactive, so a bare server
+      // pattern that Claude does not expand would strand the model at an approval prompt.
+      "--allowed-tools", `mcp__${opts.server}__*`,
       "--max-turns", "4",
     ],
     stdin: JSON.stringify({

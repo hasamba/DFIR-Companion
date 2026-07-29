@@ -38,9 +38,10 @@ describe("allowedToolPatterns", () => {
       .toEqual(["mcp__sift-mcp__run_command", "mcp__sift-mcp__check_tools"]);
   });
 
-  // The default. `mcp__<server>` is Claude Code's server-wide form — verified against the CLI.
+  // The default. Use Claude Code's explicit wildcard form so every current and future tool from
+  // the server is approved without an interactive permission prompt.
   it("grants the whole server when no allowlist was configured", () => {
-    expect(allowedToolPatterns([server({ allowedTools: [] })])).toEqual(["mcp__sift-mcp"]);
+    expect(allowedToolPatterns([server({ allowedTools: [] })])).toEqual(["mcp__sift-mcp__*"]);
   });
 });
 

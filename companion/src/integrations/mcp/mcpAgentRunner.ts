@@ -49,12 +49,13 @@ export interface McpAgentResult {
 /**
  * The --allowed-tools value: every permitted tool, fully qualified as `mcp__<server>__<tool>`.
  *
- * Enumerated rather than wildcarded per server. `mcp__sift__*` would hand the agent whatever the
- * server advertises NEXT, which is the exact widening the tool allowlist exists to prevent.
+ * A configured allowlist is enumerated tool by tool. With no allowlist, the explicit
+ * `mcp__<server>__*` permission grants every current and future tool from that server, matching the
+ * store's documented "empty means everything" policy without requiring an interactive prompt.
  */
 export function allowedToolPatterns(servers: McpServer[]): string[] {
   return servers.flatMap((s) =>
-    s.allowedTools.length === 0 ? [`mcp__${s.id}`] : s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
+    s.allowedTools.length === 0 ? [`mcp__${s.id}__*`] : s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
 }
 
 const SYSTEM_PROMPT = [

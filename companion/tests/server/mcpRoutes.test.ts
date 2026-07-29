@@ -228,7 +228,7 @@ describe("POST /mcp/servers/:id/tools", () => {
     await request(appWith(async (o) => { seen.push(o); return toolsRunner(o); }))
       .post("/mcp/servers/sift-mcp/tools");
 
-    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp");
+    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__*");
   });
 
   it("caches the list onto /mcp/status for the run form's picker", async () => {
