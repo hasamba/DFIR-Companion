@@ -5,13 +5,17 @@ import { isToolAllowed, type McpServer } from "./mcpServerStore.js";
 // I/O, no storage — so every rule here is unit-testable and there is exactly one function a caller
 // has to remember: assertCallAllowed, before any tools/call.
 //
-// WHY THIS EXISTS BEYOND THE TOOL ALLOWLIST. Naming permitted tools bounds a server whose tools are
-// fine-grained (windows-triage-mcp offers 13 of them: check_file, check_service, …). It bounds
-// nothing on a server whose useful surface is a single command runner. The Phase 0 probe found
-// exactly that: sift-mcp exposes `run_command(command: string[])` which by its own description
-// executes "most SIFT-installed tools … including curl, wget, dd, fdisk, and python3", and
-// remnux exposes `run_tool(command: string)` taking a whole shell pipeline. Allowing that one tool
-// allows everything on the box, so a second control is needed at the argv level.
+// BOTH ALLOWLISTS ARE OPTIONAL, and empty by default. The Companion is not the grant point any
+// more — Claude Code is configured with these servers and the operator already calls any tool on
+// them directly — so requiring the same servers to be described twice bought nothing.
+//
+// They remain available because they narrow something Claude Code cannot express per-caller. Naming
+// permitted tools bounds a fine-grained server (windows-triage-mcp offers 13: check_file,
+// check_service, …); naming permitted binaries bounds a command RUNNER, which the tool allowlist
+// cannot. Phase 0 found sift-mcp exposing `run_command(command: string[])` — by its own description
+// "most SIFT-installed tools … including curl, wget, dd, fdisk, and python3" — and remnux exposing
+// `run_tool(command: string)` taking a whole shell pipeline. Allowing that one tool allows the box,
+// so an operator who wants to bound it has the argv-level list to do it with.
 //
 // WHAT THIS IS NOT. It is a control over which BINARIES a call may invoke, keyed on well-known
 // parameter names. It is not a sandbox and does not claim to be:
@@ -151,23 +155,19 @@ export function areCommandsAllowed(server: McpServer, heads: string[]): boolean 
 }
 
 /**
- * The one gate every tools/call must pass. Throws with a message that says what to do about it;
- * returns silently when the call is permitted.
- *
- * An empty command allowlist denies every command, matching how an empty TOOL allowlist denies
- * every tool. The alternative — empty meaning "any command" — would ship the control switched off,
- * which is the exact gap it exists to close. The cost is one setup step per command-runner server,
- * and that step is where the analyst confronts what registering it grants.
- *
- * Servers whose tools take no command argument never reach that check, so a fine-grained server
- * needs no command allowlist at all.
+ * The one gate every tool call must pass. Throws with a message that says what to do about it;
+ * returns silently when the call is permitted — which, with both lists left empty, it always is.
  */
 export function assertCallAllowed(server: McpServer, toolName: string, args: Record<string, unknown>): void {
   if (!isToolAllowed(server, toolName)) {
     throw new Error(
-      `MCP server "${server.id}" is not allowed to run the tool "${toolName}" — add it to this server's allowed tools first`,
+      `MCP server "${server.id}" is not allowed to run the tool "${toolName}" — add it to this server's allowed tools, or clear the list to allow everything the server offers`,
     );
   }
+
+  // No command allowlist configured = no command restriction. Checked before inspectCommand so an
+  // unparseable command is only a refusal for an operator who actually asked for the narrowing.
+  if (server.allowedCommands.length === 0) return;
 
   const check = inspectCommand(args);
   if (check.kind === "none") return;

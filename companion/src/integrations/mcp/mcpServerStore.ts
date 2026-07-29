@@ -84,11 +84,10 @@ export const mcpServerSchema = z.object({
   /** Display only; defaults to the id. */
   label: z.string().catch(""),
   enabled: z.boolean().catch(true),
-  // The tools this server may be asked to RUN. See isToolAllowed for why an empty list denies.
+  // OPTIONAL narrowing. Empty — the default — means every tool this server offers, which is what
+  // Claude Code already permits when the operator uses it directly. See isToolAllowed.
   allowedTools: z.array(z.string()).catch([]),
-  // The binaries a command-runner tool on this server may invoke, by basename. Only consulted when
-  // a call actually carries a command argument — see mcpGuard.assertCallAllowed, which explains why
-  // allowedTools alone cannot bound a server whose one useful tool runs arbitrary argv.
+  // OPTIONAL narrowing for a command-runner tool, by basename. Empty means no command restriction.
   allowedCommands: z.array(z.string()).catch([]),
   // Whether an autonomous agent loop (§7 Mode 2) may use this server. Separate from `enabled`, and
   // deliberately not implied by it: the agent path cannot enforce allowedCommands (see
@@ -119,18 +118,19 @@ export interface McpServerInput {
 const SAFE_SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,80}$/;
 
 /**
- * Whether this server may be asked to run `toolName`.
+ * Whether this server may be asked to run `toolName`. An empty allowlist means every tool it offers.
  *
- * An EMPTY allowlist denies everything. That is the opposite of the usual "empty means unrestricted"
- * default, and it is the whole point of the control (§10): the threat is a registered server
- * advertising new tools after the fact and thereby widening its own reach. "Empty means allow all"
- * would leave exactly that threat unmitigated, so a tool has to be named before it can be run.
+ * This deliberately reverses the earlier deny-by-default. That default made sense when the Companion
+ * WAS the MCP client: it held the URL and the token, so allowing a server granted reach that existed
+ * nowhere else, and the operator had to say what they were granting.
  *
- * Listing a server's tools is deliberately NOT gated by this — an analyst has to be able to see what
- * a server offers in order to choose what to allow.
+ * Claude Code holds the credentials now. When the operator runs `claude` themselves they can call
+ * any tool on any server they configured, with no allowlist — so requiring one here enforced a
+ * stricter policy than their own daily use, and made them describe the same server twice. The
+ * grant point is Claude Code's configuration; this is optional narrowing on top of it.
  */
 export function isToolAllowed(server: McpServer, toolName: string): boolean {
-  return server.allowedTools.includes(toolName);
+  return server.allowedTools.length === 0 || server.allowedTools.includes(toolName);
 }
 
 function normalizeNames(input: string[] | string | undefined): string[] {

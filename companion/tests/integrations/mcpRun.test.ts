@@ -99,7 +99,7 @@ describe("runMcpTool", () => {
   // Evidence must not cross the network for a call that was never going to be permitted.
   it("refuses a disallowed tool before delivering anything", async () => {
     await expect(runMcpTool(
-      { server: server({ allowedTools: [] }, SCP), claudeRunner: fakeClaude(), transferRunner },
+      { server: server({ allowedTools: ["check_tools"] }, SCP), claudeRunner: fakeClaude(), transferRunner },
       { tool: "run_command", args: { command: ["vol.py"] }, targetPath: "/cases/c1/mem.raw" },
     )).rejects.toThrow(/not allowed to run the tool/);
 

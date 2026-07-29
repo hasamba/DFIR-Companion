@@ -4413,7 +4413,7 @@
 
         <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--c-7e8aa0);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
-        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)"><strong>Allowing a tool is not the same as allowing a task.</strong> Some servers expose one <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>) that executes whatever you hand it — permitting that tool grants command execution on that host. Both allowlists below deny by default: name each tool, and for a command runner name each binary too. Reasonable on an isolated forensics network; not anywhere else.</p>
+        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">By default a server may run <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Worth knowing what that includes: some servers expose one <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>) that executes whatever you hand it, so using such a server means command execution on that host. The two lists below are <strong>optional</strong>, for narrowing that below what Claude Code permits.</p>
         <div id="mcpServerList" style="margin-bottom:10px">—</div>
         <div style="margin:4px 0 12px"><button id="mcpDiscoverBtn" type="button" title="Ask Claude Code which MCP servers it is configured with">↻ Refresh from Claude Code</button> <span id="mcpDiscoverMsg" class="manual-msg"></span></div>
 
@@ -4421,8 +4421,8 @@
         <div class="sgrid">
           <div class="sfield"><label>Server<span class="sfield-hint">as named in Claude Code &mdash; press Refresh above to load the list</span><select id="mcpServerName"></select></label></div>
           <div class="sfield"><label>Label<span class="sfield-hint">optional display name; blank = the server name</span></label><input id="mcpLabel" placeholder="SIFT workstation" /></div>
-          <div class="sfield"><label>Allowed tools<span class="sfield-hint">comma-separated; empty = nothing may run</span></label><input id="mcpAllowedTools" placeholder="run_command" /></div>
-          <div class="sfield"><label>Allowed commands<span class="sfield-hint">comma-separated binaries a command runner may invoke; empty = none</span></label><input id="mcpAllowedCommands" placeholder="vol.py, strings" /></div>
+          <div class="sfield"><label>Restrict to tools <span style="color:var(--c-7e8aa0)">(optional)</span><span class="sfield-hint">comma-separated; blank = every tool the server offers</span></label><input id="mcpAllowedTools" placeholder="(all)" /></div>
+          <div class="sfield"><label>Restrict to commands <span style="color:var(--c-7e8aa0)">(optional)</span><span class="sfield-hint">binaries a command runner may invoke; blank = no restriction</span></label><input id="mcpAllowedCommands" placeholder="(all)" /></div>
         </div>
         <div class="settings-group-head" style="font-size:12px;margin-top:8px">How evidence reaches it</div>
         <div class="sgrid">
@@ -22943,7 +22943,8 @@
             : !s.knownToClaudeCode
               ? `<span style="color:#f0776c" title="Claude Code has no server by this name">not in Claude Code</span>`
               : (s.connected ? `<span style="color:#7fd08a">connected</span>` : `<span style="color:#d29922">${esc(s.status || "not connected")}</span>`);
-          const needsCommands = (s.allowedTools || []).length > 0 && !(s.allowedCommands || []).length;
+          const tools = (s.allowedTools || []).length ? esc(s.allowedTools.join(", ")) : "all";
+          const cmds = (s.allowedCommands || []).length ? esc(s.allowedCommands.join(", ")) : "all";
           const delivery = s.delivery && s.delivery.mode === "scp"
             ? `scp → ${esc((s.delivery.user ? s.delivery.user + "@" : "") + s.delivery.host + ":" + s.delivery.remoteDir)}`
             : (s.delivery && s.delivery.localPrefix ? `shared path ${esc(s.delivery.localPrefix)} → ${esc(s.delivery.remotePrefix)}` : `shared path (same both sides)`);
@@ -22955,9 +22956,8 @@
               <button class="mcp-del" data-id="${esc(s.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Remove</button>
             </div>
             <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:3px">
-              ${esc(delivery)} · tools allowed: ${esc((s.allowedTools || []).join(", ") || "none")} · commands allowed: ${esc((s.allowedCommands || []).join(", ") || "none")}
+              ${esc(delivery)} · tools: ${tools} · commands: ${cmds}
             </div>
-            ${needsCommands ? `<div style="font-size:11px;color:#d29922;margin-top:3px">No commands allowed — a command-runner tool will refuse every run until you name the binaries it may invoke.</div>` : ""}
           </div>`;
         }).join("");
         el.querySelectorAll(".mcp-del").forEach(b => b.onclick = () => deleteMcpServer(b.getAttribute("data-id")));

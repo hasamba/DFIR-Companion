@@ -33,15 +33,14 @@ function runnerReturning(stdout: string, extra: Partial<Awaited<ReturnType<Claud
 beforeEach(() => { seen = []; });
 
 describe("allowedToolPatterns", () => {
-  it("qualifies each allowed tool with its server", () => {
+  it("enumerates tool by tool when an allowlist was configured", () => {
     expect(allowedToolPatterns([server({ allowedTools: ["run_command", "check_tools"] })]))
       .toEqual(["mcp__sift-mcp__run_command", "mcp__sift-mcp__check_tools"]);
   });
 
-  // A wildcard would hand the agent whatever the server advertises NEXT, which is the widening the
-  // tool allowlist exists to prevent.
-  it("enumerates rather than wildcarding", () => {
-    expect(allowedToolPatterns([server()]).some((p) => p.includes("*"))).toBe(false);
+  // The default. `mcp__<server>` is Claude Code's server-wide form — verified against the CLI.
+  it("grants the whole server when no allowlist was configured", () => {
+    expect(allowedToolPatterns([server({ allowedTools: [] })])).toEqual(["mcp__sift-mcp"]);
   });
 });
 
@@ -141,11 +140,9 @@ describe("runMcpAgent", () => {
     expect(args.join(" ")).not.toMatch(/Bearer|token/i);
   });
 
-  it("refuses to run when no tool is allowed on any selected server", async () => {
-    await expect(runMcpAgent({
-      servers: [server({ allowedTools: [] })], prompt: "go",
-      runner: runnerReturning(stdoutWith(DELTA)),
-    })).rejects.toThrow(/no MCP tools are allowed/);
+  it("refuses to run with no servers selected at all", async () => {
+    await expect(runMcpAgent({ servers: [], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) }))
+      .rejects.toThrow(/no MCP servers were selected/);
     expect(seen).toHaveLength(0);
   });
 

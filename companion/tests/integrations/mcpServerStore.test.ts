@@ -220,9 +220,10 @@ describe("isToolAllowed", () => {
     expect(isToolAllowed(server(["run_command"]), "check_tools")).toBe(false);
   });
 
-  // The control exists to stop a registered server widening its own reach by advertising new
-  // tools. "Empty means allow everything" would leave exactly that unmitigated.
-  it("denies everything when the allowlist is empty", () => {
-    expect(isToolAllowed(server([]), "run_command")).toBe(false);
+  // The default. Claude Code already lets the operator call any tool on a server they configured,
+  // so requiring them to re-enumerate it here was stricter than their own daily use.
+  it("allows everything when the allowlist is empty", () => {
+    expect(isToolAllowed(server([]), "run_command")).toBe(true);
+    expect(isToolAllowed(server([]), "anything_at_all")).toBe(true);
   });
 });

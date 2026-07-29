@@ -53,7 +53,8 @@ export interface McpAgentResult {
  * server advertises NEXT, which is the exact widening the tool allowlist exists to prevent.
  */
 export function allowedToolPatterns(servers: McpServer[]): string[] {
-  return servers.flatMap((s) => s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
+  return servers.flatMap((s) =>
+    s.allowedTools.length === 0 ? [`mcp__${s.id}`] : s.allowedTools.map((t) => `mcp__${s.id}__${t}`));
 }
 
 const SYSTEM_PROMPT = [
@@ -127,9 +128,7 @@ export function normalizeAgentDelta(raw: unknown): unknown {
 export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult> {
   const runner = opts.runner ?? defaultClaudeRunner;
   const allowed = allowedToolPatterns(opts.servers);
-  if (allowed.length === 0) {
-    throw new Error("no MCP tools are allowed on the selected server(s) — name the tools each may run first");
-  }
+  if (allowed.length === 0) throw new Error("no MCP servers were selected for this run");
 
   const args = [
     "-p",

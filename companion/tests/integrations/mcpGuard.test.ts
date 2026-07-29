@@ -132,6 +132,7 @@ describe("areCommandsAllowed", () => {
     expect(areCommandsAllowed(s, ["grep", "curl"])).toBe(false);
   });
 
+  // areCommandsAllowed is the raw predicate; assertCallAllowed is what skips it when unconfigured.
   it("denies against an empty allowlist", () => {
     expect(areCommandsAllowed(server(), ["grep"])).toBe(false);
   });
@@ -143,14 +144,21 @@ describe("assertCallAllowed", () => {
     expect(() => assertCallAllowed(s, "run_command", { command: ["vol.py", "-f", "mem.raw"] })).not.toThrow();
   });
 
-  it("blocks a tool that is not on the tool allowlist", () => {
-    expect(() => assertCallAllowed(server(), "run_command", {}))
+  // Both lists empty is the default, and means "whatever Claude Code already lets me call".
+  it("allows anything when neither list is configured", () => {
+    expect(() => assertCallAllowed(server(), "run_command", { command: ["curl", "http://x"] })).not.toThrow();
+    expect(() => assertCallAllowed(server(), "anything_at_all", {})).not.toThrow();
+  });
+
+  it("blocks a tool outside an allowlist that WAS configured", () => {
+    expect(() => assertCallAllowed(server({ allowedTools: ["check_tools"] }), "run_command", {}))
       .toThrow(/not allowed to run the tool "run_command"/);
   });
 
-  // The finding this whole module exists for: allowing the tool is not allowing the box.
+  // The finding this module exists for: allowing the tool is not allowing the box — for an operator
+  // who opted into the command allowlist.
   it("still blocks the command when the command runner itself is allowed", () => {
-    const s = server({ allowedTools: ["run_command"] });
+    const s = server({ allowedTools: ["run_command"], allowedCommands: ["vol.py"] });
     expect(() => assertCallAllowed(s, "run_command", { command: ["curl", "http://elsewhere"] }))
       .toThrow(/not allowed to run "curl" via "run_command"/);
   });
@@ -167,10 +175,8 @@ describe("assertCallAllowed", () => {
       .toThrow(/shell substitution/);
   });
 
-  // A fine-grained server needs no command allowlist to be usable — the conditional check is what
-  // keeps deny-by-default from becoming friction on the servers that do not need it.
-  it("lets a tool with no command argument through on an empty command allowlist", () => {
-    const s = server({ id: "windows-triage", allowedTools: ["check_lolbin"] });
+  it("lets a tool with no command argument through regardless of the command list", () => {
+    const s = server({ id: "windows-triage-mcp", allowedTools: ["check_lolbin"], allowedCommands: ["vol.py"] });
     expect(() => assertCallAllowed(s, "check_lolbin", { filename: "certutil.exe" })).not.toThrow();
   });
 });

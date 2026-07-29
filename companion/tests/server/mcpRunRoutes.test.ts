@@ -153,6 +153,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
     expect(res.body.error).toMatch(/outside the case directory/);
   });
 
+  // The harness server opts into a command allowlist, so the narrowing applies.
   it("400s a command the server is not allowed to run", async () => {
     const { app, jobManager } = await harness();
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run")
@@ -377,12 +378,13 @@ describe("POST /cases/:id/mcp/agent", () => {
     expect((await request(app).post("/cases/c1/mcp/agent").send({})).status).toBe(400);
   });
 
-  it("400s when the opted-in server has no allowed tools", async () => {
-    const { app, mcpServerStore } = await agentHarness();
+  // No allowlist is the default and means the whole server, so this must run rather than refuse.
+  it("runs against a server with no tool allowlist", async () => {
+    const { app, jobManager, mcpServerStore } = await agentHarness();
     await mcpServerStore.update("sift-mcp", { allowedTools: [] });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no allowed tools/);
+    expect(res.status).toBe(202);
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
   });
 });
 

@@ -524,9 +524,6 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (servers.length === 0) {
       return res.status(400).json({ error: "no agent-enabled MCP servers — turn on agent use for a server first" });
     }
-    if (servers.every((s) => s.allowedTools.length === 0)) {
-      return res.status(400).json({ error: "the selected server(s) have no allowed tools — name the tools the agent may use" });
-    }
 
     const preview = req.body?.preview === true;
     const job = options.jobManager?.register({
