@@ -79,7 +79,10 @@ export async function uploadBuffer(
   baseUrl: string, data: Buffer, filename: string, fetchFn: FetchFn = fetch as FetchFn,
 ): Promise<SocratesUploadResult> {
   const form = new FormData();
-  form.append("file", new Blob([data]), filename);
+  // Copy into a plain Uint8Array: a Buffer's underlying store is ArrayBufferLike, which may be a
+  // SharedArrayBuffer as far as the type system is concerned, and BlobPart does not accept that.
+  // Blob copies its parts anyway, so this costs nothing extra in practice.
+  form.append("file", new Blob([new Uint8Array(data)]), filename);
   const res = await fetchFn(`${trimBase(baseUrl)}/api/upload`, { method: "POST", body: form });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
