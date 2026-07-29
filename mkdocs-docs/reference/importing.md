@@ -54,6 +54,42 @@ seen for this case.
 
 Enabled by default. Configure via `DFIR_DROP_ENABLED`, `DFIR_DROP_POLL_S` (poll interval), `DFIR_DROP_MAX_BYTES` (size cap).
 
+## SO-CRATES (direct API)
+
+Set `DFIR_TOOL_SOCRATES_URL` (for example `http://localhost:8000`) in **Settings → Tools**. Importing
+a PCAP, binary, EVTX, or archive then offers SO-CRATES alongside any local tool that claims the same
+file — tick one or both, since a local Suricata and SO-CRATES run different rulesets. Verdicts flow
+into the forensic timeline tagged `SO-CRATES` plus the underlying engine.
+
+Analysis is asynchronous: the run returns immediately and the banner shows
+`SO-CRATES: analyzing (network)…` until results land. Because SO-CRATES keys every analysis by MD5,
+re-importing an unchanged file costs one request instead of a re-analysis.
+
+Only detections are imported — Suricata alerts, YARA file matches, and Zircolite Sigma alerts. Raw
+telemetry (dns/http/tls/flow) stays in SO-CRATES, one click away in its own UI.
+
+### Password-protected archives
+
+The Companion extracts the archive itself before uploading. This is deliberate: the SO-CRATES API
+can only ever try `infected` (its password list is built server-side from the filename, with no
+request field to override it) and it extracts through Python's `zipfile`, which cannot open
+WinZip AES archives at all — so a 7-Zip archive fails there under any password.
+
+- Leave the password box empty for `infected`; type one for anything else.
+- ZipCrypto and WinZip AES-128/192/256 are both supported.
+- A `YYYY-MM-DD` date in the filename also tries `infected_YYYYMMDD` (the malware-traffic-analysis.net
+  convention).
+- **Every** file in the archive is analyzed, up to 25 entries. SO-CRATES itself keeps only one file
+  per archive and discards the rest.
+- Nested archives are reported rather than unpacked recursively.
+
+### Exposure
+
+SO-CRATES has no authentication of any kind and binds `127.0.0.1` by default. Pointing
+`DFIR_TOOL_SOCRATES_URL` at a non-local address means unauthenticated evidence reachable by anyone
+who can route to it. Every submission is written to the case custody log, since the uploaded file
+stays on the SO-CRATES host until deleted there.
+
 ## Per-Format Import Buttons
 
 The toolbar also exposes per-format buttons for cases where you want to import by type explicitly:

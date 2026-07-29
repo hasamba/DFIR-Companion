@@ -1636,10 +1636,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
     const jobIds: string[] = [];
     for (const sub of submissions) {
-      const md5 = md5Buffer(sub.data);
-      // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5.
-      const probe = await probeAnalysis(baseUrl, md5).catch(() => ({ status: "processing" as const }));
-      if (probe.status !== "ready") await uploadBuffer(baseUrl, sub.data, sub.name);
+      // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5, so an unchanged file
+      // costs one request instead of a re-analysis.
+      const localMd5 = md5Buffer(sub.data);
+      const probe = await probeAnalysis(baseUrl, localMd5).catch(() => ({ status: "processing" as const }));
+      // Poll under the md5 the SERVER reports, not the one we computed. They usually agree, but
+      // SO-CRATES keys an archive on the hash of the file it extracts rather than the bytes it was
+      // sent — so trusting our own hash would poll a key that never becomes ready.
+      const md5 = probe.status === "ready"
+        ? localMd5
+        : (await uploadBuffer(baseUrl, sub.data, sub.name)).md5 || localMd5;
 
       const job: SocratesJob = {
         jobId: randomUUID(), md5, sourceName: input.filename, zipEntry: sub.zipEntry,
