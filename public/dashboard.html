@@ -6075,7 +6075,15 @@
         <div class="sgrid">
           <div class="sfield"><label>Server<span class="sfield-hint">registered + enabled servers</span><select id="mcpRunServer"></select></label></div>
           <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
-          <div class="sfield"><label>Evidence file<span class="sfield-hint">a path inside this case; leave blank for a tool that needs no file</span><input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" /><datalist id="mcpRunTargets"></datalist></label></div>
+          <div class="sfield">
+            <label>Evidence file<span class="sfield-hint">enter a path inside this case, or browse to upload a local file; leave blank for a tool that needs no file</span></label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" style="min-width:0;flex:1" />
+              <button id="mcpRunBrowseBtn" type="button" title="Choose a local evidence file to upload for this run">Browse…</button>
+              <input id="mcpRunFile" type="file" style="display:none" />
+            </div>
+            <datalist id="mcpRunTargets"></datalist>
+          </div>
         </div>
         <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
           <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
@@ -12858,7 +12866,31 @@
     // local tools: the servers this targets expose a command RUNNER (sift's run_command,
     // remnux's run_tool), so the thing being chosen is a command line, not a tool-plus-file.
     let _mcpRunServers = [];
+    const MCP_BROWSER_FILE_MAX_MB = 180; // base64 overhead keeps this under the default 256 MB JSON limit
     function mcpRunCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
+    function mcpRunBrowserFile() {
+      const el = document.getElementById("mcpRunFile");
+      return el && el.files && el.files[0] ? el.files[0] : null;
+    }
+    function mcpRunFileChanged() {
+      const file = mcpRunBrowserFile();
+      if (!file) return;
+      const target = document.getElementById("mcpRunTarget");
+      target.value = file.name;
+      target.dataset.browserFile = file.name;
+      document.getElementById("mcpRunMsg").textContent =
+        `${file.name} selected from this browser (${Math.max(1, Math.round(file.size / 1024))} KB)`;
+    }
+    function mcpRunTargetChanged() {
+      const target = document.getElementById("mcpRunTarget");
+      const file = mcpRunBrowserFile();
+      // Typing after a Browse selection switches back to the case-path mode. Otherwise the visible
+      // path and the bytes actually uploaded could silently name two different files.
+      if (file && target.value.trim() !== file.name) {
+        document.getElementById("mcpRunFile").value = "";
+        delete target.dataset.browserFile;
+      }
+    }
     function loadMcpRun() {
       const form = document.getElementById("mcpRunForm");
       const none = document.getElementById("mcpRunUnavailable");
@@ -12930,7 +12962,7 @@
           loadMcpRun();
         }).catch(e => { btn.disabled = false; msg.textContent = "could not list tools: " + e.message; });
     }
-    function runMcpTool() {
+    async function runMcpTool() {
       const cid = mcpRunCaseId();
       const msg = document.getElementById("mcpRunMsg");
       const jobEl = document.getElementById("mcpRunJob");
@@ -12943,13 +12975,32 @@
       try { args = JSON.parse(document.getElementById("mcpRunArgs").value || "{}"); }
       catch (e) { msg.textContent = "arguments are not valid JSON: " + e.message; return; }
       const targetPath = (document.getElementById("mcpRunTarget").value || "").trim();
+      const browserFile = mcpRunBrowserFile();
+      if (browserFile && browserFile.size > MCP_BROWSER_FILE_MAX_MB * 1024 * 1024) {
+        msg.textContent = `${browserFile.name} is too large for browser upload — enter its path inside the case instead`;
+        return;
+      }
 
       const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
-      btn.disabled = true; msg.textContent = "starting…"; jobEl.textContent = "";
+      btn.disabled = true; msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting…"; jobEl.textContent = "";
       hideMcpPreview();
-      fetch(`/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run`, {
+      let endpoint = `/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run`;
+      let body = { tool, args, preview, ...(targetPath ? { targetPath } : {}) };
+      if (browserFile) {
+        try {
+          const dataBase64 = await fileToBase64(browserFile);
+          endpoint = `/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run-upload`;
+          body = { tool, args, preview, filename: browserFile.name, dataBase64 };
+        } catch (e) {
+          btn.disabled = false;
+          msg.textContent = `could not read ${browserFile.name}: ${e.message}`;
+          return;
+        }
+      }
+      msg.textContent = "starting…";
+      fetch(endpoint, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args, preview, ...(targetPath ? { targetPath } : {}) }),
+        body: JSON.stringify(body),
       }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
         btn.disabled = false;
         if (!ok) { msg.textContent = (j && j.error) || "run failed"; return; }
@@ -13023,6 +13074,9 @@
       const t = document.getElementById("mcpRunTool"); if (t) t.onchange = mcpRunToolChanged;
       const lt = document.getElementById("mcpRunListToolsBtn"); if (lt) lt.onclick = listMcpRunTools;
       const a = document.getElementById("mcpRunArgs"); if (a) a.oninput = () => { a.dataset.touched = "1"; };
+      const browse = document.getElementById("mcpRunBrowseBtn"); if (browse) browse.onclick = () => document.getElementById("mcpRunFile").click();
+      const file = document.getElementById("mcpRunFile"); if (file) file.onchange = mcpRunFileChanged;
+      const target = document.getElementById("mcpRunTarget"); if (target) target.oninput = mcpRunTargetChanged;
       const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
       const i = document.getElementById("mcpPreviewImportBtn"); if (i) i.onclick = importMcpPreview;
       const d = document.getElementById("mcpPreviewDiscardBtn"); if (d) d.onclick = discardMcpPreview;

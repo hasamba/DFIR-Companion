@@ -67,6 +67,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report");          // report generation via the Export menu
   });
 
+  it("lets the analyst browse for an MCP evidence file and uses the upload run path", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="mcpRunBrowseBtn"');
+    expect(html).toMatch(/id="mcpRunFile"[^>]*type="file"/);
+    expect(html).toContain("/run-upload");
+    expect(html).toMatch(/fileToBase64\(browserFile\)/);
+    expect(html).toMatch(/mcpRunBrowseBtn[\s\S]{0,300}\.click\(\)/);
+  });
+
   it("makes the case-ID field a combo box (datalist of existing cases + free text)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('list="caseList"');          // the input is bound to the datalist
