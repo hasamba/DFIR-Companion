@@ -204,3 +204,57 @@ describe("POST /mcp/reconnect", () => {
     expect((await request(app).get("/mcp/status")).body.claudeCode).toBeNull();
   });
 });
+
+describe("POST /mcp/servers/:id/tools", () => {
+  const toolsRunner: ClaudeRunner = async () => ({
+    code: 0, stderr: "",
+    stdout: JSON.stringify({
+      type: "result", subtype: "success",
+      result: '["list_available_tools","run_command","mcp__sift-mcp__check_tools"]',
+    }) + "\n",
+  });
+
+  it("asks Claude Code what one server offers, and strips a qualified prefix", async () => {
+    await store.add({ id: "sift-mcp" });
+    const res = await request(appWith(toolsRunner)).post("/mcp/servers/sift-mcp/tools");
+
+    expect(res.status).toBe(200);
+    expect(res.body.tools).toEqual(["list_available_tools", "run_command", "check_tools"]);
+  });
+
+  it("grants the whole server while asking, since the point is to see everything", async () => {
+    await store.add({ id: "sift-mcp" });
+    const seen: ClaudeRunOptions[] = [];
+    await request(appWith(async (o) => { seen.push(o); return toolsRunner(o); }))
+      .post("/mcp/servers/sift-mcp/tools");
+
+    expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp");
+  });
+
+  it("caches the list onto /mcp/status for the run form's picker", async () => {
+    await store.add({ id: "sift-mcp" });
+    const app = appWith(toolsRunner);
+    await request(app).post("/mcp/servers/sift-mcp/tools");
+
+    const status = await request(app).get("/mcp/status");
+    expect(status.body.servers[0].tools).toContain("run_command");
+  });
+
+  // A model answer, so a bad one must not become a server error.
+  it("reports an unusable reply as 200 with ok:false", async () => {
+    await store.add({ id: "sift-mcp" });
+    const app = appWith(async () => ({
+      code: 0, stderr: "",
+      stdout: JSON.stringify({ type: "result", subtype: "success", result: "I could not tell." }) + "\n",
+    }));
+
+    const res = await request(app).post("/mcp/servers/sift-mcp/tools");
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+  });
+
+  it("404s a server with no policy, 501s when unconfigured", async () => {
+    expect((await request(appWith(toolsRunner)).post("/mcp/servers/ghost/tools")).status).toBe(404);
+    expect((await request(createApp(cases, {})).post("/mcp/servers/sift-mcp/tools")).status).toBe(501);
+  });
+});

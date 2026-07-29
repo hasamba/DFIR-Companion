@@ -3,7 +3,7 @@ import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
-import { listServers, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
+import { listServers, listTools, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
 import { spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
 import { runMcpAgent } from "../integrations/mcp/mcpAgentRunner.js";
@@ -36,6 +36,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * "not checked" until something refreshes it.
    */
   let discovered: { at: string; servers: McpBridgeServer[]; error?: string } | null = null;
+  /** Tool names per server, as Claude Code last reported them. A picker hint, never a gate. */
+  const toolsByServer = new Map<string, string[]>();
 
   // Injected in tests so no route test spawns the CLI or scp.
   const transferRunner = options.mcpTransferRunner ?? spawnTransferRunner();
@@ -71,6 +73,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           knownToClaudeCode: discovered ? !!seen : null,
           connected: seen ? seen.connected : null,
           status: seen ? seen.status : null,
+          // What the server offers, when it has been asked. Populates the run form's tool picker;
+          // the allowlist, when set, narrows what may actually run.
+          tools: toolsByServer.get(s.id) ?? [],
         };
       }),
     });
@@ -572,6 +577,33 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     return res.status(202).json({ ok: true, jobId: job?.jobId ?? null, servers: servers.map((s) => s.id), preview });
   });
 
+  /**
+   * Ask Claude Code what tools one server offers, so the run form can offer a picker.
+   *
+   * A hint, not a gate: `claude mcp list` reports servers but not their tools, and the Companion
+   * cannot ask the server itself, so this is a model answer. The run form accepts a hand-typed tool
+   * name regardless, and the allowlist — when an operator sets one — is what actually bounds a call.
+   *
+   * 200 with ok:false when Claude Code cannot answer, same posture as /mcp/discover.
+   */
+  app.post("/mcp/servers/:id/tools", async (req: Request, res: Response) => {
+    if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
+    const server = await options.mcpServerStore.get(req.params.id);
+    if (!server) return res.status(404).json({ error: `MCP server "${req.params.id}" not found` });
+    try {
+      const tools = await listTools({
+        server: server.id,
+        ...(options.mcpClaudeRunner ? { runner: options.mcpClaudeRunner } : {}),
+        ...(claudeBin ? { bin: claudeBin } : {}),
+        ...(claudeModel ? { model: claudeModel } : {}),
+      });
+      toolsByServer.set(server.id, tools);
+      return res.status(200).json({ ok: true, server: server.id, tools });
+    } catch (err) {
+      return res.status(200).json({ ok: false, server: server.id, error: (err as Error).message });
+    }
+  });
+
   // Kept as the dashboard's "refresh" affordance. There is no token to reload any more — Claude Code
   // holds those — so this re-reads DFIR_MCP_* (model/flag settings) and drops the cached discovery so
   // the next status reflects a server added to Claude Code since.
@@ -579,6 +611,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     try {
       const applied = await reloadEnvPrefix("DFIR_MCP_");
       discovered = null;
+      toolsByServer.clear();
       return res.status(200).json({ ok: true, enabled: !!options.mcpServerStore, applied });
     } catch (err) {
       return res.status(500).json({ ok: false, error: (err as Error).message });

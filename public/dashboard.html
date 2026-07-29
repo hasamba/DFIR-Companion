@@ -6074,7 +6074,7 @@
       <div id="mcpRunForm" style="display:none">
         <div class="sgrid">
           <div class="sfield"><label>Server<span class="sfield-hint">registered + enabled servers</span><select id="mcpRunServer"></select></label></div>
-          <div class="sfield"><label>Tool<span class="sfield-hint">only tools this server is allowed to run</span><select id="mcpRunTool"></select></label></div>
+          <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
           <div class="sfield"><label>Evidence file<span class="sfield-hint">a path inside this case; leave blank for a tool that needs no file</span><input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" /><datalist id="mcpRunTargets"></datalist></label></div>
         </div>
         <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
@@ -6082,6 +6082,7 @@
         </label>
         <div style="margin:6px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="mcpRunBtn" type="button">&#9654; Run</button>
+          <button id="mcpRunListToolsBtn" type="button" title="Ask Claude Code which tools this server offers">&#8635; List tools</button>
           <label style="font-size:12px;color:var(--c-9aa4b2);display:flex;align-items:center;gap:4px" title="Fetch the output and show it here first. Nothing reaches the case until you approve it — a tool that returns a capability listing rather than evidence looks identical to any detector, so this is the only reliable check.">
             <input type="checkbox" id="mcpRunPreview" checked /> Preview before importing
           </label>
@@ -12887,29 +12888,47 @@
     }
     function mcpRunServerChanged() {
       const server = _mcpRunServers.find(s => s.id === document.getElementById("mcpRunServer").value);
-      const toolSel = document.getElementById("mcpRunTool");
       const msg = document.getElementById("mcpRunMsg");
       if (!server) return;
-      const allowed = server.allowedTools || [];
-      toolSel.innerHTML = allowed.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("")
-        || `<option value="">(no tools allowed)</option>`;
-      // Both allowlists deny by default, so an unconfigured server can run nothing. Say which one is
-      // missing here rather than letting the run fail with a refusal to decode.
-      if (!allowed.length) msg.textContent = `"${server.label}" has no allowed tools — Probe it in Settings → Tools, then name the ones it may run.`;
-      else if (!(server.allowedCommands || []).length) msg.textContent = `"${server.label}" has no allowed commands — a command-runner tool will refuse every run until you name the binaries.`;
-      else msg.textContent = "";
+      fillMcpRunTools(server);
+      // A server with no allowlist may run everything it offers, so there is nothing to warn about.
+      // Only an allowlist the operator DID set can be narrower than what they want.
+      msg.textContent = "";
       mcpRunToolChanged();
     }
+    // Names come from whatever Claude Code last reported for this server, narrowed by the allowlist
+    // when one is set. The field stays free text either way — the list is a convenience, not a gate.
+    function fillMcpRunTools(server) {
+      const dl = document.getElementById("mcpRunTools");
+      if (!dl) return;
+      const offered = server.tools || [];
+      const allowed = server.allowedTools || [];
+      const names = allowed.length
+        ? (offered.length ? offered.filter(t => allowed.includes(t)) : allowed)
+        : offered;
+      dl.innerHTML = names.map(t => `<option value="${esc(t)}"></option>`).join("");
+    }
     function mcpRunToolChanged() {
-      const server = _mcpRunServers.find(s => s.id === document.getElementById("mcpRunServer").value);
       const box = document.getElementById("mcpRunArgs");
-      if (!server || !box) return;
+      if (!box) return;
       // Only prefill an untouched box — never clobber something the analyst is editing.
       if (box.value.trim() && box.dataset.touched === "1") return;
-      const first = (server.allowedCommands || [])[0];
-      box.value = first
-        ? JSON.stringify({ command: [first, "<target>"], purpose: "" }, null, 2)
-        : "{}";
+      box.value = "{}";
+    }
+    function listMcpRunTools() {
+      const server = document.getElementById("mcpRunServer").value;
+      const msg = document.getElementById("mcpRunMsg");
+      const btn = document.getElementById("mcpRunListToolsBtn");
+      if (!server) return;
+      btn.disabled = true; msg.textContent = "asking Claude Code…";
+      fetch(`/mcp/servers/${encodeURIComponent(server)}/tools`, { method: "POST" })
+        .then(r => r.json()).then(j => {
+          btn.disabled = false;
+          if (!j.ok) { msg.textContent = j.error || "could not list tools"; return; }
+          msg.textContent = `${(j.tools || []).length} tool(s) offered`;
+          // Refresh from /mcp/status so the cached list and the allowlist stay in one place.
+          loadMcpRun();
+        }).catch(e => { btn.disabled = false; msg.textContent = "could not list tools: " + e.message; });
     }
     function runMcpTool() {
       const cid = mcpRunCaseId();
@@ -12919,7 +12938,7 @@
       if (!cid) { msg.textContent = "connect a case first"; return; }
       const serverId = document.getElementById("mcpRunServer").value;
       const tool = document.getElementById("mcpRunTool").value;
-      if (!tool) { msg.textContent = "this server has no allowed tools"; return; }
+      if (!tool) { msg.textContent = "name a tool to run — press List tools to see what this server offers"; return; }
       let args;
       try { args = JSON.parse(document.getElementById("mcpRunArgs").value || "{}"); }
       catch (e) { msg.textContent = "arguments are not valid JSON: " + e.message; return; }
@@ -13002,6 +13021,7 @@
     {
       const s = document.getElementById("mcpRunServer"); if (s) s.onchange = mcpRunServerChanged;
       const t = document.getElementById("mcpRunTool"); if (t) t.onchange = mcpRunToolChanged;
+      const lt = document.getElementById("mcpRunListToolsBtn"); if (lt) lt.onclick = listMcpRunTools;
       const a = document.getElementById("mcpRunArgs"); if (a) a.oninput = () => { a.dataset.touched = "1"; };
       const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
       const i = document.getElementById("mcpPreviewImportBtn"); if (i) i.onclick = importMcpPreview;
