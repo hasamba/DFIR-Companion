@@ -31,7 +31,7 @@ Report, STIX, IRIS and ClickUp exports carry conclusions rather than evidence, s
 Evidence the Companion never stored itself — a mounted disk image, output from an external tool, or a physical handover — is recorded through the API:
 
 ```bash
-curl -X POST http://localhost:3000/cases/INC-1/custody \
+curl -X POST http://127.0.0.1:4773/cases/INC-1/custody \
   -H 'content-type: application/json' \
   -d '{"artifactPath":"/mnt/evidence/laptop.dd","collectedBy":"alice","source":"seized 2026-07-28","event":"collected"}'
 ```
