@@ -3319,6 +3319,15 @@
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
 
+        <div class="settings-group-head">SO-CRATES <span style="color:var(--c-7e8aa0);font-weight:400">(HTTP service, not a local binary — pcap → Suricata, logs → Sigma, anything else → YARA · <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener">repo</a>)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 10px">The only tool here reached over HTTP rather than by spawning a binary, so it needs a URL instead of a path. Importing a PCAP, binary, EVTX, or archive will offer it alongside any local tool claiming the same file. Only detections are imported (Suricata alerts, YARA matches, Sigma alerts) — raw telemetry stays in SO-CRATES. Analysis is asynchronous; the import banner shows progress until results land. <strong>SO-CRATES has no authentication and binds <code>127.0.0.1</code> by default</strong> — a non-local URL means unauthenticated evidence reachable by anyone who can route to it. Every submission is written to the case custody log.</p>
+        <div class="sgrid">
+          <div class="sfield"><label>Base URL<span class="sfield-hint">DFIR_TOOL_SOCRATES_URL — e.g. http://localhost:8000; blank = off</span></label><input id="env-DFIR_TOOL_SOCRATES_URL" placeholder="(off)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SOCRATES_AUTO_RUN — on/off (opt-in; a dropped file otherwise asks first)</span></label><input id="env-DFIR_TOOL_SOCRATES_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SOCRATES_TIMEOUT_MS — how long to wait for analysis (default 1200000 = 20 min)</span></label><input id="env-DFIR_TOOL_SOCRATES_TIMEOUT_MS" placeholder="1200000" /></div>
+        </div>
+        <div class="sfield-hint" style="display:block;margin:4px 0 14px">Password-protected archives are unpacked <em>here</em>, not by SO-CRATES: its API can only ever try <code>infected</code>, and it cannot open WinZip AES archives at all. Enter the password in the import banner; leave it blank for <code>infected</code>.</div>
+
         <div class="sfield-hint" style="display:block;margin-bottom:16px">Master auto-run kill-switch: <code>DFIR_TOOL_AUTO_RUN=off</code> disables all auto-run (set on the General tab's <code>.env</code>, or your env).</div>
         <div class="sfield-row" style="margin-bottom:16px">
           <div class="sfield"><label>Binary spawn retries<span class="sfield-hint">DFIR_TOOL_SPAWN_RETRIES — transient spawn-launch retry count for AV/sync-client locks (default 6)</span></label><input id="env-DFIR_TOOL_SPAWN_RETRIES" placeholder="6" /></div>
