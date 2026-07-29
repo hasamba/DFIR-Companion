@@ -420,7 +420,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Configurable event ingestion cap** (`DFIR_MAX_EVENTS`) — overrides the default 2000-event-per-import safety cap
 - **Prompt regression / eval harness** — CI-safe and real-provider golden-output testing for AI extraction/synthesis quality
 - **Logging** — console + global session log + per-case audit trail; `DFIR_LOG_LEVEL` live toggle; `debug` traces AI/captures/OCR/anonymization
-- **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or a Firefox 128+ build from source (`npm run build:firefox`); connects to the local server, no standalone function
+- **Browser extension** — Chrome/Comet from the [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf), or Firefox 128+ from the `dfir-capture-extension-firefox-*.zip` on any [release](https://github.com/hasamba/DFIR-Companion/releases/latest); connects to the local server, no standalone function
 - **Portable Windows EXE** — unzip + double-click, no Node required
 - **Chocolatey package** — `choco install dfir-companion`; downloads + verifies the portable build + bundles the capture extension, data in `%LOCALAPPDATA%`
 - **Docker / Compose** — `docker compose up`; evidence on host volume, no bundled AI backend
@@ -484,6 +484,8 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
    **Easiest:** install directly from the
    [Chrome Web Store](https://chromewebstore.google.com/detail/dfir-companion-%E2%80%94-evidence/jhlffkfnamlmfkijgpaopdnbmbajldmf).
+   On **Firefox 128+**, download `dfir-capture-extension-firefox-*.zip` from the
+   [latest release](https://github.com/hasamba/DFIR-Companion/releases/latest) and unzip it.
 
    Or build from source:
    ```
@@ -495,7 +497,8 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
    On Firefox, load it from `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**
    and pick the `manifest.json` **file** (Chrome asks for the folder; Firefox does not). Firefox
-   drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet.
+   drops temporary add-ons on restart, so repeat that each session — there is no AMO listing yet,
+   so the release zip is unsigned and cannot be installed permanently.
 
    The popup only **attaches** to an existing case — you create cases in the dashboard.
 

@@ -88,3 +88,10 @@ jobs:
       - name: Build (vite)
         working-directory: extension
         run: npm run build
+
+      # The release packages both targets (#366), so both are built here — otherwise a change that
+      # breaks only the Firefox build (the derived manifest, a Firefox-only asset) goes unnoticed
+      # until the tag, where it fails the whole release job.
+      - name: Build Firefox (vite)
+        working-directory: extension
+        run: npm run build:firefox

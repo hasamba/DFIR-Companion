@@ -1,7 +1,7 @@
 name: Build release artifacts
 
-# On every version tag (vX.Y.Z) build the portable Windows EXE (Node SEA) and the
-# Chrome/Comet extension zip, then attach them to a GitHub Release. Runs in parallel
+# On every version tag (vX.Y.Z) build the portable Windows EXE (Node SEA) and both
+# extension zips (Chrome/Comet + Firefox), then attach them to a GitHub Release. Runs in parallel
 # with docker-publish.yml — the Docker image stays the recommended path for Linux/macOS;
 # this workflow produces the "double-click on Windows" download.
 
@@ -122,11 +122,17 @@ jobs:
           if-no-files-found: error
 
   extension-zip:
-    name: Build extension zip
+    name: Build extension zips
+    # Both browser targets in one job: the deps are already installed and the tests already run
+    # here, and the Firefox build is the same bundles with a derived manifest (#366). A failure in
+    # either zip fails the release, which is the intent — a tag should never publish half the
+    # extension.
     runs-on: ubuntu-latest
     outputs:
-      # SHA256 of the extension zip, consumed by the `chocolatey` job which bundles it for
-      # offline "Load unpacked".
+      # SHA256 of the CHROME extension zip, consumed by the `chocolatey` job which bundles it for
+      # offline "Load unpacked". Keep this pointing at the Chrome zip: the Chocolatey package
+      # downloads and verifies that specific asset. The Firefox zip is logged below but has no
+      # consumer, so it deliberately has no job output.
       sha256: ${{ steps.zip.outputs.sha256 }}
     steps:
       - name: Checkout
@@ -147,11 +153,11 @@ jobs:
         working-directory: extension
         run: npm test
 
-      - name: Build extension
+      - name: Build extension (Chrome)
         working-directory: extension
         run: npm run build
 
-      - name: Zip dist
+      - name: Zip dist (Chrome)
         id: zip
         working-directory: extension
         run: |
@@ -166,11 +172,40 @@ jobs:
           echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload artifact
+      - name: Upload artifact (Chrome)
         uses: actions/upload-artifact@v4
         with:
           name: extension-zip
           path: extension/${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      # Emits dist-firefox/ — a separate directory, so this cannot disturb the Chrome zip built
+      # above. No extra version to bump: the Firefox manifest is derived from manifest.json at
+      # build time (#303), so the two targets cannot ship different versions.
+      - name: Build extension (Firefox)
+        working-directory: extension
+        run: npm run build:firefox
+
+      - name: Zip dist-firefox
+        working-directory: extension
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${TAG//\//-}"   # branch refs (workflow_dispatch) contain slashes; tags don't
+          ZIP_NAME="dfir-capture-extension-firefox-${TAG}.zip"
+          # Zipped from INSIDE dist-firefox so manifest.json sits at the archive root, which is
+          # what Firefox requires of an add-on archive.
+          cd dist-firefox
+          zip -r "../${ZIP_NAME}" .
+          cd ..
+          SHA=$(sha256sum "${ZIP_NAME}" | awk '{print $1}')
+          echo "SHA256: ${SHA}"
+          echo "FIREFOX_ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact (Firefox)
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-firefox-zip
+          path: extension/${{ env.FIREFOX_ZIP_NAME }}
           if-no-files-found: error
 
   chrome-webstore:
@@ -197,6 +232,8 @@ jobs:
 
       - name: Download extension zip
         if: steps.creds.outputs.configured == 'true'
+        # The Chrome artifact only — `extension-firefox-zip` is a separate artifact and must stay
+        # out of this directory, since the resolve step below just takes the first zip it finds.
         uses: actions/download-artifact@v4
         with:
           name: extension-zip
@@ -335,6 +372,7 @@ jobs:
             artifacts/windows-exe/*
             artifacts/linux-appimage/*
             artifacts/extension-zip/*
+            artifacts/extension-firefox-zip/*
           fail_on_unmatched_files: true
           # Don't auto-create; the release is published manually per CLAUDE.md.
           draft: false
