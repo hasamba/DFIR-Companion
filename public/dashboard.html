@@ -4410,6 +4410,34 @@
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">on = run without asking; blank/off = ask first</span></label><input id="ctAutoRun" placeholder="off" /></div>
         </div>
         <div style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
+
+        <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--c-7e8aa0);font-weight:400">(point case evidence at your own SIFT / REMnux / triage servers)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">Register an MCP server you already run. The Companion never bundles, installs or hosts one. Probe a server to see what it offers, then name the tools it may run. Results come back through the normal importers, and the evidence transfer is written to the case's chain of custody.</p>
+        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)"><strong>Allowing a tool is not the same as allowing a task.</strong> Some servers expose one <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>) that executes whatever you hand it — permitting that tool grants command execution on that host. Both allowlists below deny by default: name each tool, and for a command runner name each binary too. Reasonable on an isolated forensics network; not anywhere else.</p>
+        <div id="mcpServerList" style="margin-bottom:10px">—</div>
+        <div style="margin:4px 0 12px"><button id="mcpReconnectBtn" type="button">↻ Re-read tokens from .env</button> <span id="mcpReconnectMsg" class="manual-msg"></span></div>
+
+        <div class="settings-group-head" style="font-size:12px;margin-top:6px">Add an MCP server</div>
+        <div class="sgrid">
+          <div class="sfield"><label>Label<span class="sfield-hint">names the server; also sets its id and token key</span></label><input id="mcpLabel" placeholder="e.g. SIFT" /></div>
+          <div class="sfield"><label>URL<span class="sfield-hint">http:// is allowed to a private/LAN host, https:// anywhere</span></label><input id="mcpUrl" placeholder="http://192.168.1.50:8080/mcp" /></div>
+          <div class="sfield"><label>Allowed tools<span class="sfield-hint">comma-separated; empty = nothing may run. Probe first to see the names</span></label><input id="mcpAllowedTools" placeholder="run_command" /></div>
+          <div class="sfield"><label>Allowed commands<span class="sfield-hint">comma-separated binaries a command runner may invoke; empty = none</span></label><input id="mcpAllowedCommands" placeholder="vol.py, strings" /></div>
+        </div>
+        <div class="settings-group-head" style="font-size:12px;margin-top:8px">How evidence reaches it</div>
+        <div class="sgrid">
+          <div class="sfield"><label>Delivery<span class="sfield-hint">shared mount, or push the file over scp</span></label>
+            <select id="mcpDeliveryMode"><option value="remote-path">Shared path (no copy)</option><option value="scp">scp (push the file)</option></select>
+          </div>
+          <div class="sfield"><label>Local prefix<span class="sfield-hint">shared path only — this side of the mount; blank = same path both sides</span></label><input id="mcpLocalPrefix" placeholder="/srv/cases" /></div>
+          <div class="sfield"><label>Remote prefix<span class="sfield-hint">shared path only — the analysis host's side of the mount</span></label><input id="mcpRemotePrefix" placeholder="/mnt/dfir" /></div>
+          <div class="sfield"><label>SSH host<span class="sfield-hint">scp only — its host key must already be trusted (no prompting)</span></label><input id="mcpHost" placeholder="sift.lab" /></div>
+          <div class="sfield"><label>SSH user<span class="sfield-hint">scp only — optional</span></label><input id="mcpUser" placeholder="analyst" /></div>
+          <div class="sfield"><label>SSH port<span class="sfield-hint">scp only — blank = 22</span></label><input id="mcpPort" placeholder="22" /></div>
+          <div class="sfield"><label>Identity file<span class="sfield-hint">scp only — key path; passphrase-free or agent-loaded (never prompts)</span></label><input id="mcpIdentityFile" placeholder="/home/dfir/.ssh/lab" /></div>
+          <div class="sfield"><label>Remote staging dir<span class="sfield-hint">scp only — absolute path; the copy is deleted after the run</span></label><input id="mcpRemoteDir" placeholder="/cases/incoming" /></div>
+        </div>
+        <div style="margin:6px 0 4px"><button id="mcpAddBtn" type="button">＋ Add MCP server</button> <span id="mcpMsg" class="manual-msg"></span></div>
       </div>
 
       <!-- IOC Whitelist (Phase 2 of #35) -->
@@ -22656,6 +22684,7 @@
         wire();
       }).catch(() => wire());
       loadCustomTools();
+      loadMcpServers();
     }
     // Custom tools (#211): list existing + wire delete; the add form posts /tools/custom.
     function loadCustomTools() {
@@ -22700,6 +22729,102 @@
         .then(() => loadCustomTools()).catch(() => {});
     }
     { const b = document.getElementById("ctAddBtn"); if (b) b.onclick = addCustomTool; }
+
+    // MCP servers (#296). /mcp/status never touches the network — reachability is whatever the last
+    // probe found — so opening this tab can't hang on a lab host that's powered off.
+    function loadMcpServers() {
+      const el = document.getElementById("mcpServerList");
+      if (!el) return;
+      fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
+        const servers = (j && j.servers) || [];
+        if (!j || !j.enabled) { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">MCP servers unavailable — restart the companion server if this 404s.</div>`; return; }
+        if (!servers.length) { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">No MCP servers registered yet.</div>`; return; }
+        el.innerHTML = servers.map(s => {
+          const reach = s.reachable === true ? `<span style="color:#7fd08a">reachable</span>`
+            : s.reachable === false ? `<span style="color:#f0776c" title="${esc(s.error || "")}">unreachable</span>`
+            : `<span style="color:var(--c-7e8aa0)">not probed</span>`;
+          const token = s.hasToken ? `token set` : `<span style="color:#d29922">no token</span> (${esc(s.tokenEnvKey)})`;
+          const tools = (s.tools || []).length ? `${s.tools.length} tool(s): ${esc(s.tools.map(t => t.name).join(", ")).slice(0, 200)}` : "";
+          // An allowed command runner with no command allowlist can run nothing — say so here rather
+          // than letting the first run fail with a refusal the analyst has to decode.
+          const needsCommands = (s.allowedTools || []).length > 0 && !(s.allowedCommands || []).length;
+          const delivery = s.delivery && s.delivery.mode === "scp"
+            ? `scp → ${esc((s.delivery.user ? s.delivery.user + "@" : "") + s.delivery.host + ":" + s.delivery.remoteDir)}`
+            : (s.delivery && s.delivery.localPrefix ? `shared path ${esc(s.delivery.localPrefix)} → ${esc(s.delivery.remotePrefix)}` : `shared path (same both sides)`);
+          return `<div style="padding:6px 8px;border:1px solid var(--c-2a2f3a);border-radius:6px;margin-bottom:6px">
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+              <strong>${esc(s.label)}</strong>
+              <code style="font-size:11px;color:var(--c-7e8aa0)">${esc(s.url)}</code>
+              <span style="font-size:12px;color:var(--c-9aa4b2)">${reach} · ${token}${s.enabled ? "" : ` · <span style="color:#d29922">disabled</span>`}</span>
+              <button class="mcp-probe" data-id="${esc(s.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Probe</button>
+              <button class="mcp-del" data-id="${esc(s.id)}" type="button" style="padding:1px 8px;font-size:11px">Delete</button>
+            </div>
+            <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:3px">
+              ${esc(delivery)} · tools allowed: ${esc((s.allowedTools || []).join(", ") || "none")} · commands allowed: ${esc((s.allowedCommands || []).join(", ") || "none")}
+            </div>
+            ${tools ? `<div style="font-size:11px;color:var(--c-9aa4b2);margin-top:3px">${tools}</div>` : ""}
+            ${needsCommands ? `<div style="font-size:11px;color:#d29922;margin-top:3px">No commands allowed — a command-runner tool will refuse every run until you name the binaries it may invoke.</div>` : ""}
+          </div>`;
+        }).join("");
+        el.querySelectorAll(".mcp-del").forEach(b => b.onclick = () => deleteMcpServer(b.getAttribute("data-id")));
+        el.querySelectorAll(".mcp-probe").forEach(b => b.onclick = () => probeMcpServer(b.getAttribute("data-id"), b));
+      }).catch(() => { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">MCP servers unavailable — restart the companion server if this 404s.</div>`; });
+    }
+    function addMcpServer() {
+      const msg = document.getElementById("mcpMsg");
+      const val = (id) => (document.getElementById(id) || {}).value ? document.getElementById(id).value.trim() : "";
+      const mode = val("mcpDeliveryMode") || "remote-path";
+      const port = parseInt(val("mcpPort"), 10);
+      const body = {
+        label: val("mcpLabel"), url: val("mcpUrl"),
+        allowedTools: val("mcpAllowedTools"), allowedCommands: val("mcpAllowedCommands"),
+        delivery: {
+          mode,
+          ...(mode === "scp"
+            ? { host: val("mcpHost"), user: val("mcpUser"), remoteDir: val("mcpRemoteDir"), identityFile: val("mcpIdentityFile"), ...(port > 0 ? { port } : {}) }
+            : { localPrefix: val("mcpLocalPrefix"), remotePrefix: val("mcpRemotePrefix") }),
+        },
+      };
+      if (!body.label || !body.url) { if (msg) msg.textContent = "label and URL are required"; return; }
+      if (msg) msg.textContent = "adding…";
+      fetch("/mcp/servers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          if (!ok) { if (msg) msg.textContent = (j && j.error ? j.error : "add failed") + " — restart the companion server if this 404s"; return; }
+          // The token key is derived from the label, so tell the analyst what to set before they leave.
+          if (msg) msg.textContent = `added "${j.server.label}" — put its bearer token in ${j.tokenEnvKey} on the General tab, then Re-read tokens`;
+          ["mcpLabel","mcpUrl","mcpAllowedTools","mcpAllowedCommands","mcpLocalPrefix","mcpRemotePrefix","mcpHost","mcpUser","mcpPort","mcpIdentityFile","mcpRemoteDir"]
+            .forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; });
+          loadMcpServers();
+        }).catch(e => { if (msg) msg.textContent = "add failed: " + e.message; });
+    }
+    function deleteMcpServer(id) {
+      if (!id) return;
+      fetch(`/mcp/servers/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => loadMcpServers()).catch(() => {});
+    }
+    function probeMcpServer(id, btn) {
+      if (!id) return;
+      const msg = document.getElementById("mcpMsg");
+      if (btn) { btn.disabled = true; btn.textContent = "Probing…"; }
+      fetch(`/mcp/servers/${encodeURIComponent(id)}/probe`, { method: "POST" })
+        .then(r => r.json()).then(j => {
+          if (btn) { btn.disabled = false; btn.textContent = "Probe"; }
+          // An unreachable server answers 200 with ok:false — that's an answer, not a failure.
+          if (msg) msg.textContent = j.ok ? `${id}: ${(j.tools || []).length} tool(s) — add the ones it may run` : `${id}: ${j.error || "unreachable"}`;
+          loadMcpServers();
+        }).catch(e => { if (btn) { btn.disabled = false; btn.textContent = "Probe"; } if (msg) msg.textContent = "probe failed: " + e.message; });
+    }
+    { const b = document.getElementById("mcpAddBtn"); if (b) b.onclick = addMcpServer; }
+    {
+      const b = document.getElementById("mcpReconnectBtn");
+      if (b) b.onclick = () => {
+        const msg = document.getElementById("mcpReconnectMsg");
+        if (msg) msg.textContent = "reloading…";
+        fetch("/mcp/reconnect", { method: "POST" }).then(r => r.json()).then(j => {
+          if (msg) msg.textContent = j.ok ? `reloaded ${(j.applied || []).length} key(s)` : (j.error || "reload failed");
+          loadMcpServers();   // reachability is dropped on reconnect — a new token can change the answer
+        }).catch(e => { if (msg) msg.textContent = "reload failed: " + e.message; });
+      };
+    }
     function updateToolRules(toolId, btn) {
       const caseId = (document.getElementById("caseId").value || "").trim();
       const msg = document.getElementById("toolsMsg");
