@@ -160,6 +160,12 @@ import {
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
+import { extractZipEntries } from "./analysis/zipExtract.js";
+import {
+  md5Buffer, probeAnalysis, uploadBuffer, checkStatus, fetchVerdicts,
+} from "./integrations/socrates/socratesApi.js";
+import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
+import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -859,6 +865,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
   }
 
+  // Per-case record of asynchronous SO-CRATES analyses. Declared here (not beside
+  // startSocratesAnalysis further down) because the RouteContext literal below references it, and a
+  // `const` is not hoisted the way the surrounding function declarations are.
+  const socratesJobs = new SocratesJobStore(store);
+
   const ctx: RouteContext = {
     store,
     options,
@@ -894,6 +905,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     ingestStreamed,
     runToolAndIngest,
     reloadCustomTools,
+    startSocratesAnalysis,
+    socratesJobStore: socratesJobs,
     resolveImportKind: () => resolveImportKind,
     captureBuffers: () => buffers,
     synthInFlight: () => synthInFlight,
@@ -1565,9 +1578,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   async function runToolAndIngest(
     caseId: string, toolId: string, targetPath: string, opts: { undoLabel?: string } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
-    if (!options.toolRunner) throw new Error("external tools not configured");
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
+    // The toolRunner is the PROCESS SPAWNER. Only spawn-transport tools need it — gating http tools
+    // on it would make SO-CRATES unreachable on a machine with no local forensic binaries, which is
+    // exactly the machine most likely to want it.
+    if (cfg.transport === "http") throw new Error(`tool "${toolId}" is an HTTP tool — use startSocratesAnalysis`);
+    if (!options.toolRunner) throw new Error("external tools not configured");
     const caseDir = store.caseDir(caseId);
     const contained = resolveContainedPath(caseDir, targetPath);
     const { outputText, importKind } = await runToolAgainstFile({
@@ -1587,6 +1604,71 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await pushImportCheckpoint(caseId, before, opts.undoLabel);
     }
     return r;
+  }
+
+  // Submit one file (or every entry of a zip) to SO-CRATES and poll for results in the background.
+  // Zip handling happens HERE rather than in SO-CRATES because its upload handler builds the
+  // password list server-side from the filename — an analyst-supplied password cannot reach it —
+  // and it extracts through Python's zipfile, which cannot open AES archives at all.
+  async function startSocratesAnalysis(
+    caseId: string,
+    input: { data: Buffer; filename: string; zipPassword?: string },
+  ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }> {
+    const cfg = liveToolConfigs().get("socrates");
+    if (!cfg?.baseUrl) throw new Error("SO-CRATES is not configured — set DFIR_TOOL_SOCRATES_URL in Settings → Tools");
+    const baseUrl = cfg.baseUrl;
+
+    // Decide what to submit: the file itself, or each entry of an archive.
+    let submissions: { data: Buffer; name: string; zipEntry?: string }[];
+    let skippedNested: string[] = [];
+    let truncated = false;
+    if (input.data.subarray(0, 2).toString("latin1") === "PK") {
+      const extracted = extractZipEntries(input.data, input.filename, input.zipPassword);
+      skippedNested = extracted.skippedNested;
+      truncated = extracted.truncated;
+      submissions = extracted.entries.map((e) => ({
+        data: e.data, name: basename(e.path), zipEntry: `${input.filename}!${e.path}`,
+      }));
+      if (submissions.length === 0) throw new Error(`"${input.filename}" contained no analyzable files`);
+    } else {
+      submissions = [{ data: input.data, name: input.filename }];
+    }
+
+    const jobIds: string[] = [];
+    for (const sub of submissions) {
+      const md5 = md5Buffer(sub.data);
+      // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5.
+      const probe = await probeAnalysis(baseUrl, md5).catch(() => ({ status: "processing" as const }));
+      if (probe.status !== "ready") await uploadBuffer(baseUrl, sub.data, sub.name);
+
+      const job: SocratesJob = {
+        jobId: randomUUID(), md5, sourceName: input.filename, zipEntry: sub.zipEntry,
+        status: "processing", startedAt: new Date().toISOString(),
+      };
+      await socratesJobs.upsert(caseId, job);
+      jobIds.push(job.jobId);
+
+      // Uploading evidence leaves a copy on the SO-CRATES host, keyed by MD5 and retained until
+      // deleted. That belongs in the case record. Best-effort — never block the analysis.
+      await options.custodyStore?.recordExport(caseId, {
+        exportedBy: "companion",
+        destination: `SO-CRATES analysis at ${baseUrl} (md5 ${md5}, ${sub.zipEntry ?? sub.name})`,
+      }).catch(() => { /* custody is best-effort */ });
+
+      // Fire and forget: the poller updates the job record, which the dashboard polls.
+      void pollUntilImported(caseId, job, {
+        store: socratesJobs,
+        checkStatus: (m) => checkStatus(baseUrl, m),
+        fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
+        ingest: async (cid, text, name) => {
+          const r = await ingestStreamed(cid, "socrates", text, name);
+          return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
+        },
+      }, { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) })
+        .catch(() => { /* pollUntilImported already records failures on the job */ });
+    }
+
+    return { jobIds, skippedNested, truncated };
   }
 
   function dropDirOf(caseId: string): string { return join(store.caseDir(caseId), "drop"); }

@@ -29,6 +29,12 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   // createApp original read its closure `customTools`); the live custom-tool list comes from ctx.
   const isKnownTool = (toolId: string): boolean => toolId in TOOL_DEFS || ctx.customTools().some((t) => t.id === toolId);
 
+  // How this tool is reached. Custom tools are always local binaries, so anything not a built-in
+  // is "spawn". Used to decide whether the toolRunner (the PROCESS SPAWNER) is required — an HTTP
+  // tool like SO-CRATES must work on a machine with no local forensic binaries installed.
+  const transportOf = (toolId: string): "spawn" | "http" =>
+    (toolId in TOOL_DEFS ? TOOL_DEFS[toolId as ToolId].transport : "spawn");
+
   // ── External forensic tools (#211) ────────────────────────────────────────────────────────────
   // Per-tool configured/auto-run status for the Settings → Tools tab (no secret values). Derived LIVE
   // from env so it reflects settings just saved + reconnected.
@@ -41,6 +47,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
         label: TOOL_DEFS[id].label,
         repoUrl: TOOL_DEFS[id].repoUrl,
         importKind: TOOL_DEFS[id].importKind,
+        transport: TOOL_DEFS[id].transport,
         extensions: TOOL_DEFS[id].extensions,
         configured: !!cfg,
         autoRun: cfg?.autoRun ?? false,
@@ -52,6 +59,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
       id: t.id,
       label: t.name,
       importKind: "auto",
+      transport: "spawn" as const,
       extensions: t.extensions,
       configured: true,
       autoRun: t.autoRun,
@@ -80,8 +88,10 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/tools/:toolId/run", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const toolId = req.params.toolId;
-    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    if (transportOf(toolId) === "spawn" && !options.toolRunner) {
+      return res.status(501).json({ error: "external tools not configured" });
+    }
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!path) return res.status(400).json({ error: "path is required" });
@@ -103,13 +113,31 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/tools/:toolId/run-upload", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const toolId = req.params.toolId;
-    if (!options.toolRunner) return res.status(501).json({ error: "external tools not configured" });
     if (!isKnownTool(toolId)) return res.status(400).json({ error: `unknown tool "${toolId}"` });
+    if (transportOf(toolId) === "spawn" && !options.toolRunner) {
+      return res.status(501).json({ error: "external tools not configured" });
+    }
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
     const filename = String(req.body?.filename ?? "").trim();
     const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
     if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
     if (!ctx.liveToolConfigs()().get(toolId)) return res.status(400).json({ error: `tool "${toolId}" is not configured` });
+
+    // HTTP tools never touch disk here — the bytes go straight to the service, and a zip is
+    // extracted first. Returns job ids rather than counts: the analysis is asynchronous.
+    if (transportOf(toolId) === "http") {
+      try {
+        const r = await ctx.startSocratesAnalysis(caseId, {
+          data: Buffer.from(dataBase64, "base64"),
+          filename,
+          zipPassword: typeof req.body?.zipPassword === "string" ? req.body.zipPassword : undefined,
+        });
+        return res.status(200).json({ ok: true, tool: toolId, ...r });
+      } catch (err) {
+        recordImportFailure(caseId, toolId, filename, err);
+        return res.status(400).json({ ok: false, error: (err as Error).message });
+      }
+    }
     // Stage into a FRESH per-upload dir under the file's ORIGINAL basename (no collisions, so no need to
     // mangle the name) — folder-root tools (Velociraptor --ROOT) detect the EVTX channel from the filename.
     const toolWork = join(store.caseDir(caseId), ".toolwork");
@@ -150,6 +178,14 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
+  });
+
+  // In-flight and finished SO-CRATES analyses for this case — polled by the import banner so the
+  // analyst sees "analyzing (network)…" rather than a silent gap. SO-CRATES analysis is
+  // asynchronous, so the run route returns job ids and the results land here.
+  app.get("/cases/:id/socrates/jobs", async (req: Request, res: Response) => {
+    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    return res.status(200).json({ jobs: await ctx.socratesJobStore.list(req.params.id) });
   });
 
   // Custom tools (#211) — analyst-defined tools (name/binary/command/update/extensions) beyond the

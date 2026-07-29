@@ -14,6 +14,7 @@ import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diag
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
+import type { SocratesJobStore } from "../integrations/socrates/socratesJobStore.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
@@ -123,6 +124,14 @@ export interface RouteContext {
     caseId: string, toolId: string, targetPath: string, opts?: { undoLabel?: string },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   reloadCustomTools(): Promise<void>;
+  // Submit a file to SO-CRATES and start background polling. Zips are extracted first (SO-CRATES
+  // can only ever try the password "infected"), so one call may start several jobs — one per entry.
+  // Returns immediately; the caller polls GET /cases/:id/socrates/jobs.
+  startSocratesAnalysis(
+    caseId: string,
+    input: { data: Buffer; filename: string; zipPassword?: string },
+  ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }>;
+  socratesJobStore: SocratesJobStore;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
   // the drop-folder poller reuses moveDropFile, and the push/tool paths reuse the whitelist/NSRL/
