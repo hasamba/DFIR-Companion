@@ -67,6 +67,7 @@ nav:
     - IOC Enrichment: reference/ioc-enrichment.md
     - Threat Hunting: reference/threat-hunting.md
     - Reports & Exports: reference/reports.md
+    - Chain of Custody: reference/chain-of-custody.md
     - Integrations: reference/integrations.md
     - War-Room Slash-Command Bot: reference/war-room-bot.md
     - Live Monitoring & Push Ingest: reference/live-monitoring.md

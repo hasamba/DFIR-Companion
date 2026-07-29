@@ -488,6 +488,26 @@ timestamp and the analyst who did it (where applicable).
 
 ---
 
+## Chain of Custody
+
+Every artifact this case has stored, with its SHA-256 and each event that touched it — the same
+content as the report's Chain of Custody appendix, live. Artifacts are recorded automatically as
+screenshots and imports land; nothing needs to be entered by hand.
+
+Each row expands to the artifact's full chain (collected → transferred → exported, with who, when
+and from where). Three controls:
+
+- **Verify now** — re-hash every artifact in this case and re-walk the custody log. Failed artifacts
+  are marked ⚠ FAILED in red. On a case holding disk images this takes a while; the button stays
+  disabled until it answers.
+- **Refresh** — reload the records without re-hashing.
+- **Signed manifest** — download `custody-manifest.json` for this case.
+
+The case is also verified automatically in the background whenever you open it (at most once every
+four hours). See [Chain of Custody](chain-of-custody.md) for the full picture.
+
+---
+
 ## Customer Exposure
 
 Check whether the victim organisation's own domains and email addresses appear in breach databases.
