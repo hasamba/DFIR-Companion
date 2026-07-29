@@ -161,3 +161,51 @@ describe("buildRedactedExport", () => {
     expect(manifest.totalBytes).toBe(others.reduce((n, e) => n + e.data.length, 0));
   });
 });
+
+describe("buildRedactedExport — custody manifest (#362 follow-up)", () => {
+  const manifest = {
+    version: 1 as const,
+    caseId: "INC-1",
+    generatedAt: "2026-07-29T00:00:00.000Z",
+    generatedBy: "test",
+    chain: { records: 1, headSeq: 1, headHash: "c".repeat(64), breaks: [] },
+    artifacts: [{ path: "ANON_PATH_1", sha256: "a".repeat(64), chain: [] }],
+    signature: { algorithm: "HMAC-SHA256" as const, value: "d".repeat(64) },
+  };
+
+  const withManifest = () => deps({
+    reportWriter: {
+      redactedReportContents: async () => ({
+        markdown: "r", html: "<h1>r</h1>", findingsCsv: "f", iocsCsv: "i",
+        timelineCsv: "t", forensicTimelineCsv: "ft", stateJson: "{}",
+        custodyManifest: manifest,
+      }),
+    } as unknown as RedactedExportDeps["reportWriter"],
+  });
+
+  it("ships custody-manifest.json inside the package", async () => {
+    const { zip } = await buildRedactedExport(withManifest(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
+
+    const files = readZip(zip);
+    const entry = files.find((f) => f.path === "custody-manifest.json");
+    expect(entry).toBeDefined();
+    expect(JSON.parse(entry!.data.toString("utf8"))).toEqual(manifest);
+  });
+
+  it("hashes it into export-manifest.json like every other file", async () => {
+    const { zip } = await buildRedactedExport(withManifest(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
+
+    const files = readZip(zip);
+    const pkg = JSON.parse(files.find((f) => f.path === "export-manifest.json")!.data.toString("utf8")) as { files: { path: string; sha256: string }[] };
+    const row = pkg.files.find((f) => f.path === "custody-manifest.json");
+    const raw = files.find((f) => f.path === "custody-manifest.json")!.data;
+    expect(row).toBeDefined();
+    expect(row!.sha256).toBe(createHash("sha256").update(raw).digest("hex"));
+  });
+
+  it("omits the entry entirely when there is no custody manifest", async () => {
+    const { zip } = await buildRedactedExport(deps(), "INC-1", DEFAULT_REDACTED_EXPORT_OPTIONS);
+
+    expect(readZip(zip).some((f) => f.path === "custody-manifest.json")).toBe(false);
+  });
+});
