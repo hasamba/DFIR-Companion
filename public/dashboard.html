@@ -1126,6 +1126,10 @@
     .raw-banner button { padding: 4px 14px; font-size: 12px; margin-right: 6px; }
     .raw-banner .rb-yes { background: #2f7d32; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
     .raw-banner .rb-no { background: transparent; color: var(--c-9aa4b2); border: 1px solid var(--c-2a3146); border-radius: 5px; cursor: pointer; }
+    /* One row per raw file: its name, a checkbox per claiming tool, and (for archives) a password box. */
+    .raw-banner .rb-row { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .raw-banner .rb-tool { font-size: 12px; opacity: 0.9; }
+    .raw-banner .rb-pw { width: 130px; font-size: 12px; padding: 2px 6px; }
     /* Second LLM opinion panel (#116) — independent-model QA cross-check with per-delta accept/reject. */
     .so-panel { font-size: 12px; color: var(--c-c7ced9); margin: 0 0 10px; padding: 9px 11px;
       border: 1px solid var(--c-2a2f3a); border-radius: 6px; background: var(--c-0f1115); }
@@ -3314,6 +3318,15 @@
           <div class="sfield"><label>Max output (bytes)<span class="sfield-hint">DFIR_TOOL_YARA_MAX_OUTPUT (default 104857600 = 100 MB)</span></label><input id="env-DFIR_TOOL_YARA_MAX_OUTPUT" placeholder="104857600" /></div>
         </div>
         <div style="margin:4px 0 14px"><button class="tool-update" data-tool="yara" type="button">↻ Update rules</button></div>
+
+        <div class="settings-group-head">SO-CRATES <span style="color:var(--c-7e8aa0);font-weight:400">(HTTP service, not a local binary — pcap → Suricata, logs → Sigma, anything else → YARA · <a href="https://github.com/dougburks/so-crates" target="_blank" rel="noopener">repo</a>)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 10px">The only tool here reached over HTTP rather than by spawning a binary, so it needs a URL instead of a path. Importing a PCAP, binary, EVTX, or archive will offer it alongside any local tool claiming the same file. Only detections are imported (Suricata alerts, YARA matches, Sigma alerts) — raw telemetry stays in SO-CRATES. Analysis is asynchronous; the import banner shows progress until results land. <strong>SO-CRATES has no authentication and binds <code>127.0.0.1</code> by default</strong> — a non-local URL means unauthenticated evidence reachable by anyone who can route to it. Every submission is written to the case custody log.</p>
+        <div class="sgrid">
+          <div class="sfield"><label>Base URL<span class="sfield-hint">DFIR_TOOL_SOCRATES_URL — e.g. http://localhost:8000; blank = off</span></label><input id="env-DFIR_TOOL_SOCRATES_URL" placeholder="(off)" /></div>
+          <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">DFIR_TOOL_SOCRATES_AUTO_RUN — on/off (opt-in; a dropped file otherwise asks first)</span></label><input id="env-DFIR_TOOL_SOCRATES_AUTO_RUN" placeholder="off (opt-in)" /></div>
+          <div class="sfield"><label>Timeout (ms)<span class="sfield-hint">DFIR_TOOL_SOCRATES_TIMEOUT_MS — how long to wait for analysis (default 1200000 = 20 min)</span></label><input id="env-DFIR_TOOL_SOCRATES_TIMEOUT_MS" placeholder="1200000" /></div>
+        </div>
+        <div class="sfield-hint" style="display:block;margin:4px 0 14px">Password-protected archives are unpacked <em>here</em>, not by SO-CRATES: its API can only ever try <code>infected</code>, and it cannot open WinZip AES archives at all. Enter the password in the import banner; leave it blank for <code>infected</code>.</div>
 
         <div class="sfield-hint" style="display:block;margin-bottom:16px">Master auto-run kill-switch: <code>DFIR_TOOL_AUTO_RUN=off</code> disables all auto-run (set on the General tab's <code>.env</code>, or your env).</div>
         <div class="sfield-row" style="margin-bottom:16px">
@@ -10609,71 +10622,153 @@
         return set;
       }).catch(() => new Set());
     }
-    // Raw EVTX/PCAP picked in the Import dialog → ask ONCE before running a tool (yes/no, one banner for
-    // the whole batch). On Yes, each file's bytes are uploaded and run through its tool server-side. #211
+    // Every CONFIGURED tool claiming this extension, not just the first. SO-CRATES and a local
+    // Suricata run different rulesets, so an analyst may legitimately want both verdicts.
+    function toolsForExt(ext, status) {
+      return ((status && status.tools) || []).filter((t) => t.configured && (t.extensions || []).includes(ext));
+    }
+    // Raw evidence picked in the Import dialog → one banner listing each file with the tools that
+    // can analyze it. Zips also get a password box, defaulting to "infected". #211
     function askRunToolsOnImport(caseId, rawFiles) {
       const el = document.getElementById("rawToolBanner");
       if (!el) return;
       fetch("/tools/status").then((r) => r.ok ? r.json() : null).then((status) => {
-        const items = rawFiles.map((f) => {
+        const items = rawFiles.map((f, i) => {
           const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
-          const toolId = toolForExt(ext, status);
-          return { file: f, ext, toolId, label: toolLabel(toolId, status), suggested: suggestToolForExt(ext, status) };
+          return { idx: i, file: f, ext, tools: toolsForExt(ext, status), isZip: /\.(zip|7z|rar)$/i.test(f.name) };
         });
-        const runnable = items.filter((i) => i.toolId);
-        const notCfg = items.filter((i) => !i.toolId);
-        const files = items.map((i) => `<code>${esc(i.file.name)}</code>`).join(", ");
+        const runnable = items.filter((it) => it.tools.length);
+        const notCfg = items.filter((it) => !it.tools.length);
         el.style.display = "block";
-        let head, actions;
-        if (runnable.length) {
-          const tools = [...new Set(runnable.map((i) => i.label))].join(", ");
+
+        if (!runnable.length) {
+          const sug = [...new Set(items.map((it) => toolLabel(suggestToolForExt(it.ext, status), status)))].join(", ");
           const many = rawFiles.length !== 1;
-          head = `<div class="rb-head">⚠️ ${rawFiles.length} raw ${many ? "files" : "file"} — the Companion can't read ${many ? "them" : "it"} directly. Run <strong>${esc(tools)}</strong> on ${many ? "them" : "it"}?</div>`;
-          actions = "";
-          if (notCfg.length) actions += `<div class="rb-files">${notCfg.length} file(s) have no configured tool and will be skipped — <a href="#" id="rawCfgLink">configure in Settings → Tools</a>.</div>`;
-          actions += `<button class="rb-yes" id="rawRunYes">Yes, run ${esc(tools)}</button><button class="rb-no" id="rawRunNo">No</button>`;
+          el.innerHTML =
+            '<div class="rb-head">⚠️ Raw evidence not directly supported</div>' +
+            '<div class="rb-files">The Companion analyzes tool <em>output</em>, not raw binaries. Configure <strong>' +
+            esc(sug) + '</strong> (Settings → Tools) to analyze ' + (many ? "these" : "this") +
+            ', then re-import — or copy into the case <strong>drop folder</strong> ' +
+            '(EVTX can also be exported to XML via <code>wevtutil qe /f:xml</code>).</div>' +
+            '<button class="rb-yes" id="rawCfgBtn">Settings → Tools</button><button class="rb-no" id="rawRunNo">Dismiss</button>';
         } else {
-          const sug = [...new Set(items.map((i) => toolLabel(i.suggested, status)))].join(", ");
+          let rows = "";
+          for (const it of runnable) {
+            const boxes = it.tools.map((t) =>
+              '<label class="rb-tool"><input type="checkbox" data-file="' + it.idx + '" value="' + esc(t.id) + '" checked> ' +
+              esc(t.label) + "</label>").join(" ");
+            const pw = it.isZip
+              ? '<input class="rb-pw" type="password" data-pw="' + it.idx + '" placeholder="infected" autocomplete="off">'
+              : "";
+            rows += '<div class="rb-row"><code>' + esc(it.file.name) + "</code> " + boxes + " " + pw + "</div>";
+          }
           const many = rawFiles.length !== 1;
-          head = `<div class="rb-head">⚠️ Raw evidence not directly supported</div>`;
-          actions = `<div class="rb-files">The Companion analyzes tool <em>output</em>, not raw binaries. Configure <strong>${esc(sug)}</strong> (Settings → Tools) to analyze ${many ? "these" : "this"}, then re-import — or copy into the case <strong>drop folder</strong> (EVTX can also be exported to XML via <code>wevtutil qe /f:xml</code>).</div>` +
-            `<button class="rb-yes" id="rawCfgBtn">Settings → Tools</button><button class="rb-no" id="rawRunNo">Dismiss</button>`;
+          let head = '<div class="rb-head">⚠️ ' + rawFiles.length + " raw " + (many ? "files" : "file") +
+            " — the Companion can't read " + (many ? "them" : "it") + " directly. Choose what to run:</div>";
+          if (notCfg.length) {
+            rows += '<div class="rb-files">' + notCfg.length + ' file(s) have no configured tool and will be skipped — ' +
+              '<a href="#" id="rawCfgLink">configure in Settings → Tools</a>.</div>';
+          }
+          el.innerHTML = head + rows +
+            '<button class="rb-yes" id="rawRunYes">Run selected</button><button class="rb-no" id="rawRunNo">No</button>';
         }
-        el.innerHTML = head + `<div class="rb-files">${files}</div>` + actions;
+
         const no = document.getElementById("rawRunNo"); if (no) no.onclick = () => { el.style.display = "none"; };
         const cfgBtn = document.getElementById("rawCfgBtn"); if (cfgBtn) cfgBtn.onclick = openToolsSettings;
-        const cfgLink = document.getElementById("rawCfgLink"); if (cfgLink) cfgLink.onclick = (ev) => { ev.preventDefault(); openToolsSettings(); };
+        const cfgLink = document.getElementById("rawCfgLink");
+        if (cfgLink) cfgLink.onclick = (ev) => { ev.preventDefault(); openToolsSettings(); };
         const yes = document.getElementById("rawRunYes");
-        if (yes) yes.onclick = () => runUploadRawFiles(caseId, runnable, el, yes);
+        if (yes) yes.onclick = () => {
+          // Expand the checkbox grid into one (file, tool, password) run per ticked box.
+          const runs = [];
+          el.querySelectorAll('input[type="checkbox"][data-file]:checked').forEach((cb) => {
+            const it = runnable.find((x) => String(x.idx) === cb.getAttribute("data-file"));
+            if (!it) return;
+            const pwEl = el.querySelector('input[data-pw="' + it.idx + '"]');
+            runs.push({ file: it.file, toolId: cb.value, zipPassword: pwEl ? pwEl.value : "" });
+          });
+          if (!runs.length) { el.style.display = "none"; return; }
+          runUploadRawFiles(caseId, runs, el, yes);
+        };
       }).catch(() => { el.style.display = "none"; });
     }
-    // Upload each raw file's bytes (base64) and run its tool via /tools/:id/run-upload. Batch, sequential.
+    // Upload each selected file's bytes and run its tool. Spawn tools return counts synchronously;
+    // SO-CRATES returns job ids because its analysis is asynchronous, so those are polled after.
     // Files too big for the JSON body cap are skipped with a hint to use the drop folder. #211
-    function runUploadRawFiles(caseId, items, el, btn) {
+    function runUploadRawFiles(caseId, runs, el, btn) {
       if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
       const statusEl = document.getElementById("status");
       const LARGE_MB = 180; // base64 body must fit DFIR_MAX_BODY_MB (default 256 MB → ~190 MB raw)
       (async () => {
         let ran = 0, failed = 0, ev = 0, ioc = 0;
-        for (const it of items) {
-          statusEl.textContent = `running ${it.label || it.toolId} on ${it.file.name}…`;
+        const jobIds = [];
+        for (const it of runs) {
+          statusEl.textContent = "running " + it.toolId + " on " + it.file.name + "…";
           try {
-            if (it.file.size > LARGE_MB * 1024 * 1024) { failed++; statusEl.textContent = `${it.file.name} is too large to upload — copy it into the case drop folder instead`; continue; }
+            if (it.file.size > LARGE_MB * 1024 * 1024) {
+              failed++;
+              statusEl.textContent = it.file.name + " is too large to upload — copy it into the case drop folder instead";
+              continue;
+            }
             const b64 = await fileToBase64(it.file);
             if (!b64) { failed++; continue; }
-            const r = await fetch(`/cases/${caseId}/tools/${it.toolId}/run-upload`, {
-              method: "POST", headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: it.file.name, dataBase64: b64 }),
+            const body = { filename: it.file.name, dataBase64: b64 };
+            if (it.zipPassword) body.zipPassword = it.zipPassword;
+            const r = await fetch("/cases/" + caseId + "/tools/" + it.toolId + "/run-upload", {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
             });
             const j = await r.json().catch(() => ({}));
-            if (!r.ok) { failed++; console.warn("tool run failed", it.file.name, j.error); continue; }
-            ran++; ev += j.addedEvents || 0; ioc += j.addedIocs || 0;
+            if (!r.ok) {
+              failed++;
+              // Surface the reason (wrong zip password, unreachable service) instead of a silent skip.
+              statusEl.textContent = it.file.name + ": " + (j.error || "failed");
+              console.warn("tool run failed", it.file.name, j.error);
+              continue;
+            }
+            ran++;
+            ev += j.addedEvents || 0;
+            ioc += j.addedIocs || 0;
+            if (Array.isArray(j.jobIds)) jobIds.push.apply(jobIds, j.jobIds);
+            if (j.truncated) statusEl.textContent = it.file.name + ": only the first 25 archive entries were submitted";
           } catch (e) { failed++; console.warn("tool run error", it.file.name, e && e.message); }
         }
         if (el) el.style.display = "none";
-        statusEl.textContent = `Ran ${ran} tool run(s): +${ev} event(s), +${ioc} IOC(s)` + (failed ? `, ${failed} failed/skipped` : "");
+        statusEl.textContent = "Ran " + ran + " run(s): +" + ev + " event(s), +" + ioc + " IOC(s)" +
+          (failed ? ", " + failed + " failed/skipped" : "") +
+          (jobIds.length ? " — " + jobIds.length + " SO-CRATES analysis/es running…" : "");
+        if (jobIds.length) pollSocratesJobs(caseId, jobIds);
         loadImportMeta(caseId);
       })();
+    }
+    // SO-CRATES analysis is asynchronous, so follow the jobs until every one is terminal. Polls at
+    // 5s and gives up after 20 minutes, matching the server-side attempt ceiling.
+    function pollSocratesJobs(caseId, jobIds) {
+      const statusEl = document.getElementById("status");
+      const wanted = new Set(jobIds);
+      let ticks = 0;
+      const timer = setInterval(async () => {
+        ticks++;
+        try {
+          const r = await fetch("/cases/" + caseId + "/socrates/jobs");
+          if (!r.ok) return;
+          const jobs = ((await r.json()).jobs || []).filter((j) => wanted.has(j.jobId));
+          const done = jobs.filter((j) => j.status === "imported" || j.status === "error");
+          const running = jobs.filter((j) => j.status !== "imported" && j.status !== "error");
+          if (running.length) {
+            const phase = running[0].phase ? " (" + running[0].phase + ")" : "";
+            statusEl.textContent = "SO-CRATES: analyzing" + phase + " — " + running.length + " remaining…";
+          }
+          if (jobs.length && done.length === jobs.length) {
+            clearInterval(timer);
+            const ev = done.reduce((n, j) => n + (j.addedEvents || 0), 0);
+            const errs = done.filter((j) => j.status === "error");
+            statusEl.textContent = "SO-CRATES finished: +" + ev + " event(s)" +
+              (errs.length ? ", " + errs.length + " failed — " + (errs[0].error || "") : "");
+            loadImportMeta(caseId);
+          }
+        } catch (e) { /* transient; keep polling */ }
+        if (ticks > 240) clearInterval(timer);
+      }, 5000);
     }
     function renderImportMeta(m) {
       paintTimelineImportMeta(m);

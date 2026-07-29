@@ -155,11 +155,17 @@ import {
 } from "./analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
 import {
-  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, type ToolId, type ToolConfig,
+  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, SOCRATES_EXTS, type ToolId, type ToolConfig,
 } from "./integrations/tools/toolConfig.js";
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
 import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
+import { extractZipEntries } from "./analysis/zipExtract.js";
+import {
+  md5Buffer, probeAnalysis, uploadBuffer, checkStatus, fetchVerdicts,
+} from "./integrations/socrates/socratesApi.js";
+import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
+import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -859,6 +865,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
   }
 
+  // Per-case record of asynchronous SO-CRATES analyses. Declared here (not beside
+  // startSocratesAnalysis further down) because the RouteContext literal below references it, and a
+  // `const` is not hoisted the way the surrounding function declarations are.
+  const socratesJobs = new SocratesJobStore(store);
+
+  // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
+  // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
+  // once — piles them all onto that lock. Chain them per case so verdicts land one at a time, in
+  // completion order. The chain never rejects (each link swallows), so one bad import cannot wedge
+  // every later one behind it.
+  const socratesIngestChain = new Map<string, Promise<unknown>>();
+  const queueSocratesIngest = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => {
+    const prev = socratesIngestChain.get(caseId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    socratesIngestChain.set(caseId, next.catch(() => { /* keep the chain alive after a failure */ }));
+    return next;
+  };
+
   const ctx: RouteContext = {
     store,
     options,
@@ -894,6 +918,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     ingestStreamed,
     runToolAndIngest,
     reloadCustomTools,
+    startSocratesAnalysis,
+    socratesJobStore: socratesJobs,
+    runDropToolAndIngest,
     resolveImportKind: () => resolveImportKind,
     captureBuffers: () => buffers,
     synthInFlight: () => synthInFlight,
@@ -1553,9 +1580,33 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     const custom = customTools.find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
     return custom ? custom.id : null;
   };
-  // Every file extension claimed by a built-in raw type OR a defined custom tool (for drop routing).
+  // Every file extension claimed by a built-in raw type, SO-CRATES, OR a defined custom tool (for drop
+  // routing). SOCRATES_EXTS is included unconditionally — even when SO-CRATES is not configured — so a
+  // dropped .exe is recognized as RAW and surfaces as pending ("configure a tool") instead of falling
+  // through to the text path, which would read the binary as UTF-8 and ingest garbage.
   const rawExtClaimed = (ext: string): boolean =>
-    RAW_TOOL_EXTS.has(ext.toLowerCase()) || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
+    RAW_TOOL_EXTS.has(ext.toLowerCase()) || SOCRATES_EXTS.includes(ext.toLowerCase())
+    || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
+
+  // Run a raw on-disk file through whichever transport its tool uses, and ingest the result. Spawn
+  // tools go through runToolAndIngest (synchronous); HTTP tools hand off to startSocratesAnalysis and
+  // return immediately, with the poller landing the verdicts later. Shared by the drop-folder auto-run
+  // and the "Run pending" batch so both behave identically.
+  // Returns true when the work is ASYNCHRONOUS (handed off, not finished) so the caller can log
+  // SUBMITTED rather than claiming an import that has not happened yet.
+  async function runDropToolAndIngest(
+    caseId: string, toolId: string, fullPath: string, name: string, dropRelpath?: string,
+  ): Promise<boolean> {
+    const cfg = liveToolConfigs().get(toolId);
+    if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
+    if (cfg.transport === "http") {
+      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name, dropRelpath });
+      return true;
+    }
+    const r = await runToolAndIngest(caseId, toolId, fullPath);
+    if (!r.analyzed) throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
+    return false;
+  }
 
   // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
   // output through the SAME chain as the Import button (ingestStreamed). Shared by the drop-folder
@@ -1565,9 +1616,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   async function runToolAndIngest(
     caseId: string, toolId: string, targetPath: string, opts: { undoLabel?: string } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
-    if (!options.toolRunner) throw new Error("external tools not configured");
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
+    // The toolRunner is the PROCESS SPAWNER. Only spawn-transport tools need it — gating http tools
+    // on it would make SO-CRATES unreachable on a machine with no local forensic binaries, which is
+    // exactly the machine most likely to want it.
+    if (cfg.transport === "http") throw new Error(`tool "${toolId}" is an HTTP tool — use startSocratesAnalysis`);
+    if (!options.toolRunner) throw new Error("external tools not configured");
     const caseDir = store.caseDir(caseId);
     const contained = resolveContainedPath(caseDir, targetPath);
     const { outputText, importKind } = await runToolAgainstFile({
@@ -1587,6 +1642,91 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       await pushImportCheckpoint(caseId, before, opts.undoLabel);
     }
     return r;
+  }
+
+  // Submit one file (or every entry of a zip) to SO-CRATES and poll for results in the background.
+  // Zip handling happens HERE rather than in SO-CRATES because its upload handler builds the
+  // password list server-side from the filename — an analyst-supplied password cannot reach it —
+  // and it extracts through Python's zipfile, which cannot open AES archives at all.
+  async function startSocratesAnalysis(
+    caseId: string,
+    input: { data: Buffer; filename: string; zipPassword?: string; dropRelpath?: string },
+  ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }> {
+    const cfg = liveToolConfigs().get("socrates");
+    if (!cfg?.baseUrl) throw new Error("SO-CRATES is not configured — set DFIR_TOOL_SOCRATES_URL in Settings → Tools");
+    const baseUrl = cfg.baseUrl;
+
+    // Decide what to submit: the file itself, or each entry of an archive.
+    let submissions: { data: Buffer; name: string; zipEntry?: string }[];
+    let skippedNested: string[] = [];
+    let truncated = false;
+    if (input.data.subarray(0, 2).toString("latin1") === "PK") {
+      const extracted = extractZipEntries(input.data, input.filename, input.zipPassword);
+      skippedNested = extracted.skippedNested;
+      truncated = extracted.truncated;
+      submissions = extracted.entries.map((e) => ({
+        data: e.data, name: basename(e.path), zipEntry: `${input.filename}!${e.path}`,
+      }));
+      if (submissions.length === 0) throw new Error(`"${input.filename}" contained no analyzable files`);
+    } else {
+      submissions = [{ data: input.data, name: input.filename }];
+    }
+
+    const jobIds: string[] = [];
+    for (const sub of submissions) {
+      // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5, so an unchanged file
+      // costs one request instead of a re-analysis.
+      const localMd5 = md5Buffer(sub.data);
+      const probe = await probeAnalysis(baseUrl, localMd5).catch(() => ({ status: "processing" as const }));
+      // Poll under the md5 the SERVER reports, not the one we computed. They usually agree, but
+      // SO-CRATES keys an archive on the hash of the file it extracts rather than the bytes it was
+      // sent — so trusting our own hash would poll a key that never becomes ready.
+      const md5 = probe.status === "ready"
+        ? localMd5
+        : (await uploadBuffer(baseUrl, sub.data, sub.name)).md5 || localMd5;
+
+      const job: SocratesJob = {
+        jobId: randomUUID(), md5, sourceName: input.filename, zipEntry: sub.zipEntry,
+        status: "processing", startedAt: new Date().toISOString(),
+      };
+      await socratesJobs.upsert(caseId, job);
+      jobIds.push(job.jobId);
+
+      // Uploading evidence leaves a copy on the SO-CRATES host, keyed by MD5 and retained until
+      // deleted. That belongs in the case record. Best-effort — never block the analysis.
+      await options.custodyStore?.recordExport(caseId, {
+        exportedBy: "companion",
+        destination: `SO-CRATES analysis at ${baseUrl} (md5 ${md5}, ${sub.zipEntry ?? sub.name})`,
+      }).catch(() => { /* custody is best-effort */ });
+
+      // Fire and forget: the poller updates the job record, which the dashboard polls.
+      void pollUntilImported(caseId, job, {
+        store: socratesJobs,
+        checkStatus: (m) => checkStatus(baseUrl, m),
+        fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
+        ingest: (cid, text, name) => queueSocratesIngest(cid, async () => {
+          const r = await ingestStreamed(cid, "socrates", text, name);
+          return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
+        }),
+      }, { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) })
+        .then(async (final) => {
+          // Close the SUBMITTED line in drop-log.txt with what actually happened. Without this the
+          // audit trail ends at "handed to socrates" and never says whether verdicts landed — and a
+          // failed analysis would leave a file sitting in _processed/ with no recorded outcome.
+          if (!input.dropRelpath) return;
+          const entry: DropLogEntry = final.status === "imported"
+            ? {
+              status: "IMPORTED", relpath: input.dropRelpath,
+              reason: `via socrates — +${final.addedEvents ?? 0} event(s), +${final.addedIocs ?? 0} IOC(s)`,
+            }
+            : { status: "FAILED", relpath: input.dropRelpath, reason: final.error ?? "SO-CRATES analysis failed" };
+          await appendDropLog(dropDirOf(caseId), formatDropLogLines([entry], new Date().toISOString()))
+            .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+        })
+        .catch(() => { /* pollUntilImported already records failures on the job */ });
+    }
+
+    return { jobIds, skippedNested, truncated };
   }
 
   function dropDirOf(caseId: string): string { return join(store.caseDir(caseId), "drop"); }
@@ -1682,7 +1822,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   }
 
-  async function processDropFile(caseId: string, dropDir: string, file: DropFileStat): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput }> {
+  async function processDropFile(
+    caseId: string, dropDir: string, file: DropFileStat,
+  ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
@@ -1698,17 +1840,37 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
       // <tool>". Auto-run is gated per-tool (#211). Images always go to the capture path, not here.
       const ext = extname(file.relpath).toLowerCase();
-      if (options.toolRunner && classifyDropFile(file.relpath) !== "image" && rawExtClaimed(ext)) {
+      // Sniff the head so an EXTENSIONLESS or hash-named sample (routine for malware) is still seen as
+      // raw rather than read as text. Only the first 8 KB — the file may be gigabytes.
+      let head: Buffer | undefined;
+      try {
+        const fh = await open(full, "r");
+        try {
+          const buf = Buffer.alloc(Math.min(8192, Math.max(0, file.size)));
+          if (buf.length) await fh.read(buf, 0, buf.length, 0);
+          head = buf;
+        } finally { await fh.close(); }
+      } catch { /* unreadable head → fall back to extension-only classification */ }
+
+      // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
+      // NOT gated on options.toolRunner — that is the PROCESS SPAWNER, and SO-CRATES needs no spawner.
+      // Gating here would drop a binary into the text path on a box with no local forensic binaries.
+      if (classifyDropFile(file.relpath, head) === "raw-tool-input" || rawExtClaimed(ext)) {
         const configured = liveToolConfigs();
-        const toolId = resolveToolForExt(ext, configured);
+        // An extensionless binary is claimed by nobody, but SO-CRATES YARA-scans anything, so it is the
+        // fallback whenever it is configured.
+        const toolId = resolveToolForExt(ext, configured) ?? (configured.has("socrates") ? "socrates" : null);
         const cfg = toolId ? configured.get(toolId) : undefined;
-        if (!toolId || !cfg || !cfg.autoRun) {
+        // A spawn tool additionally needs the process spawner; an HTTP tool does not.
+        const runnable = !!cfg && cfg.autoRun && (cfg.transport === "http" || !!options.toolRunner);
+        if (!toolId || !cfg || !runnable) {
           // Not runnable now → pending (banner). Do NOT move the file so a manual run can still act on it.
           return { ok: false, pending: { relpath: file.relpath, ext, suggestedTool: toolId ?? suggestedToolForExtension(ext), configured: !!toolId } };
         }
-        const r = await runToolAndIngest(caseId, toolId, full);
-        if (!r.analyzed) return { ok: false, reason: `${toolId} ran but AI is off — output saved as evidence but not analyzed` };
-        return { ok: true };
+        const async_ = await runDropToolAndIngest(caseId, toolId, full, name, file.relpath);
+        // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
+        // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
+        return async_ ? { ok: true, submitted: `handed to ${toolId}; verdicts land when analysis finishes` } : { ok: true };
       }
       if (isOversize(file.size, dropMaxBytes)) {
         return { ok: false, reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path` };
@@ -1754,6 +1916,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
 
       const imported: string[] = [];
+      // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
+      // job itself when the analysis resolves.
+      const submitted: { relpath: string; reason: string }[] = [];
       const failed: DropFailure[] = [];
       const pendingRawInputs: PendingRawInput[] = [];
       let processed = 0;
@@ -1768,7 +1933,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
               pendingRawInputs.push(res.pending);
               return;
             }
-            if (res.ok) imported.push(file.relpath);
+            // A submitted file still counts as "imported" for the dashboard's drop banner (it was
+            // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
+            if (res.ok && res.submitted) { imported.push(file.relpath); submitted.push({ relpath: file.relpath, reason: res.submitted }); }
+            else if (res.ok) imported.push(file.relpath);
             else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
             await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
             nextSeen.delete(file.relpath); // moved out of the watched area — forget it
@@ -1792,7 +1960,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
       // the ~10s poll interval until it resolves).
       const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
-        { imported, failed, pendingRawInputs },
+        // `imported` minus the async handoffs — those get a SUBMITTED line instead, so a file is
+        // never claimed as imported before its verdicts actually land.
+        { imported: imported.filter((r) => !submitted.some((s) => s.relpath === r)), submitted, failed, pendingRawInputs },
         dropPendingLogged.get(caseId) ?? new Set<string>(),
       );
       dropPendingLogged.set(caseId, nextLoggedPending);

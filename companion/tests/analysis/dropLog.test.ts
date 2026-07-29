@@ -11,7 +11,7 @@ describe("formatDropLogLines", () => {
 
   it("formats an IMPORTED line with no reason", () => {
     const lines = formatDropLogLines([{ status: "IMPORTED", relpath: "alerts.csv" }], at);
-    expect(lines).toEqual([`${at}  IMPORTED  alerts.csv`]);
+    expect(lines).toEqual([`${at}  IMPORTED   alerts.csv`]);
   });
 
   it("formats a FAILED line with a reason", () => {
@@ -19,7 +19,7 @@ describe("formatDropLogLines", () => {
       [{ status: "FAILED", relpath: "weird.csv", reason: "unrecognized file type (not a supported import format)" }],
       at,
     );
-    expect(lines).toEqual([`${at}  FAILED    weird.csv  — unrecognized file type (not a supported import format)`]);
+    expect(lines).toEqual([`${at}  FAILED     weird.csv  — unrecognized file type (not a supported import format)`]);
   });
 
   it("formats a PENDING line with a reason", () => {
@@ -27,7 +27,7 @@ describe("formatDropLogLines", () => {
       [{ status: "PENDING", relpath: "capture.evtx", reason: "no tool configured for .evtx" }],
       at,
     );
-    expect(lines).toEqual([`${at}  PENDING   capture.evtx  — no tool configured for .evtx`]);
+    expect(lines).toEqual([`${at}  PENDING    capture.evtx  — no tool configured for .evtx`]);
   });
 
   it("preserves entry order across multiple entries in one call", () => {
@@ -202,5 +202,44 @@ describe("buildSweepLogEntries", () => {
       original,
     );
     expect(original).toEqual(new Set(["existing.evtx"])); // unchanged — caller must use the returned set
+  });
+});
+
+describe("SUBMITTED (asynchronous tools)", () => {
+  const at = "2026-07-29T15:25:30.404Z";
+
+  it("formats a SUBMITTED line, aligned with the other statuses", () => {
+    const lines = formatDropLogLines(
+      [{ status: "SUBMITTED", relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" }],
+      at,
+    );
+    expect(lines).toEqual([`${at}  SUBMITTED  evil.exe  — handed to socrates; verdicts land when analysis finishes`]);
+  });
+
+  it("logs an async handoff as SUBMITTED, never as IMPORTED", () => {
+    // Claiming IMPORTED at handoff would assert an import that has not happened — and would still
+    // assert it if the analysis later failed.
+    const { entries } = buildSweepLogEntries(
+      {
+        imported: ["alerts.csv"],
+        submitted: [{ relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" }],
+        failed: [],
+        pendingRawInputs: [],
+      },
+      new Set<string>(),
+    );
+    expect(entries).toEqual([
+      { status: "IMPORTED", relpath: "alerts.csv" },
+      { status: "SUBMITTED", relpath: "evil.exe", reason: "handed to socrates; verdicts land when analysis finishes" },
+    ]);
+  });
+
+  it("omits the submitted section entirely when a caller does not pass one", () => {
+    // Back-compat: every existing caller passes only imported/failed/pendingRawInputs.
+    const { entries } = buildSweepLogEntries(
+      { imported: ["a.csv"], failed: [], pendingRawInputs: [] },
+      new Set<string>(),
+    );
+    expect(entries).toEqual([{ status: "IMPORTED", relpath: "a.csv" }]);
   });
 });

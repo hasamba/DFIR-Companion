@@ -9,7 +9,11 @@
 // CLI→velociraptor, Suricata→network, Snort→snort, YARA→yara. The Companion runs the tool and ingests
 // its verdict; it does NOT re-implement detection (see CLAUDE.md).
 
-export type ToolId = "hayabusa" | "velociraptor_cli" | "suricata" | "snort" | "yara";
+export type ToolId = "hayabusa" | "velociraptor_cli" | "suricata" | "snort" | "yara" | "socrates";
+
+// How the Companion reaches the tool. "spawn" runs a local binary through the toolRunner; "http"
+// calls a service over the network and never touches the process spawner.
+export type ToolTransport = "spawn" | "http";
 
 // How the tool emits its result:
 //  - "stdout": read the process stdout (YARA, Snort -A fast -q)
@@ -19,7 +23,9 @@ export type OutputMode = "stdout" | "file" | "dir";
 
 export interface ToolConfig {
   id: string;                 // built-in ToolId or a custom-tool id
-  binary: string;             // executable path / PATH name (gates on/off)
+  binary: string;             // executable path / PATH name (gates on/off); "" for http tools
+  transport: ToolTransport;   // spawn a binary, or call an HTTP service
+  baseUrl?: string;           // http tools only — the service root, no trailing slash
   runArgs: string;            // args template with <target>/<output>/<rules> placeholders
   updateCommand?: string;     // FULL "update rules" command line (first token = executable); blank = no button
   importKind: string;         // fixed downstream importer kind
@@ -37,6 +43,7 @@ interface ToolDef {
   label: string;                    // display name
   repoUrl: string;                  // official repo (linked in the UI, never bundled)
   importKind: string;
+  transport: ToolTransport;
   defaultRunArgs: string;
   outputMode: OutputMode;
   defaultOutputFile?: string;
@@ -46,6 +53,19 @@ interface ToolDef {
   defaultUpdateCommand?: string;    // standalone update command line (Suricata: suricata-update)
 }
 
+// The extensions SO-CRATES claims. Explicit rather than a catch-all: SO-CRATES YARA-scans anything
+// that is not a PCAP or a log, so claiming "*" would divert every CSV/JSON import away from the
+// Companion's native importers. Extensionless and hash-named samples are covered by the
+// looksBinary() content sniff in analysis/dropScan.ts instead.
+export const SOCRATES_EXTS: string[] = [
+  ".pcap", ".pcapng", ".cap", ".trace",
+  ".evtx", ".evt",
+  ".exe", ".dll", ".sys", ".drv", ".scr", ".com", ".cpl", ".ocx", ".msi", ".bin", ".elf", ".so", ".dylib",
+  ".lnk", ".msp", ".cab",
+  ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".rtf",
+  ".zip", ".7z", ".rar",
+];
+
 // Static per-tool definitions (NOT env). The importKind + outputMode + claimed extensions are fixed;
 // env carries only the analyst's per-tool overrides (binary, args, rules, toggles).
 export const TOOL_DEFS: Record<ToolId, ToolDef> = {
@@ -54,6 +74,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     label: "Hayabusa",
     repoUrl: "https://github.com/Yamato-Security/hayabusa",
     importKind: "hayabusa",
+    transport: "spawn",
     defaultRunArgs: "csv-timeline -f <target> -o <output> -w",
     outputMode: "file",
     defaultOutputFile: "hayabusa.csv",
@@ -66,6 +87,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     label: "Velociraptor CLI (offline)",
     repoUrl: "https://github.com/Velocidex/velociraptor",
     importKind: "velociraptor",
+    transport: "spawn",
     // Runs the Windows.Hayabusa.Rules artifact (NON-built-in → loaded from the definitions zip) against a
     // FOLDER of EVTX (--ROOT). `<targetdir>` is a folder holding the input file under its ORIGINAL name, so
     // Velociraptor detects the channel from the filename and globs it. `--nobanner --no-debug` keep the
@@ -82,6 +104,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     label: "Suricata",
     repoUrl: "https://suricata.io/download/",
     importKind: "network",
+    transport: "spawn",
     defaultRunArgs: "-r <target> -l <output>",
     outputMode: "dir",
     defaultOutputFile: "eve.json",
@@ -97,6 +120,7 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     label: "Snort",
     repoUrl: "https://github.com/snort3/snort3",
     importKind: "snort",
+    transport: "spawn",
     defaultRunArgs: "-r <target> -c <rules> -A fast -q",
     outputMode: "stdout",
     usesRules: true,
@@ -107,10 +131,23 @@ export const TOOL_DEFS: Record<ToolId, ToolDef> = {
     label: "YARA",
     repoUrl: "https://github.com/VirusTotal/yara",
     importKind: "yara",
+    transport: "spawn",
     defaultRunArgs: "-s -m -r <rules> <target>",
     outputMode: "stdout",
     usesRules: true,
     extensions: [],   // YARA scans files/dirs on demand — not a raw drop-folder extension
+  },
+  socrates: {
+    id: "socrates",
+    label: "SO-CRATES",
+    repoUrl: "https://github.com/dougburks/so-crates",
+    importKind: "socrates",
+    transport: "http",
+    // Not a spawned command — the client in integrations/socrates drives the HTTP API instead.
+    defaultRunArgs: "",
+    outputMode: "stdout",
+    usesRules: false,
+    extensions: SOCRATES_EXTS,
   },
 };
 
@@ -121,6 +158,7 @@ const ENV_ID: Record<ToolId, string> = {
   suricata: "SURICATA",
   snort: "SNORT",
   yara: "YARA",
+  socrates: "SOCRATES",
 };
 
 function boolEnv(v: string | undefined, dflt: boolean): boolean {
@@ -137,14 +175,28 @@ function quoteIfNeeded(s: string): string {
 export function loadToolConfig(id: ToolId, env: NodeJS.ProcessEnv = process.env): ToolConfig | null {
   const def = TOOL_DEFS[id];
   const p = `DFIR_TOOL_${ENV_ID[id]}_`;
-  const binary = env[`${p}BINARY`]?.trim();
-  if (!binary) return null;
 
   // Auto-run is doubly gated: a master kill-switch (default on) AND the per-tool toggle (default OFF —
   // opt-in). Default off so a dropped/imported raw file ASKS the analyst first (a confirmation banner)
   // instead of silently spawning a tool; set _AUTO_RUN=on per tool for hands-off running.
   const masterAuto = boolEnv(env.DFIR_TOOL_AUTO_RUN, true);
   const toolAuto = boolEnv(env[`${p}AUTO_RUN`], false);
+
+  // HTTP tools are gated on a base URL, not an executable path.
+  if (def.transport === "http") {
+    const baseUrl = env[`${p}URL`]?.trim();
+    if (!baseUrl) return null;
+    return {
+      id, binary: "", transport: "http", baseUrl: baseUrl.replace(/\/+$/, ""),
+      runArgs: "", importKind: def.importKind, outputMode: def.outputMode,
+      autoRun: masterAuto && toolAuto,
+      timeoutMs: Number(env[`${p}TIMEOUT_MS`]) || 1_200_000,   // 20 min: Suricata over a large PCAP
+      maxOutputBytes: Number(env[`${p}MAX_OUTPUT`]) || 100 * 1024 * 1024,
+    };
+  }
+
+  const binary = env[`${p}BINARY`]?.trim();
+  if (!binary) return null;
 
   const envUpdate = env[`${p}UPDATE_CMD`]?.trim();
   const updateCommand = envUpdate
@@ -158,6 +210,7 @@ export function loadToolConfig(id: ToolId, env: NodeJS.ProcessEnv = process.env)
   return {
     id,
     binary,
+    transport: "spawn",
     runArgs: env[`${p}RUN_ARGS`]?.trim() || def.defaultRunArgs,
     updateCommand,
     importKind: def.importKind,
@@ -185,7 +238,9 @@ export function loadAllToolConfigs(env: NodeJS.ProcessEnv = process.env): Map<To
 // pcap→Suricata then Snort). Derived from TOOL_DEFS so it stays in sync.
 export function toolPreferenceForExtension(ext: string): ToolId[] {
   const e = ext.toLowerCase();
-  const order: ToolId[] = ["hayabusa", "velociraptor_cli", "suricata", "snort", "yara"];
+  // Order matters: the first CONFIGURED tool wins for drop-folder auto-run. SO-CRATES is last so a
+  // tuned local Suricata/Hayabusa keeps priority; the import banner offers every claimant instead.
+  const order: ToolId[] = ["hayabusa", "velociraptor_cli", "suricata", "snort", "yara", "socrates"];
   return order.filter((id) => TOOL_DEFS[id].extensions.includes(e));
 }
 

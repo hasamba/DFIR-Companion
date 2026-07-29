@@ -66,6 +66,7 @@ export function customToolToConfig(t: CustomTool): ToolConfig {
   return {
     id: t.id,
     binary: t.binary,
+    transport: "spawn",   // a custom tool is always a local binary; HTTP tools are built-in only
     runArgs: t.runArgs,
     updateCommand: t.updateCommand && t.updateCommand.trim() ? t.updateCommand.trim() : undefined,
     importKind: "auto",

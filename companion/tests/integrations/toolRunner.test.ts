@@ -14,6 +14,7 @@ import {
   loadToolConfig,
   loadAllToolConfigs,
   toolForExtension,
+  toolPreferenceForExtension,
   suggestedToolForExtension,
   TOOL_DEFS,
   type ToolId,
@@ -307,5 +308,48 @@ describe("updateToolRules", () => {
     const cfg = loadToolConfig("snort", { DFIR_TOOL_SNORT_BINARY: "snort" })!;
     const runner: ToolRunner = async () => ({ stdout: "", stderr: "", code: 0 });
     await expect(updateToolRules(cfg, runner)).rejects.toThrow(/no update command/i);
+  });
+});
+
+describe("SO-CRATES as an http-transport tool", () => {
+  it("is off until DFIR_TOOL_SOCRATES_URL is set", () => {
+    expect(loadToolConfig("socrates", {} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it("loads from a URL rather than a binary path", () => {
+    const cfg = loadToolConfig("socrates", { DFIR_TOOL_SOCRATES_URL: "http://localhost:8000/" } as NodeJS.ProcessEnv);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.transport).toBe("http");
+    expect(cfg!.baseUrl).toBe("http://localhost:8000");   // trailing slash trimmed
+    expect(cfg!.importKind).toBe("socrates");
+  });
+
+  it("marks every built-in binary tool as spawn transport", () => {
+    for (const id of Object.keys(TOOL_DEFS) as ToolId[]) {
+      if (id === "socrates") continue;
+      expect(TOOL_DEFS[id].transport).toBe("spawn");
+    }
+  });
+
+  it("claims pcap, evtx, binary, and zip extensions", () => {
+    const claimed = TOOL_DEFS.socrates.extensions;
+    for (const ext of [".pcap", ".pcapng", ".evtx", ".exe", ".dll", ".zip"]) {
+      expect(claimed).toContain(ext);
+    }
+    // Text formats the Companion parses natively must NOT be claimed, or ordinary log imports
+    // would be diverted away from the native importers.
+    for (const ext of [".csv", ".json", ".log", ".xml"]) {
+      expect(claimed).not.toContain(ext);
+    }
+  });
+
+  it("ranks behind the configured binary tools for a shared extension", () => {
+    // Drop-folder auto-run takes the first configured claimant; a tuned local Suricata should win.
+    const order = toolPreferenceForExtension(".pcap");
+    expect(order.indexOf("socrates")).toBeGreaterThan(order.indexOf("suricata"));
+  });
+
+  it("is the suggested tool for a binary nothing else claims", () => {
+    expect(suggestedToolForExtension(".exe")).toBe("socrates");
   });
 });

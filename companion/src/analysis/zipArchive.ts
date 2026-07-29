@@ -1,4 +1,7 @@
 import { deflateRawSync, inflateRawSync } from "node:zlib";
+import {
+  zipCryptoDecrypt, verifyZipCryptoCheckByte, parseAesExtra, aesDecrypt, ZipPasswordError,
+} from "./zipCrypto.js";
 
 // A tiny, dependency-free ZIP writer/reader. The redacted case export (#54) bundles the
 // anonymized report + screenshots into one shareable archive; rather than pull in a native
@@ -33,6 +36,9 @@ const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_EOCD = 0x06054b50;
 const METHOD_DEFLATE = 8;
+const METHOD_AES = 99;          // WinZip AE-x; the real method lives in the 0x9901 extra field
+const FLAG_ENCRYPTED = 0x0001;  // general-purpose bit 0
+const ZIPCRYPTO_HEADER_LEN = 12;
 const VERSION = 20; // 2.0 — the minimum that supports DEFLATE
 const FLAG_UTF8 = 0x0800; // general-purpose bit 11: filenames are UTF-8
 // Fixed DOS time/date (1980-01-01 00:00:00) → reproducible archives, no Date dependency.
@@ -134,6 +140,8 @@ export interface ReadZipOptions {
   maxEntryBytes?: number;
   /** Override the total inflated-size cap (default {@link MAX_TOTAL_INFLATED}). Tests only. */
   maxTotalBytes?: number;
+  /** Password for encrypted entries. Ignored for unencrypted archives. Never logged or persisted. */
+  password?: string;
 }
 
 /**
@@ -165,6 +173,8 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
   for (let i = 0; i < total; i++) {
     if (archive.readUInt32LE(ptr) !== SIG_CENTRAL) throw new Error("corrupt ZIP: bad central header");
     const method = archive.readUInt16LE(ptr + 10);
+    const flag = archive.readUInt16LE(ptr + 8);
+    const modTime = archive.readUInt16LE(ptr + 12);
     const crc = archive.readUInt32LE(ptr + 16);
     const compSize = archive.readUInt32LE(ptr + 20);
     const nameLen = archive.readUInt16LE(ptr + 28);
@@ -172,14 +182,46 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     const commentLen = archive.readUInt16LE(ptr + 32);
     const localOffset = archive.readUInt32LE(ptr + 42);
     const name = archive.toString("utf8", ptr + 46, ptr + 46 + nameLen);
+    const extra = archive.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen);
 
     // Jump to the local header to find the actual data start (its name/extra lengths may differ).
     const localNameLen = archive.readUInt16LE(localOffset + 26);
     const localExtraLen = archive.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
-    const compressed = archive.subarray(dataStart, dataStart + compSize);
+    let compressed = archive.subarray(dataStart, dataStart + compSize);
+    const encrypted = (flag & FLAG_ENCRYPTED) !== 0;
+
+    // Effective compression method and CRC policy, both of which AES entries override.
+    let effectiveMethod = method;
+    let verifyCrc = true;
+
+    if (encrypted) {
+      const password = opts.password;
+      if (password === undefined || password === "") {
+        throw new ZipPasswordError(`zip entry "${name}" is encrypted — a password is required`, "password-required");
+      }
+      if (method === METHOD_AES) {
+        const params = parseAesExtra(extra);
+        if (!params) {
+          throw new ZipPasswordError(`zip entry "${name}" uses AES but has no readable AE header`, "unsupported-encryption");
+        }
+        const { plaintext } = aesDecrypt(compressed, password, params.strength);
+        compressed = plaintext;
+        effectiveMethod = params.actualMethod;
+        // AE-2 stores a zero CRC by design, so the usual integrity check would always fail.
+        // The HMAC already authenticated the data.
+        verifyCrc = params.aeVersion !== 2;
+      } else {
+        const decrypted = zipCryptoDecrypt(compressed, password);
+        if (!verifyZipCryptoCheckByte(decrypted.subarray(0, ZIPCRYPTO_HEADER_LEN), crc, modTime)) {
+          throw new ZipPasswordError(`wrong password for zip entry "${name}"`, "wrong-password");
+        }
+        compressed = decrypted.subarray(ZIPCRYPTO_HEADER_LEN);
+      }
+    }
+
     let data: Buffer;
-    if (method === METHOD_DEFLATE) {
+    if (effectiveMethod === METHOD_DEFLATE) {
       // Zip-bomb guard: cap the output DURING decompression via zlib's own maxOutputLength, not
       // after — inflateRawSync() otherwise fully materializes the decompressed output before
       // returning, so a check on the result's length only runs once the damage (allocating/OOMing
@@ -203,7 +245,7 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
 
     totalInflated += data.length;
 
-    if (crc32(data) !== crc) throw new Error(`corrupt ZIP: CRC mismatch for ${name}`);
+    if (verifyCrc && crc32(data) !== crc) throw new Error(`corrupt ZIP: CRC mismatch for ${name}`);
     entries.push({ path: name, data });
     ptr += 46 + nameLen + extraLen + commentLen;
   }

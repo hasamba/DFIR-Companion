@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { inflateRawSync } from "node:zlib";
 import { createZip, readZip, crc32, type ZipEntry } from "../../src/analysis/zipArchive.js";
+import { ZipPasswordError } from "../../src/analysis/zipCrypto.js";
 
 const EOCD_SIG = 0x06054b50;
 const LOCAL_SIG = 0x04034b50;
@@ -101,5 +102,59 @@ describe("readZip — zip-bomb guard (#247)", () => {
     // archives (e.g. a real forensic case's screenshots/state).
     const archive = createZip([{ path: "normal.bin", data: Buffer.from("just a normal file", "utf8") }]);
     expect(() => readZip(archive)).not.toThrow();
+  });
+});
+
+// Same two fixtures as tests/analysis/zipCrypto.test.ts — see that file for how they were produced.
+const ZC_ZIP_B64 =
+  "UEsDBAoACQAAAGWB/VzrJ0KsIwAAABcAAAAKABwAc2FtcGxlLmJpblVUCQAD7vtpau77aWp1eAsAAQToAwAABOgDAACSY93uO3OX" +
+  "/aoYARCx5Jfbd3EGx/7tlqbVxQgzvT21C/Kx6FBLBwjrJ0KsIwAAABcAAABQSwECHgMKAAkAAABlgf1c6ydCrCMAAAAXAAAACgAY" +
+  "AAAAAAABAAAAtIEAAAAAc2FtcGxlLmJpblVUBQAD7vtpanV4CwABBOgDAAAE6AMAAFBLBQYAAAAAAQABAFAAAAB3AAAAAAA=";
+const AES_ZIP_B64 =
+  "UEsDBDMAAQBjAGaB/VwAAAAAMwAAABcAAAAKAAsAc2FtcGxlLmJpbgGZBwACAEFFAwAAjSVbocfmvx3PE5161dsvWZeAGwRMGhH+" +
+  "U3dNZiO2mA/QMCMLIAwEGRmcHEdlOo1WBP7zUEsBAj8DMwABAGMAZoH9XAAAAAAzAAAAFwAAAAoALwAAAAAAAAAggLSBAAAAAHNh" +
+  "bXBsZS5iaW4KACAAAAAAAAEAGAC4I7e5Wx/dAQAAAAAAAAAAAAAAAAAAAAABmQcAAgBBRQMAAFBLBQYAAAAAAQABAGcAAABmAAAA" +
+  "AAA=";
+
+describe("readZip with encrypted entries", () => {
+  it("reads a ZipCrypto entry when given the password", () => {
+    const back = readZip(Buffer.from(ZC_ZIP_B64, "base64"), { password: "infected" });
+    expect(back).toHaveLength(1);
+    expect(back[0].path).toBe("sample.bin");
+    expect(back[0].data.toString("utf8")).toBe("MZ fake sample payload\n");
+  });
+
+  it("reads an AES-256 entry when given the password", () => {
+    const back = readZip(Buffer.from(AES_ZIP_B64, "base64"), { password: "infected" });
+    expect(back).toHaveLength(1);
+    expect(back[0].path).toBe("sample.bin");
+    expect(back[0].data.toString("utf8")).toBe("MZ fake sample payload\n");
+  });
+
+  it("throws password-required when an encrypted entry gets no password", () => {
+    try {
+      readZip(Buffer.from(AES_ZIP_B64, "base64"));
+      throw new Error("expected readZip to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ZipPasswordError);
+      expect((err as ZipPasswordError).reason).toBe("password-required");
+    }
+  });
+
+  it("throws wrong-password for a bad ZipCrypto password", () => {
+    try {
+      readZip(Buffer.from(ZC_ZIP_B64, "base64"), { password: "nope" });
+      throw new Error("expected readZip to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ZipPasswordError);
+      expect((err as ZipPasswordError).reason).toBe("wrong-password");
+    }
+  });
+
+  it("still round-trips unencrypted archives unchanged", () => {
+    const archive = createZip([{ path: "a.txt", data: Buffer.from("plain") }]);
+    expect(readZip(archive)[0].data.toString()).toBe("plain");
+    // A password on an unencrypted archive is simply ignored.
+    expect(readZip(archive, { password: "infected" })[0].data.toString()).toBe("plain");
   });
 });

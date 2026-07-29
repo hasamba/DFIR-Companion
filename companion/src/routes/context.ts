@@ -14,6 +14,7 @@ import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diag
 import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import type { CustomTool } from "../integrations/tools/customToolStore.js";
+import type { SocratesJobStore } from "../integrations/socrates/socratesJobStore.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
@@ -123,6 +124,22 @@ export interface RouteContext {
     caseId: string, toolId: string, targetPath: string, opts?: { undoLabel?: string },
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   reloadCustomTools(): Promise<void>;
+  // Submit a file to SO-CRATES and start background polling. Zips are extracted first (SO-CRATES
+  // can only ever try the password "infected"), so one call may start several jobs — one per entry.
+  // Returns immediately; the caller polls GET /cases/:id/socrates/jobs.
+  startSocratesAnalysis(
+    caseId: string,
+    input: { data: Buffer; filename: string; zipPassword?: string },
+  ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }>;
+  socratesJobStore: SocratesJobStore;
+  // Run a raw drop-folder file through whichever transport its tool uses (spawn → runToolAndIngest,
+  // http → startSocratesAnalysis). Shared with the drop poller so the "Run pending" batch behaves
+  // identically to auto-run.
+  // Returns true when the work is ASYNCHRONOUS (handed off, not finished), so the caller logs
+  // SUBMITTED instead of claiming an import that has not happened yet.
+  runDropToolAndIngest(
+    caseId: string, toolId: string, fullPath: string, name: string, dropRelpath?: string,
+  ): Promise<boolean>;
   // Import machinery shared between routes/import.ts and the createApp import seams that stay
   // (the Velociraptor bundle collector reuses dispatchImport/demoteForensicForCase/resynthesize,
   // the drop-folder poller reuses moveDropFile, and the push/tool paths reuse the whitelist/NSRL/

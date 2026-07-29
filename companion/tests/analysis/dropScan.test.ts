@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDropFile,
+  looksBinary,
   rawToolInputExt,
   shouldIgnoreDropFile,
   selectReadyFiles,
@@ -95,5 +96,51 @@ describe("dropScan — oversize", () => {
     expect(isOversize(100, 50)).toBe(true);
     expect(isOversize(40, 50)).toBe(false);
     expect(isOversize(1e9, 0)).toBe(false);
+  });
+});
+
+describe("looksBinary", () => {
+  it("is false for plain ASCII text", () => {
+    expect(looksBinary(Buffer.from("2026-07-29 login succeeded for alice\n"))).toBe(false);
+  });
+
+  it("is false for UTF-8 text with accents and CJK", () => {
+    expect(looksBinary(Buffer.from("café — 日本語のログ\n", "utf8"))).toBe(false);
+  });
+
+  it("is true for a PE header", () => {
+    const pe = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(64), Buffer.from("PE\0\0")]);
+    expect(looksBinary(pe)).toBe(true);
+  });
+
+  it("is true for an ELF header", () => {
+    expect(looksBinary(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0, 0]))).toBe(true);
+  });
+
+  it("is false for an empty buffer", () => {
+    // Nothing to go on — do not claim an empty file is a malware sample.
+    expect(looksBinary(Buffer.alloc(0))).toBe(false);
+  });
+});
+
+describe("classifyDropFile with a content sample", () => {
+  it("still routes by extension when there is one", () => {
+    expect(classifyDropFile("Security.evtx")).toBe("raw-tool-input");
+    expect(classifyDropFile("shot.png")).toBe("image");
+    expect(classifyDropFile("auth.log")).toBe("artifact");
+  });
+
+  it("routes an extensionless binary sample to the tool path", () => {
+    const pe = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(64)]);
+    expect(classifyDropFile("a1b2c3d4e5f6", pe)).toBe("raw-tool-input");
+  });
+
+  it("leaves an extensionless text file as an artifact", () => {
+    expect(classifyDropFile("notes", Buffer.from("just some text\n"))).toBe("artifact");
+  });
+
+  it("never lets the sniff override a known text extension", () => {
+    // A .csv with an odd byte is still a csv for the native importer, not a malware sample.
+    expect(classifyDropFile("data.csv", Buffer.from([0x00, 0x41, 0x42]))).toBe("artifact");
   });
 });
