@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { listServers, listTools, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
-import { spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
+import { deliver, spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
 import { runMcpAgent } from "../integrations/mcp/mcpAgentRunner.js";
 import { mergeDelta } from "../analysis/stateMerge.js";
@@ -497,47 +497,86 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
+  interface AgentRequest {
+    prompt: string;
+    servers: McpServer[];
+    preview: boolean;
+  }
+
   /**
-   * Agentic mode (§7 Mode 2), behind DFIR_MCP_AGENT_ENABLED. Body: `{ prompt, servers?, preview? }`.
-   *
-   * Two independent opt-ins, because this grants more than a manual run: the feature flag, and
-   * `agentEnabled` on each server. Enabling the feature does not expose any server, and registering
-   * a server does not expose it to the agent. mcpAgentRunner's header explains why — the companion
-   * is not the MCP client in this mode, so the command allowlist cannot be enforced.
-   *
-   * Preview is honoured here too, and matters more: an autonomous loop decides for itself what to
-   * report, so reading it before it lands is worth more than on a single deterministic call.
+   * Resolve the analyst-facing MCP request. Allowing a server in Companion is the permission
+   * boundary: `enabled` controls both plain-English investigations and advanced manual calls.
+   * `agentEnabled` remains readable for old policy files but no longer creates a hidden second gate.
    */
-  app.post("/cases/:id/mcp/agent", async (req: Request, res: Response) => {
+  async function resolveAgentRequest(req: Request, res: Response): Promise<AgentRequest | null> {
     const caseId = req.params.id;
-    if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
-    if (!/^(1|true|on|yes)$/i.test(String(process.env.DFIR_MCP_AGENT_ENABLED ?? "").trim())) {
-      return res.status(501).json({ error: "agentic MCP mode is off — set DFIR_MCP_AGENT_ENABLED=on to enable it" });
-    }
-    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    if (!options.mcpServerStore) { res.status(501).json({ error: "MCP servers not enabled" }); return null; }
+    if (!(await store.caseExists(caseId))) { res.status(404).json({ error: `case ${caseId} does not exist` }); return null; }
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the agent` });
+      res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation` });
+      return null;
     }
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
-    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+    if (!prompt) { res.status(400).json({ error: "an investigation instruction is required" }); return null; }
 
     const wanted = Array.isArray(req.body?.servers) ? (req.body.servers as unknown[]).map(String) : null;
     const all = await options.mcpServerStore.load();
-    const servers = all.filter((s) => s.enabled && s.agentEnabled && (!wanted || wanted.includes(s.id)));
+    const servers = all.filter((s) => s.enabled && (!wanted || wanted.includes(s.id)));
     if (servers.length === 0) {
-      return res.status(400).json({ error: "no agent-enabled MCP servers — turn on agent use for a server first" });
+      res.status(400).json({ error: "no allowed MCP servers were selected" });
+      return null;
     }
+    return { prompt, servers, preview: req.body?.preview === true };
+  }
 
-    const preview = req.body?.preview === true;
+  /**
+   * Deliver optional evidence, let the model choose the MCP tools and arguments, then merge or stage
+   * its structured findings. A target is restricted to one server because each analysis host has a
+   * different path; silently giving several agents one server's path would analyze the wrong file.
+   */
+  function startAgent(
+    caseId: string, request: AgentRequest, targetPath?: string,
+    onDone?: () => Promise<void>,
+  ): string | null {
+    const { servers, preview } = request;
     const job = options.jobManager?.register({
       caseId, kind: "mcp", label: `agent (${servers.map((s) => s.id).join(", ")})${preview ? " (preview)" : ""}`,
       detail: "starting", cancellable: true,
     });
 
     void (async () => {
+      let cleanupRemote: (() => Promise<void>) | undefined;
       try {
+        let prompt = request.prompt;
+        if (targetPath) {
+          if (servers.length !== 1) throw new Error("choose one MCP server when investigating an evidence file");
+          if (job) options.jobManager?.progress(job.jobId, 0, 1, "delivering evidence");
+          const delivered = await deliver(servers[0], targetPath, {
+            runner: transferRunner,
+            signal: job?.signal,
+            recordTransfer: options.custodyStore
+              ? async (destination) => {
+                await options.custodyStore!.recordTransfer(caseId, {
+                  artifactPaths: [targetPath],
+                  transferredBy: "analyst",
+                  destination,
+                  trigger: `mcp:${servers[0].id}`,
+                });
+              }
+              : undefined,
+          });
+          cleanupRemote = delivered.cleanup;
+          prompt = [
+            request.prompt,
+            "",
+            "Evidence selected by the analyst is available on the analysis host at this exact path:",
+            delivered.remotePath,
+            "Use that path when choosing and calling the appropriate MCP tools. Do not ask the analyst for a tool name or arguments.",
+          ].join("\n");
+          if (job) options.jobManager?.progress(job.jobId, 0, 1, "investigating");
+        }
         const result = await runMcpAgent({
           servers, prompt,
           ...(claudeBin ? { bin: claudeBin } : {}),
@@ -571,10 +610,70 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,
         });
+      } finally {
+        await cleanupRemote?.().catch(() => { /* best-effort */ });
+        await onDone?.().catch(() => { /* best-effort */ });
       }
     })();
 
-    return res.status(202).json({ ok: true, jobId: job?.jobId ?? null, servers: servers.map((s) => s.id), preview });
+    return job?.jobId ?? null;
+  }
+
+  /**
+   * Plain-English investigation of evidence already inside the case. Body:
+   * `{ prompt, servers?, targetPath?, preview? }`.
+   */
+  app.post("/cases/:id/mcp/agent", async (req: Request, res: Response) => {
+    const request = await resolveAgentRequest(req, res);
+    if (!request) return;
+    const caseId = req.params.id;
+    let targetPath: string | undefined;
+    const raw = typeof req.body?.targetPath === "string" ? req.body.targetPath.trim() : "";
+    if (raw) {
+      try {
+        targetPath = resolveContainedPath(store.caseDir(caseId), raw);
+      } catch (err) {
+        return res.status(400).json({ error: (err as Error).message });
+      }
+    }
+    if (targetPath && request.servers.length !== 1) {
+      return res.status(400).json({ error: "choose one MCP server when investigating an evidence file" });
+    }
+    const jobId = startAgent(caseId, request, targetPath);
+    return res.status(202).json({
+      ok: true, jobId, servers: request.servers.map((s) => s.id), preview: request.preview,
+    });
+  });
+
+  /** Browser-upload counterpart to /mcp/agent, for a local sample not already in the case. */
+  app.post("/cases/:id/mcp/agent-upload", async (req: Request, res: Response) => {
+    const request = await resolveAgentRequest(req, res);
+    if (!request) return;
+    if (request.servers.length !== 1) {
+      return res.status(400).json({ error: "choose one MCP server when investigating an evidence file" });
+    }
+    const filename = String(req.body?.filename ?? "").trim();
+    const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
+    if (!filename || !dataBase64) return res.status(400).json({ error: "filename and dataBase64 are required" });
+
+    const caseId = req.params.id;
+    const work = join(store.caseDir(caseId), ".mcpwork");
+    const safe = basename(filename).replace(/[^\w.\-]+/g, "_").slice(0, 120) || "evidence.dat";
+    let stageDir = "";
+    try {
+      await mkdir(work, { recursive: true });
+      stageDir = await mkdtemp(join(work, "agent-up-"));
+      const staged = join(stageDir, safe);
+      await writeFile(staged, Buffer.from(dataBase64, "base64"));
+      const dir = stageDir;
+      const jobId = startAgent(caseId, request, staged, () => rm(dir, { recursive: true, force: true }));
+      return res.status(202).json({
+        ok: true, jobId, servers: request.servers.map((s) => s.id), preview: request.preview,
+      });
+    } catch (err) {
+      if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+      return res.status(400).json({ ok: false, error: (err as Error).message });
+    }
   });
 
   /**

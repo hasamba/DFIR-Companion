@@ -4413,7 +4413,7 @@
 
         <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--c-7e8aa0);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
-        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">By default a server may run <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Worth knowing what that includes: some servers expose one <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>) that executes whatever you hand it, so using such a server means command execution on that host. The two lists below are <strong>optional</strong>, for narrowing that below what Claude Code permits.</p>
+        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
         <div id="mcpServerList" style="margin-bottom:10px">—</div>
         <div style="margin:4px 0 12px"><button id="mcpDiscoverBtn" type="button" title="Ask Claude Code which MCP servers it is configured with">↻ Refresh from Claude Code</button> <span id="mcpDiscoverMsg" class="manual-msg"></span></div>
 
@@ -6069,33 +6069,44 @@
       </div>
       <div id="activityLogPanel">—</div>
     </section>
-    <section id="sec-mcp" style="grid-column: 1 / -1" class="collapsed"><h2>MCP Analysis<span class="ev-sub">run a tool on one of your own MCP servers against case evidence &mdash; the result imports like any other tool output, and the transfer is written to the chain of custody</span></h2>
+    <section id="sec-mcp" style="grid-column: 1 / -1" class="collapsed"><h2>MCP Analysis<span class="ev-sub">describe the investigation in plain English and let your MCP app choose the tools &mdash; results import into the case and evidence transfer is written to the chain of custody</span></h2>
       <div id="mcpRunUnavailable" style="display:none;font-size:12px;color:var(--c-9aa4b2)">No MCP servers allowed yet &mdash; configure them in Claude Code, then allow one in Settings &rarr; Tools.</div>
       <div id="mcpRunForm" style="display:none">
+        <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--c-9aa4b2)">What should the MCP app investigate?
+          <textarea id="mcpAgentPrompt" rows="3" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:4px" placeholder="Investigate this RAM dump for signs of compromise, persistence, and suspicious processes."></textarea>
+        </label>
         <div class="sgrid">
-          <div class="sfield"><label>Server<span class="sfield-hint">registered + enabled servers</span><select id="mcpRunServer"></select></label></div>
-          <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
+          <div class="sfield"><label>MCP app<span class="sfield-hint">an allowed and enabled server; it chooses the tools</span><select id="mcpRunServer"></select></label></div>
           <div class="sfield">
-            <label>Evidence file<span class="sfield-hint">enter a path inside this case, or browse to upload a local file; leave blank for a tool that needs no file</span></label>
+            <label>Evidence file<span class="sfield-hint">enter a path inside this case, or browse to upload a local file; leave blank if none is needed</span></label>
             <div style="display:flex;gap:6px;align-items:center">
               <input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" style="min-width:0;flex:1" />
-              <button id="mcpRunBrowseBtn" type="button" title="Choose a local evidence file to upload for this run">Browse…</button>
+              <button id="mcpRunBrowseBtn" type="button" title="Choose a local evidence file to upload">Browse…</button>
               <input id="mcpRunFile" type="file" style="display:none" />
             </div>
             <datalist id="mcpRunTargets"></datalist>
           </div>
         </div>
-        <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
-          <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
-        </label>
         <div style="margin:6px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button id="mcpRunBtn" type="button">&#9654; Run</button>
-          <button id="mcpRunListToolsBtn" type="button" title="Ask Claude Code which tools this server offers">&#8635; List tools</button>
-          <label style="font-size:12px;color:var(--c-9aa4b2);display:flex;align-items:center;gap:4px" title="Fetch the output and show it here first. Nothing reaches the case until you approve it — a tool that returns a capability listing rather than evidence looks identical to any detector, so this is the only reliable check.">
+          <button id="mcpAgentBtn" type="button">&#9654; Investigate</button>
+          <label style="font-size:12px;color:var(--c-9aa4b2);display:flex;align-items:center;gap:4px" title="Show the proposed findings here first. Nothing reaches the case until you approve it.">
             <input type="checkbox" id="mcpRunPreview" checked /> Preview before importing
           </label>
           <span id="mcpRunMsg" class="manual-msg"></span>
         </div>
+        <details style="margin-top:10px;border-top:1px solid var(--c-2a2f3a);padding-top:8px">
+          <summary>Advanced: call one MCP tool manually</summary>
+          <div class="sgrid" style="margin-top:8px">
+            <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
+          </div>
+          <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
+            <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
+          </label>
+          <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="mcpRunBtn" type="button">&#9654; Run manual call</button>
+            <button id="mcpRunListToolsBtn" type="button" title="Ask Claude Code which tools this server offers">&#8635; List tools</button>
+          </div>
+        </details>
         <div id="mcpRunJob" style="font-size:12px;color:var(--c-9aa4b2)"></div>
         <div id="mcpPreviewPanel" style="display:none;margin-top:8px;border:1px solid var(--c-2a2f3a);border-radius:6px;padding:8px">
           <div id="mcpPreviewHead" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px"></div>
@@ -12859,12 +12870,9 @@
     }
 
     // ── Background jobs (#225) ──────────────────────────────────────────────────
-    // MCP Analysis section (#296): pick a registered server + one of the tools it is allowed to run,
-    // point it at case evidence, and let the result import like any other tool output.
-    //
-    // A form rather than the per-file "shall I run X on this?" button the Import dialog offers for
-    // local tools: the servers this targets expose a command RUNNER (sift's run_command,
-    // remnux's run_tool), so the thing being chosen is a command line, not a tool-plus-file.
+    // MCP Analysis section (#296): the analyst states the forensic goal and the MCP-backed agent
+    // chooses tools and arguments. A manual single-tool call remains under Advanced for debugging
+    // and tightly constrained workflows.
     let _mcpRunServers = [];
     const MCP_BROWSER_FILE_MAX_MB = 180; // base64 overhead keeps this under the default 256 MB JSON limit
     function mcpRunCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
@@ -13008,6 +13016,50 @@
         watchMcpJob(cid, j.jobId, preview);
       }).catch(e => { btn.disabled = false; msg.textContent = "run failed: " + e.message; });
     }
+    async function runMcpAgent() {
+      const cid = mcpRunCaseId();
+      const msg = document.getElementById("mcpRunMsg");
+      const jobEl = document.getElementById("mcpRunJob");
+      const btn = document.getElementById("mcpAgentBtn");
+      if (!cid) { msg.textContent = "connect a case first"; return; }
+      const serverId = document.getElementById("mcpRunServer").value;
+      const prompt = (document.getElementById("mcpAgentPrompt").value || "").trim();
+      if (!prompt) { msg.textContent = "describe what you want investigated"; return; }
+      const targetPath = (document.getElementById("mcpRunTarget").value || "").trim();
+      const browserFile = mcpRunBrowserFile();
+      if (browserFile && browserFile.size > MCP_BROWSER_FILE_MAX_MB * 1024 * 1024) {
+        msg.textContent = `${browserFile.name} is too large for browser upload — enter its path inside the case instead`;
+        return;
+      }
+      const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
+      btn.disabled = true;
+      msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting investigation…";
+      jobEl.textContent = "";
+      hideMcpPreview();
+      let endpoint = `/cases/${encodeURIComponent(cid)}/mcp/agent`;
+      let body = { prompt, servers: [serverId], preview, ...(targetPath ? { targetPath } : {}) };
+      if (browserFile) {
+        try {
+          const dataBase64 = await fileToBase64(browserFile);
+          endpoint = `/cases/${encodeURIComponent(cid)}/mcp/agent-upload`;
+          body = { prompt, servers: [serverId], preview, filename: browserFile.name, dataBase64 };
+        } catch (e) {
+          btn.disabled = false;
+          msg.textContent = `could not read ${browserFile.name}: ${e.message}`;
+          return;
+        }
+      }
+      msg.textContent = "investigation started…";
+      fetch(endpoint, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        btn.disabled = false;
+        if (!ok) { msg.textContent = (j && j.error) || "investigation failed"; return; }
+        msg.textContent = `investigating with ${serverId}…`;
+        watchMcpJob(cid, j.jobId, preview);
+      }).catch(e => { btn.disabled = false; msg.textContent = "investigation failed: " + e.message; });
+    }
     let _mcpPreviewJob = null;
     function hideMcpPreview() {
       _mcpPreviewJob = null;
@@ -13038,7 +13090,7 @@
         .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
           if (!ok) { m.textContent = (j && j.error) || "import failed"; return; }
           hideMcpPreview();
-          document.getElementById("mcpRunMsg").textContent = `imported — ${j.addedEvents} event(s), ${j.addedIocs} IOC(s)`;
+          document.getElementById("mcpRunMsg").textContent = `imported — ${j.addedFindings || 0} finding(s), ${j.addedEvents} event(s), ${j.addedIocs} IOC(s)`;
           loadMcpRunTargets();
         }).catch(e => { m.textContent = "import failed: " + e.message; });
     }
@@ -13077,6 +13129,7 @@
       const browse = document.getElementById("mcpRunBrowseBtn"); if (browse) browse.onclick = () => document.getElementById("mcpRunFile").click();
       const file = document.getElementById("mcpRunFile"); if (file) file.onchange = mcpRunFileChanged;
       const target = document.getElementById("mcpRunTarget"); if (target) target.oninput = mcpRunTargetChanged;
+      const agent = document.getElementById("mcpAgentBtn"); if (agent) agent.onclick = runMcpAgent;
       const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
       const i = document.getElementById("mcpPreviewImportBtn"); if (i) i.onclick = importMcpPreview;
       const d = document.getElementById("mcpPreviewDiscardBtn"); if (d) d.onclick = discardMcpPreview;
@@ -23026,7 +23079,7 @@
             <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
               <strong>${esc(s.label || s.id)}</strong>
               <code style="font-size:11px;color:var(--c-7e8aa0)">${esc(s.id)}</code>
-              <span style="font-size:12px;color:var(--c-9aa4b2)">${known}${s.enabled ? "" : ` · <span style="color:#d29922">disabled</span>`}${s.agentEnabled ? ` · <span style="color:#d29922">agent allowed</span>` : ""}</span>
+              <span style="font-size:12px;color:var(--c-9aa4b2)">${known}${s.enabled ? ` · plain-English analysis allowed` : ` · <span style="color:#d29922">disabled</span>`}</span>
               <button class="mcp-del" data-id="${esc(s.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Remove</button>
             </div>
             <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:3px">

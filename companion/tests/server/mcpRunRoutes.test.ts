@@ -300,36 +300,25 @@ describe("POST /cases/:id/mcp/agent", () => {
     stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
   });
 
-  async function agentHarness(opts: { flag?: string; agentEnabled?: boolean } = {}) {
+  async function agentHarness(opts: { agentEnabled?: boolean; runner?: ClaudeRunner } = {}) {
     const h = await harness();
-    if (opts.flag === undefined) process.env.DFIR_MCP_AGENT_ENABLED = "on";
-    else delete process.env.DFIR_MCP_AGENT_ENABLED;
     await h.mcpServerStore.update("sift-mcp", { agentEnabled: opts.agentEnabled ?? true });
     // Rebuild the app so it picks up the injected agent runner.
     const app = createApp(h.store, {
       pipeline: h.pipeline, stateStore: h.stateStore, importUndoStore: h.importUndoStore,
       mcpServerStore: h.mcpServerStore, custodyStore: h.custodyStore, jobManager: h.jobManager,
-      mcpClaudeRunner: fakeClaude(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: agentRunner,
+      mcpClaudeRunner: fakeClaude(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: opts.runner ?? agentRunner,
     });
     return { ...h, app };
   }
 
-  afterEach(() => { delete process.env.DFIR_MCP_AGENT_ENABLED; });
-
-  it("501s while the feature flag is off", async () => {
-    const { app } = await agentHarness({ flag: "off" });
-    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
-    expect(res.status).toBe(501);
-    expect(res.body.error).toMatch(/DFIR_MCP_AGENT_ENABLED/);
-  });
-
-  // Enabling the feature must not expose any server: the agent path cannot enforce the command
-  // allowlist, so each server opts in separately.
-  it("400s when no server has opted in, even with the flag on", async () => {
+  // Allowing the MCP server is the permission boundary. The analyst should not need a second hidden
+  // opt-in before a plain-English request can use a server they explicitly allowed.
+  it("uses an enabled server even when an older policy file says agentEnabled false", async () => {
     const { app } = await agentHarness({ agentEnabled: false });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no agent-enabled MCP servers/);
+    expect(res.status).toBe(202);
+    expect(res.body.servers).toEqual(["sift-mcp"]);
   });
 
   it("runs the loop and merges what it found", async () => {
@@ -385,6 +374,48 @@ describe("POST /cases/:id/mcp/agent", () => {
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
     expect(res.status).toBe(202);
     expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+  });
+
+  it("delivers case evidence and tells the agent its analysis-host path", async () => {
+    let prompt = "";
+    const runner: ClaudeRunner = async (run) => {
+      const line = JSON.parse(run.stdin.trim()) as { message: { content: Array<{ text: string }> } };
+      prompt = line.message.content[0].text;
+      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+    };
+    const { app, jobManager, transfers, custodyStore } = await agentHarness({ runner });
+
+    const res = await request(app).post("/cases/c1/mcp/agent").send({
+      prompt: "Investigate this RAM dump",
+      servers: ["sift-mcp"],
+      targetPath: "imports/mem.raw",
+    });
+    expect(res.status).toBe(202);
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect(prompt).toContain("Investigate this RAM dump");
+    expect(prompt).toContain("/cases/incoming/mem.raw");
+    expect(transfers.map((t) => t.binary)).toEqual(["scp", "ssh"]);
+    expect((await custodyStore.load("c1")).some((r) => r.event === "transferred")).toBe(true);
+  });
+
+  it("stages a browser-selected file for a plain-English investigation", async () => {
+    let prompt = "";
+    const runner: ClaudeRunner = async (run) => {
+      prompt = (JSON.parse(run.stdin.trim()) as { message: { content: Array<{ text: string }> } }).message.content[0].text;
+      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+    };
+    const { app, jobManager, transfers } = await agentHarness({ runner });
+    const res = await request(app).post("/cases/c1/mcp/agent-upload").send({
+      prompt: "Analyze this binary with REMnux",
+      servers: ["sift-mcp"],
+      filename: "sample.exe",
+      dataBase64: Buffer.from("MZ\x90\x00").toString("base64"),
+      preview: true,
+    });
+    expect(res.status).toBe(202);
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect(prompt).toContain("/cases/incoming/sample.exe");
+    expect(transfers[0].args.some((a) => a.includes("sample.exe"))).toBe(true);
   });
 });
 

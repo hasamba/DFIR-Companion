@@ -89,9 +89,8 @@ export const mcpServerSchema = z.object({
   allowedTools: z.array(z.string()).catch([]),
   // OPTIONAL narrowing for a command-runner tool, by basename. Empty means no command restriction.
   allowedCommands: z.array(z.string()).catch([]),
-  // Whether an autonomous agent loop (§7 Mode 2) may use this server. Separate from `enabled`, and
-  // deliberately not implied by it: the agent path cannot enforce allowedCommands (see
-  // mcpAgentRunner's header), so exposing a server to it grants strictly more than a manual run.
+  // Legacy field retained so existing policy files still parse. `enabled` is now the permission
+  // boundary for both plain-English and manual use; see mcpAgentRunner's security note.
   agentEnabled: z.boolean().catch(false),
   /** Bounds one tool call. A real Volatility run outlives it, which is why the call is a job (§7). */
   timeoutMs: z.number().catch(300_000),

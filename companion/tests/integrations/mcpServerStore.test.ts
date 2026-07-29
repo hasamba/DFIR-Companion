@@ -106,7 +106,7 @@ describe("McpServerStore CRUD", () => {
     expect((await store.update("sift-mcp", { label: "SIFT box" }))?.allowedCommands).toEqual(["vol.py"]);
   });
 
-  it("defaults agent use to off", async () => {
+  it("keeps the legacy agent field off by default", async () => {
     expect((await store.add({ id: "sift-mcp" })).agentEnabled).toBe(false);
   });
 });

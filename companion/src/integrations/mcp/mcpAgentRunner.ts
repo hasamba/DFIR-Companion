@@ -21,9 +21,9 @@ import type { McpServer } from "./mcpServerStore.js";
 // command-runner tool in this mode grants an autonomous loop the ability to choose its own command
 // lines on that host.
 //
-// That is why it takes two independent opt-ins — DFIR_MCP_AGENT_ENABLED for the feature and
-// `agentEnabled` per server — and why the README says so in those words. It is not a default, it is
-// not implied by registering a server, and it is not implied by enabling the feature globally.
+// Allowing a server in Companion is therefore the deliberate permission boundary. The dashboard
+// states this consequence beside the setting and keeps manual, command-filtered calls available as
+// an advanced fallback.
 
 /** Bounds the loop. A runaway agent is a cost and a blast-radius problem, not just a slow one. */
 export const DEFAULT_MAX_TURNS = 20;

@@ -815,3 +815,22 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
     for (const tag of inlineOpeners) expect(tag).toContain('nonce="__CSP_NONCE__"');
   });
 });
+
+describe("dashboard.html — plain-English MCP investigations", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("makes instruction and evidence the primary workflow", async () => {
+    const html = await load();
+    expect(html).toMatch(/id="mcpAgentPrompt"[\s\S]{0,300}Investigate this RAM dump/);
+    expect(html).toContain('id="mcpAgentBtn"');
+    expect(html).toContain("/mcp/agent-upload");
+    expect(html).toContain("/mcp/agent");
+  });
+
+  it("keeps tool names and JSON arguments in an advanced manual fallback", async () => {
+    const html = await load();
+    expect(html).toMatch(/<details[^>]*>[\s\S]{0,300}<summary>Advanced: call one MCP tool manually<\/summary>/);
+    expect(html).toContain('id="mcpRunTool"');
+    expect(html).toContain('id="mcpRunArgs"');
+  });
+});

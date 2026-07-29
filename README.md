@@ -580,28 +580,32 @@ Either route records a **chain-of-custody `transferred` event** naming the desti
 file shows that evidence left this machine, when, and to where. A transfer that fails records
 nothing — the chain never claims a copy that did not happen.
 
-### Agentic mode (off by default)
+### Plain-English MCP investigations
 
 A single tool call cannot follow a thread. "Investigate this dump" wants a loop — run pslist, notice
 something, pivot to malfind — and that is what agentic mode does: it lets Claude Code drive against
-the servers you allowed, then merges what it reports.
+the server you allowed, then merges what it reports. This is the primary MCP workflow in the
+dashboard: write the goal in plain English, select or browse to the evidence, choose the MCP app,
+and press **Investigate**. Tool names and JSON arguments are available only under the advanced
+manual-call section.
 
-`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, preview? }`.
+`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, targetPath?, preview? }`, or
+`POST /cases/<id>/mcp/agent-upload` with `{ prompt, servers, filename, dataBase64, preview? }`.
 
-**Read this before turning it on.** In a normal run the Companion is the MCP client, so every call
+**Read this before allowing a server.** In a manual run the Companion controls each call, so every call
 passes the tool *and* command allowlists. In agentic mode it is not: `claude` talks to the servers
 directly. Only the tool allowlist survives, as `--allowed-tools`. **The command allowlist cannot be
 enforced.** Letting an agent use a command-runner tool therefore grants an autonomous loop the
 ability to choose its own command lines on that host.
 
-That is why it takes two separate opt-ins, neither implying the other:
+Allowing and enabling an MCP server in Companion is the permission boundary for this mode. The
+server's tool restriction still applies. A command restriction cannot constrain the autonomous
+loop; it applies only to advanced manual calls.
 
-1. `DFIR_MCP_AGENT_ENABLED=on` — the feature
-2. **Agent use** on each server — which servers it may reach
-
-What the mode still guarantees: tools are enumerated, never wildcarded, so a server cannot widen its
-own reach by advertising new ones; `--setting-sources ""` means no `CLAUDE.md`, hooks or settings;
-and the run is turn-limited.
+What the mode still guarantees: an explicit tool restriction is passed through tool by tool; a
+blank restriction deliberately permits every tool that server exposes. Project/local settings,
+`CLAUDE.md` files and hooks are excluded, and the run is turn-limited. Claude Code's user settings
+remain enabled because that is where its MCP server connections live.
 
 The agent's reply is schema-validated and stripped of provenance claims before it is merged —
 everything it saw came from tool output, which is untrusted. It is never asked for a case summary,
@@ -1051,7 +1055,6 @@ survives a server restart; results appear on the dashboard timeline/IOCs.
 | Variable | Default | Description |
 |---|---|---|
 | `DFIR_MCP_MODEL` | (CLI default) | Model used for single MCP tool calls, passed to `claude --model`. |
-| `DFIR_MCP_AGENT_ENABLED` | `off` | Enables agentic mode. Off by default, and on its own it exposes nothing — each server must also opt in. Requires Claude Code authenticated on this host. Read [Agentic mode](#agentic-mode-off-by-default) first: the command allowlist cannot be enforced in that mode. |
 | `DFIR_MCP_AGENT_MODEL` | (CLI default) | Model for the agentic loop, passed to `claude --model`. |
 
 Registering a server is a security decision, not just configuration — see
