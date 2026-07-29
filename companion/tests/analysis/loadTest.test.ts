@@ -279,15 +279,49 @@ interface Measurement { ms: number; result: unknown }
 // process.cpuUsage() counts only cycles actually burned on this process's behalf, so time spent
 // waiting for a core simply isn't counted. Every measured fn here is synchronous, so nothing else
 // in this worker can run inside the window and contribute. Same minimum-of-N, honest clock.
+//
+// What that clock does NOT give is equal resolution everywhere. On Linux it is microsecond-grained,
+// but on Windows it advances in ~15.6ms scheduler ticks, so any run cheaper than one tick measures
+// as exactly 0. Three of the paths below cost 0.1-4.6 CPU-ms at baseline size, so on the Windows
+// release runner their baselines read 0 — and a 0 baseline collapses the allowance in
+// expectSubQuadratic() from baseline*GROWTH_LIMIT + FLOOR_MS to FLOOR_MS alone, several times
+// tighter than intended. That is what failed the release job during #366, on a path nobody had
+// touched: correlateEvents reported "0.0ms → 93.0ms" against a 25ms limit.
+//
+// So time a BATCH of calls and divide. The window then clears the tick and the per-call figure is
+// honest on every platform. Every figure in the table below is per-call CPU-time.
+const MIN_SAMPLE_MS = 50;   // ~3 Windows ticks, so quantization error is well under 1%.
+// Backstop against a path so cheap it could never fill a window. Reaching it needs a call under
+// ~0.01ms, and at that size the full-size run is under a millisecond too — orders of magnitude
+// inside FLOOR_MS — so the assertion still cannot fail on an unresolved measurement.
+const MAX_BATCH = 4096;
+
 function bestOf(fn: () => unknown, repeats: number): Measurement {
+  let batch = 1;
   let ms = Infinity;
   let result: unknown;
   for (let i = 0; i < repeats; i++) {
-    const start = process.cpuUsage();
-    result = fn();
-    const { user, system } = process.cpuUsage(start);
-    const elapsed = (user + system) / 1000;   // microseconds → milliseconds
-    if (elapsed < ms) ms = elapsed;
+    // Double the batch until one window clears MIN_SAMPLE_MS. Doubling rather than scaling a pilot
+    // estimate, because the reading being calibrated against is exactly the one that can come back
+    // 0 — there is nothing to divide by. Undersized windows are discarded rather than counted,
+    // since a reading below the clock's resolution is the very thing this avoids.
+    //
+    // `batch` lives outside the repeat loop, so this converges once and later repeats go straight
+    // through: the total cost is `repeats` honest windows plus one batch's worth of calibration.
+    // A path that already fills a window on its own — renderMarkdownReport at ~500ms — settles at
+    // batch 1 on its first sample and keeps it, so it is measured exactly as it was before.
+    for (;;) {
+      const start = process.cpuUsage();
+      for (let j = 0; j < batch; j++) result = fn();
+      const { user, system } = process.cpuUsage(start);
+      const elapsed = (user + system) / 1000;   // microseconds → milliseconds
+      if (elapsed >= MIN_SAMPLE_MS || batch >= MAX_BATCH) {
+        const perCall = elapsed / batch;
+        if (perCall < ms) ms = perCall;
+        break;
+      }
+      batch *= 2;
+    }
   }
   return { ms, result };
 }
