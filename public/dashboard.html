@@ -4952,6 +4952,15 @@
       </div>
       <div id="activityLogPanel">—</div>
     </section>
+    <section id="sec-custody" style="grid-column: 1 / -1"><h2>Chain of Custody<span class="ev-sub">every stored artifact, its hash, and each event that touched it &mdash; the appendix that ships in the report</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <button id="custodyVerifyBtn" type="button" title="Re-hash every artifact in this case now and re-walk the custody log">&#128274; Verify now</button>
+        <button id="custodyRefreshBtn" type="button" title="Reload the custody records">&#8635; Refresh</button>
+        <a id="custodyManifestLink" href="#" target="_blank" rel="noopener" title="Download the signed custody manifest for this case">&#11015; Signed manifest</a>
+        <span id="custodyVerifyMsg" class="manual-msg"></span>
+      </div>
+      <div id="custodyPanel">&mdash;</div>
+    </section>
     <section id="sec-case-details" style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
@@ -13833,6 +13842,113 @@
       });
     })();
 
+    // ── Chain of Custody (#231) ───────────────────────────────────────────────────────────
+    // Every artifact this case has stored, grouped with the full sequence of events that touched
+    // it. Grouped by artifact rather than shown as a flat log because the question an analyst has
+    // is "what happened to THIS piece of evidence" — the same reasoning as the report appendix.
+    // Verification state is filled in by "Verify now" (a re-hash of every artifact, which is far
+    // too heavy to run just because a panel rendered).
+    let custodyRecords = [];
+    let custodyFailedPaths = new Set();
+    let custodyVerifiedAt = null;
+
+    function custodyGroupByArtifact(records) {
+      const byPath = new Map();
+      for (const r of records) {
+        const chain = byPath.get(r.artifactPath);
+        if (chain) chain.push(r); else byPath.set(r.artifactPath, [r]);
+      }
+      return byPath;
+    }
+
+    function renderCustody() {
+      const el = document.getElementById("custodyPanel");
+      if (!el) return;
+      if (!custodyRecords.length) {
+        el.innerHTML = "<div style='color:var(--c-9aa4b2);font-size:12px'>No custody records for this case yet. Artifacts are recorded automatically as screenshots and imports are stored.</div>";
+        return;
+      }
+      const byPath = custodyGroupByArtifact(custodyRecords);
+      const rows = [];
+      byPath.forEach((chain, path) => {
+        const name = path.split(/[\\/]/).pop() || path;
+        const last = chain[chain.length - 1];
+        const failed = custodyFailedPaths.has(path);
+        const state = failed
+          ? "<span style='color:#e5484d;font-weight:600' title='This artifact no longer matches its recorded hash, or is missing'>&#9888; FAILED</span>"
+          : (custodyVerifiedAt ? "<span style='color:#46a758' title='Re-hashed and matching'>&#10003; verified</span>" : "<span style='color:var(--c-9aa4b2)'>&mdash;</span>");
+        const events = chain.map(r => `<tr style="border-bottom:1px solid var(--c-2a2f3a)">
+            <td style="padding:3px 8px;white-space:nowrap;color:var(--c-9aa4b2)">${esc(String(r.seq ?? ""))}</td>
+            <td style="padding:3px 8px;white-space:nowrap">${esc(r.event || "collected")}</td>
+            <td style="padding:3px 8px;white-space:nowrap;color:var(--c-9aa4b2)" title="${escAttr(r.collectedAt)}">${activityTimeAgo(r.collectedAt)}</td>
+            <td style="padding:3px 8px;white-space:nowrap">${esc(r.collectedBy)}</td>
+            <td style="padding:3px 8px">${esc(r.source)}</td>
+            <td style="padding:3px 8px;white-space:nowrap;color:var(--c-9aa4b2)">${esc(r.trigger)}</td>
+          </tr>`).join("");
+        rows.push(`<details style="border-bottom:1px solid var(--c-2a2f3a)">
+          <summary style="padding:5px 8px;cursor:pointer;display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;font-size:12px">
+            <span title="${escAttr(path)}">${esc(name)}</span>
+            <span style="color:var(--c-9aa4b2)">${chain.length} event(s)</span>
+            <code style="color:var(--c-9aa4b2);font-size:11px" title="${escAttr(last.sha256)}">${esc(String(last.sha256).slice(0, 12))}&hellip;</code>
+            <span>${state}</span>
+          </summary>
+          <div style="padding:4px 8px 10px">
+            <div style="font-size:11px;color:var(--c-9aa4b2);margin-bottom:4px">${esc(path)}</div>
+            <table style="width:100%;font-size:12px;border-collapse:collapse">
+              <tr style="color:var(--c-9aa4b2)"><td style="padding:3px 8px">#</td><td style="padding:3px 8px">Event</td><td style="padding:3px 8px">When</td><td style="padding:3px 8px">By</td><td style="padding:3px 8px">Source</td><td style="padding:3px 8px">Trigger</td></tr>
+              ${events}
+            </table>
+          </div>
+        </details>`);
+      });
+      el.innerHTML = `<div style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px">${byPath.size} artifact(s), ${custodyRecords.length} recorded event(s).</div>` + rows.join("");
+    }
+
+    function loadCustody(caseId) {
+      fetch(`/cases/${caseId}/custody`)
+        .then(r => r.ok ? r.json() : { records: [] })
+        .then(d => { custodyRecords = d.records || []; renderCustody(); })
+        .catch(() => {});
+      const link = document.getElementById("custodyManifestLink");
+      if (link) link.href = `/cases/${caseId}/custody/manifest`;
+    }
+
+    (function initCustodyButtons() {
+      const verifyBtn = document.getElementById("custodyVerifyBtn");
+      const refreshBtn = document.getElementById("custodyRefreshBtn");
+      const msg = document.getElementById("custodyVerifyMsg");
+      if (refreshBtn) refreshBtn.addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (caseId) loadCustody(caseId);
+      });
+      if (!verifyBtn) return;
+      verifyBtn.addEventListener("click", () => {
+        const caseId = document.getElementById("caseId").value.trim();
+        if (!caseId) return;
+        verifyBtn.disabled = true;
+        if (msg) msg.textContent = "Re-hashing evidence…";
+        // The synchronous verify endpoint: it re-reads every artifact, so it can take a while on a
+        // case holding disk images. The button stays disabled until it answers.
+        fetch(`/cases/${caseId}/custody/verify`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (!d) { if (msg) msg.textContent = "Verification unavailable."; return; }
+            custodyFailedPaths = new Set((d.mismatches || []).map(m => m.artifactPath));
+            custodyVerifiedAt = new Date().toISOString();
+            const breaks = (d.chainBreaks || []).length;
+            if (msg) {
+              msg.textContent = d.ok
+                ? "All artifacts verified, custody log intact."
+                : `${custodyFailedPaths.size} artifact(s) failed${breaks ? `, ${breaks} custody-log chain break(s)` : ""}.`;
+              msg.style.color = d.ok ? "#46a758" : "#e5484d";
+            }
+            renderCustody();
+          })
+          .catch(() => { if (msg) msg.textContent = "Verification failed to run."; })
+          .finally(() => { verifyBtn.disabled = false; });
+      });
+    })();
+
     // ── Hunting Profile (#157) ────────────────────────────────────────────────────────────
     // The per-case hunt feedback loop, surfaced read-only: every hunt deployed in this case (fleet /
     // playbook / technique / bundle) with whether it found new evidence. Auto-loaded on case open and
@@ -16544,6 +16660,7 @@
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
       const stateLoadPromise = fetch(`/cases/${caseId}/state`, { signal: loadSignal }).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
       verifyCustodyOnOpen(caseId);
+      loadCustody(caseId);
       pollCount(caseId);
       loadAiToggle(caseId);
       loadEnrichToggle(caseId);
@@ -19208,6 +19325,7 @@
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
+      { id: "sec-custody",      label: "Chain of Custody" },
       { id: "sec-case-details", label: "Case Details" },
     ];
 
