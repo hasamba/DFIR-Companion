@@ -288,6 +288,10 @@ export interface DiagnosticsReport {
     totalCount: number;
     totalBytes: number;
     retain: number;
+    /** Per-case byte budget (DFIR_STATE_BACKUP_MAX_BYTES); 0 = no byte cap (#295). */
+    maxBytes: number;
+    /** Cases still over that budget after pruning, because only exempt backups remain (#295). */
+    overBudgetCases: number;
   };
   /** Result of the last periodic re-verification of stored evidence (#231). */
   evidenceIntegrity: EvidenceIntegrityStatus;

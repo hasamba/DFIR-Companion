@@ -6,7 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
-import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, type BackupConfig, type BackupManagerDeps } from "../../src/storage/backupManager.js";
+import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, DEFAULT_MAX_BYTES, type BackupConfig, type BackupManagerDeps, type BackupTrigger } from "../../src/storage/backupManager.js";
 import { createApp } from "../../src/server.js";
 
 // ── Pure unit tests ───────────────────────────────────────────────────────────
@@ -49,6 +49,26 @@ describe("resolveBackupConfig", () => {
     // Must not resolve to NaN: `kept < NaN` is always false, which would delete every backup.
     expect(resolveBackupConfig({ DFIR_STATE_BACKUP_RETAIN: "abc" }).retain).toBe(24);
   });
+
+  it("defaults maxBytes to DEFAULT_MAX_BYTES (#295)", () => {
+    expect(resolveBackupConfig({}).maxBytes).toBe(DEFAULT_MAX_BYTES);
+    expect(DEFAULT_MAX_BYTES).toBeGreaterThan(0);
+  });
+
+  it("reads DFIR_STATE_BACKUP_MAX_BYTES (#295)", () => {
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_MAX_BYTES: "1048576" }).maxBytes).toBe(1_048_576);
+  });
+
+  it("treats 0 and negative maxBytes as the cap being off (#295)", () => {
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_MAX_BYTES: "0" }).maxBytes).toBe(0);
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_MAX_BYTES: "-1" }).maxBytes).toBe(0);
+  });
+
+  it("falls back to the default for blank or non-numeric maxBytes (#295)", () => {
+    // NaN would make every `totalBytes > maxBytes` comparison false — the cap silently off.
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_MAX_BYTES: "" }).maxBytes).toBe(DEFAULT_MAX_BYTES);
+    expect(resolveBackupConfig({ DFIR_STATE_BACKUP_MAX_BYTES: "abc" }).maxBytes).toBe(DEFAULT_MAX_BYTES);
+  });
 });
 
 // ── BackupManager with real temp dirs ────────────────────────────────────────
@@ -90,10 +110,54 @@ function memoryFs(): Required<BackupManagerDeps> {
   };
 }
 
+const MB = 1024 * 1024;
+
+/**
+ * memoryFs with stat reporting a caller-chosen size per backup filename, so the byte-cap tests can
+ * describe 500 MB snapshots without writing 500 MB. Delegates to the real stat first so a missing
+ * file still raises ENOENT (listBackups skips those).
+ */
+function sizedFs(sizeOf: (filename: string) => number): Required<BackupManagerDeps> {
+  const fs = memoryFs();
+  return {
+    ...fs,
+    stat: async (path) => {
+      const real = await fs.stat(path);
+      return { size: sizeOf(path.slice(path.lastIndexOf(sep) + 1)), mtimeMs: real.mtimeMs };
+    },
+  };
+}
+
+/**
+ * Write backup files straight through the injected fs rather than via createBackup, so seeding a
+ * fixture never triggers the prune that is under test. Hours are 2-digit, newest = highest.
+ */
+async function seedBackups(
+  fs: Required<BackupManagerDeps>,
+  mgr: BackupManager,
+  caseId: string,
+  entries: Array<[hour: string, trigger: BackupTrigger]>,
+): Promise<void> {
+  for (const [hour, trigger] of entries) {
+    await fs.atomicWrite(join(mgr.backupDir(caseId), `2026-06-28T${hour}-00-00-000Z_${trigger}.json`), "{}");
+  }
+}
+
+async function makeByteCapManager(
+  maxBytes: number,
+  sizeOf: (filename: string) => number,
+  config: Partial<BackupConfig> = {},
+): Promise<{ mgr: BackupManager; fs: Required<BackupManagerDeps> }> {
+  const root = await mkdtemp(join(tmpdir(), "dfir-backup-bytes-"));
+  const fs = sizedFs(sizeOf);
+  const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes, ...config };
+  return { mgr: new BackupManager(new CaseStore(root), cfg, fs), fs };
+}
+
 async function makeManager(config: Partial<BackupConfig> = {}): Promise<{ mgr: BackupManager; store: CaseStore; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-"));
   const store = new CaseStore(root);
-  const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 3_600_000, ...config };
+  const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 3_600_000, maxBytes: 0, ...config };
   const mgr = new BackupManager(store, cfg);
   return { mgr, store, root };
 }
@@ -257,6 +321,95 @@ describe("BackupManager.pruneBackups", () => {
   });
 });
 
+// The count cap bounds how MANY backups a case keeps; it says nothing about how much disk they
+// occupy, and one bundle can approach the ~512 MB state-load ceiling. These cover the byte cap
+// that bounds the total (#295).
+describe("BackupManager.pruneBackups byte cap (#295)", () => {
+  const CASE = "byte-cap-case";
+
+  it("evicts oldest-first until the total fits the budget", async () => {
+    const { mgr, fs } = await makeByteCapManager(250 * MB, () => 100 * MB);
+    await seedBackups(fs, mgr, CASE, [
+      ["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"],
+      ["04", "scheduled"], ["05", "scheduled"],
+    ]);
+
+    const result = await mgr.pruneBackups(CASE);
+
+    // 5 × 100 MB = 500 MB; dropping the three oldest lands on 200 MB, the first total under 250 MB.
+    expect((await mgr.listBackups(CASE)).map((b) => b.createdAt)).toEqual([
+      "2026-06-28T05:00:00.000Z",
+      "2026-06-28T04:00:00.000Z",
+    ]);
+    expect(result.totalBytes).toBe(200 * MB);
+    expect(result.overBudget).toBe(false);
+  });
+
+  it("enforces the budget even when the count is under the retain limit", async () => {
+    // Regression guard: the count pass used to return early whenever list.length <= retain, which
+    // would skip the byte pass entirely for exactly the case it exists to catch — few, huge backups.
+    const { mgr, fs } = await makeByteCapManager(150 * MB, () => 100 * MB, { retain: 24 });
+    await seedBackups(fs, mgr, CASE, [["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"]]);
+
+    await mgr.pruneBackups(CASE);
+
+    expect((await mgr.listBackups(CASE)).map((b) => b.createdAt)).toEqual(["2026-06-28T03:00:00.000Z"]);
+  });
+
+  it("keeps the newest backup even when it alone exceeds the budget, and reports overBudget", async () => {
+    // Deleting it would leave the case with no recovery point at all, which is worse than the
+    // overrun; the operator gets told instead.
+    const { mgr, fs } = await makeByteCapManager(250 * MB, () => 500 * MB);
+    await seedBackups(fs, mgr, CASE, [["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"]]);
+
+    const result = await mgr.pruneBackups(CASE);
+
+    expect((await mgr.listBackups(CASE)).map((b) => b.createdAt)).toEqual(["2026-06-28T03:00:00.000Z"]);
+    expect(result.totalBytes).toBe(500 * MB);
+    expect(result.overBudget).toBe(true);
+  });
+
+  it("never deletes the only backup a case has", async () => {
+    const { mgr, fs } = await makeByteCapManager(1 * MB, () => 500 * MB);
+    await seedBackups(fs, mgr, CASE, [["01", "scheduled"]]);
+
+    const result = await mgr.pruneBackups(CASE);
+
+    expect(await mgr.listBackups(CASE)).toHaveLength(1);
+    expect(result.overBudget).toBe(true);
+  });
+
+  it("keeps the newest pre-synthesis backup but counts older ones against the budget", async () => {
+    // preSynthRetain protects both pre-synth entries from the COUNT pass; the byte pass still
+    // evicts the older one, otherwise 10 large pre-synth snapshots could blow the cap on their own.
+    const { mgr, fs } = await makeByteCapManager(150 * MB, () => 100 * MB, { preSynthRetain: 10 });
+    await seedBackups(fs, mgr, CASE, [
+      ["01", "pre-synthesis"], ["02", "pre-synthesis"], ["03", "scheduled"],
+    ]);
+
+    const result = await mgr.pruneBackups(CASE);
+
+    expect((await mgr.listBackups(CASE)).map((b) => b.createdAt)).toEqual([
+      "2026-06-28T03:00:00.000Z", // newest overall — never evicted
+      "2026-06-28T02:00:00.000Z", // newest pre-synthesis — the rollback point #267 guarantees
+    ]);
+    // Both survivors are exempt, so the budget is still blown and the operator is told.
+    expect(result.overBudget).toBe(true);
+  });
+
+  it("leaves every backup in place when the byte cap is off", async () => {
+    const { mgr, fs } = await makeByteCapManager(0, () => 500 * MB, { retain: 24 });
+    await seedBackups(fs, mgr, CASE, [
+      ["01", "scheduled"], ["02", "scheduled"], ["03", "scheduled"],
+    ]);
+
+    const result = await mgr.pruneBackups(CASE);
+
+    expect(await mgr.listBackups(CASE)).toHaveLength(3);
+    expect(result.overBudget).toBe(false);
+  });
+});
+
 describe("BackupManager.summary", () => {
   it("returns zeros for a case with no backups", async () => {
     const { mgr, store } = await makeManager();
@@ -286,7 +439,7 @@ async function makeAppWithBackup(
 ): Promise<{ app: ReturnType<typeof createApp>; store: CaseStore }> {
   const root = await mkdtemp(join(tmpdir(), "dfir-backup-route-"));
   const store = new CaseStore(root);
-  const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, ...config };
+  const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes: 0, ...config };
   const backupManager = new BackupManager(store, cfg);
   const app = createApp(store, { backupManager, ...extra });
   return { app, store };
@@ -295,7 +448,7 @@ async function makeAppWithBackup(
 // Seed a case with a backup, then corrupt the live state so a successful restore is observable.
 async function seedRestorable(store: CaseStore): Promise<{ caseId: string; filename: string }> {
   const caseId = await makeCase(store);
-  const mgr = new BackupManager(store, { retain: 24, preSynthRetain: 10, intervalMs: 0 });
+  const mgr = new BackupManager(store, { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes: 0 });
   const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T10:00:00.000Z");
   await writeFile(join(store.stateDir(caseId), "investigation.json"), '{"corrupted":true}');
   return { caseId, filename: info.filename };
@@ -349,7 +502,7 @@ describe("POST /cases/:id/restore-backup", () => {
     const caseId = await makeCase(store);
 
     // Create a backup via the manager directly
-    const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0 };
+    const cfg: BackupConfig = { retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes: 0 };
     const mgr = new BackupManager(store, cfg);
     const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-06-28T10:00:00.000Z");
 
