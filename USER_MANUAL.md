@@ -147,6 +147,17 @@ Click **Add to Chrome**, confirm the permissions, and the extension icon appears
 3. Click **Load unpacked** and select the `extension/dist/` folder (run `npm run build` inside `extension/` first if building from source; Chocolatey installs it pre-built on disk).
 4. The extension icon appears in the toolbar.
 
+#### Firefox (temporary add-on)
+
+Needs **Firefox 128 or later**. There is no Mozilla Add-ons listing yet, so build it from source:
+
+1. Run `npm run build:firefox` inside `extension/` — this writes `extension/dist-firefox/`.
+2. In Firefox, go to `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and select `extension/dist-firefox/manifest.json` — the manifest **file**, not the folder. (Chrome asks for a folder here; Firefox asks for the manifest inside it.)
+4. The extension icon appears in the toolbar.
+
+Firefox removes a temporary add-on when the browser restarts, so repeat step 3 each session. Nothing you captured is lost: evidence is sent to the Companion server as you capture it and lives in the case, not in the browser.
+
 **Keyboard shortcut:** `Ctrl+Shift+S` (Windows/Linux) toggles capture mode on/off. When capture is active, a floating push button appears on the page.
 
 ---
