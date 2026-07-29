@@ -86,6 +86,17 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
+  // Verify ONE case in the background — what the dashboard fires when an analyst opens a case
+  // (#231). Returns immediately: a case with a 40 GB image would otherwise hold the request open
+  // for minutes. Throttled inside the monitor, so flipping between cases re-hashes nothing.
+  app.post("/cases/:id/custody/verify", async (req: Request, res: Response) => {
+    if (!options.integrityMonitor) return res.status(501).json({ error: "evidence integrity monitor not configured" });
+    const caseId = req.params.id;
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    void options.integrityMonitor.verifyCaseIfStale(caseId).catch(() => { /* alerting happens inside the monitor */ });
+    return res.status(202).json({ started: true });
+  });
+
   app.get("/cases/:id/custody/verify", async (req: Request, res: Response) => {
     if (!options.custodyStore) return res.status(501).json({ error: "custody not configured" });
     const caseId = req.params.id;

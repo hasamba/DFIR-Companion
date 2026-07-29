@@ -376,15 +376,26 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
  * this is the one section an operator scans for a reason to worry.
  */
 function evidenceIntegrityLines(e: EvidenceIntegrityStatus): string[] {
-  if (!e.enabled) return ["  disabled (DFIR_CUSTODY_VERIFY_INTERVAL_MS=0)"];
-  if (!e.lastRunAt) return [`  not verified yet — next sweep within ${formatAge(e.intervalMs)}`];
+  const lines: string[] = [];
+  // State the triggers first. With the all-cases sweep off by default, "nothing verified yet" is
+  // the normal state of a fresh install and must not read like a fault.
+  const triggers = [
+    e.verifyOnOpen ? `on case open (re-checked after ${formatAge(e.onOpenThrottleMs)})` : "",
+    e.enabled ? `scheduled sweep of all cases every ${formatAge(e.intervalMs)}` : "",
+  ].filter(Boolean);
+  lines.push(triggers.length ? `  verifies: ${triggers.join("; ")}` : "  verification is switched off");
+
+  if (!e.lastRunAt) {
+    lines.push(triggers.length ? "  no case verified yet this run" : "");
+    return lines.filter(Boolean);
+  }
 
   const ago = formatAge(Date.now() - Date.parse(e.lastRunAt));
-  const lines: string[] = [];
+  const scope = `across ${e.casesVerified} case(s)`;
   if (e.failedArtifacts > 0) {
-    lines.push(`  last verified ${ago} ago — ${e.failedArtifacts} of ${e.artifacts} artifacts FAILED verification`);
+    lines.push(`  last verified ${ago} ago — ${e.failedArtifacts} of ${e.artifacts} artifacts FAILED verification ${scope}`);
   } else {
-    lines.push(`  last verified ${ago} ago — all ${e.artifacts} artifacts OK`);
+    lines.push(`  last verified ${ago} ago — all ${e.artifacts} artifacts OK ${scope}`);
   }
   if (e.chainBreaks > 0) lines.push(`  ${e.chainBreaks} custody-log chain break(s)`);
   if (e.problemCaseIds.length) lines.push(`  affected cases: ${e.problemCaseIds.join(", ")}`);
