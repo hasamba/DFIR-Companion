@@ -441,6 +441,32 @@ bundles, installs, hosts or updates one. Same rule as the external tool runner: 
 Register a server in **Settings → Tools**, or `POST /mcp/servers` with a label and URL. Then
 `POST /mcp/servers/<id>/probe` to handshake and list what it offers.
 
+### Running a tool against case evidence
+
+`POST /cases/<id>/mcp/<serverId>/run` with `{ tool, args, targetPath }`. Put `<target>` wherever the
+tool expects the evidence path — it is replaced with the path *on the analysis host* after delivery
+has run, so the argument you write is the argument the tool receives:
+
+```json
+{ "tool": "run_command",
+  "args": { "command": ["vol.py", "-f", "<target>", "pslist"] },
+  "targetPath": "imports/memory.raw" }
+```
+
+`targetPath` is resolved inside the case directory; anything outside it is refused. For a sample the
+browser holds and the server has no path to, `POST /cases/<id>/mcp/<serverId>/run-upload` takes
+`{ filename, dataBase64 }` instead and stages the bytes inside the case first.
+
+Both return **202 with a job id** rather than blocking. A real Volatility run outlives any sensible
+request timeout, so the run is a background job with progress, a cancel button, and a WebSocket
+`job_changed` broadcast. The result flows into the case through the same import chain as every other
+tool — timeline events, findings and IOCs, with an undo checkpoint — so nothing about reading the
+result differs from an ordinary import. Structured output is routed to the matching importer;
+unstructured prose falls through to the generic log path rather than being rejected.
+
+A tool that reports its own failure fails the job instead of being ingested: an error message is a
+diagnostic, not an artifact, and filing it in the timeline would make it look like evidence.
+
 ### Read this before registering a server that runs commands
 
 **Allowing a tool is not the same as allowing a task.** Some MCP servers expose fine-grained tools —

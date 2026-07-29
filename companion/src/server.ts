@@ -169,6 +169,7 @@ import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socr
 import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
 import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
 import type { McpHttpTransport } from "./integrations/mcp/mcpClient.js";
+import type { TransferRunner } from "./integrations/mcp/mcpDelivery.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -532,6 +533,8 @@ export interface AppOptions {
   // How the MCP client reaches those servers. Defaults to undici; tests inject a fake so no route
   // test opens a socket (same discipline as toolRunner).
   mcpTransport?: McpHttpTransport;
+  // How evidence is pushed to an analysis host (scp). Defaults to a real spawn; tests inject.
+  mcpTransferRunner?: TransferRunner;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
