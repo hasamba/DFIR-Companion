@@ -1,0 +1,58 @@
+DFIR Companion
+Copyright (C) the DFIR Companion contributors
+
+This program is free software licensed under the GNU Affero General Public
+License v3.0 only (AGPL-3.0-only). See LICENSE for the full text.
+
+This file records third-party material redistributed as part of this program,
+together with the notices those licences require.
+
+
+================================================================================
+Theme palettes — Security Onion Solutions, LLC
+================================================================================
+
+Used in: companion/scripts/theme/vendor/themePalettes.ts
+         public/dashboard.html (the generated :root[data-theme="..."] blocks)
+
+The colour palettes behind 22 of the dashboard's themes come from an MIT-licensed
+theme set published by the copyright holder named below. The role names those
+palettes are keyed by are also that project's names, which is what allows its
+themes to be used here without translation.
+
+No source code from it is included — only colour values and the role names they
+are keyed by. Its own `dark` and `light` themes are not used, and one theme is
+excluded because its body text does not meet the contrast floor this project
+enforces.
+
+    MIT License
+
+    Copyright (c) 2026 Security Onion Solutions, LLC
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+
+Colour schemes named in the theme picker
+----------------------------------------
+
+Several of those palettes are renditions of colour schemes maintained by other
+projects: Catppuccin, Everforest, Gruvbox, Kanagawa, Nord, Rosé Pine and Tokyo
+Night. Colour values are not themselves copyrightable and each of those projects
+is permissively licensed; they are credited by name in the picker as a courtesy
+to their authors rather than as a licence obligation.
