@@ -52,6 +52,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           url: s.url,
           enabled: s.enabled,
           allowedTools: s.allowedTools,
+          allowedCommands: s.allowedCommands,
+          // A server whose permitted tools take a command argument grants execution of whatever
+          // that command names, so the UI can warn before the first run rather than after.
           timeoutMs: s.timeoutMs,
           // The KEY, never the value — the token itself stays in .env behind envManager's redaction.
           tokenEnvKey: tokenEnvKey(s.id),

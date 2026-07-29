@@ -79,6 +79,18 @@ describe("McpServerStore CRUD", () => {
     const added = await store.add({ label: "SIFT", url: LAN_URL, allowedTools: "pslist, malfind netscan" });
     expect(added.allowedTools).toEqual(["pslist", "malfind", "netscan"]);
   });
+
+  it("stores allowed commands, reduced to basenames", async () => {
+    const added = await store.add({ label: "SIFT", url: LAN_URL, allowedCommands: "/usr/bin/grep, vol.py" });
+    // "/usr/bin/grep" and "grep" must not be two different rules — mcpGuard compares on basename.
+    expect(added.allowedCommands).toEqual(["grep", "vol.py"]);
+  });
+
+  it("keeps allowed commands across an update that does not mention them", async () => {
+    await store.add({ label: "SIFT", url: LAN_URL, allowedCommands: ["vol.py"] });
+    const updated = await store.update("sift", { label: "SIFT box" });
+    expect(updated?.allowedCommands).toEqual(["vol.py"]);
+  });
 });
 
 describe("McpServerStore URL validation", () => {
@@ -133,7 +145,7 @@ describe("McpServerStore file handling", () => {
     await writeFile(file, JSON.stringify([{ id: "sift", label: "SIFT", url: LAN_URL }]), "utf8");
 
     const [server] = await store.load();
-    expect(server).toMatchObject({ enabled: true, allowedTools: [], timeoutMs: 300_000 });
+    expect(server).toMatchObject({ enabled: true, allowedTools: [], allowedCommands: [], timeoutMs: 300_000 });
   });
 });
 
@@ -159,7 +171,7 @@ describe("slugifyServerLabel", () => {
 
 describe("isToolAllowed", () => {
   const server = (allowedTools: string[]): McpServer =>
-    ({ id: "sift", label: "SIFT", url: LAN_URL, enabled: true, allowedTools, timeoutMs: 1000 });
+    ({ id: "sift", label: "SIFT", url: LAN_URL, enabled: true, allowedTools, allowedCommands: [], timeoutMs: 1000 });
 
   it("allows a tool that was named", () => {
     expect(isToolAllowed(server(["pslist"]), "pslist")).toBe(true);

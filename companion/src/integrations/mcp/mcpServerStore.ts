@@ -1,6 +1,6 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { atomicWrite } from "../../storage/atomicWrite.js";
@@ -25,6 +25,10 @@ export const mcpServerSchema = z.object({
   enabled: z.boolean().catch(true),
   // The tools this server may be asked to RUN. See isToolAllowed for why an empty list denies.
   allowedTools: z.array(z.string()).catch([]),
+  // The binaries a command-runner tool on this server may invoke, by basename. Only consulted when
+  // a call actually carries a command argument — see mcpGuard.assertCallAllowed, which explains why
+  // allowedTools alone cannot bound a server whose one useful tool runs arbitrary argv.
+  allowedCommands: z.array(z.string()).catch([]),
   // Matches ToolConfig's default. A real Volatility run outlives it, which is why the call is a
   // JobManager job rather than a request (§7) — this bounds the individual HTTP round-trip.
   timeoutMs: z.number().catch(300_000),
@@ -35,7 +39,8 @@ export interface McpServerInput {
   label: string;
   url: string;
   enabled?: boolean;
-  allowedTools?: string[] | string;   // array or a comma/space-separated string
+  allowedTools?: string[] | string;      // array or a comma/space-separated string
+  allowedCommands?: string[] | string;   // likewise
   timeoutMs?: number;
 }
 
@@ -72,7 +77,7 @@ export function isToolAllowed(server: McpServer, toolName: string): boolean {
   return server.allowedTools.includes(toolName);
 }
 
-function normalizeTools(input: string[] | string | undefined): string[] {
+function normalizeNames(input: string[] | string | undefined): string[] {
   const parts = Array.isArray(input) ? input : String(input ?? "").split(/[,\s]+/);
   const out: string[] = [];
   for (const p of parts) {
@@ -88,7 +93,10 @@ function fromInput(input: McpServerInput, id: string): McpServer {
     label: String(input.label ?? "").trim().slice(0, 120),
     url: String(input.url ?? "").trim().replace(/\/+$/, ""),
     enabled: input.enabled !== false,
-    allowedTools: normalizeTools(input.allowedTools),
+    allowedTools: normalizeNames(input.allowedTools),
+    // Stored by basename, the same form mcpGuard compares against, so "/usr/bin/grep" and "grep"
+    // are not two different rules.
+    allowedCommands: normalizeNames(input.allowedCommands).map((c) => basename(c)),
     timeoutMs: Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 300_000,
   };
 }
@@ -158,6 +166,7 @@ export class McpServerStore {
       url,
       enabled: patch.enabled ?? cur.enabled,
       allowedTools: patch.allowedTools ?? cur.allowedTools,
+      allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
       timeoutMs: patch.timeoutMs ?? cur.timeoutMs,
     }, id);   // keep the same id — a label change does not re-slug an existing server
     await this.save(list.map((s) => (s.id === id ? merged : s)));

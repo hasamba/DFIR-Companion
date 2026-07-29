@@ -140,6 +140,16 @@ describe("/mcp/servers CRUD", () => {
     expect(res.body.server.allowedTools).toEqual(["pslist", "malfind"]);
   });
 
+  it("sets the command allowlist that bounds a command-runner tool", async () => {
+    await store.add({ label: "SIFT", url: LAN_URL, allowedTools: ["run_command"] });
+
+    const res = await request(appWith()).put("/mcp/servers/sift").send({ allowedCommands: "vol.py, /usr/bin/grep" });
+
+    expect(res.body.server.allowedCommands).toEqual(["vol.py", "grep"]);
+    const status = await request(appWith()).get("/mcp/status");
+    expect(status.body.servers[0].allowedCommands).toEqual(["vol.py", "grep"]);
+  });
+
   it("404s when updating a server that is not registered", async () => {
     expect((await request(appWith()).put("/mcp/servers/ghost").send({ label: "x" })).status).toBe(404);
   });
