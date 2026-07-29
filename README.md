@@ -467,6 +467,26 @@ unstructured prose falls through to the generic log path rather than being rejec
 A tool that reports its own failure fails the job instead of being ingested: an error message is a
 diagnostic, not an artifact, and filing it in the timeline would make it look like evidence.
 
+### Preview before importing
+
+**On by default**, and worth leaving on. An MCP server will return reference data as readily as
+evidence — ask SIFT what tools it has and you get a JSON inventory that is structurally identical to
+a Volatility table: an array of objects with no timestamps. No detector can tell them apart, so the
+importers do what they are built to do and extract every path in it as a file indicator. One
+capability listing is a few dozen IOCs the case never wanted.
+
+With preview on, the run fetches the output and stops. You see the bytes, the size, and the kind it
+*would* import as, and choose. Approving ingests **exactly the bytes already fetched** — it never
+re-runs the tool, so a twenty-minute Volatility run costs twenty minutes once, and a tool with side
+effects performs them once. Discarding throws the output away and the case is untouched.
+
+Send `preview: true` on the run to use it from the API, then `GET`,
+`POST …/import` or `DELETE` on `/cases/<id>/mcp/preview/<jobId>`.
+
+Nothing here is a substitute for judgement about what to run, and importing without preview is not
+dangerous — every MCP import pushes an undo checkpoint, so a run that turns out to be noise is one
+click from being rolled back.
+
 ### Read this before registering a server that runs commands
 
 **Allowing a tool is not the same as allowing a task.** Some MCP servers expose fine-grained tools —

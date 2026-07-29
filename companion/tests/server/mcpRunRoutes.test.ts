@@ -203,6 +203,114 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
   });
 });
 
+// A tool can return reference data as readily as evidence — a capability listing is structurally
+// identical to a Volatility table — so the analyst gets to look before any of it reaches the case.
+describe("preview before import", () => {
+  it("fetches the output without touching the case", async () => {
+    const { app, jobManager } = await harness();
+
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    expect(res.body.preview).toBe(true);
+    const job = await settle(jobManager, res.body.jobId);
+    expect(job.status).toBe("done");
+
+    const state = await request(app).get("/cases/c1/state");
+    expect(state.body.iocs).toHaveLength(0);
+    expect(state.body.forensicTimeline).toHaveLength(0);
+  });
+
+  it("labels the job as a preview", async () => {
+    const { app, jobManager } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    expect(jobManager.get(res.body.jobId)?.label).toBe("sift/run_command (preview)");
+    await settle(jobManager, res.body.jobId);
+  });
+
+  it("returns the output and the kind it would import as", async () => {
+    const { app, jobManager } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+
+    const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(p.status).toBe(200);
+    expect(p.body).toMatchObject({ server: "sift", tool: "run_command", kind: "yara", bytes: YARA_OUT.length, truncated: false });
+    expect(p.body.text).toBe(YARA_OUT);
+  });
+
+  it("caps a large body so the point is the shape, not the volume", async () => {
+    const big = "EvilRule /x/a.bin\n" + "0x10:$s: 4d 5a\n".repeat(2000);
+    const { app, jobManager } = await harness({ text: big });
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+
+    const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(p.body.bytes).toBe(big.length);
+    expect(p.body.truncated).toBe(true);
+    expect(p.body.text.length).toBe(8 * 1024);
+  });
+
+  it("imports exactly the fetched bytes on approval, without re-running the tool", async () => {
+    const { app, jobManager, transfers } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+    const transfersAfterPreview = transfers.length;
+
+    const imp = await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
+
+    expect(imp.status).toBe(200);
+    expect(imp.body.addedEvents + imp.body.addedIocs).toBeGreaterThan(0);
+    // Approval must not mean executing the tool a second time.
+    expect(transfers.length).toBe(transfersAfterPreview);
+    const state = await request(app).get("/cases/c1/state");
+    expect(state.body.iocs.length + state.body.forensicTimeline.length).toBeGreaterThan(0);
+  });
+
+  it("makes an approved import undoable", async () => {
+    const { app, jobManager } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+    await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
+
+    const undo = await request(app).get("/cases/c1/import/undo-stack");
+    expect(undo.body.undo?.[0]?.label ?? undo.body.entries?.[0]?.label).toBe("MCP: sift/run_command");
+  });
+
+  it("is consumed by importing, so it cannot be imported twice", async () => {
+    const { app, jobManager } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+
+    expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(200);
+    expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(404);
+  });
+
+  it("discards a preview and leaves the case untouched", async () => {
+    const { app, jobManager } = await harness();
+    const res = await request(app).post("/cases/c1/mcp/sift/run").send({ ...RUN_BODY, preview: true });
+    await settle(jobManager, res.body.jobId);
+
+    const del = await request(app).delete(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(del.body).toEqual({ ok: true, discarded: true });
+
+    expect((await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`)).status).toBe(404);
+    const state = await request(app).get("/cases/c1/state");
+    expect(state.body.iocs).toHaveLength(0);
+  });
+
+  // The job id names the file on disk and arrives from the client.
+  it("refuses a job id that is not one JobManager could have minted", async () => {
+    const { app } = await harness();
+    expect((await request(app).get("/cases/c1/mcp/preview/..%2F..%2Fetc%2Fpasswd")).status).toBe(404);
+    expect((await request(app).get("/cases/c1/mcp/preview/job_1x")).status).toBe(404);
+    expect((await request(app).post("/cases/c1/mcp/preview/nope/import")).status).toBe(404);
+  });
+
+  it("404s a preview that never existed", async () => {
+    const { app } = await harness();
+    expect((await request(app).get("/cases/c1/mcp/preview/job_999")).status).toBe(404);
+  });
+});
+
 describe("POST /cases/:id/mcp/:serverId/run-upload", () => {
   it("stages uploaded bytes, runs against them, and ingests", async () => {
     const { app, jobManager, transfers } = await harness();
