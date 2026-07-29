@@ -88,6 +88,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-source-trust",
       "sec-hypotheses",
       "sec-notebook",
+      "sec-custody",
       "sec-case-details",
     ]);
   });

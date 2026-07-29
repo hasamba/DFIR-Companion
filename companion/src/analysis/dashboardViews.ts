@@ -79,6 +79,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-notebook",
   "sec-inv-log",
   "sec-activity",
+  "sec-custody",
   "sec-case-details",
 ];
 
@@ -123,6 +124,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-source-trust",
       "sec-hypotheses",
       "sec-notebook",
+      "sec-custody",
       "sec-case-details",
     ],
     defaultSort: "time",
@@ -206,6 +208,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-questions",
       "sec-uncertainties",
       "sec-compliance",
+      "sec-custody",
       "sec-case-details",
     ],
     defaultSort: "severity",
@@ -243,6 +246,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-source-trust",
       "sec-notebook",
       "sec-activity",
+      "sec-custody",
     ],
     defaultSort: "time",
     reportTemplateId: "technical-detailed",
