@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { AnonCategory, AnonPolicy } from "./anonymize.js";
 import { SECRET_PLACEHOLDER } from "./anonymize.js";
 import type { ZipEntry } from "./zipArchive.js";
+import { CUSTODY_MANIFEST_FILENAME, type CustodyManifest } from "./custodyManifest.js";
 
 // Pure logic for the Redacted case export (#54): a shareable ZIP for external parties with internal
 // IPs / hosts / usernames / emails / paths tokenized, secrets one-way redacted, screenshot metadata
@@ -69,6 +70,11 @@ export interface RedactedReportContents {
   timelineCsv: string;
   forensicTimelineCsv: string;
   stateJson: string;
+  /**
+   * The signed chain-of-custody manifest describing the REDACTED appendix in this package. Absent
+   * when the case has no custody store or the writer has no signing secret.
+   */
+  custodyManifest?: CustodyManifest;
 }
 
 /**
@@ -224,6 +230,11 @@ export function assembleRedactedEntries(input: {
     for (const shot of input.screenshots) {
       entries.push({ path: `${SCREENSHOT_DIR}/${safeArchiveName(shot.name)}`, data: shot.data });
     }
+  }
+  // The signed custody manifest for the redacted appendix. Placed before the package manifest below
+  // so it is enumerated and hashed like every other file in the package.
+  if (input.contents.custodyManifest) {
+    entries.push({ path: CUSTODY_MANIFEST_FILENAME, data: enc(JSON.stringify(input.contents.custodyManifest, null, 2)) });
   }
   // Hashed manifest of every file assembled above, appended LAST so it enumerates the whole package
   // (but not itself). Gives the recipient chain-of-custody verification the human-readable notes can't.

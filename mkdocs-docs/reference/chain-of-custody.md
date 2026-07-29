@@ -103,14 +103,15 @@ The **Chain of Custody** panel (see [Dashboard Panels](dashboard.md)) has a **Ve
 
 It exists to close a gap the chain cannot close on its own: **chopping entries off the end of the log leaves a shorter chain that verifies perfectly.** Nothing inside the file can detect that, because the file is exactly what an attacker controls. So the manifest records where the chain *ends* — the record count, the final `seq`, and the hash of the last line — and signs that along with the records.
 
-You get it in three places:
+You get it in four places:
 
 - **In the report folder**, written every time you generate a report
-- **Inside the encrypted case archive**, so whoever receives the case can check it
+- **Inside the encrypted case archive**
+- **Inside the redacted case package** — built over the *redacted* records, so it describes the appendix that package actually ships
 - **On demand** at `GET /cases/:id/custody/manifest`, or the **Signed manifest** link in the dashboard panel
 
 !!! info "What the signature does and does not prove"
-    A shared-secret signature proves the manifest has not been altered since *this installation* signed it. It cannot prove *which* installation signed it to somebody who does not hold the secret. Signing with an external PKI or HSM is a deployment concern and is deliberately out of scope.
+    A shared-secret signature proves the manifest has not been altered since *this installation* signed it — so **you** can later prove what you sent. It does **not** let a recipient verify anything on their own: verification needs the instance secret, which they do not have. Treat the manifest as a seal you can check, plus a machine-readable index of the chain for them, not as proof they can independently validate. Signing with an external PKI or HSM would change that, and is deliberately out of scope.
 
 ---
 

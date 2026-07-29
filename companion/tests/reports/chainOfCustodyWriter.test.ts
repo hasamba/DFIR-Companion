@@ -6,11 +6,14 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
 import { redactCustodyRecords } from "../../src/analysis/redactedExport.js";
+import { verifyCustodyManifest } from "../../src/analysis/custodyManifest.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 
 let cases: CaseStore;
 let custody: CustodyStore;
 let writer: ReportWriter;
+
+const SECRET = Buffer.from("a".repeat(64), "hex");
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-custodyreport-"));
@@ -18,7 +21,7 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   custody = new CustodyStore(cases);
   const state = new StateStore(cases);
-  writer = new ReportWriter(cases, state, { custodyStore: custody });
+  writer = new ReportWriter(cases, state, { custodyStore: custody, instanceSecret: SECRET });
 
   const artifactPath = join(cases.importsDir("c1"), "0001_evidence.csv");
   await writeFile(artifactPath, "ts,message\n", "utf8");
@@ -125,5 +128,42 @@ describe("what survives redaction in the custody appendix (#362)", () => {
     const [record] = redactCustodyRecords([withExtra as never], redactAll) as unknown as Record<string, unknown>[];
 
     expect(record.custodianNotes).toBe("ANON(handed over by Bob at ACME-DC01)");
+  });
+});
+
+describe("the signed manifest that travels with a redacted package", () => {
+  it("is built over the REDACTED records, never the real ones", async () => {
+    const redact = (s: string) => s.replace(/WORKSTATION-7/g, "ANON_HOST_1").replace(/evidence\.csv/g, "ANON_FILE");
+
+    const { custodyManifest } = await writer.redactedReportContents("c1", redact);
+
+    expect(custodyManifest).toBeDefined();
+    const blob = JSON.stringify(custodyManifest);
+    expect(blob).not.toContain("WORKSTATION-7");
+    expect(blob).not.toContain("evidence.csv");
+    expect(blob).toContain("ANON_HOST_1");
+  });
+
+  it("keeps the artifact hashes, so the chain still describes real evidence", async () => {
+    const redact = (s: string) => `ANON(${s})`;
+
+    const { custodyManifest } = await writer.redactedReportContents("c1", redact);
+
+    expect(custodyManifest!.artifacts[0].sha256).toBe("a".repeat(64));
+  });
+
+  it("is signed, so the issuing installation can later prove what it sent", async () => {
+    const { custodyManifest } = await writer.redactedReportContents("c1", (s) => s);
+
+    expect(verifyCustodyManifest(custodyManifest!, SECRET)).toBe(true);
+    expect(verifyCustodyManifest(custodyManifest!, Buffer.from("b".repeat(64), "hex"))).toBe(false);
+  });
+
+  it("is absent when the writer has no signing secret", async () => {
+    const unsigned = new ReportWriter(cases, new StateStore(cases), { custodyStore: custody });
+
+    const { custodyManifest } = await unsigned.redactedReportContents("c1", (s) => s);
+
+    expect(custodyManifest).toBeUndefined();
   });
 });
