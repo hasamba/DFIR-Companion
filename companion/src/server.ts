@@ -30,6 +30,7 @@ import { registerSessionSegmentationRoutes } from "./routes/sessionSegmentation.
 import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerCustodyRoutes } from "./routes/custody.js";
+import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerPlaybookMatchRoutes } from "./routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
@@ -166,6 +167,8 @@ import {
 } from "./integrations/socrates/socratesApi.js";
 import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
+import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
+import type { McpHttpTransport } from "./integrations/mcp/mcpClient.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -522,6 +525,13 @@ export interface AppOptions {
   // User-defined custom tools (#211) — a GLOBAL JSON store of analyst-added tools (name/binary/command/
   // extensions), merged into the tool set alongside the built-ins. Absent → only built-ins.
   customToolStore?: CustomToolStore;
+  // Analyst-registered MCP servers (#296) — the SIFT/REMnux/windows-triage boxes on the operator's
+  // own network that case evidence can be pointed at. Same ownership rule as the tool runner: the
+  // analyst owns the servers, the companion only calls them. Absent → the /mcp routes answer 501.
+  mcpServerStore?: McpServerStore;
+  // How the MCP client reaches those servers. Defaults to undici; tests inject a fake so no route
+  // test opens a socket (same discipline as toolRunner).
+  mcpTransport?: McpHttpTransport;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
@@ -981,6 +991,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPushNotifyRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
+  registerMcpRoutes(app, ctx);
 
   // Rate-limit AI-cost-bearing routes to prevent an attacker who knows a caseId from burning
   // the operator's AI budget. 20 requests per minute per case — generous for a single analyst,
@@ -3631,6 +3642,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
   // Custom external tools (#211) — a global JSON store in its own subdir beside cases/ (drive-root-safe).
   const customToolStore = new CustomToolStore(join(dirname(casesRoot), "tools", "custom-tools.json"));
+  // Registered MCP servers (#296) — global and shared across cases, beside the custom-tool list for
+  // the same reason: a variable-length list belongs in a JSON store, not fixed .env keys.
+  const mcpServerStore = new McpServerStore(join(dirname(casesRoot), "tools", "mcp-servers.json"));
   const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
   if (nsrlFiles.length > 0) {
     // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
@@ -3982,6 +3996,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
+    // Registered MCP servers (#296). No gating client either — a server is off until it is added,
+    // and its bearer token is read live from DFIR_MCP_<ID>_TOKEN on each call.
+    mcpServerStore,
     // Extra browser origins permitted past the origin guard (#211), beyond the extension and
     // loopback. Comma-separated, e.g. "https://soc.example.com".
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
