@@ -11,9 +11,15 @@
 
 /**
  * Permanent add-on identity on AMO. Also scopes storage.local, so changing it after publication
- * orphans every analyst's saved settings — see #301, which tracks replacing the placeholder domain.
+ * both orphans every analyst's saved settings and reads to Firefox as a different add-on that
+ * existing installs never update to — which is why it is settled here, before the first submission,
+ * rather than left as a placeholder (#301).
+ *
+ * `hasamba.github.io` is the project's own GitHub Pages domain, where the manual is published. The
+ * address itself receives no mail: an AMO add-on ID only has to be shaped like an email and sit
+ * under a domain the project actually controls, which the IANA-reserved `example.com` never was.
  */
-export const GECKO_ID = "dfir-companion@example.com";
+export const GECKO_ID = "dfir-companion@hasamba.github.io";
 
 /**
  * Firefox 128 (the current ESR) is the floor because it is where scripting.executeScript gained
