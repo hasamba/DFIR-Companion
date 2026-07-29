@@ -14,7 +14,7 @@ function report(evidenceIntegrity: EvidenceIntegrityStatus): DiagnosticsReport {
       attempts: { last24h: 0, last7d: 0, total: 0 },
       recentFailures: [], customImporters: 0, perImporter: [], loadErrors: [],
     },
-    backups: { enabled: true, totalCount: 0, totalBytes: 0, retain: 24 },
+    backups: { enabled: true, totalCount: 0, totalBytes: 0, retain: 24, maxBytes: 0, overBudgetCases: 0 },
     evidenceIntegrity,
   };
 }

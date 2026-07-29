@@ -25,6 +25,11 @@ export interface BackupSummary {
 // unlimited (retain=0) we substitute this cap instead — raise DFIR_STATE_BACKUP_RETAIN for more.
 export const RETAIN_FALLBACK_CAP = 100;
 
+// A count cap does not bound disk: at the ~512 MB state-load ceiling a single bundle is huge, so
+// retain + preSynthRetain entries can still run to tens of GB per case (#295). 10 GiB is far above
+// what a normal case ever reaches — it binds only on the runaway shape the cap exists to catch.
+export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024;
+
 export interface BackupConfig {
   /**
    * Max total backups to keep per case (DFIR_STATE_BACKUP_RETAIN, default 24). Always > 0: an
@@ -36,6 +41,24 @@ export interface BackupConfig {
   preSynthRetain: number;
   /** Time-based backup interval in ms (DFIR_STATE_BACKUP_INTERVAL_MS, default 3 600 000 = 1 h). 0 = disabled. */
   intervalMs: number;
+  /**
+   * Max total bytes of backups to keep per case (DFIR_STATE_BACKUP_MAX_BYTES, default
+   * DEFAULT_MAX_BYTES). 0 = no byte cap. Enforced per case rather than host-wide on purpose:
+   * a global budget would delete one case's snapshots because a different case grew, which is
+   * not a trade-off an investigator can predict. Host-level pressure is reported instead —
+   * see the /diagnostics backups block and the DFIR_DISK_WARN_PCT check.
+   */
+  maxBytes: number;
+}
+
+/** What a prune pass did, so callers can log an overrun and diagnostics can report it. */
+export interface BackupPruneResult {
+  /** Backups actually unlinked by this pass. */
+  deleted: number;
+  /** Bytes remaining after the pass. */
+  totalBytes: number;
+  /** True when the survivors still exceed maxBytes because every one of them is exempt. */
+  overBudget: boolean;
 }
 
 export function resolveBackupConfig(env: NodeJS.ProcessEnv = process.env): BackupConfig {
@@ -54,7 +77,13 @@ export function resolveBackupConfig(env: NodeJS.ProcessEnv = process.env): Backu
     0,
     rawInterval != null && rawInterval !== "" ? Number(rawInterval) : 3_600_000,
   );
-  return { retain, preSynthRetain, intervalMs };
+  // Parsed explicitly like retain above: a literal "0" is the operator turning the byte cap off,
+  // while blank or non-numeric must land on the default rather than NaN — every `total > NaN`
+  // comparison is false, which would leave the cap silently disabled.
+  const rawMaxBytes = env.DFIR_STATE_BACKUP_MAX_BYTES;
+  const parsedMaxBytes = rawMaxBytes != null && rawMaxBytes !== "" ? Number(rawMaxBytes) : DEFAULT_MAX_BYTES;
+  const maxBytes = Math.max(0, Number.isFinite(parsedMaxBytes) ? parsedMaxBytes : DEFAULT_MAX_BYTES);
+  return { retain, preSynthRetain, intervalMs, maxBytes };
 }
 
 // Replace colons + dots with dashes so timestamps are safe on Windows filenames.
@@ -117,13 +146,14 @@ export class BackupManager {
 
   /**
    * Snapshot all present SNAPSHOT_STATE_FILES into a single bundle and write it to the backup dir.
-   * Prunes the backup dir afterwards according to the configured retention policy.
+   * Prunes the backup dir afterwards according to the configured retention policy; the prune's
+   * outcome rides along on the result so the caller can log a byte-budget overrun.
    */
   async createBackup(
     caseId: string,
     trigger: BackupTrigger,
     now: string = new Date().toISOString(),
-  ): Promise<BackupInfo> {
+  ): Promise<BackupInfo & { prune: BackupPruneResult }> {
     const dir = this.backupDir(caseId);
     await this.deps.mkdir(dir, { recursive: true });
 
@@ -145,10 +175,8 @@ export class BackupManager {
     await this.deps.atomicWrite(join(dir, filename), json);
 
     const sizeBytes = Buffer.byteLength(json, "utf8");
-    const info: BackupInfo = { filename, createdAt: now, trigger, sizeBytes };
-
-    await this.pruneBackups(caseId);
-    return info;
+    const prune = await this.pruneBackups(caseId);
+    return { filename, createdAt: now, trigger, sizeBytes, prune };
   }
 
   /** List all backups for a case, newest first. */
@@ -220,34 +248,70 @@ export class BackupManager {
   }
 
   /**
-   * Prune the backup dir: keep the newest `retain` backups per case, plus the newest
-   * `preSynthRetain` pre-synthesis backups, which are preserved on top of that cap so frequent
-   * scheduled or pre-import backups can never crowd them out. The ceiling is therefore
-   * `retain + preSynthRetain`; `retain` is always > 0 (see resolveBackupConfig), so a case's
-   * backup dir is always bounded.
+   * Prune the backup dir in two passes.
+   *
+   * Count pass: keep the newest `retain` backups, plus the newest `preSynthRetain` pre-synthesis
+   * backups, which are preserved on top of that cap so frequent scheduled or pre-import backups
+   * can never crowd them out. The ceiling is `retain + preSynthRetain`; `retain` is always > 0
+   * (see resolveBackupConfig), so the entry count is always bounded.
+   *
+   * Byte pass (#295): a bounded count is not a bounded size — 34 bundles of a few hundred MB is
+   * still tens of GB. Whatever survived the count pass is walked oldest → newest, deleting until
+   * the total fits `maxBytes`. Two entries are exempt: the newest backup overall (deleting it
+   * would leave the case with no recovery point) and the newest pre-synthesis backup (the
+   * rollback point the count pass exists to guarantee). Older pre-synthesis backups are NOT
+   * exempt — if they were, `preSynthRetain` large snapshots could blow the budget on their own
+   * and the cap would not be a cap. When only exempt entries remain and the total is still over,
+   * nothing more is deleted and the result reports `overBudget` for the caller to surface.
    */
-  async pruneBackups(caseId: string): Promise<void> {
-    if (this.config.retain <= 0) return; // defensive: hand-built configs bypass resolveBackupConfig
+  async pruneBackups(caseId: string): Promise<BackupPruneResult> {
     const list = await this.listBackups(caseId); // newest first
-    if (list.length <= this.config.retain) return;
+    const doomed = new Set<string>();
 
-    // Always keep the newest preSynthRetain pre-synthesis backups.
-    const preSynth = list.filter((b) => b.trigger === "pre-synthesis");
-    const protectedSet = new Set(preSynth.slice(0, this.config.preSynthRetain).map((b) => b.filename));
+    // ── Count pass ──
+    // retain <= 0 is defensive: hand-built configs bypass resolveBackupConfig's normalisation.
+    if (this.config.retain > 0 && list.length > this.config.retain) {
+      const preSynth = list.filter((b) => b.trigger === "pre-synthesis");
+      const protectedSet = new Set(preSynth.slice(0, this.config.preSynthRetain).map((b) => b.filename));
 
-    // Walk newest → oldest: fill retain slots, skipping protected entries (they're kept regardless).
-    let kept = 0;
-    for (const b of list) {
-      if (protectedSet.has(b.filename)) continue;
-      if (kept < this.config.retain) {
-        kept++;
-      } else {
-        try {
-          await this.deps.unlink(join(this.backupDir(caseId), b.filename));
-        } catch {
-          // Best-effort: a file that's already gone is not an error
-        }
+      // Walk newest → oldest: fill retain slots, skipping protected entries (they're kept regardless).
+      let kept = 0;
+      for (const b of list) {
+        if (protectedSet.has(b.filename)) continue;
+        if (kept < this.config.retain) kept++;
+        else doomed.add(b.filename);
       }
     }
+
+    // ── Byte pass ──
+    const survivors = list.filter((b) => !doomed.has(b.filename)); // still newest first
+    let totalBytes = survivors.reduce((s, b) => s + b.sizeBytes, 0);
+    let overBudget = false;
+
+    if (this.config.maxBytes > 0 && totalBytes > this.config.maxBytes) {
+      const exempt = new Set<string>();
+      if (survivors.length > 0) exempt.add(survivors[0].filename); // newest overall
+      const newestPreSynth = survivors.find((b) => b.trigger === "pre-synthesis");
+      if (newestPreSynth) exempt.add(newestPreSynth.filename);
+
+      for (let i = survivors.length - 1; i >= 0 && totalBytes > this.config.maxBytes; i--) {
+        const b = survivors[i];
+        if (exempt.has(b.filename)) continue;
+        doomed.add(b.filename);
+        totalBytes -= b.sizeBytes;
+      }
+      overBudget = totalBytes > this.config.maxBytes;
+    }
+
+    let deleted = 0;
+    for (const filename of doomed) {
+      try {
+        await this.deps.unlink(join(this.backupDir(caseId), filename));
+        deleted++;
+      } catch {
+        // Best-effort: a file that's already gone is not an error
+      }
+    }
+    return { deleted, totalBytes, overBudget };
   }
 }

@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { createApp, setServerLogger, buildRuntimePipeline } from "../../src/server.js";
+import { BackupManager, type BackupConfig } from "../../src/storage/backupManager.js";
 import { createConsoleLogger } from "../../src/logging/logger.js";
 import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
 
@@ -113,6 +114,40 @@ describe("GET /diagnostics", () => {
     expect(JSON.stringify(res.body)).not.toContain(root);
     expect(res.body.text).not.toContain(root);
     expect(res.body.text).not.toContain("cases root");
+  });
+});
+
+// #267 fixed "the retain number shown isn't the number enforced"; the byte budget must not
+// reintroduce the same gap, so /diagnostics reports the budget and who is breaching it.
+describe("GET /diagnostics backup byte budget (#295)", () => {
+  const config = (maxBytes: number): BackupConfig => ({
+    retain: 24, preSynthRetain: 10, intervalMs: 0, maxBytes,
+  });
+
+  it("reports the byte budget and counts the cases over it", async () => {
+    await store.createCase({ caseId: "over-budget", name: "A", investigator: "x", aiProvider: null });
+    // A 1-byte budget no real bundle can fit, so the case is over the moment it has a backup —
+    // and the backup survives anyway, because the newest one is never evicted.
+    const backupManager = new BackupManager(store, config(1));
+    await backupManager.createBackup("over-budget", "scheduled", "2026-06-28T01:00:00.000Z");
+    const app = createApp(store, { backupManager });
+
+    const res = await request(app).get("/diagnostics");
+
+    expect(res.body.report.backups.maxBytes).toBe(1);
+    expect(res.body.report.backups.overBudgetCases).toBe(1);
+  });
+
+  it("counts no case as over budget when the byte cap is off", async () => {
+    await store.createCase({ caseId: "uncapped", name: "A", investigator: "x", aiProvider: null });
+    const backupManager = new BackupManager(store, config(0));
+    await backupManager.createBackup("uncapped", "scheduled", "2026-06-28T01:00:00.000Z");
+    const app = createApp(store, { backupManager });
+
+    const res = await request(app).get("/diagnostics");
+
+    expect(res.body.report.backups.maxBytes).toBe(0);
+    expect(res.body.report.backups.overBudgetCases).toBe(0);
   });
 });
 

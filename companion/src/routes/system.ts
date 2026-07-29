@@ -250,18 +250,24 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         },
         backups: options.backupManager
           ? await (async () => {
+              const { retain, maxBytes } = options.backupManager!.config;
               let totalCount = 0;
               let totalBytes = 0;
+              // Cases whose backups still exceed the per-case byte budget after pruning — only
+              // possible when every survivor is exempt (the newest backup, the newest
+              // pre-synthesis one). Reported so the budget shown is the budget enforced (#295).
+              let overBudgetCases = 0;
               await Promise.all(cases.map(async (c) => {
                 try {
                   const s = await options.backupManager!.summary(c.caseId);
                   totalCount += s.count;
                   totalBytes += s.totalBytes;
+                  if (maxBytes > 0 && s.totalBytes > maxBytes) overBudgetCases++;
                 } catch { /* best-effort */ }
               }));
-              return { enabled: true, totalCount, totalBytes, retain: options.backupManager!.config.retain };
+              return { enabled: true, totalCount, totalBytes, retain, maxBytes, overBudgetCases };
             })()
-          : { enabled: false, totalCount: 0, totalBytes: 0, retain: 0 },
+          : { enabled: false, totalCount: 0, totalBytes: 0, retain: 0, maxBytes: 0, overBudgetCases: 0 },
         // Reported from the last completed sweep, never computed here: re-hashing every artifact
         // is far too heavy for a route the dashboard polls (#231).
         evidenceIntegrity: options.integrityMonitor?.status() ?? {

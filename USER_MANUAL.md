@@ -1391,7 +1391,7 @@ The server automatically backs up all per-case state (findings, timeline, IOCs, 
 
 View and restore backups in **Settings → Diagnostics → Per-case backup list**. One click restores to any saved state.
 
-Configure: `DFIR_STATE_BACKUP_RETAIN` (how many per-synthesis backups to keep), `DFIR_STATE_BACKUP_INTERVAL_MS` (timer interval).
+Configure: `DFIR_STATE_BACKUP_RETAIN` (how many per-synthesis backups to keep), `DFIR_STATE_BACKUP_INTERVAL_MS` (timer interval), `DFIR_STATE_BACKUP_MAX_BYTES` (disk budget for one case's backups — the oldest are evicted once the total exceeds it; default 10 GiB, 0 = off).
 
 ### Preflight Diagnostics
 

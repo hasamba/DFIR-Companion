@@ -3607,8 +3607,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
         const lastAt = lastScheduledBackupAt.get(c.caseId) ?? 0;
         if (mtime > lastAt) {
           try {
-            await backupManager.createBackup(c.caseId, "scheduled");
+            const { prune } = await backupManager.createBackup(c.caseId, "scheduled");
             lastScheduledBackupAt.set(c.caseId, Date.now());
+            // The byte cap holds everything it is allowed to delete; when the survivors are all
+            // exempt (newest backup, newest pre-synthesis) it cannot be met. Say so rather than
+            // silently overrunning — deleting the last recovery point would be the worse bug (#295).
+            if (prune.overBudget) {
+              logLine(
+                `[backup] ${c.caseId} is over the ${backupConfig.maxBytes}-byte budget ` +
+                `(${prune.totalBytes} bytes in backups that cannot be pruned further)`,
+              );
+            }
           } catch (e) {
             logLine(`[backup] scheduled backup for ${c.caseId} failed: ${(e as Error).message}`);
           }
@@ -3617,7 +3626,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     };
     const backupTimer = setInterval(() => { void runScheduledBackups(); }, backupConfig.intervalMs);
     backupTimer.unref();
-    logLine(`[backup] automatic backups every ${backupConfig.intervalMs / 1000}s (retain ${backupConfig.retain})`);
+    logLine(
+      `[backup] automatic backups every ${backupConfig.intervalMs / 1000}s (retain ${backupConfig.retain}` +
+      `${backupConfig.maxBytes > 0 ? `, max ${backupConfig.maxBytes} bytes per case` : ", no byte cap"})`,
+    );
   }
 
   // Periodic evidence re-verification (#231 item 3). Scheduled here beside the backup timer rather

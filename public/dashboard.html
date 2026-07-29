@@ -3823,9 +3823,10 @@
         <div id="diagBody" style="font-size:12.5px;color:var(--c-cbd3df)">Loading…</div>
         <div class="settings-group-head" style="margin-top:14px">Automatic state backup configuration<span style="color:var(--c-7e8aa0);font-weight:400"> — created before each synthesis + on an interval</span></div>
         <div class="sfield-row3">
-          <div class="sfield"><label>Max backups kept per case<span class="sfield-hint">DFIR_STATE_BACKUP_RETAIN — oldest pruned once exceeded (default 24); 0 = unbounded</span></label><input id="env-DFIR_STATE_BACKUP_RETAIN" placeholder="24" /></div>
-          <div class="sfield"><label>Pre-synthesis slots reserved<span class="sfield-hint">DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN — of the slots above, how many stay reserved for pre-synthesis backups so interval backups can't crowd them out (default 10)</span></label><input id="env-DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN" placeholder="10" /></div>
+          <div class="sfield"><label>Max backups kept per case<span class="sfield-hint">DFIR_STATE_BACKUP_RETAIN — oldest pruned once exceeded (default 24); 0 asks for no limit but is capped at 100</span></label><input id="env-DFIR_STATE_BACKUP_RETAIN" placeholder="24" /></div>
+          <div class="sfield"><label>Pre-synthesis slots reserved<span class="sfield-hint">DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN — pre-synthesis backups kept on top of the cap above, so interval backups can't crowd them out (default 10)</span></label><input id="env-DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN" placeholder="10" /></div>
           <div class="sfield"><label>Interval backup (ms)<span class="sfield-hint">DFIR_STATE_BACKUP_INTERVAL_MS — time-based backup interval (default 3600000 = 1h); 0 = interval backups off</span></label><input id="env-DFIR_STATE_BACKUP_INTERVAL_MS" placeholder="3600000" /></div>
+          <div class="sfield"><label>Max backup bytes per case<span class="sfield-hint">DFIR_STATE_BACKUP_MAX_BYTES — disk budget for one case's backups; oldest are evicted until it fits (default 10737418240 = 10 GiB); 0 = no byte cap. The newest backup and the newest pre-synthesis backup are never evicted, so a case can stay over budget — Diagnostics reports when it does.</span></label><input id="env-DFIR_STATE_BACKUP_MAX_BYTES" placeholder="10737418240" /></div>
         </div>
         <!-- Case backup restore (#180) -->
         <div id="diagCaseBackups" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--c-2a2f3a,#2a2f3a)">
@@ -21418,7 +21419,13 @@
         backupsCard = diagCard("State backups", [
           diagRow("Total backups", `${bk.totalCount} across all cases`),
           diagRow("Disk usage", diagFmtBytes(bk.totalBytes)),
-          diagRow("Retain per case", bk.retain === 0 ? "unlimited" : String(bk.retain)),
+          diagRow("Retain per case", String(bk.retain)),
+          diagRow("Byte budget per case", bk.maxBytes > 0 ? diagFmtBytes(bk.maxBytes) : "no byte cap"),
+          // Only non-zero when pruning has already deleted everything it may: what is left is the
+          // newest backup and the newest pre-synthesis one, and those are never evicted (#295).
+          bk.overBudgetCases > 0
+            ? diagRow("Over budget", `⚠ ${bk.overBudgetCases} case(s) — nothing left to prune`)
+            : "",
           `<div style="font-size:11px;color:#7e8aa0;margin-top:4px">Created automatically before each synthesis. Use "Load case backups" below to browse and restore per-case snapshots.</div>`,
         ].join(""));
       }
