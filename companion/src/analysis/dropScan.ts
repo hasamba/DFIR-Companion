@@ -11,6 +11,7 @@
 
 import { extname, basename } from "node:path";
 import { DROP_LOG_FILE } from "./dropLog.js";
+import { SOCRATES_EXTS } from "../integrations/tools/toolConfig.js";
 
 /** A drop-folder file as seen by one poll: its path relative to `drop/`, plus size + mtime. */
 export interface DropFileStat {
@@ -36,6 +37,34 @@ export const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".b
 // Raw binary evidence the Companion can't parse natively — routed to the external-tool run path (#211),
 // never read as text. Kept in sync with the tool `extensions` in integrations/tools/toolConfig.ts.
 export const RAW_TOOL_EXTS = new Set([".evtx", ".evt", ".pcap", ".pcapng"]);
+
+// Text formats the Companion parses natively. The binary sniff must never override these — a .csv
+// with a stray NUL is still a CSV for the native importer, not a malware sample.
+const NATIVE_TEXT_EXTS = new Set([
+  ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xml", ".log", ".txt", ".yaml", ".yml", ".md", ".html",
+]);
+
+// How much of a file to look at, and how much non-printable content marks it binary.
+const SNIFF_BYTES = 8192;
+const NON_PRINTABLE_RATIO = 0.3;
+
+/**
+ * Heuristic "is this a binary blob rather than text". A NUL byte is decisive; otherwise more than
+ * 30 percent non-printable bytes. Exists because malware samples routinely arrive extensionless or
+ * hash-named, and reading one as text produces silent garbage.
+ */
+export function looksBinary(sample: Buffer): boolean {
+  const view = sample.subarray(0, SNIFF_BYTES);
+  if (view.length === 0) return false;   // nothing to judge on
+  let nonPrintable = 0;
+  for (const b of view) {
+    if (b === 0) return true;
+    // Printable ASCII, common whitespace, or a high byte (assume UTF-8 continuation).
+    const printable = (b >= 0x20 && b < 0x7f) || b === 0x09 || b === 0x0a || b === 0x0d || b >= 0x80;
+    if (!printable) nonPrintable++;
+  }
+  return nonPrintable / view.length > NON_PRINTABLE_RATIO;
+}
 
 // Reserved subfolders the watcher writes to — never re-scanned (moving a file here *is* the dedup).
 export const DROP_PROCESSED = "_processed";
@@ -71,13 +100,21 @@ export function shouldIgnoreDropFile(relpath: string): boolean {
 }
 
 /**
- * Route a (non-ignored) drop file by extension: image → capture pipeline; raw binary (EVTX/PCAP) →
- * external-tool run path; else artifact import (read as text).
+ * Route a (non-ignored) drop file: image → capture pipeline; raw binary → external-tool run path;
+ * else artifact import (read as text).
+ *
+ * `sample` is the first bytes of the file when the caller has them. It only ever promotes an
+ * otherwise-unclaimed file to "raw-tool-input" — a known image or text extension always wins, so
+ * adding the sniff cannot re-route anything that worked before.
  */
-export function classifyDropFile(relpath: string): DropClass {
+export function classifyDropFile(relpath: string, sample?: Buffer): DropClass {
   const ext = extname(relpath).toLowerCase();
   if (IMAGE_EXTS.has(ext)) return "image";
   if (RAW_TOOL_EXTS.has(ext)) return "raw-tool-input";
+  if (SOCRATES_EXTS.includes(ext)) return "raw-tool-input";
+  if (ext === "" || !NATIVE_TEXT_EXTS.has(ext)) {
+    if (sample && looksBinary(sample)) return "raw-tool-input";
+  }
   return "artifact";
 }
 
