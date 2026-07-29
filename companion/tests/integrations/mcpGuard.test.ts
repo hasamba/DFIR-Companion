@@ -9,6 +9,7 @@ const server = (over: Partial<McpServer> = {}): McpServer => ({
   enabled: true,
   allowedTools: [],
   allowedCommands: [],
+  agentEnabled: false,
   timeoutMs: 1000,
   delivery: DEFAULT_DELIVERY,
   ...over,

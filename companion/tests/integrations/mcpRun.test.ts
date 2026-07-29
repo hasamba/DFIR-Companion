@@ -8,7 +8,7 @@ const SCP = { mode: "scp" as const, host: "sift.lab", user: "analyst", remoteDir
 
 const server = (over: Partial<McpServer> = {}, delivery: Partial<McpDelivery> = {}): McpServer => ({
   id: "sift", label: "SIFT", url: "http://192.168.1.50:8080/mcp", enabled: true,
-  allowedTools: ["run_command"], allowedCommands: ["vol.py"], timeoutMs: 1000,
+  allowedTools: ["run_command"], allowedCommands: ["vol.py"], agentEnabled: false, timeoutMs: 1000,
   delivery: { ...DEFAULT_DELIVERY, ...delivery },
   ...over,
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
 import type { McpHttpResponse, McpHttpTransport } from "../../src/integrations/mcp/mcpClient.js";
 import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
+import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
 
 const LAN_URL = "http://192.168.1.50:8080/mcp";
 // Output the existing importers recognize, so the run exercises the real ingest chain.
@@ -46,6 +47,7 @@ async function harness(opts: { text?: string; isError?: boolean } = {}) {
   const mcpServerStore = new McpServerStore(join(root, "mcp-servers.json"));
   const custodyStore = new CustodyStore(store);
   const jobManager = new JobManager();
+  const importUndoStore = new ImportUndoStore(store);
   const transfers: { binary: string; args: string[] }[] = [];
   const mcpTransferRunner: TransferRunner = async (binary, args) => {
     transfers.push({ binary, args });
@@ -53,7 +55,7 @@ async function harness(opts: { text?: string; isError?: boolean } = {}) {
   };
 
   const app = createApp(store, {
-    pipeline, stateStore, importUndoStore: new ImportUndoStore(store),
+    pipeline, stateStore, importUndoStore,
     mcpServerStore, custodyStore, jobManager,
     mcpTransport: fakeTransport(opts), mcpTransferRunner,
   });
@@ -68,7 +70,8 @@ async function harness(opts: { text?: string; isError?: boolean } = {}) {
     delivery: { mode: "scp", host: "sift.lab", user: "analyst", remoteDir: "/cases/incoming" },
   });
 
-  return { app, store, mcpServerStore, custodyStore, jobManager, transfers };
+  return { app, store, mcpServerStore, custodyStore, jobManager, transfers,
+           pipeline, stateStore, importUndoStore, mcpTransferRunner };
 }
 
 /** The run is backgrounded, so wait for its job to reach a terminal state. */
@@ -308,6 +311,100 @@ describe("preview before import", () => {
   it("404s a preview that never existed", async () => {
     const { app } = await harness();
     expect((await request(app).get("/cases/c1/mcp/preview/job_999")).status).toBe(404);
+  });
+});
+
+describe("POST /cases/:id/mcp/agent", () => {
+  const AGENT_JSON = '{"findings":[{"title":"Injected process","description":"malfind hit","severity":"High"}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
+  const agentRunner: ClaudeRunner = async () => ({
+    code: 0, stderr: "",
+    stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n",
+  });
+
+  async function agentHarness(opts: { flag?: string; agentEnabled?: boolean } = {}) {
+    const h = await harness();
+    if (opts.flag === undefined) process.env.DFIR_MCP_AGENT_ENABLED = "on";
+    else delete process.env.DFIR_MCP_AGENT_ENABLED;
+    await h.mcpServerStore.update("sift", { agentEnabled: opts.agentEnabled ?? true });
+    // Rebuild the app so it picks up the injected agent runner.
+    const app = createApp(h.store, {
+      pipeline: h.pipeline, stateStore: h.stateStore, importUndoStore: h.importUndoStore,
+      mcpServerStore: h.mcpServerStore, custodyStore: h.custodyStore, jobManager: h.jobManager,
+      mcpTransport: fakeTransport(), mcpTransferRunner: h.mcpTransferRunner, mcpAgentRunner: agentRunner,
+    });
+    return { ...h, app };
+  }
+
+  afterEach(() => { delete process.env.DFIR_MCP_AGENT_ENABLED; });
+
+  it("501s while the feature flag is off", async () => {
+    const { app } = await agentHarness({ flag: "off" });
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
+    expect(res.status).toBe(501);
+    expect(res.body.error).toMatch(/DFIR_MCP_AGENT_ENABLED/);
+  });
+
+  // Enabling the feature must not expose any server: the agent path cannot enforce the command
+  // allowlist, so each server opts in separately.
+  it("400s when no server has opted in, even with the flag on", async () => {
+    const { app } = await agentHarness({ agentEnabled: false });
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no agent-enabled MCP servers/);
+  });
+
+  it("runs the loop and merges what it found", async () => {
+    const { app, jobManager } = await agentHarness();
+
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate the dump" });
+    expect(res.status).toBe(202);
+    expect(res.body.servers).toEqual(["sift"]);
+    const job = await settle(jobManager, res.body.jobId);
+    expect(job.status).toBe("done");
+
+    const state = await request(app).get("/cases/c1/state");
+    expect(state.body.findings.some((f: { title: string }) => f.title === "Injected process")).toBe(true);
+    expect(state.body.iocs.some((i: { value: string }) => i.value === "10.2.3.4")).toBe(true);
+  });
+
+  it("makes an agent run undoable", async () => {
+    const { app, jobManager } = await agentHarness();
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
+    await settle(jobManager, res.body.jobId);
+
+    const undo = await request(app).get("/cases/c1/import/undo-stack");
+    expect((undo.body.undo || [])[0]?.label).toBe("MCP agent: sift");
+  });
+
+  it("previews the delta without merging it", async () => {
+    const { app, jobManager } = await agentHarness();
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go", preview: true });
+    const job = await settle(jobManager, res.body.jobId);
+    expect(job.status).toBe("done");
+
+    const before = await request(app).get("/cases/c1/state");
+    expect(before.body.findings).toHaveLength(0);
+
+    const p = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(p.body.text).toContain("Injected process");
+
+    const imp = await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
+    expect(imp.status).toBe(200);
+    const after = await request(app).get("/cases/c1/state");
+    expect(after.body.findings).toHaveLength(1);
+  });
+
+  it("400s without a prompt", async () => {
+    const { app } = await agentHarness();
+    expect((await request(app).post("/cases/c1/mcp/agent").send({})).status).toBe(400);
+  });
+
+  it("400s when the opted-in server has no allowed tools", async () => {
+    const { app, mcpServerStore } = await agentHarness();
+    await mcpServerStore.update("sift", { allowedTools: [] });
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no allowed tools/);
   });
 });
 

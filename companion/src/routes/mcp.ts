@@ -6,6 +6,9 @@ import { McpClient } from "../integrations/mcp/mcpClient.js";
 import { createMcpHttpTransport } from "../integrations/mcp/mcpHttpTransport.js";
 import { spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
+import { runMcpAgent } from "../integrations/mcp/mcpAgentRunner.js";
+import { mergeDelta } from "../analysis/stateMerge.js";
+import { deltaSchema, type AnalysisDelta } from "../analysis/responseSchema.js";
 import { tokenEnvKey, type McpServer } from "../integrations/mcp/mcpServerStore.js";
 import { resolveContainedPath } from "../integrations/tools/runToolImport.js";
 import { logActivity } from "../analysis/activityLog.js";
@@ -192,6 +195,40 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     void label;
     return r;
   }
+
+  /**
+   * Merge an agent's delta into case state, with an undo checkpoint.
+   *
+   * Goes through mergeDelta — the same path every other AI response takes — rather than the import
+   * chain, because a delta is already findings/IOCs/events and has no file format to detect. The
+   * delta was schema-validated and stripped of `extractedFrom` in the runner: everything the agent
+   * saw came from tool output, which is untrusted.
+   */
+  async function applyAgentDelta(
+    caseId: string, serverLabel: string, delta: AnalysisDelta,
+  ): Promise<{ findings: number; iocs: number; events: number }> {
+    if (!options.stateStore) throw new Error("state store not configured");
+    const before = await options.stateStore.load(caseId);
+    const merged = mergeDelta(before, delta, {
+      windowSequence: 0,
+      timestamp: new Date().toISOString(),
+      sourceScreenshots: [],
+    });
+    await options.stateStore.save(merged);
+    const counts = {
+      findings: merged.findings.length - before.findings.length,
+      iocs: merged.iocs.length - before.iocs.length,
+      events: merged.forensicTimeline.length - before.forensicTimeline.length,
+    };
+    if (counts.findings > 0 || counts.iocs > 0 || counts.events > 0) {
+      await pushImportCheckpoint(caseId, before, `MCP agent: ${serverLabel}`);
+    }
+    options.onState?.(merged);
+    return counts;
+  }
+
+  /** The kind an agent preview is staged under; it is a delta, not a file any importer detects. */
+  const AGENT_DELTA_KIND = "mcp-agent-delta";
 
   // A job id is the preview's filename, and it arrives from the client on the approve/discard
   // routes. Only the shape JobManager mints is accepted, so nothing can walk out of the directory.
@@ -382,6 +419,17 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const p = await readPreview(caseId, req.params.jobId);
     if (!p) return res.status(404).json({ error: "no preview for that run — it may have been imported, discarded, or lost to a restart" });
     try {
+      // An agent preview holds a delta, not tool output — merge it rather than routing it through
+      // importers that have no format to detect.
+      if (p.kind === AGENT_DELTA_KIND) {
+        const r = await applyAgentDelta(caseId, p.tool, deltaSchema.parse(JSON.parse(p.text)));
+        await dropPreview(caseId, req.params.jobId);
+        logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "ai", action: "mcp-agent",
+          detail: `agent on ${p.tool} imported after review → ${r.findings} finding(s), ${r.iocs} IOC(s), ${r.events} event(s)`,
+        });
+        return res.status(200).json({ ok: true, addedEvents: r.events, addedIocs: r.iocs, addedFindings: r.findings });
+      }
       const r = await ingestMcpOutput(caseId, p.server, p.tool, p.label, p.kind, p.text, p.outName);
       await dropPreview(caseId, req.params.jobId);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -444,6 +492,92 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
       return res.status(400).json({ ok: false, error: (err as Error).message });
     }
+  });
+
+  /**
+   * Agentic mode (§7 Mode 2), behind DFIR_MCP_AGENT_ENABLED. Body: `{ prompt, servers?, preview? }`.
+   *
+   * Two independent opt-ins, because this grants more than a manual run: the feature flag, and
+   * `agentEnabled` on each server. Enabling the feature does not expose any server, and registering
+   * a server does not expose it to the agent. mcpAgentRunner's header explains why — the companion
+   * is not the MCP client in this mode, so the command allowlist cannot be enforced.
+   *
+   * Preview is honoured here too, and matters more: an autonomous loop decides for itself what to
+   * report, so reading it before it lands is worth more than on a single deterministic call.
+   */
+  app.post("/cases/:id/mcp/agent", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
+    if (!/^(1|true|on|yes)$/i.test(String(process.env.DFIR_MCP_AGENT_ENABLED ?? "").trim())) {
+      return res.status(501).json({ error: "agentic MCP mode is off — set DFIR_MCP_AGENT_ENABLED=on to enable it" });
+    }
+    if (!(await store.caseExists(caseId))) return res.status(404).json({ error: `case ${caseId} does not exist` });
+    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the agent` });
+    }
+    const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+
+    const wanted = Array.isArray(req.body?.servers) ? (req.body.servers as unknown[]).map(String) : null;
+    const all = await options.mcpServerStore.load();
+    const servers = all.filter((s) => s.enabled && s.agentEnabled && (!wanted || wanted.includes(s.id)));
+    if (servers.length === 0) {
+      return res.status(400).json({ error: "no agent-enabled MCP servers — turn on agent use for a server first" });
+    }
+    if (servers.every((s) => s.allowedTools.length === 0)) {
+      return res.status(400).json({ error: "the selected server(s) have no allowed tools — name the tools the agent may use" });
+    }
+
+    const preview = req.body?.preview === true;
+    const job = options.jobManager?.register({
+      caseId, kind: "mcp", label: `agent (${servers.map((s) => s.id).join(", ")})${preview ? " (preview)" : ""}`,
+      detail: "starting", cancellable: true,
+    });
+
+    void (async () => {
+      try {
+        const tokens: Record<string, string | undefined> = {};
+        for (const s of servers) tokens[s.id] = process.env[tokenEnvKey(s.id)];
+        const result = await runMcpAgent({
+          servers, tokens, prompt,
+          workDir: join(store.caseDir(caseId), ".mcpwork"),
+          bin: process.env.DFIR_AI_CLAUDE_CODE_BIN,
+          model: process.env.DFIR_MCP_AGENT_MODEL,
+          ...(options.mcpAgentRunner ? { runner: options.mcpAgentRunner } : {}),
+          ...(job?.signal ? { signal: job.signal } : {}),
+        });
+
+        if (preview) {
+          await stagePreview(caseId, job?.jobId ?? "", {
+            server: "agent", tool: servers.map((s) => s.id).join("+"), label: prompt.slice(0, 80),
+            kind: AGENT_DELTA_KIND, outName: `agent.${Date.now()}.json`, text: JSON.stringify(result.delta, null, 2),
+          });
+          if (job) options.jobManager?.finish(job.jobId);
+          logActivity(options.activityLogStore, options.onActivity, caseId, {
+            category: "ai", action: "mcp-agent",
+            detail: `agent on ${servers.map((s) => s.id).join(", ")} → awaiting review`,
+          });
+          return;
+        }
+
+        const r = await applyAgentDelta(caseId, servers.map((s) => s.id).join(", "), result.delta);
+        if (job) options.jobManager?.finish(job.jobId);
+        logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "ai", action: "mcp-agent",
+          detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.findings} finding(s), ${r.iocs} IOC(s), ${r.events} event(s)`,
+        });
+      } catch (err) {
+        if (job) options.jobManager?.fail(job.jobId, err);
+        logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "ai", action: "mcp-agent",
+          detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,
+        });
+      }
+    })();
+
+    return res.status(202).json({ ok: true, jobId: job?.jobId ?? null, servers: servers.map((s) => s.id), preview });
   });
 
   // Re-read DFIR_MCP_* from .env so a token saved via the dashboard applies WITHOUT a restart —

@@ -558,6 +558,37 @@ Either route records a **chain-of-custody `transferred` event** naming the desti
 file shows that evidence left this machine, when, and to where. A transfer that fails records
 nothing — the chain never claims a copy that did not happen.
 
+### Agentic mode (off by default)
+
+A single tool call cannot follow a thread. "Investigate this dump" wants a loop — run pslist, notice
+something, pivot to malfind — and that is what agentic mode does: it spawns the Claude Code CLI with
+an MCP config scoped to the servers you chose and lets it drive, then merges what it reports.
+
+`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, preview? }`. It needs **Claude Code installed
+and authenticated on the Companion host**, which nothing else here does.
+
+**Read this before turning it on.** In a normal run the Companion is the MCP client, so every call
+passes the tool *and* command allowlists. In agentic mode it is not: `claude` talks to the servers
+directly. Only the tool allowlist survives, as `--allowed-tools`. **The command allowlist cannot be
+enforced.** Letting an agent use a command-runner tool therefore grants an autonomous loop the
+ability to choose its own command lines on that host.
+
+That is why it takes two separate opt-ins, neither implying the other:
+
+1. `DFIR_MCP_AGENT_ENABLED=on` — the feature
+2. **Agent use** on each server — which servers it may reach
+
+What the mode still guarantees: tools are enumerated, never wildcarded, so a server cannot widen its
+own reach by advertising new ones; `--strict-mcp-config` means only the generated config is used,
+never your own MCP servers; `--setting-sources ""` means no `CLAUDE.md`, hooks or settings; the run
+is turn-limited; and the bearer token is written to an owner-only file that is deleted afterwards,
+never passed on the command line where any process could read it.
+
+The agent's reply is schema-validated and stripped of provenance claims before it is merged —
+everything it saw came from tool output, which is untrusted. It is never asked for a case summary,
+so a run adds findings, IOCs and events without rewriting your conclusions. Preview works here too,
+and matters more: an autonomous loop decides for itself what to report.
+
 ### Tokens
 
 Bearer tokens are **not** stored in the registry JSON. They live in `.env` as
@@ -1001,6 +1032,8 @@ survives a server restart; results appear on the dashboard timeline/IOCs.
 | Variable | Default | Description |
 |---|---|---|
 | `DFIR_MCP_<ID>_TOKEN` | — | Bearer token for the registered MCP server with that id — e.g. `DFIR_MCP_SIFT_TOKEN` for a server whose id is `sift`. The server list itself lives in `tools/mcp-servers.json` beside `cases/`; only the token belongs in `.env`, where it is redacted in Settings like every other secret. Save one and `POST /mcp/reconnect` applies it without a restart. |
+| `DFIR_MCP_AGENT_ENABLED` | `off` | Enables agentic mode. Off by default, and on its own it exposes nothing — each server must also opt in. Requires Claude Code authenticated on this host. Read [Agentic mode](#agentic-mode-off-by-default) first: the command allowlist cannot be enforced in that mode. |
+| `DFIR_MCP_AGENT_MODEL` | (CLI default) | Model for the agentic loop, passed to `claude --model`. |
 
 Registering a server is a security decision, not just configuration — see
 [Registering an MCP server](#registering-an-mcp-server).

@@ -86,6 +86,10 @@ export const mcpServerSchema = z.object({
   // a call actually carries a command argument — see mcpGuard.assertCallAllowed, which explains why
   // allowedTools alone cannot bound a server whose one useful tool runs arbitrary argv.
   allowedCommands: z.array(z.string()).catch([]),
+  // Whether an autonomous agent loop (§7 Mode 2) may use this server. Separate from `enabled`, and
+  // deliberately not implied by it: the agent path cannot enforce allowedCommands (see
+  // mcpAgentRunner's header), so exposing a server to it grants strictly more than a manual run.
+  agentEnabled: z.boolean().catch(false),
   // Matches ToolConfig's default. A real Volatility run outlives it, which is why the call is a
   // JobManager job rather than a request (§7) — this bounds the individual HTTP round-trip.
   timeoutMs: z.number().catch(300_000),
@@ -99,6 +103,7 @@ export interface McpServerInput {
   enabled?: boolean;
   allowedTools?: string[] | string;      // array or a comma/space-separated string
   allowedCommands?: string[] | string;   // likewise
+  agentEnabled?: boolean;
   timeoutMs?: number;
   delivery?: Partial<McpDelivery>;
 }
@@ -152,6 +157,7 @@ function fromInput(input: McpServerInput, id: string): McpServer {
     label: String(input.label ?? "").trim().slice(0, 120),
     url: String(input.url ?? "").trim().replace(/\/+$/, ""),
     enabled: input.enabled !== false,
+    agentEnabled: input.agentEnabled === true,
     allowedTools: normalizeNames(input.allowedTools),
     // Stored by basename, the same form mcpGuard compares against, so "/usr/bin/grep" and "grep"
     // are not two different rules.
@@ -229,6 +235,7 @@ export class McpServerStore {
       label: patch.label ?? cur.label,
       url,
       enabled: patch.enabled ?? cur.enabled,
+      agentEnabled: patch.agentEnabled ?? cur.agentEnabled,
       allowedTools: patch.allowedTools ?? cur.allowedTools,
       allowedCommands: patch.allowedCommands ?? cur.allowedCommands,
       timeoutMs: patch.timeoutMs ?? cur.timeoutMs,

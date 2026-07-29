@@ -244,7 +244,7 @@ describe("isToolAllowed", () => {
   const server = (allowedTools: string[]): McpServer =>
     ({
       id: "sift", label: "SIFT", url: LAN_URL, enabled: true,
-      allowedTools, allowedCommands: [], timeoutMs: 1000, delivery: DEFAULT_DELIVERY,
+      allowedTools, allowedCommands: [], agentEnabled: false, timeoutMs: 1000, delivery: DEFAULT_DELIVERY,
     });
 
   it("allows a tool that was named", () => {

@@ -170,6 +170,7 @@ import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
 import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
 import type { McpHttpTransport } from "./integrations/mcp/mcpClient.js";
 import type { TransferRunner } from "./integrations/mcp/mcpDelivery.js";
+import type { ClaudeRunner } from "./providers/claudeRunner.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -535,6 +536,8 @@ export interface AppOptions {
   mcpTransport?: McpHttpTransport;
   // How evidence is pushed to an analysis host (scp). Defaults to a real spawn; tests inject.
   mcpTransferRunner?: TransferRunner;
+  // Drives agentic MCP mode (spawns the claude CLI). Tests inject; absent = the real spawn.
+  mcpAgentRunner?: ClaudeRunner;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
