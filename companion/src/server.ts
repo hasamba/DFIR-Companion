@@ -1592,15 +1592,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // tools go through runToolAndIngest (synchronous); HTTP tools hand off to startSocratesAnalysis and
   // return immediately, with the poller landing the verdicts later. Shared by the drop-folder auto-run
   // and the "Run pending" batch so both behave identically.
-  async function runDropToolAndIngest(caseId: string, toolId: string, fullPath: string, name: string): Promise<void> {
+  // Returns true when the work is ASYNCHRONOUS (handed off, not finished) so the caller can log
+  // SUBMITTED rather than claiming an import that has not happened yet.
+  async function runDropToolAndIngest(
+    caseId: string, toolId: string, fullPath: string, name: string, dropRelpath?: string,
+  ): Promise<boolean> {
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
     if (cfg.transport === "http") {
-      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name });
-      return;
+      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name, dropRelpath });
+      return true;
     }
     const r = await runToolAndIngest(caseId, toolId, fullPath);
     if (!r.analyzed) throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
+    return false;
   }
 
   // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
@@ -1645,7 +1650,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // and it extracts through Python's zipfile, which cannot open AES archives at all.
   async function startSocratesAnalysis(
     caseId: string,
-    input: { data: Buffer; filename: string; zipPassword?: string },
+    input: { data: Buffer; filename: string; zipPassword?: string; dropRelpath?: string },
   ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }> {
     const cfg = liveToolConfigs().get("socrates");
     if (!cfg?.baseUrl) throw new Error("SO-CRATES is not configured — set DFIR_TOOL_SOCRATES_URL in Settings → Tools");
@@ -1704,6 +1709,20 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
         }),
       }, { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) })
+        .then(async (final) => {
+          // Close the SUBMITTED line in drop-log.txt with what actually happened. Without this the
+          // audit trail ends at "handed to socrates" and never says whether verdicts landed — and a
+          // failed analysis would leave a file sitting in _processed/ with no recorded outcome.
+          if (!input.dropRelpath) return;
+          const entry: DropLogEntry = final.status === "imported"
+            ? {
+              status: "IMPORTED", relpath: input.dropRelpath,
+              reason: `via socrates — +${final.addedEvents ?? 0} event(s), +${final.addedIocs ?? 0} IOC(s)`,
+            }
+            : { status: "FAILED", relpath: input.dropRelpath, reason: final.error ?? "SO-CRATES analysis failed" };
+          await appendDropLog(dropDirOf(caseId), formatDropLogLines([entry], new Date().toISOString()))
+            .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
+        })
         .catch(() => { /* pollUntilImported already records failures on the job */ });
     }
 
@@ -1803,7 +1822,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     }
   }
 
-  async function processDropFile(caseId: string, dropDir: string, file: DropFileStat): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput }> {
+  async function processDropFile(
+    caseId: string, dropDir: string, file: DropFileStat,
+  ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
@@ -1846,8 +1867,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           // Not runnable now → pending (banner). Do NOT move the file so a manual run can still act on it.
           return { ok: false, pending: { relpath: file.relpath, ext, suggestedTool: toolId ?? suggestedToolForExtension(ext), configured: !!toolId } };
         }
-        await runDropToolAndIngest(caseId, toolId, full, name);
-        return { ok: true };
+        const async_ = await runDropToolAndIngest(caseId, toolId, full, name, file.relpath);
+        // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
+        // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
+        return async_ ? { ok: true, submitted: `handed to ${toolId}; verdicts land when analysis finishes` } : { ok: true };
       }
       if (isOversize(file.size, dropMaxBytes)) {
         return { ok: false, reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path` };
@@ -1893,6 +1916,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
 
       const imported: string[] = [];
+      // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
+      // job itself when the analysis resolves.
+      const submitted: { relpath: string; reason: string }[] = [];
       const failed: DropFailure[] = [];
       const pendingRawInputs: PendingRawInput[] = [];
       let processed = 0;
@@ -1907,7 +1933,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
               pendingRawInputs.push(res.pending);
               return;
             }
-            if (res.ok) imported.push(file.relpath);
+            // A submitted file still counts as "imported" for the dashboard's drop banner (it was
+            // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
+            if (res.ok && res.submitted) { imported.push(file.relpath); submitted.push({ relpath: file.relpath, reason: res.submitted }); }
+            else if (res.ok) imported.push(file.relpath);
             else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
             await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
             nextSeen.delete(file.relpath); // moved out of the watched area — forget it
@@ -1931,7 +1960,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
       // the ~10s poll interval until it resolves).
       const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
-        { imported, failed, pendingRawInputs },
+        // `imported` minus the async handoffs — those get a SUBMITTED line instead, so a file is
+        // never claimed as imported before its verdicts actually land.
+        { imported: imported.filter((r) => !submitted.some((s) => s.relpath === r)), submitted, failed, pendingRawInputs },
         dropPendingLogged.get(caseId) ?? new Set<string>(),
       );
       dropPendingLogged.set(caseId, nextLoggedPending);

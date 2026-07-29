@@ -10,17 +10,21 @@ import { join } from "node:path";
 /** The log file's basename inside `drop/`. Also added to dropScan.ts's IGNORED_BASENAMES. */
 export const DROP_LOG_FILE = "drop-log.txt";
 
-export type DropLogStatus = "IMPORTED" | "FAILED" | "PENDING";
+// SUBMITTED is distinct from IMPORTED on purpose: an ASYNCHRONOUS tool (SO-CRATES over HTTP) has only
+// been handed the file at that point. Its verdicts land minutes later, or the analysis fails — either
+// way a second line follows. Logging the handoff as IMPORTED would make this file claim an import that
+// had not happened, and would still claim it if the analysis later failed.
+export type DropLogStatus = "IMPORTED" | "SUBMITTED" | "FAILED" | "PENDING";
 
 export interface DropLogEntry {
   status: DropLogStatus;
   relpath: string;
-  /** Present for FAILED and PENDING; optional for IMPORTED (e.g. "via <tool>" when resolved from pending). */
+  /** Present for FAILED, PENDING and SUBMITTED; optional for IMPORTED (e.g. "via <tool>"). */
   reason?: string;
 }
 
-// "IMPORTED" is the longest status (8 chars); pad the others to match for column alignment.
-const STATUS_WIDTH = 8;
+// "SUBMITTED" is the longest status (9 chars); pad the others to match for column alignment.
+const STATUS_WIDTH = 9;
 
 // Collapse embedded newlines (and surrounding whitespace) to a single space so one logical event
 // never splits across multiple physical lines in drop-log.txt. Real Error messages (Node/Zod/parser)
@@ -52,6 +56,8 @@ export async function appendDropLog(dropDir: string, lines: readonly string[]): 
 export function buildSweepLogEntries(
   sweep: {
     imported: readonly string[];
+    /** Handed to an asynchronous tool; the outcome is appended later. Optional for older callers. */
+    submitted?: readonly { relpath: string; reason: string }[];
     failed: readonly { relpath: string; reason: string }[];
     pendingRawInputs: readonly { relpath: string; ext: string; configured: boolean }[];
   },
@@ -59,6 +65,7 @@ export function buildSweepLogEntries(
 ): { entries: DropLogEntry[]; nextLoggedPending: Set<string> } {
   const entries: DropLogEntry[] = [
     ...sweep.imported.map((relpath): DropLogEntry => ({ status: "IMPORTED", relpath })),
+    ...(sweep.submitted ?? []).map((s): DropLogEntry => ({ status: "SUBMITTED", relpath: s.relpath, reason: s.reason })),
     ...sweep.failed.map((f): DropLogEntry => ({ status: "FAILED", relpath: f.relpath, reason: f.reason })),
     ...sweep.pendingRawInputs
       .filter((p) => !loggedPending.has(p.relpath))
