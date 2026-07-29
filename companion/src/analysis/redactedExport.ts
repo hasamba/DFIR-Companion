@@ -88,6 +88,38 @@ export function applyAnonDeep<T>(value: T, redact: (s: string) => string): T {
   return value;
 }
 
+/**
+ * Fields of a custody record that survive redaction untouched (#362).
+ *
+ * A SHA-256 is not PII: it reveals nothing about a file's contents, its name, or the host it came
+ * from. Tokenizing it leaves an external recipient a chain they cannot check against the evidence
+ * they actually hold, which is most of what the appendix is for. `prevHash` goes with it — without
+ * it the chain cannot be walked at all in the redacted copy. `seq` is an ordinal and `event` a fixed
+ * enum; neither can carry case data, and both are listed here so they survive by DESIGN rather than
+ * because the anonymizer's detectors happen not to match them.
+ *
+ * Everything else is redacted, including fields added later: `artifactPath` carries filenames and
+ * case ids, `source` a hostname or page URL, `collectedBy` an analyst's name.
+ */
+const CUSTODY_PRESERVED_FIELDS: ReadonlySet<string> = new Set(["sha256", "prevHash", "seq", "event"]);
+
+/**
+ * Redact custody records for the redacted export, field by field.
+ *
+ * Deliberately NOT applyAnonDeep over the whole record: the point is that unknown fields are
+ * redacted by DEFAULT. A field added to CustodyRecord later leaks only if someone explicitly adds it
+ * to the allow-list above, which is the safe direction for a mistake to fall.
+ */
+export function redactCustodyRecords<T extends object>(records: readonly T[], redact: (s: string) => string): T[] {
+  return records.map((record) => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
+      out[key] = CUSTODY_PRESERVED_FIELDS.has(key) ? value : applyAnonDeep(value, redact);
+    }
+    return out as T;
+  });
+}
+
 export interface RedactionSummary {
   caseId: string;
   options: RedactedExportOptions;

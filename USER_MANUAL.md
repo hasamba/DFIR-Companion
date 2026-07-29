@@ -1011,7 +1011,7 @@ The report carries an **Appendix — Chain of Custody**: every artifact with its
 
 Generating a report also writes `custody-manifest.json` beside it, and the encrypted case archive carries one inside: the same chain, signed with this installation's secret so tampering is detectable. The signature proves the manifest has not been altered since *this* installation signed it; it cannot prove *which* installation signed it to someone who does not hold the secret.
 
-**In a redacted case package**, custody records pass through the anonymizer with everything else — and it does not distinguish a hash from a hostname, so the redacted appendix shows the *structure* of the chain but not verifiable hashes. Use the normal report or the signed manifest when the hashes are the point.
+**In a redacted case package**, the appendix is redacted field by field: artifact hashes, the ordinal and the event name survive intact so the recipient can still check the chain against the evidence they hold, while paths, source hosts and collector names are tokenized. Any field added to a custody record in future is redacted by default.
 
 ### Report customization
 

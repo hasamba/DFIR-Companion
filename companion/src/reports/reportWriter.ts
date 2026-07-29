@@ -66,7 +66,7 @@ import { buildBrandingContext, defaultReportTemplate, renderTemplateString, type
 import type { ReportTemplateStore } from "./reportTemplateStore.js";
 import type { ReportTemplateControlStore } from "./reportTemplateControl.js";
 import type { ComplianceControlStore, ComplianceControl } from "../analysis/complianceControl.js";
-import { applyAnonDeep, type RedactedReportContents } from "../analysis/redactedExport.js";
+import { applyAnonDeep, redactCustodyRecords, type RedactedReportContents } from "../analysis/redactedExport.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { KevCatalog } from "../analysis/kev.js";
@@ -615,7 +615,9 @@ export class ReportWriter {
     // Custody records live in custody.jsonl, NOT in investigation.json, so they never passed
     // through the applyAnonDeep(state) above. Redacting them here is what stops the appendix
     // shipping real hostnames, analyst names and filesystem paths to an external party (#231).
-    const custody = this.custodyStore ? applyAnonDeep(await this.custodyStore.load(caseId), redact) : undefined;
+    // Field by field rather than wholesale, so the artifact hashes survive and the recipient can
+    // actually check the chain against the evidence they hold (#362).
+    const custody = this.custodyStore ? redactCustodyRecords(await this.custodyStore.load(caseId), redact) : undefined;
     return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl, custody);
   }
 }
