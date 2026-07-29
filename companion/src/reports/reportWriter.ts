@@ -7,6 +7,7 @@ import { projectScope } from "../analysis/scopeProject.js";
 import { applyFalsePositive, filterFalsePositiveEvents, type FalsePositiveStore } from "../analysis/falsePositive.js";
 import { renderMarkdownReport } from "./markdown.js";
 import type { CustodyRecord, CustodyStore } from "../analysis/custody.js";
+import { assembleCustodyManifest } from "../analysis/custodyManifest.js";
 import { renderHtmlReport } from "./html.js";
 import { renderDocxReport } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
@@ -104,6 +105,8 @@ export interface ReportWriterOptions {
   complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
   clockSkew?: ClockSkewStore;   // #228 per-host clock offsets + the alignment toggle
   custodyStore?: CustodyStore;   // #231 chain-of-custody appendix
+  /** Signs the custody manifest that travels with a redacted package. Without it, none is produced. */
+  instanceSecret?: Buffer;
 }
 
 export class ReportWriter {
@@ -124,6 +127,7 @@ export class ReportWriter {
   private readonly reportVersions?: ReportVersionStore;
   private readonly complianceControl?: ComplianceControlStore;
   private readonly custodyStore?: CustodyStore;
+  private readonly instanceSecret?: Buffer;
 
   constructor(
     private readonly cases: CaseStore,
@@ -132,6 +136,7 @@ export class ReportWriter {
   ) {
     this.scope = opts.scope;
     this.custodyStore = opts.custodyStore;
+    this.instanceSecret = opts.instanceSecret;
     this.falsePositives = opts.falsePositives;
     this.reportMeta = opts.reportMeta;
     this.customerExposure = opts.customerExposure;
@@ -618,6 +623,19 @@ export class ReportWriter {
     // Field by field rather than wholesale, so the artifact hashes survive and the recipient can
     // actually check the chain against the evidence they hold (#362).
     const custody = this.custodyStore ? redactCustodyRecords(await this.custodyStore.load(caseId), redact) : undefined;
-    return this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl, custody);
+    // A manifest describing the REDACTED appendix, signed so this installation can later prove what
+    // it sent. Built from the redacted records, never the store's: handing the real ones to an
+    // external party is precisely what this export exists to prevent (#362 follow-up). The chain head
+    // and any breaks come from the real log — hashes, line numbers and an enum carry no case data.
+    const custodyManifest = this.custodyStore && this.instanceSecret && custody
+      ? assembleCustodyManifest({
+          caseId,
+          records: custody,
+          head: await this.custodyStore.chainHead(caseId),
+          breaks: await this.custodyStore.verifyChain(caseId),
+          secret: this.instanceSecret,
+        })
+      : undefined;
+    return { ...this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, undefined, lateralPaths, undefined, complianceControl, custody), custodyManifest };
   }
 }

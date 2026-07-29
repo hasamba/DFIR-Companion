@@ -1009,7 +1009,7 @@ Click **Export** in the toolbar to see all options:
 
 The report carries an **Appendix — Chain of Custody**: every artifact with its SHA-256 and the full sequence of events that touched it. It is a normal report section — reorder or switch it off in **Settings → Report Templates** like any other. On in the Standard template, off in the Executive Brief (a per-artifact table is operator detail, not client-facing content).
 
-Generating a report also writes `custody-manifest.json` beside it, and the encrypted case archive carries one inside: the same chain, signed with this installation's secret so tampering is detectable. The signature proves the manifest has not been altered since *this* installation signed it; it cannot prove *which* installation signed it to someone who does not hold the secret.
+Generating a report also writes `custody-manifest.json` beside it, and the encrypted archive and the redacted package each carry one inside — the redacted package's is built over the redacted records, so it describes the appendix that package actually ships. The signature proves the manifest has not been altered since *this* installation signed it, so you can later prove what you sent; it does not let a recipient verify anything on their own, since verification needs the instance secret they do not have.
 
 **In a redacted case package**, the appendix is redacted field by field: artifact hashes, the ordinal and the event name survive intact so the recipient can still check the chain against the evidence they hold, while paths, source hosts and collector names are tokenized. Any field added to a custody record in future is redacted by default.
 

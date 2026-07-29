@@ -68,31 +68,50 @@ export async function buildCustodyManifest(
     custody.chainHead(caseId),
     custody.verifyChain(caseId),
   ]);
+  return assembleCustodyManifest({ caseId, records, head, breaks, caseDir: cases.caseDir(caseId), secret });
+}
 
-  const caseDir = cases.caseDir(caseId);
+/**
+ * Build and sign a manifest from records supplied by the caller, rather than read from the store.
+ *
+ * Split out for the redacted export (#362 follow-up), which must publish a manifest describing the
+ * REDACTED appendix it ships — the same records, with paths and hostnames tokenized. Handing the
+ * store's real records to an external party is exactly what that export exists to prevent.
+ *
+ * `caseDir` is optional because a redacted path is a token, not a location: there is nothing to make
+ * it relative to, and the token is published as-is.
+ */
+export function assembleCustodyManifest(input: {
+  caseId: string;
+  records: readonly CustodyRecord[];
+  head: CustodyChainHead;
+  breaks: CustodyChainBreak[];
+  caseDir?: string;
+  secret: Buffer;
+}): CustodyManifest {
   // Insertion order = first-seen order, so artifacts appear as they entered the case.
   const byArtifact = new Map<string, CustodyRecord[]>();
-  for (const record of records) {
+  for (const record of input.records) {
     const existing = byArtifact.get(record.artifactPath);
     if (existing) existing.push(record);
     else byArtifact.set(record.artifactPath, [record]);
   }
 
   const artifacts: CustodyManifestArtifact[] = [...byArtifact].map(([artifactPath, chain]) => ({
-    path: toCaseRelative(caseDir, artifactPath) ?? artifactPath,
+    path: (input.caseDir ? toCaseRelative(input.caseDir, artifactPath) : null) ?? artifactPath,
     sha256: chain[chain.length - 1].sha256,
     chain,
   }));
 
   const unsigned: Omit<CustodyManifest, "signature"> = {
     version: 1,
-    caseId,
+    caseId: input.caseId,
     generatedAt: new Date().toISOString(),
     generatedBy: getAppVersion(),
-    chain: { ...head, breaks },
+    chain: { ...input.head, breaks: input.breaks },
     artifacts,
   };
-  return { ...unsigned, signature: { algorithm: "HMAC-SHA256", value: sign(unsigned, secret) } };
+  return { ...unsigned, signature: { algorithm: "HMAC-SHA256", value: sign(unsigned, input.secret) } };
 }
 
 /**
