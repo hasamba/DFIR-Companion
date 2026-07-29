@@ -6069,6 +6069,24 @@
       </div>
       <div id="activityLogPanel">—</div>
     </section>
+    <section id="sec-mcp" style="grid-column: 1 / -1" class="collapsed"><h2>MCP Analysis<span class="ev-sub">run a tool on one of your own MCP servers against case evidence &mdash; the result imports like any other tool output, and the transfer is written to the chain of custody</span></h2>
+      <div id="mcpRunUnavailable" style="display:none;font-size:12px;color:var(--c-9aa4b2)">No MCP servers registered &mdash; add one in Settings &rarr; Tools.</div>
+      <div id="mcpRunForm" style="display:none">
+        <div class="sgrid">
+          <div class="sfield"><label>Server<span class="sfield-hint">registered + enabled servers</span><select id="mcpRunServer"></select></label></div>
+          <div class="sfield"><label>Tool<span class="sfield-hint">only tools this server is allowed to run</span><select id="mcpRunTool"></select></label></div>
+          <div class="sfield"><label>Evidence file<span class="sfield-hint">a path inside this case; leave blank for a tool that needs no file</span><input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" /><datalist id="mcpRunTargets"></datalist></label></div>
+        </div>
+        <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
+          <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
+        </label>
+        <div style="margin:6px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="mcpRunBtn" type="button">&#9654; Run</button>
+          <span id="mcpRunMsg" class="manual-msg"></span>
+        </div>
+        <div id="mcpRunJob" style="font-size:12px;color:var(--c-9aa4b2)"></div>
+      </div>
+    </section>
     <section id="sec-custody" style="grid-column: 1 / -1"><h2>Chain of Custody<span class="ev-sub">every stored artifact, its hash, and each event that touched it &mdash; the appendix that ships in the report</span></h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <button id="custodyVerifyBtn" type="button" title="Re-hash every artifact in this case now and re-walk the custody log">&#128274; Verify now</button>
@@ -12820,6 +12838,118 @@
     }
 
     // ── Background jobs (#225) ──────────────────────────────────────────────────
+    // MCP Analysis section (#296): pick a registered server + one of the tools it is allowed to run,
+    // point it at case evidence, and let the result import like any other tool output.
+    //
+    // A form rather than the per-file "shall I run X on this?" button the Import dialog offers for
+    // local tools: the servers this targets expose a command RUNNER (sift's run_command,
+    // remnux's run_tool), so the thing being chosen is a command line, not a tool-plus-file.
+    let _mcpRunServers = [];
+    function mcpRunCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
+    function loadMcpRun() {
+      const form = document.getElementById("mcpRunForm");
+      const none = document.getElementById("mcpRunUnavailable");
+      if (!form || !none) return;
+      fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
+        _mcpRunServers = ((j && j.servers) || []).filter(s => s.enabled);
+        if (!_mcpRunServers.length) { form.style.display = "none"; none.style.display = ""; return; }
+        none.style.display = "none"; form.style.display = "";
+        const sel = document.getElementById("mcpRunServer");
+        const keep = sel.value;
+        sel.innerHTML = _mcpRunServers.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("");
+        if (keep && _mcpRunServers.some(s => s.id === keep)) sel.value = keep;
+        mcpRunServerChanged();
+      }).catch(() => { form.style.display = "none"; none.style.display = ""; });
+      loadMcpRunTargets();
+    }
+    // The evidence already under custody is the best available answer to "what can I point this at",
+    // and it needs no new endpoint. Free text still works for anything not yet recorded.
+    function loadMcpRunTargets() {
+      const dl = document.getElementById("mcpRunTargets");
+      const cid = mcpRunCaseId();
+      if (!dl || !cid) return;
+      fetch(`/cases/${encodeURIComponent(cid)}/custody`).then(r => r.ok ? r.json() : null).then(j => {
+        const paths = [...new Set(((j && j.records) || []).map(r => r.artifactPath).filter(Boolean))];
+        dl.innerHTML = paths.map(p => `<option value="${esc(p)}"></option>`).join("");
+      }).catch(() => {});
+    }
+    function mcpRunServerChanged() {
+      const server = _mcpRunServers.find(s => s.id === document.getElementById("mcpRunServer").value);
+      const toolSel = document.getElementById("mcpRunTool");
+      const msg = document.getElementById("mcpRunMsg");
+      if (!server) return;
+      const allowed = server.allowedTools || [];
+      toolSel.innerHTML = allowed.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("")
+        || `<option value="">(no tools allowed)</option>`;
+      // Both allowlists deny by default, so an unconfigured server can run nothing. Say which one is
+      // missing here rather than letting the run fail with a refusal to decode.
+      if (!allowed.length) msg.textContent = `"${server.label}" has no allowed tools — Probe it in Settings → Tools, then name the ones it may run.`;
+      else if (!(server.allowedCommands || []).length) msg.textContent = `"${server.label}" has no allowed commands — a command-runner tool will refuse every run until you name the binaries.`;
+      else msg.textContent = "";
+      mcpRunToolChanged();
+    }
+    function mcpRunToolChanged() {
+      const server = _mcpRunServers.find(s => s.id === document.getElementById("mcpRunServer").value);
+      const box = document.getElementById("mcpRunArgs");
+      if (!server || !box) return;
+      // Only prefill an untouched box — never clobber something the analyst is editing.
+      if (box.value.trim() && box.dataset.touched === "1") return;
+      const first = (server.allowedCommands || [])[0];
+      box.value = first
+        ? JSON.stringify({ command: [first, "<target>"], purpose: "" }, null, 2)
+        : "{}";
+    }
+    function runMcpTool() {
+      const cid = mcpRunCaseId();
+      const msg = document.getElementById("mcpRunMsg");
+      const jobEl = document.getElementById("mcpRunJob");
+      const btn = document.getElementById("mcpRunBtn");
+      if (!cid) { msg.textContent = "connect a case first"; return; }
+      const serverId = document.getElementById("mcpRunServer").value;
+      const tool = document.getElementById("mcpRunTool").value;
+      if (!tool) { msg.textContent = "this server has no allowed tools"; return; }
+      let args;
+      try { args = JSON.parse(document.getElementById("mcpRunArgs").value || "{}"); }
+      catch (e) { msg.textContent = "arguments are not valid JSON: " + e.message; return; }
+      const targetPath = (document.getElementById("mcpRunTarget").value || "").trim();
+
+      btn.disabled = true; msg.textContent = "starting…"; jobEl.textContent = "";
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tool, args, ...(targetPath ? { targetPath } : {}) }),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        btn.disabled = false;
+        if (!ok) { msg.textContent = (j && j.error) || "run failed"; return; }
+        msg.textContent = `running ${serverId}/${tool}…`;
+        watchMcpJob(cid, j.jobId);
+      }).catch(e => { btn.disabled = false; msg.textContent = "run failed: " + e.message; });
+    }
+    // The run is a background job (a real Volatility run outlives any request), so follow it here.
+    // The toolbar jobs badge shows it too — this is the inline copy for whoever pressed the button.
+    function watchMcpJob(caseIdStr, jobId) {
+      const jobEl = document.getElementById("mcpRunJob");
+      const msg = document.getElementById("mcpRunMsg");
+      if (!jobId) return;
+      let tries = 0;
+      const tick = () => {
+        fetch(`/api/jobs?caseId=${encodeURIComponent(caseIdStr)}`).then(r => r.ok ? r.json() : null).then(d => {
+          const job = ((d && d.jobs) || []).find(x => x.id === jobId);
+          if (!job) { if (++tries < 600) setTimeout(tick, 1000); return; }
+          jobEl.textContent = `${job.status}${job.detail ? " — " + job.detail : ""}`;
+          if (job.status === "running" || job.status === "queued") { if (++tries < 600) setTimeout(tick, 1000); return; }
+          if (job.status === "done") { msg.textContent = "done — result imported"; loadMcpRunTargets(); }
+          else { msg.textContent = job.status === "cancelled" ? "cancelled" : (job.error || "failed"); }
+        }).catch(() => {});
+      };
+      tick();
+    }
+    {
+      const s = document.getElementById("mcpRunServer"); if (s) s.onchange = mcpRunServerChanged;
+      const t = document.getElementById("mcpRunTool"); if (t) t.onchange = mcpRunToolChanged;
+      const a = document.getElementById("mcpRunArgs"); if (a) a.oninput = () => { a.dataset.touched = "1"; };
+      const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
+    }
+
     // A toolbar badge shows the count of RUNNING heavy operations (import / synthesis / enrichment);
     // clicking it opens a popover to view recent jobs and cancel a long/stuck one. Fed by GET
     // /api/jobs and refreshed on the job_changed WS event.
@@ -18135,6 +18265,7 @@
       loadImportMeta(caseId);
       loadDropStatus(caseId);
       loadJobs(caseId);   // #225 background-jobs badge/popover
+      loadMcpRun();       // #296 MCP Analysis section — servers + this case's evidence paths
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
       const lifecycleLoadPromise = loadCaseLifecycle(caseId, loadSignal);
@@ -20730,6 +20861,7 @@
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
+      { id: "sec-mcp",          label: "MCP Analysis" },
       { id: "sec-custody",      label: "Chain of Custody" },
       { id: "sec-case-details", label: "Case Details" },
     ];
