@@ -106,6 +106,34 @@ describe("parseDelta", () => {
     expect(d.forensicEvents?.[0]).toMatchObject({ timestamp: "2026-07-29T10:00:00Z", description: "beacon" });
   });
 
+  it("turns a supported malicious verdict into a finding when the agent omitted findings", () => {
+    const d = parseDelta(JSON.stringify({
+      verdict: { classification: "malicious", confidence: 0.95, summary: "Memory injection and beaconing were observed." },
+      findings: [],
+      iocs: [],
+    }));
+
+    expect(d.findings).toHaveLength(1);
+    expect(d.findings[0]).toMatchObject({
+      title: "MCP analysis indicates malicious activity",
+      severity: "High",
+      confidence: 95,
+      description: "Memory injection and beaconing were observed.",
+    });
+  });
+
+  it("uses unique finding ids for separate investigations", () => {
+    const first = parseDelta(DELTA);
+    const second = parseDelta(DELTA);
+
+    expect(first.findings[0].id).not.toBe(second.findings[0].id);
+  });
+
+  it("preserves a percentage embedded in a malicious verdict", () => {
+    const d = parseDelta('{"verdict":"95% malicious","findings":[]}');
+    expect(d.findings[0]).toMatchObject({ confidence: 95, severity: "High" });
+  });
+
   it("refuses output that is not JSON at all", () => {
     expect(() => parseDelta("I could not complete the investigation.")).toThrow(/did not return JSON/);
   });

@@ -7,6 +7,7 @@ import { listServers, listTools, type McpBridgeServer } from "../integrations/mc
 import { deliver, spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
 import { runMcpAgent, DEFAULT_AGENT_TIMEOUT_MS } from "../integrations/mcp/mcpAgentRunner.js";
+import { McpReportStore, type McpImportCounts } from "../integrations/mcp/mcpReportStore.js";
 import { mergeDelta } from "../analysis/stateMerge.js";
 import { deltaSchema, type AnalysisDelta } from "../analysis/responseSchema.js";
 import type { McpServer } from "../integrations/mcp/mcpServerStore.js";
@@ -14,6 +15,7 @@ import { resolveContainedPath } from "../integrations/tools/runToolImport.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { atomicWrite } from "../storage/atomicWrite.js";
 
 /**
  * MCP policy + run routes (#296).
@@ -29,6 +31,7 @@ import type { RouteContext } from "./context.js";
  */
 export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, recordImportFailure, ingestStreamed, pushImportCheckpoint } = ctx;
+  const reportStore = new McpReportStore(store);
 
   /**
    * What Claude Code last reported. Domain-local rather than on RouteContext: nothing outside this
@@ -219,9 +222,11 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    */
   async function applyAgentDelta(
     caseId: string, serverLabel: string, delta: AnalysisDelta,
-  ): Promise<{ findings: number; iocs: number; events: number }> {
+  ): Promise<McpImportCounts> {
     if (!options.stateStore) throw new Error("state store not configured");
     const before = await options.stateStore.load(caseId);
+    const beforeFindingIds = new Set(before.findings.map((finding) => finding.id));
+    const beforeEventIds = new Set(before.forensicTimeline.map((event) => event.id));
     const merged = mergeDelta(before, delta, {
       windowSequence: 0,
       timestamp: new Date().toISOString(),
@@ -229,11 +234,14 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     });
     await options.stateStore.save(merged);
     const counts = {
-      findings: merged.findings.length - before.findings.length,
-      iocs: merged.iocs.length - before.iocs.length,
-      events: merged.forensicTimeline.length - before.forensicTimeline.length,
+      addedFindings: merged.findings.length - before.findings.length,
+      updatedFindings: delta.findings.filter((finding) => beforeFindingIds.has(finding.id)).length,
+      addedIocs: merged.iocs.length - before.iocs.length,
+      updatedIocs: 0,
+      addedEvents: merged.forensicTimeline.length - before.forensicTimeline.length,
+      updatedEvents: (delta.forensicEvents ?? []).filter((event) => beforeEventIds.has(event.id)).length,
     };
-    if (counts.findings > 0 || counts.iocs > 0 || counts.events > 0) {
+    if (Object.values(counts).some((count) => count > 0)) {
       await pushImportCheckpoint(caseId, before, `MCP agent: ${serverLabel}`);
     }
     options.onState?.(merged);
@@ -248,7 +256,16 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const isJobId = (v: string): boolean => /^job_\d+$/.test(v);
   const previewDir = (caseId: string): string => join(store.caseDir(caseId), ".mcpwork", "preview");
 
-  interface StagedPreview { server: string; tool: string; label: string; kind: string; outName: string; runId?: string }
+  interface StagedPreview {
+    server: string;
+    tool: string;
+    label: string;
+    kind: string;
+    outName: string;
+    runId?: string;
+    importedAt?: string;
+    reportId?: string;
+  }
 
   /**
    * Identifies THIS process. JobManager numbers jobs from 1 on every start, and a preview is named
@@ -257,24 +274,31 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    */
   const RUN_ID = randomUUID();
 
-  async function stagePreview(caseId: string, jobId: string, p: StagedPreview & { text: string }): Promise<void> {
+  async function stagePreview(
+    caseId: string, jobId: string, p: StagedPreview & { text: string; reportText?: string },
+  ): Promise<void> {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
     await mkdir(dir, { recursive: true });
-    const { text, ...rest } = p;
+    const { text, reportText, ...rest } = p;
     const meta: StagedPreview = { ...rest, runId: RUN_ID };
     await writeFile(join(dir, `${jobId}.out`), text, "utf8");
+    if (reportText !== undefined) await writeFile(join(dir, `${jobId}.report`), reportText, "utf8");
     await writeFile(join(dir, `${jobId}.json`), JSON.stringify(meta), "utf8");
   }
 
-  async function readPreview(caseId: string, jobId: string): Promise<(StagedPreview & { text: string }) | null> {
+  async function readPreview(
+    caseId: string, jobId: string,
+  ): Promise<(StagedPreview & { text: string; reportText?: string }) | null> {
     if (!isJobId(jobId)) return null;
     const dir = previewDir(caseId);
     try {
       const meta = JSON.parse(await readFile(join(dir, `${jobId}.json`), "utf8")) as StagedPreview;
       // A preview from a previous process is not this job's — drop it rather than serve it.
-      if (meta.runId !== RUN_ID) { await dropPreview(caseId, jobId); return null; }
-      return { ...meta, text: await readFile(join(dir, `${jobId}.out`), "utf8") };
+      if (meta.runId !== RUN_ID && !meta.importedAt) { await dropPreview(caseId, jobId); return null; }
+      const text = await readFile(join(dir, `${jobId}.out`), "utf8");
+      const reportText = await readFile(join(dir, `${jobId}.report`), "utf8").catch(() => undefined);
+      return { ...meta, text, ...(reportText !== undefined ? { reportText } : {}) };
     } catch {
       return null;
     }
@@ -284,7 +308,19 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (!isJobId(jobId)) return;
     const dir = previewDir(caseId);
     await rm(join(dir, `${jobId}.out`), { force: true }).catch(() => { /* best-effort */ });
+    await rm(join(dir, `${jobId}.report`), { force: true }).catch(() => { /* best-effort */ });
     await rm(join(dir, `${jobId}.json`), { force: true }).catch(() => { /* best-effort */ });
+  }
+
+  async function markPreviewImported(
+    caseId: string, jobId: string, preview: StagedPreview, reportId: string, importedAt: string,
+  ): Promise<void> {
+    await atomicWrite(join(previewDir(caseId), `${jobId}.json`), JSON.stringify({
+      ...preview,
+      runId: RUN_ID,
+      reportId,
+      importedAt,
+    }));
   }
 
   /**
@@ -363,6 +399,14 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         }
 
         const r = await ingestMcpOutput(caseId, server.id, tool, label, kind, outcome.text, outName);
+        await reportStore.save(caseId, {
+          server: server.id, tool, label, kind, text: outcome.text,
+          counts: {
+            addedFindings: 0, updatedFindings: 0,
+            addedEvents: r.addedEvents, updatedEvents: 0,
+            addedIocs: r.addedIocs, updatedIocs: 0,
+          },
+        });
         if (job) options.jobManager?.finish(job.jobId);
         logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import", action: "mcp-run",
@@ -420,18 +464,35 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
    * of the thing, which the first few kilobytes settle.
    */
   const PREVIEW_CHARS = 8 * 1024;
+  app.get("/cases/:id/mcp/reports", async (req: Request, res: Response) => {
+    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    const reports = (await reportStore.list(req.params.id)).map(({ text: _text, ...report }) => report);
+    return res.status(200).json({ reports });
+  });
+
+  app.get("/cases/:id/mcp/reports/:reportId", async (req: Request, res: Response) => {
+    if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
+    const report = await reportStore.get(req.params.id, req.params.reportId);
+    return report
+      ? res.status(200).json(report)
+      : res.status(404).json({ error: "analysis report not found" });
+  });
+
   app.get("/cases/:id/mcp/preview/:jobId", async (req: Request, res: Response) => {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
     if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const p = await readPreview(req.params.id, req.params.jobId);
     if (!p) return res.status(404).json({ error: "no preview for that run — it may have been imported, discarded, or lost to a restart" });
+    const displayText = p.reportText ?? p.text;
     return res.status(200).json({
-      server: p.server, tool: p.tool, kind: p.kind, bytes: p.text.length,
-      text: p.text.slice(0, PREVIEW_CHARS), truncated: p.text.length > PREVIEW_CHARS,
+      server: p.server, tool: p.tool, kind: p.kind, bytes: displayText.length,
+      text: displayText.slice(0, PREVIEW_CHARS), truncated: displayText.length > PREVIEW_CHARS,
+      imported: !!p.importedAt,
+      ...(p.importedAt ? { importedAt: p.importedAt, reportId: p.reportId } : {}),
     });
   });
 
-  /** Approve a preview: ingest exactly the bytes already fetched, then drop the staged copy. */
+  /** Approve a preview: ingest exactly the bytes already fetched, then retain it as case history. */
   app.post("/cases/:id/mcp/preview/:jobId/import", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
@@ -443,25 +504,38 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
     const p = await readPreview(caseId, req.params.jobId);
     if (!p) return res.status(404).json({ error: "no preview for that run — it may have been imported, discarded, or lost to a restart" });
+    if (p.importedAt) return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
     try {
       // An agent preview holds a delta, not tool output — merge it rather than routing it through
       // importers that have no format to detect.
       if (p.kind === AGENT_DELTA_KIND) {
         const r = await applyAgentDelta(caseId, p.tool, deltaSchema.parse(JSON.parse(p.text)));
-        await dropPreview(caseId, req.params.jobId);
+        const report = await reportStore.save(caseId, {
+          server: p.server, tool: p.tool, label: p.label, kind: p.kind,
+          text: p.reportText ?? p.text, counts: r,
+        });
+        await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
         logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
-          detail: `agent on ${p.tool} imported after review → ${r.findings} finding(s), ${r.iocs} IOC(s), ${r.events} event(s)`,
+          detail: `agent on ${p.tool} imported after review → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
-        return res.status(200).json({ ok: true, addedEvents: r.events, addedIocs: r.iocs, addedFindings: r.findings });
+        return res.status(200).json({ ok: true, reportId: report.id, ...r });
       }
       const r = await ingestMcpOutput(caseId, p.server, p.tool, p.label, p.kind, p.text, p.outName);
-      await dropPreview(caseId, req.params.jobId);
+      const counts: McpImportCounts = {
+        addedFindings: 0, updatedFindings: 0,
+        addedEvents: r.addedEvents, updatedEvents: 0,
+        addedIocs: r.addedIocs, updatedIocs: 0,
+      };
+      const report = await reportStore.save(caseId, {
+        server: p.server, tool: p.tool, label: p.label, kind: p.kind, text: p.text, counts,
+      });
+      await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
       logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "import", action: "mcp-run",
         detail: `${p.server}/${p.tool} on ${p.label} imported after review → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`,
       });
-      return res.status(200).json({ ok: true, addedEvents: r.addedEvents, addedIocs: r.addedIocs });
+      return res.status(200).json({ ok: true, reportId: report.id, ...counts });
     } catch (err) {
       recordImportFailure(caseId, `mcp:${p.server}/${p.tool}`, p.label, err);
       return res.status(400).json({ ok: false, error: (err as Error).message });
@@ -473,6 +547,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
     if (!(await store.caseExists(req.params.id))) return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const p = await readPreview(req.params.id, req.params.jobId);
+    if (p?.importedAt) return res.status(409).json({ error: "an imported analysis report cannot be discarded" });
     await dropPreview(req.params.id, req.params.jobId);
     if (p) {
       logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -638,6 +713,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           await stagePreview(caseId, job?.jobId ?? "", {
             server: "agent", tool: servers.map((s) => s.id).join("+"), label: prompt.slice(0, 80),
             kind: AGENT_DELTA_KIND, outName: `agent.${Date.now()}.json`, text: JSON.stringify(result.delta, null, 2),
+            reportText: result.rawText,
           });
           if (job) options.jobManager?.finish(job.jobId);
           logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -648,10 +724,18 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         }
 
         const r = await applyAgentDelta(caseId, servers.map((s) => s.id).join(", "), result.delta);
+        await reportStore.save(caseId, {
+          server: "agent",
+          tool: servers.map((s) => s.id).join("+"),
+          label: prompt.slice(0, 80),
+          kind: AGENT_DELTA_KIND,
+          text: result.rawText,
+          counts: r,
+        });
         if (job) options.jobManager?.finish(job.jobId);
         logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
-          detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.findings} finding(s), ${r.iocs} IOC(s), ${r.events} event(s)`,
+          detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
       } catch (err) {
         if (job) options.jobManager?.fail(job.jobId, err);

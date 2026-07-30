@@ -844,6 +844,14 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).not.toMatch(/tries\s*<\s*600/);
   });
 
+  it("keeps imported analysis visible in a case history", async () => {
+    const html = await load();
+    expect(html).toContain('id="mcpReportHistory"');
+    expect(html).toContain("function loadMcpReports(");
+    expect(html).toContain("/mcp/reports");
+    expect(html).toContain("Imported and preserved in analysis history.");
+  });
+
   it("exposes the configurable long-investigation timeout in Settings", async () => {
     const html = await load();
     expect(html).toContain('id="env-DFIR_MCP_AGENT_TIMEOUT_MS"');

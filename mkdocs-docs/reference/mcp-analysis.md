@@ -233,6 +233,12 @@ Open a case and expand **MCP Analysis**:
 Browser uploads are limited to 180 MB by default. For larger memory or disk images, place the
 evidence in the case first and select its case-relative path.
 
+After import, the reviewed output remains visible in **Imported analysis history** with its import
+time and the number of findings added or updated, events, and IOCs. The history is stored inside the
+case and travels with a full case archive. Importing does not turn an overall maliciousness score
+into hidden prose: the agent is required to provide a verdict and supporting findings, and
+Companion creates a visible finding when a malicious or suspicious verdict arrives without one.
+
 The agent chooses tools and arguments from your instruction. Use **Advanced: call one MCP tool
 manually** only when you deliberately need to test a specific tool or reproduce an exact call.
 

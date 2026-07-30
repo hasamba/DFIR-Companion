@@ -6125,6 +6125,14 @@
           </div>
         </div>
       </div>
+      <details id="mcpReportHistory" style="margin-top:10px;border-top:1px solid var(--c-2a2f3a);padding-top:8px">
+        <summary>Imported analysis history <span id="mcpReportCount" class="ev-sub"></span></summary>
+        <div id="mcpReportList" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"></div>
+        <div id="mcpReportView" style="display:none">
+          <div id="mcpReportHead" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px"></div>
+          <pre id="mcpReportText" style="max-height:320px;overflow:auto;background:var(--c-0d1117);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+        </div>
+      </details>
     </section>
     <section id="sec-custody" style="grid-column: 1 / -1"><h2>Chain of Custody<span class="ev-sub">every stored artifact, its hash, and each event that touched it &mdash; the appendix that ships in the report</span></h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
@@ -12925,6 +12933,7 @@
         mcpRunServerChanged();
       }).catch(() => { form.style.display = "none"; none.style.display = ""; });
       loadMcpRunTargets();
+      loadMcpReports();
     }
     // The evidence already under custody is the best available answer to "what can I point this at",
     // and it needs no new endpoint. Free text still works for anything not yet recorded.
@@ -13091,7 +13100,14 @@
             `${p.server}/${p.tool} — ${p.bytes} byte(s), would import as "${p.kind}"${p.truncated ? " (showing the first 8 KB)" : ""}`;
           document.getElementById("mcpPreviewText").textContent = p.text;
           document.getElementById("mcpPreviewPanel").style.display = "";
-          document.getElementById("mcpRunMsg").textContent = "review the output, then import or discard";
+          document.getElementById("mcpPreviewImportBtn").style.display = p.imported ? "none" : "";
+          document.getElementById("mcpPreviewDiscardBtn").style.display = p.imported ? "none" : "";
+          document.getElementById("mcpPreviewMsg").textContent = p.imported
+            ? "Imported and preserved in analysis history."
+            : "";
+          document.getElementById("mcpRunMsg").textContent = p.imported
+            ? "analysis imported"
+            : "review the output, then import or discard";
         }).catch(() => {});
     }
     function importMcpPreview() {
@@ -13102,9 +13118,13 @@
       fetch(`/cases/${encodeURIComponent(cid)}/mcp/preview/${encodeURIComponent(jobId)}/import`, { method: "POST" })
         .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
           if (!ok) { m.textContent = (j && j.error) || "import failed"; return; }
-          hideMcpPreview();
-          document.getElementById("mcpRunMsg").textContent = `imported — ${j.addedFindings || 0} finding(s), ${j.addedEvents} event(s), ${j.addedIocs} IOC(s)`;
+          document.getElementById("mcpPreviewImportBtn").style.display = "none";
+          document.getElementById("mcpPreviewDiscardBtn").style.display = "none";
+          m.textContent = "Imported and preserved in analysis history.";
+          const updated = j.updatedFindings ? `, ${j.updatedFindings} finding(s) updated` : "";
+          document.getElementById("mcpRunMsg").textContent = `imported — ${j.addedFindings || 0} finding(s) added${updated}, ${j.addedEvents} event(s), ${j.addedIocs} IOC(s)`;
           loadMcpRunTargets();
+          loadMcpReports(j.reportId);
         }).catch(e => { m.textContent = "import failed: " + e.message; });
     }
     function discardMcpPreview() {
@@ -13113,6 +13133,42 @@
       fetch(`/cases/${encodeURIComponent(cid)}/mcp/preview/${encodeURIComponent(jobId)}`, { method: "DELETE" })
         .then(() => { hideMcpPreview(); document.getElementById("mcpRunMsg").textContent = "discarded — nothing was imported"; })
         .catch(() => {});
+    }
+    function showMcpReport(reportId) {
+      const cid = mcpRunCaseId();
+      if (!cid || !reportId) return;
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/reports/${encodeURIComponent(reportId)}`)
+        .then(r => r.ok ? r.json() : null).then(report => {
+          if (!report) return;
+          const counts = report.counts || {};
+          document.getElementById("mcpReportHead").textContent =
+            `${new Date(report.importedAt).toLocaleString()} — ${report.server}/${report.tool} — ` +
+            `${counts.addedFindings || 0} finding(s) added, ${counts.updatedFindings || 0} updated, ` +
+            `${counts.addedEvents || 0} event(s), ${counts.addedIocs || 0} IOC(s)`;
+          document.getElementById("mcpReportText").textContent = report.text || "";
+          document.getElementById("mcpReportView").style.display = "";
+          document.getElementById("mcpReportHistory").open = true;
+        }).catch(() => {});
+    }
+    function loadMcpReports(openReportId) {
+      const cid = mcpRunCaseId();
+      const list = document.getElementById("mcpReportList");
+      if (!list) return;
+      list.textContent = "";
+      if (!cid) { document.getElementById("mcpReportCount").textContent = ""; return; }
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/reports`).then(r => r.ok ? r.json() : { reports: [] }).then(j => {
+        const reports = Array.isArray(j.reports) ? j.reports : [];
+        document.getElementById("mcpReportCount").textContent = reports.length ? `(${reports.length})` : "(none yet)";
+        reports.forEach(report => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.style.cssText = "padding:3px 8px;font-size:11px";
+          button.textContent = `${new Date(report.importedAt).toLocaleString()} — ${report.server}/${report.tool}`;
+          button.onclick = () => showMcpReport(report.id);
+          list.appendChild(button);
+        });
+        if (openReportId) showMcpReport(openReportId);
+      }).catch(() => {});
     }
     function mcpJobDuration(ms) {
       const seconds = Math.max(0, Math.floor(ms / 1000));

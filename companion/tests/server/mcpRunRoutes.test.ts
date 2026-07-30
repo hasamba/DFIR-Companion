@@ -257,13 +257,24 @@ describe("preview before import", () => {
     expect(undo.body.undo?.[0]?.label ?? undo.body.entries?.[0]?.label).toBe("MCP: sift-mcp/run_command");
   });
 
-  it("is consumed by importing, so it cannot be imported twice", async () => {
+  it("retains an approved preview as a read-only imported analysis", async () => {
     const { app, jobManager } = await harness();
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     await settle(jobManager, res.body.jobId);
 
-    expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(200);
-    expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(404);
+    const imported = await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
+    expect(imported.status).toBe(200);
+    expect(imported.body.reportId).toMatch(/^mcp-/);
+
+    const preview = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(preview.status).toBe(200);
+    expect(preview.body).toMatchObject({ imported: true, reportId: imported.body.reportId });
+    expect((await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`)).status).toBe(409);
+
+    const reports = await request(app).get("/cases/c1/mcp/reports");
+    expect(reports.body.reports[0]).toMatchObject({ id: imported.body.reportId, server: "sift-mcp" });
+    const report = await request(app).get(`/cases/c1/mcp/reports/${imported.body.reportId}`);
+    expect(report.body.text).toBe(YARA_OUT);
   });
 
   it("discards a preview and leaves the case untouched", async () => {
@@ -333,6 +344,8 @@ describe("POST /cases/:id/mcp/agent", () => {
     const state = await request(app).get("/cases/c1/state");
     expect(state.body.findings.some((f: { title: string }) => f.title === "Injected process")).toBe(true);
     expect(state.body.iocs.some((i: { value: string }) => i.value === "10.2.3.4")).toBe(true);
+    const reports = await request(app).get("/cases/c1/mcp/reports");
+    expect(reports.body.reports).toHaveLength(1);
   });
 
   it("publishes live sanitized tool activity on the background job", async () => {
@@ -384,8 +397,17 @@ describe("POST /cases/:id/mcp/agent", () => {
 
     const imp = await request(app).post(`/cases/c1/mcp/preview/${res.body.jobId}/import`);
     expect(imp.status).toBe(200);
+    expect(imp.body).toMatchObject({ addedFindings: 1, updatedFindings: 0 });
     const after = await request(app).get("/cases/c1/state");
     expect(after.body.findings).toHaveLength(1);
+
+    const retained = await request(app).get(`/cases/c1/mcp/preview/${res.body.jobId}`);
+    expect(retained.body).toMatchObject({ imported: true, reportId: imp.body.reportId });
+    expect(retained.body.text).toContain("Injected process");
+
+    const reports = await request(app).get("/cases/c1/mcp/reports");
+    expect(reports.body.reports).toHaveLength(1);
+    expect(reports.body.reports[0].counts).toMatchObject({ addedFindings: 1, updatedFindings: 0 });
   });
 
   it("400s without a prompt", async () => {
