@@ -167,4 +167,39 @@ describe("runMcpAgent", () => {
     await runMcpAgent({ servers: two, prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
     expect(seen[0].args[seen[0].args.indexOf("--allowed-tools") + 1]).toBe("mcp__sift-mcp__run_command,mcp__remnux__run_tool");
   });
+
+  it("turns a max-turns investigation into a report in the same session with tools disabled", async () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const runner: ClaudeRunner = async (opts) => {
+      seen.push(opts);
+      if (seen.length === 1) {
+        return {
+          code: 0, stderr: "",
+          stdout: JSON.stringify({
+            type: "result", subtype: "error_max_turns", is_error: true,
+            result: "", session_id: sessionId,
+          }) + "\n",
+        };
+      }
+      return { code: 0, stderr: "", stdout: stdoutWith(DELTA) };
+    };
+
+    const result = await runMcpAgent({ servers: [server()], prompt: "investigate", runner });
+
+    expect(result.delta.findings?.[0]?.title).toBe("Injected process");
+    expect(seen).toHaveLength(2);
+    expect(seen[1].args).toContain("--resume");
+    expect(seen[1].args[seen[1].args.indexOf("--resume") + 1]).toBe(sessionId);
+    expect(seen[1].args[seen[1].args.indexOf("--tools") + 1]).toBe("");
+    expect(seen[1].stdin).toContain("Do not call any more tools");
+  });
+
+  it("explains a max-turns failure when Claude Code provides no resumable session", async () => {
+    const out = JSON.stringify({
+      type: "result", subtype: "error_max_turns", is_error: true, result: "",
+    }) + "\n";
+    await expect(runMcpAgent({
+      servers: [server()], prompt: "investigate", runner: runnerReturning(out),
+    })).rejects.toThrow(/turn safety limit.*could not open the final reporting turn/i);
+  });
 });

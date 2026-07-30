@@ -612,6 +612,11 @@ everything it saw came from tool output, which is untrusted. It is never asked f
 so a run adds findings, IOCs and events without rewriting your conclusions. Preview works here too,
 and matters more: an autonomous loop decides for itself what to report.
 
+The investigation is capped at 40 turns. If Claude Code consumes that budget while using tools,
+Companion resumes the same session once with all tools disabled and asks it to report only from the
+evidence already collected. This preserves the safety boundary without losing a completed
+investigation merely because its final JSON would have been the next turn.
+
 ### Credentials
 
 There are none to configure here. Bearer tokens, headers and transports all live in Claude Code's own
