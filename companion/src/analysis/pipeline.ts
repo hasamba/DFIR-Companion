@@ -4976,8 +4976,7 @@ export class AnalysisPipeline {
     if (!this.opts.superTimelineStore) throw new Error("super-timeline not configured");
     const loaded = await this.opts.stateStore.load(caseId);
     const { events: matched } = await this.opts.superTimelineStore.query(
-      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
-      caseId, { ...filters, offset: 0, limit: Number.MAX_SAFE_INTEGER }, labelMap);
+      caseId, { ...filters, offset: 0, limit: 10_000 }, labelMap);
     if (!matched.length) throw new Error("no events match the current filters");
 
     const prompt = getViewSummaryPrompt();

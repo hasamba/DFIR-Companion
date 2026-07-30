@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Canonical forensic event schema** — versioned structured identities, timestamps, source pointers, artifact hashes, mapping versions, and field-level provenance now underpin representative Windows, Linux, cloud, network, email, memory, and EDR imports while legacy cases upgrade incrementally and graph joins no longer depend on description wording (closes #374).
+- **Indexed SQLite case storage** — investigation entities and the distinct super-timeline now use a worker-backed, cursor-paged database with atomic legacy-JSON migration, integrity-checked backups/restores, bounded timeline/graph reads, and a Node 22.5+ runtime floor (closes #373).
 - **One-click Jira / ServiceNow push from the finding panel** (#297) — the routes shipped in #272 finally have a UI: every finding row carries a **Jira** and a **SNow** chip, and the finding bulk bar gains **Push to Jira** / **Push to ServiceNow** for the whole selection via the new `POST /cases/:id/push/{jira,servicenow}/bulk` endpoints. A batch reports created / updated / skipped, and a finding the ticket system refuses is named rather than aborting the rest. Both sets of buttons stay hidden until the integration is configured; re-pushing still updates the ticket the Companion opened instead of duplicating it. The ten `DFIR_JIRA_*` / `DFIR_SERVICENOW_*` environment variables are now documented in `.env.example`, the README route table and the manual.
 
 ### Fixed
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Incident-type auto-playbooks** (#236) — the New case dialog's *Incident type* picker pre-configures a case for a recurring incident pattern: eight built-in types (ransomware, BEC, data exfiltration, intrusion, insider threat, cloud compromise, web-app intrusion, malware outbreak) seed type-specific key questions, priority-ordered next steps, and that incident's expected findings as open confirm/deny questions. Synthesis is told which type the case is so it prioritizes the relevant ATT&CK techniques — prompt context only, it never reaches the report. Types are editable JSON in `companion/data/incident-types/`, analysts can drop their own into an `incident-types/` folder beside the cases root, and re-picking a type merges rather than overwriting analyst edits.
 
 ### Fixed
+- **MCP analysis reports survive import** — imported previews remain available as read-only case history, malicious verdicts cannot disappear without a finding, generated finding IDs no longer collide across investigations, and import totals distinguish findings added from findings updated (part of #296).
 - **Correlation no longer merges one artifact across hosts** (#345) — the same binary hash or file path seen on two machines was collapsed into a single event, which erased the lateral-movement edge the evidence graph derives from it, left the surviving row holding one host's name and the other's timestamp, and could drop a host from the case entirely. The hash, path and exact-duplicate steps now correlate within a host (as the host+pid and command-line steps already did); an event with no recorded host still joins a host's group when the artifact was seen on exactly one. Note: timelines correlated by an earlier build stay merged — the fix applies as new evidence is correlated, and cannot un-merge what was already persisted.
 
 ### Added
@@ -61,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action from one overlay; `>` filters by category, recently-run actions float to the top, and actions unavailable for the current case are hidden (closes #238).
 
 ### Changed
-- **Clearer error when a case's state file passes the ~512 MB load ceiling** — says the whole case is unreadable rather than just new imports, prints the absolute `state/backups/` path, and states the limit is permanent now that the SQLite-backed store (#237) is not planned.
+- **Actionable oversized legacy-state recovery** — if an unmigrated JSON case already exceeds V8's decode ceiling, startup explains how to restore a smaller backup and confirms that the original JSON and any incomplete SQLite migration remain untouched.
 
 ## [0.33.0] - 2026-07-24
 

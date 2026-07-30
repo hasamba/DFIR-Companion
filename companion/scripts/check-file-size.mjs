@@ -12,12 +12,19 @@
  *   2. A file IN the ledger may not exceed the size recorded there. The 12 oversized files are
  *      frozen at today's length: you can shrink them freely, but not add to them.
  *
- * The ledger only shrinks. `--update` rewrites it, and it refuses to raise any recorded number —
- * so decomposition work re-records smaller values, while a PR that inflates a big file has to
- * explain itself rather than quietly bumping a threshold.
+ * The ledger only shrinks. `--update` rewrites it and REFUSES to raise any recorded number, so
+ * decomposition work re-records smaller values while a PR that inflates a big file has to explain
+ * itself rather than quietly bumping a threshold.
+ *
+ * `--init` is the one way to raise a number, and it exists for exactly two moments: the first
+ * recording, and re-baselining after merging a long-lived branch whose landed work legitimately
+ * grew a ledgered file. It prints every raise it makes so they appear in the PR conversation
+ * rather than only in the JSON diff. If you find yourself reaching for it during ordinary work,
+ * the answer is to move the new code into its own module instead.
  *
  *   node scripts/check-file-size.mjs            # gate
  *   node scripts/check-file-size.mjs --update   # re-record after shrinking a file
+ *   node scripts/check-file-size.mjs --init     # re-baseline; raises are printed, justify them
  */
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -51,24 +58,30 @@ for (const f of walk(SRC)) {
 
 const ledger = existsSync(LEDGER) ? JSON.parse(readFileSync(LEDGER, "utf8")) : {};
 
-if (process.argv.includes("--update")) {
+const init = process.argv.includes("--init");
+if (init || process.argv.includes("--update")) {
   const next = {};
-  let raised = null;
+  const raises = [];
+  const additions = [];
   for (const [path, lines] of [...sizes].sort()) {
     if (lines <= SOFT_LIMIT) continue;
-    // Never let --update be the way a file gets bigger.
-    if (ledger[path] !== undefined && lines > ledger[path]) raised = { path, from: ledger[path], to: lines };
+    if (ledger[path] === undefined) additions.push(`${path}: ${lines}`);
+    else if (lines > ledger[path]) raises.push({ path, from: ledger[path], to: lines });
     next[path] = lines;
   }
-  if (raised) {
+  // Never let --update be the way a file gets bigger; --init says the raise is deliberate.
+  if (raises.length > 0 && !init) {
+    console.error(`\n[size] refusing to update: ${raises.length} ledgered file(s) grew.`);
+    for (const r of raises) console.error(`  ✖ ${r.path}: ${r.from} -> ${r.to} lines`);
     console.error(
-      `\n[size] refusing to update: ${raised.path} grew ${raised.from} -> ${raised.to} lines.\n` +
-        "[size] The ledger only shrinks. Split the file, or argue for the growth in review and edit\n" +
-        "[size] scripts/file-size-ledger.json by hand with a note in the PR.",
+      "\n[size] The ledger only shrinks. Split the file, or — if this is a re-baseline after merging\n" +
+        "[size] landed work that legitimately grew it — use `--init` and justify each raise in the PR.",
     );
     process.exit(1);
   }
   writeFileSync(LEDGER, `${JSON.stringify(next, null, 2)}\n`);
+  for (const r of raises) console.log(`[size] RAISED ${r.path}: ${r.from} -> ${r.to} lines`);
+  for (const a of additions) console.log(`[size] added  ${a} lines`);
   console.log(`[size] recorded ${Object.keys(next).length} file(s) over ${SOFT_LIMIT} lines`);
   process.exit(0);
 }

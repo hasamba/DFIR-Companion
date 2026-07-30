@@ -29,6 +29,7 @@ import { registerSessionSegmentationRoutes } from "./routes/sessionSegmentation.
 import { registerFindingsRoutes } from "./routes/findings.js";
 import { registerTaggerRoutes } from "./routes/tagger.js";
 import { registerCustodyRoutes } from "./routes/custody.js";
+import { registerMcpRoutes } from "./routes/mcp.js";
 import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
 import { registerPlaybookMatchRoutes } from "./routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
@@ -158,6 +159,9 @@ import {
 } from "./integrations/socrates/socratesApi.js";
 import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
 import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
+import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
+import type { TransferRunner } from "./integrations/mcp/mcpDelivery.js";
+import type { ClaudeRunner } from "./providers/claudeRunner.js";
 import {
   createOriginGuard,
   parseAllowedOrigins,
@@ -511,6 +515,18 @@ export interface AppOptions {
   // User-defined custom tools (#211) — a GLOBAL JSON store of analyst-added tools (name/binary/command/
   // extensions), merged into the tool set alongside the built-ins. Absent → only built-ins.
   customToolStore?: CustomToolStore;
+  // Policy for the MCP servers CLAUDE CODE is configured with (#296) — which of them case evidence
+  // may be pointed at, what they may run, how it gets there. No URLs and no tokens: the analyst
+  // configures servers in Claude Code, and the companion asks Claude Code to call them.
+  // Absent → the /mcp routes answer 501.
+  mcpServerStore?: McpServerStore;
+  // Drives the `claude` CLI for MCP discovery and single tool calls. Tests inject; absent = a real
+  // spawn. The Companion speaks no MCP itself, so this is the only route to a server.
+  mcpClaudeRunner?: ClaudeRunner;
+  // How evidence is pushed to an analysis host (scp). Defaults to a real spawn; tests inject.
+  mcpTransferRunner?: TransferRunner;
+  // Drives agentic MCP mode (spawns the claude CLI). Tests inject; absent = the real spawn.
+  mcpAgentRunner?: ClaudeRunner;
   // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
   // collection resolves the host against this file instead of a brittle live `clients(search=...)`
   // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
@@ -678,7 +694,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // the cases root so "remember on this computer" survives a server restart.
   const instanceSecret = loadOrCreateInstanceSecret(store.casesRoot);
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
-  // Serialize the load->save critical section for a case's investigation.json so concurrent
+  // Serialize the load->save critical section for a case's investigation state so concurrent
   // mutations (a manual event/IOC add while background enrichment or re-synthesis saves)
   // cannot clobber each other (lost update). No-op when no StateLock is wired (tests).
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
@@ -976,6 +992,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPushNotifyRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
+  registerMcpRoutes(app, ctx);
 
   // Rate-limit AI-cost-bearing routes to prevent an attacker who knows a caseId from burning
   // the operator's AI budget. 20 requests per minute per case — generous for a single analyst,
@@ -3052,6 +3069,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 }
 
 import { StateStore as StateStoreImpl } from "./analysis/stateStore.js";
+import { loadDatabaseSync } from "./analysis/sqliteRuntime.js";
 import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
 import { makeImageLoader } from "./analysis/imageLoader.js";
 import { ProviderRegistry, ProviderError } from "./providers/provider.js";
@@ -3568,6 +3586,9 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
+  // Case storage is SQLite-backed. Fail before binding the HTTP port so an unsupported runtime
+  // produces one actionable startup error instead of a dashboard that breaks on the first case.
+  loadDatabaseSync();
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
@@ -3588,9 +3609,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateLock = new StateLock();
-  const stateStore = new StateStoreImpl(store, (caseId, retries) =>
-    warnLine(`[state] ${caseId}: investigation.json save needed ${retries} rename retr${retries === 1 ? "y" : "ies"} — the state dir is contended (antivirus / search indexer / sync client). Consider excluding the cases root from real-time scanning, or raise DFIR_ATOMIC_WRITE_RETRIES.`),
-  );
+  const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
   // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
@@ -3624,6 +3643,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
   // Custom external tools (#211) — a global JSON store in its own subdir beside cases/ (drive-root-safe).
   const customToolStore = new CustomToolStore(join(dirname(casesRoot), "tools", "custom-tools.json"));
+  // MCP policy (#296) — global and shared across cases, beside the custom-tool list for the same
+  // reason: a variable-length list belongs in a JSON store, not fixed .env keys.
+  const mcpServerStore = new McpServerStore(join(dirname(casesRoot), "tools", "mcp-servers.json"));
   const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
   if (nsrlFiles.length > 0) {
     // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
@@ -3975,6 +3997,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
     toolRunner: spawnToolRunner(),
     customToolStore,
+    // MCP policy (#296). No gating client: the companion holds no credentials and reaches every
+    // server through Claude Code, which must be installed and configured on this host.
+    mcpServerStore,
     // Extra browser origins permitted past the origin guard (#211), beyond the extension and
     // loopback. Comma-separated, e.g. "https://soc.example.com".
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),

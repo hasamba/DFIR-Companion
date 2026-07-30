@@ -159,16 +159,17 @@ export default tseslint.config(
       "no-restricted-syntax": [
         "error",
         {
-          // FORBIDDEN BROAD TIMELINE READS (#385, enforcing #373's criterion).
+          // FORBIDDEN BROAD TIMELINE READS (#385, holding #373's criterion).
           //
           // `query(caseId, { limit: Number.MAX_SAFE_INTEGER })` pulls a case's ENTIRE super-timeline
           // into memory to answer a question about a handful of rows. On a real case that is
-          // hundreds of thousands of events per request. There were exactly seven of these when
-          // this rule was written — in caseLifecycle, timeline, threatIntel, analysisGraph and
-          // pipeline — each carrying an eslint-disable naming #373, the issue that removes them.
+          // hundreds of thousands of events per request.
           //
-          // The rule is here rather than in #373 so that the count can only go DOWN: #373 deletes
-          // disables, and a new unbounded read cannot be added without arguing for it in review.
+          // There were exactly seven of these when this rule was written — in caseLifecycle,
+          // timeline, threatIntel, analysisGraph and pipeline. #373 landed first and removed every
+          // one (batched `eventBatches()`, `all()`, or a real page size), so the rule ships with ZERO
+          // violations and zero suppressions. It exists purely to keep it that way: #373 fixed the
+          // seven that were there, this stops the eighth.
           selector:
             "Property[key.name='limit'] > MemberExpression[object.name='Number'][property.name='MAX_SAFE_INTEGER']",
           message:

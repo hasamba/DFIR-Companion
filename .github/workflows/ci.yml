@@ -9,9 +9,7 @@ name: CI
 # "Companion lint + format + structure" failing means it is untidy. Merging those into one step
 # would make every failure look equally alarming and train people to skim past them.
 #
-# Node 22 to match release-artifacts.yml / docker-publish.yml. The project's floor is Node 20,
-# but two NSRL tests hard-require `node:sqlite` (Node 22.5+) at import time, so a Node-20 leg
-# can't go green until those tests are guarded with skipIf — tracked as a follow-up to #126.
+# Node 22 to match release-artifacts.yml / docker-publish.yml and the Node 22.5+ case-storage floor.
 
 on:
   pull_request:

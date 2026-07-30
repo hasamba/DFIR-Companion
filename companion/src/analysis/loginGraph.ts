@@ -1,13 +1,11 @@
 import type { ForensicEvent } from "./stateTypes.js";
 import { LOGON_TYPES, logonRisk } from "./siemImport.js";
+import { upgradeForensicEvent } from "./canonicalEvent.js";
 
 // Builds the Login Graph (Timesketch-style directed account → host logon graph) from the
-// super-timeline. PARSES the deterministic descriptions mapWindows() rendered at import time
-// ("{tool} Successful logon (EID 4624) - DOMAIN\\user - LogonType=N - IpAddress=… @ host") —
-// no new import-time field, so existing stored cases get the graph with no re-import.
-// Pure + deterministic, no AI, no I/O. Sibling of assetGraph.ts.
-
-const LOGON_MARKER = /(Successful|Failed) logon \(EID (?:4624|4625)\)/;
+// super-timeline. Identity/session facts come from the canonical envelope; the legacy upgrader is
+// the only place allowed to recover them from pre-schema display text. Description wording is
+// therefore no longer a graph contract. Pure + deterministic, no AI, no I/O.
 
 export interface ParsedLogon {
   account: string;                  // full form as rendered, e.g. "CORP\\jdoe", "NT AUTHORITY\\SYSTEM"
@@ -19,39 +17,31 @@ export interface ParsedLogon {
   workstation?: string;
 }
 
-// Parse one super-timeline row. Returns null when the row is not a 4624/4625 logon, carries no
-// account segment, or has no asset — malformed rows are skipped, never fatal.
+// Read one structured login event. Returns null for non-logon or incomplete rows.
 export function parseLoginEvent(e: ForensicEvent): ParsedLogon | null {
-  const m = LOGON_MARKER.exec(e.description);
-  if (!m) return null;
-  // Injection guard: on a genuine row the marker sits in the `${tool} ${label} (EID n)` prefix,
-  // BEFORE the first ` - ` separator (channelLabel values and event labels are ` - `-free, and every
-  // importer path routes through mapWindows). A marker AFTER it is log content echoed into a field
-  // value (e.g. a CommandLine containing "Successful logon (EID 4624) - EVIL\\fake @ x") — an
-  // attacker-controlled string that must not plant a fake account→host edge in the graph.
-  const sep = e.description.indexOf(" - ");
-  if (sep !== -1 && m.index > sep) return null;
-  const host = (e.asset ?? "").trim();
-  if (!host) return null;
-  // Accounts segment: everything after the marker up to the first `Key=value` field, the ` @ host`
-  // suffix, or the 4624 ` [TypeName …]` overlay. mapWindows renders accounts (when present) as the
-  // first ` - `-joined segment, comma-separated, TARGET account first (winAccounts pair order).
-  const rest = e.description.slice(m.index + m[0].length);
-  const seg = rest.replace(/^ - /, "").split(/ - (?=[A-Za-z]+=)| @ | \[/)[0]?.trim() ?? "";
-  const account = seg.split(", ")[0]?.trim();
-  if (!account || account.includes("=")) return null;   // no accounts rendered on this row
-  const lt = /\bLogonType=(\d+)\b/.exec(e.description);
-  const logonType = lt ? Number(lt[1]) : undefined;
-  const ip = /\bIpAddress=(\S+)/.exec(e.description)?.[1];
-  const ws = /\bWorkstationName=(\S+)/.exec(e.description)?.[1];
+  const canonical = upgradeForensicEvent(e).canonical;
+  if (canonical?.event.category !== "authentication" || canonical.event.type !== "logon") return null;
+  const account = (
+    canonical.actor?.kind === "account" ? canonical.actor.name : undefined
+  ) ?? canonical.account?.name;
+  const host = (
+    canonical.target?.kind === "host" ? canonical.target.name : undefined
+  ) ?? e.asset;
+  const cleanAccount = account?.trim() ?? "";
+  const cleanHost = host?.trim() ?? "";
+  if (!cleanAccount || !cleanHost) return null;
+  const logonType = canonical.authentication?.logonType;
+  const sourceIp = canonical.network?.source?.address;
+  const workstation = canonical.session?.terminal;
+  const outcome = canonical.event.outcome === "failed" ? "failed" : "success";
   return {
-    account,
-    host,
+    account: cleanAccount,
+    host: cleanHost,
     ...(logonType !== undefined ? { logonType } : {}),
     typeName: logonType !== undefined ? (LOGON_TYPES[logonType] ?? `type ${logonType}`) : "Unknown",
-    outcome: m[1] === "Successful" ? "success" : "failed",
-    ...(ip ? { sourceIp: ip } : {}),
-    ...(ws ? { workstation: ws } : {}),
+    outcome,
+    ...(sourceIp ? { sourceIp } : {}),
+    ...(workstation ? { workstation } : {}),
   };
 }
 
@@ -104,13 +94,13 @@ export interface LoginGraph {
 
 export const DEFAULT_MAX_EDGES = 500;
 
-export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
-  const nodes = new Map<string, LoginGraphNode>();
-  const edges = new Map<string, LoginGraphEdge>();
+export class LoginGraphBuilder {
+  private readonly nodes = new Map<string, LoginGraphNode>();
+  private readonly edges = new Map<string, LoginGraphEdge>();
 
-  const ensureNode = (type: "account" | "host", full: string): LoginGraphNode => {
+  private ensureNode(type: "account" | "host", full: string): LoginGraphNode {
     const id = `${type}:${full.toLowerCase()}`;
-    let n = nodes.get(id);
+    let n = this.nodes.get(id);
     if (!n) {
       n = {
         id,
@@ -119,17 +109,21 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
         isNoise: type === "account" && isNoiseAccount(full),
         eventCount: 0,
       };
-      nodes.set(id, n);
+      this.nodes.set(id, n);
     }
     return n;
-  };
+  }
 
-  for (const e of events) {
+  add(events: readonly ForensicEvent[]): void {
+    for (const e of events) this.addOne(e);
+  }
+
+  private addOne(e: ForensicEvent): void {
     const p = parseLoginEvent(e);
-    if (!p) continue;
+    if (!p) return;
     const n = e.count ?? 1;
-    const acct = ensureNode("account", p.account);
-    const host = ensureNode("host", p.host);
+    const acct = this.ensureNode("account", p.account);
+    const host = this.ensureNode("host", p.host);
     acct.eventCount += n;
     host.eventCount += n;
 
@@ -143,9 +137,9 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     const tsMs = Date.parse(e.timestamp);
     const last = !Number.isNaN(endMs) && endMs > tsMs ? end : e.timestamp;
     const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
-    const edge = edges.get(key);
+    const edge = this.edges.get(key);
     if (!edge) {
-      edges.set(key, {
+      this.edges.set(key, {
         source: acct.id, target: host.id, logonType: p.typeName, outcome: p.outcome,
         count: n, firstSeen: e.timestamp, lastSeen: last, risk: risky ? "medium" : "none",
       });
@@ -156,7 +150,7 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
       const firstSeen = !Number.isNaN(eFirstMs) && tsMs < eFirstMs ? e.timestamp : edge.firstSeen;
       const lastMs = Date.parse(last);
       const lastSeen = !Number.isNaN(lastMs) && !Number.isNaN(eLastMs) && lastMs > eLastMs ? last : edge.lastSeen;
-      edges.set(key, {
+      this.edges.set(key, {
         ...edge,
         count: edge.count + n,
         firstSeen,
@@ -166,17 +160,25 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     }
   }
 
-  // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
-  const sorted = [...edges.values()].sort((a, b) =>
-    b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
-  const kept = sorted.slice(0, maxEdges);
-  const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
-  return {
-    nodes: [...nodes.values()].filter((n) => referenced.has(n.id)),
-    edges: kept,
-    totalEdges: sorted.length,
-    truncated: sorted.length > kept.length,
-  };
+  build(maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
+    // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
+    const sorted = [...this.edges.values()].sort((a, b) =>
+      b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
+    const kept = sorted.slice(0, maxEdges);
+    const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
+    return {
+      nodes: [...this.nodes.values()].filter((n) => referenced.has(n.id)),
+      edges: kept,
+      totalEdges: sorted.length,
+      truncated: sorted.length > kept.length,
+    };
+  }
+}
+
+export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
+  const builder = new LoginGraphBuilder();
+  builder.add(events);
+  return builder.build(maxEdges);
 }
 
 export interface LoginEdgeEvent {

@@ -162,7 +162,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const caseId = typeof req.body?.caseId === "string" ? req.body.caseId : undefined;
       const force  = req.body?.force === true;
       // Guard against clobbering an in-progress case. force previously overwrote case.json +
-      // investigation.json for an OPEN case with a running synthesis/import job, destroying the
+      // investigation state for an OPEN case with a running synthesis/import job, destroying the
       // analyst's findings/timeline mid-flight and leaving orphan files (the demo only writes its
       // own captures/imports, so extra screenshots/imports survived as orphans). Refuse when the
       // case exists and is open, or has a non-terminal job — mirroring /restore-backup's check.
@@ -368,12 +368,23 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
+      const rawCursor = Number(req.query.timelineCursor);
+      const rawLimit = Number(req.query.timelineLimit);
+      const timeline = await options.stateStore.queryForensicTimeline(req.params.id, {
+        cursor: Number.isFinite(rawCursor) && rawCursor >= 0 ? Math.floor(rawCursor) : undefined,
+        limit: Number.isFinite(rawLimit) && rawLimit >= 0 ? Math.min(10_000, Math.floor(rawLimit)) : 10_000,
+      });
+      const state = await options.stateStore.loadOverview(req.params.id);
       // Clock-skew alignment (#228) is a VIEW over the stored case, applied here on the way out: the
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
       // while state/state.json keeps the evidence exactly as imported.
       const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
-      return res.status(200).json({ ...state, forensicTimeline: projectAlignment(skew, state.forensicTimeline) });
+      return res.status(200).json({
+        ...state,
+        forensicTimeline: projectAlignment(skew, timeline.entities),
+        forensicTimelineTotal: timeline.total,
+        forensicTimelineNextCursor: timeline.nextCursor,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -595,7 +606,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "filename is required" });
     }
     try {
-      // A restore rewrites investigation.json wholesale, so it must not land on top of another
+      // A restore replaces the investigation database, so it must not land on top of another
       // writer (#251). Two guards, because they close different windows:
       //   - runStateExclusive serializes against the short load→save critical sections (manual
       //     event/IOC adds, enrichment saves) that hold the same per-case lock.
@@ -734,8 +745,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const caseId = req.params.id;
     try {
-      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
-      const { events } = await options.superTimelineStore.query(caseId, { limit: Number.MAX_SAFE_INTEGER });
+      const events = await options.superTimelineStore.all(caseId);
       logLine(`[timesketch] ${caseId} super-timeline push START`);
       const result = await pushSuperTimelineToTimesketch(options.timesketchClient, { sketchName: caseId, events }, options.timesketchOptions);
       logLine(`[timesketch] ${caseId} super-timeline push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +

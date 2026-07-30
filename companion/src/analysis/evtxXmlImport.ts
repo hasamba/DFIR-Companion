@@ -9,7 +9,7 @@
 //
 // The parser is dependency-free (no XML library — mirrors the hand-rolled MIME email importer):
 // the Windows event XML is highly regular, so a focused scan over `<Event>` blocks is robust and
-// avoids pulling an XML parser into the Node-20 floor / bundler graph. Pure.
+// avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
 import { buildSiemResult, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
 
@@ -140,5 +140,5 @@ export function parseWinEventXml(text: string): Row[] {
 // Parse a Windows Event Log XML export into a SIEM result (identical shape to parseSiemExport).
 export function parseEvtxXml(text: string, opts: SiemImportOptions = {}): SiemParseResult {
   const records = parseWinEventXml(text);
-  return buildSiemResult(records, "winevent-xml", opts);
+  return buildSiemResult(records, "winevent-xml", opts, text);
 }

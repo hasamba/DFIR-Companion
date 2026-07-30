@@ -31,6 +31,7 @@ describe("jobRegistry", () => {
     expect(j.status).toBe("running");
     expect(j.cancellable).toBe(true);
     expect(j.startedAt).toBe(T0);
+    expect(j.updatedAt).toBe(T0);
     expect(j.endedAt).toBeUndefined();
   });
 
@@ -41,10 +42,11 @@ describe("jobRegistry", () => {
 
   it("progressJob updates progress + detail without mutating", () => {
     const t1 = withJobs(1);
-    const t2 = progressJob(t1, "job_0", { done: 3, total: 10 }, "extracting");
+    const t2 = progressJob(t1, "job_0", { done: 3, total: 10 }, "extracting", T1);
     expect(getJob(t1, "job_0")!.progress).toBeUndefined();
     expect(getJob(t2, "job_0")!.progress).toEqual({ done: 3, total: 10 });
     expect(getJob(t2, "job_0")!.detail).toBe("extracting");
+    expect(getJob(t2, "job_0")!.updatedAt).toBe(T1);
   });
 
   it("finish / fail / cancel set a terminal status + endedAt", () => {
@@ -55,6 +57,7 @@ describe("jobRegistry", () => {
     expect(getJob(cancelled, "job_0")!.status).toBe("done");
     expect(getJob(cancelled, "job_1")!).toMatchObject({ status: "error", error: "boom", endedAt: T1 });
     expect(getJob(cancelled, "job_2")!.status).toBe("cancelled");
+    expect(getJob(cancelled, "job_2")!.updatedAt).toBe(T1);
     for (const id of ["job_0", "job_1", "job_2"]) expect(isTerminal(getJob(cancelled, id)!.status)).toBe(true);
   });
 

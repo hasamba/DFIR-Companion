@@ -60,7 +60,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
-  // Serialize the load->save critical section for a case's investigation.json (module-private copy of
+  // Serialize the load->save critical section for a case's investigation state (module-private copy of
   // createApp's non-exported helper; no-op when no StateLock is wired, e.g. tests).
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
     options.stateLock ? options.stateLock.runExclusive(caseId, fn) : fn();
@@ -128,8 +128,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       // limit past the store cap so pagination returns the full set.
       let superEvents: ForensicEvent[] = [];
       if (options.superTimelineStore) {
-        // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
-        superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
+        superEvents = await options.superTimelineStore.all(req.params.id);
       }
       return res.status(200).json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
     } catch (err) {
@@ -171,8 +170,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       const state = await options.stateStore.load(req.params.id);
       let superEvents: ForensicEvent[] = [];
       if (options.superTimelineStore) {
-        // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
-        superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
+        superEvents = await options.superTimelineStore.all(req.params.id);
       }
       return res.status(200).json(buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings));
     } catch (err) {

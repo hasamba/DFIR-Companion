@@ -15,10 +15,10 @@
 //  - sharp is native — SEA cannot embed .node files, so it stays external and we ship the
 //    pre-built node_modules/sharp + @img/sharp-* tree next to the EXE. The bundle calls
 //    require("sharp") which createRequire(execPath) resolves to that adjacent folder.
-//  - Node 20 SEA only supports CommonJS main scripts; esbuild handles the ESM→CJS transform.
+//  - The SEA main script is CommonJS; esbuild handles the ESM→CJS transform.
 //  - Targets the host platform (whatever node you launched this with); CI is responsible
 //    for running this on the right OS (Windows for .exe).
-//  - Build with Node 20 or 22. postject can't inject the SEA blob into a Node 23+ binary
+//  - Build with Node 22.5+. postject can't inject the SEA blob into a Node 23+ binary
 //    (you'll get "Could not find the sentinel NODE_SEA_FUSE ..."); CI pins Node 22.
 
 import { build } from "esbuild";
@@ -38,6 +38,13 @@ const BUILD_DIR = join(COMPANION_DIR, "build-sea");
 const DIST_DIR = join(COMPANION_DIR, "dist-sea");
 const EXE_NAME = platform() === "win32" ? "dfir-companion.exe" : "dfir-companion";
 const EXE_PATH = join(DIST_DIR, EXE_NAME);
+const [NODE_MAJOR, NODE_MINOR] = process.versions.node.split(".").map(Number);
+
+if (NODE_MAJOR !== 22 || NODE_MINOR < 5) {
+  throw new Error(
+    `[sea] packaging requires Node 22.5.x or later in the Node 22 line; current runtime is ${process.version}`,
+  );
+}
 const BUNDLE_PATH = join(BUILD_DIR, "bundle.cjs");
 const SEA_CONFIG_PATH = join(BUILD_DIR, "sea-config.json");
 const SEA_BLOB_PATH = join(BUILD_DIR, "sea-prep.blob");
@@ -162,7 +169,7 @@ async function injectBlob() {
       throw new Error(
         `${err?.message ?? err}\n` +
         `[sea] HINT: postject couldn't inject into a Node ${process.version} binary — SEA ` +
-        `packaging needs Node 20 or 22. Switch (e.g. \`nvm use 22\`) and re-run; CI pins Node 22.`,
+        `packaging needs Node 22.5+. Switch (e.g. \`nvm use 22\`) and re-run; CI pins Node 22.`,
       );
     }
     throw err;

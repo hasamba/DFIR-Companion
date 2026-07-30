@@ -32,6 +32,7 @@
 // import time. The same forensic timeline the screenshot pipeline feeds.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   aggregateEvents,
   genericIocs,
@@ -219,6 +220,7 @@ function procName(row: Row): string {
 function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>): MappedEvent[] {
   const out: MappedEvent[] = [];
   const psscan = /psscan|psxview/.test(label);
+  let recordIndex = 0;
 
   // Index PID → name (across the whole tree) so a flat table resolves PPID → parent name.
   const pidIndex = new Map<string, string>();
@@ -231,9 +233,11 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
     }
   };
   index(rows);
+  recordIndex = 0;
 
   const walk = (list: Row[], parent: string): void => {
     for (const r of list) {
+      const locatorIndex = recordIndex++;
       const name = procName(r);
       const pid = pickPid(r);
       const ppid = pick(r, ["PPID", "ppid"]);
@@ -249,15 +253,62 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
         let description = `${tool} ${label}: ${name || "?"} (PID ${pid || "?"}${ppid ? `, PPID ${ppid}` : ""}${exitNote})`;
         if (created) description += ` started ${created}`;
         if (cmd) description += ` — ${oneLine(cmd).slice(0, 160)}`;
+        const pidNumber = Number(pid);
+        const parentPidNumber = Number(ppid);
+        const canonical = createCanonicalEvent({
+          event: { category: "process", type: "observation" },
+          subject: {
+            kind: "process",
+            ...(pid ? { id: pid } : {}),
+            ...(name ? { name } : {}),
+          },
+          process: {
+            ...(Number.isInteger(pidNumber) && pidNumber > 0 ? { pid: pidNumber } : {}),
+            ...(name ? { name } : {}),
+            ...(path ? { executable: path } : {}),
+            ...(cmd ? { commandLine: cmd } : {}),
+            ...(parentName || (Number.isInteger(parentPidNumber) && parentPidNumber > 0) ? {
+              parent: {
+                ...(Number.isInteger(parentPidNumber) && parentPidNumber > 0 ? { pid: parentPidNumber } : {}),
+                ...(parentName ? { name: parentName } : {}),
+              },
+            } : {}),
+          },
+          ...(path ? { file: { path, name: baseName(path) } } : {}),
+          time: { observed: created, normalized: created },
+          evidence: {
+            rawRecords: [{
+              source: `${tool.toLowerCase()}-${label}`,
+              locator: `row:${locatorIndex}`,
+              ...(pid ? { recordId: pid } : {}),
+            }],
+          },
+          producer: {
+            importer: "memory",
+            parserVersion: "1",
+            mappingVersion: "memory-process-v1",
+          },
+          rawFieldMap: {
+            "time.observed": ["CreateTime", "process_create_time", "CreatedTime", "start_time"],
+            ...(pid ? { "subject.id": ["PID"], "process.pid": ["PID"] } : {}),
+            ...(name ? { "subject.name": PROC_NAME_KEYS, "process.name": PROC_NAME_KEYS } : {}),
+            ...(path ? { "process.executable": ["Path"], "file.path": ["Path"] } : {}),
+            ...(cmd ? { "process.commandLine": ["Cmd", "CommandLine", "Args"] } : {}),
+            ...(ppid ? { "process.parent.pid": ["PPID"] } : {}),
+          },
+        });
         out.push({
           timestamp: created,
           description: description.slice(0, 600),
           severity: "Info",
           mitre: [],
+          canonical,
           aggKey: `mem|proc|${(name || "?").toLowerCase()}|${pid}|${ppid}${psscan ? "|scan" : ""}`.slice(0, 400),
           sources: [tool],
           ...(name ? { processName: name } : {}),
           ...(parentName ? { parentName } : {}),
+          ...(Number.isInteger(pidNumber) && pidNumber > 0 ? { pid: pidNumber } : {}),
+          ...(cmd ? { commandLine: cmd } : {}),
           ...(path && /[\\/]/.test(path) ? { path } : {}),
         });
       }
@@ -1193,13 +1244,14 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events,
+    events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: finalEvents.length,
     dropped: Math.max(0, total - represented),
     groups,
     tables: tables.length,

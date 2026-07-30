@@ -86,9 +86,10 @@ void logActivity(store, onActivity, caseId, { category: "ai", action: "synthesis
 
 **`no-restricted-syntax` / unbounded timeline read** — `query(caseId, { limit: Number.MAX_SAFE_INTEGER })`
 loads a whole case's super-timeline into memory to answer a question about a few rows. Page the
-query, or push the filter into the store. There are seven grandfathered sites, each carrying a
-disable comment naming [#373](https://github.com/hasamba/DFIR-Companion/issues/373), the issue that
-removes them. The rule exists so that count can only go down.
+query, batch it with `eventBatches()`, or push the filter into the store.
+[#373](https://github.com/hasamba/DFIR-Companion/issues/373) removed the seven that existed when
+this rule was written, so it ships with no violations and nothing suppressed — it is here to stop
+the eighth.
 
 **`no-restricted-syntax` / unvalidated request boundary** — `req.body as { name?: string }` asserts a
 shape the wire never promised. A client posting `{"name": 42}` gives you a value typed `string` that
@@ -150,19 +151,21 @@ A 6,000-line module is a review problem, not a style problem: nobody reads the w
 `analysis/pipeline.ts` before changing twenty lines of it, so nobody sees the interaction four
 thousand lines away.
 
-- A file **not** in `scripts/file-size-ledger.json` may not exceed **800 lines**. (406 of 418 source
-  files are already under it — it is where this codebase already sits, not an aspiration.)
+- A file **not** in `scripts/file-size-ledger.json` may not exceed **800 lines**. (Over 96% of
+  source files are already under it — it is where this codebase already sits, not an aspiration.)
 - A file **in** the ledger is frozen at its recorded length. Shrink it freely; you cannot grow it.
 
 When it fails, put the new code in its own module. If you shrank a ledgered file, lock the smaller
 number in:
 
 ```bash
-npm run check:size -- --update
+npm run check:size -- --update   # shrink-only; refuses to raise a recorded number
+npm run check:size -- --init     # re-baseline; prints every raise, justify them in the PR
 ```
 
-`--update` refuses to raise any recorded number. Growing a big file needs a hand edit to the ledger
-and an argument in the PR.
+`--init` is for two moments only: the first recording, and re-baselining after merging a long-lived
+branch whose landed work legitimately grew a ledgered file. Reaching for it during ordinary work
+means the new code belongs in its own module instead.
 
 ## `npm run check:imports` — the circular-import ratchet
 
@@ -201,5 +204,4 @@ them were caught by review, and all of them are trivially caught by a machine.
 - `@typescript-eslint/no-base-to-string` (119 sites) and `unbound-method` (45) both find real
   fragility. They are not enabled because adopting them would have meant shipping a legacy-baseline
   file — the exact mechanism that let ~250 test type errors accumulate unnoticed in the first place.
-- The seven `Number.MAX_SAFE_INTEGER` timeline reads are removed by #373.
-- The 12 ledgered oversized files shrink under #384.
+- The 14 ledgered oversized files shrink under #384.

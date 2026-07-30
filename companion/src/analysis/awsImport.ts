@@ -12,6 +12,7 @@
 // in the description. NOT a detection engine — the same deterministic mapping pattern.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -22,6 +23,7 @@ import {
   isObject,
   getCI,
   getPath,
+  firstStr,
   oneLine,
   normalizeTime,
   type MappedEvent,
@@ -110,21 +112,32 @@ const AWS_ACTIONS: Record<string, ActionDef> = {
 function truthy(v: unknown): boolean { return v === true || /^(true|1|yes)$/i.test(str(v).trim()); }
 
 // The acting principal: IAM user name, the assumed-role's issuer, the ARN, or the type.
-function principal(ui: unknown): { name: string; isRoot: boolean } {
+function principal(ui: unknown): { name: string; isRoot: boolean; id?: string; type?: string; arn?: string; accountId?: string } {
   if (!isObject(ui)) return { name: str(ui), isRoot: false };
+  const type = str(getCI(ui, "type"));
+  const arn = str(getCI(ui, "arn"));
+  const id = str(getCI(ui, "principalId")) || str(getCI(ui, "userId"));
+  const accountId = str(getCI(ui, "accountId"));
   const name = str(getCI(ui, "userName"))
     || str(getPath(ui, "sessionContext.sessionIssuer.userName"))
-    || str(getCI(ui, "arn"))
+    || arn
     || str(getCI(ui, "invokedBy"))
-    || str(getCI(ui, "type"));
-  return { name, isRoot: /^root$/i.test(str(getCI(ui, "type"))) };
+    || type;
+  return {
+    name,
+    isRoot: /^root$/i.test(type),
+    ...(id ? { id } : {}),
+    ...(type ? { type } : {}),
+    ...(arn ? { arn } : {}),
+    ...(accountId ? { accountId } : {}),
+  };
 }
 
 function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
 
-function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent | null {
   const name = str(getCI(rec, "eventName"));
   const source = str(getCI(rec, "eventSource"));
   if (!name || !source) return null;
@@ -134,17 +147,19 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   let severity: Severity = def?.severity ?? (readOnly ? "Info" : "Low");
   const mitre = [...(def?.mitre ?? [])];
 
-  const { name: who, isRoot } = principal(getCI(rec, "userIdentity"));
+  const identity = principal(getCI(rec, "userIdentity"));
+  const { name: who, isRoot } = identity;
   const region = str(getCI(rec, "awsRegion"));
   const errorCode = str(getCI(rec, "errorCode"));
   const rawIp = str(getCI(rec, "sourceIPAddress"));
   const ip = cleanIp(rawIp); // AWS-service callers ("ec2.amazonaws.com") yield no IP
 
   // Console-login failure → brute-force signal; root console login is notable.
+  let failed = !!errorCode;
   if (/^consolelogin$/i.test(name)) {
     const res = str(getPath(rec, "responseElements.ConsoleLogin"));
     if (/fail/i.test(res) || /failed authentication/i.test(str(getCI(rec, "errorMessage")))) {
-      severity = worst(severity, "Medium"); if (!mitre.includes("T1110")) mitre.push("T1110");
+      severity = worst(severity, "Medium"); if (!mitre.includes("T1110")) mitre.push("T1110"); failed = true;
     }
     if (isRoot) severity = worst(severity, "High");
   }
@@ -163,10 +178,67 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (isRoot) description += " [root]";
   if (errorCode) description += ` [${errorCode}]`;
   description = description.slice(0, 600);
+  const observedTimestamp = str(getCI(rec, "eventTime"));
+  const normalizedTimestamp = normalizeTime(observedTimestamp);
+  const request = getCI(rec, "requestParameters");
+  const resource = isObject(request)
+    ? firstStr(request, ["resource", "resourceName", "userName", "roleName", "bucketName", "key"])
+    : "";
+  const canonical = createCanonicalEvent({
+    event: {
+      category: "cloud",
+      type: "api",
+      action: name,
+      outcome: failed ? "failed" : "success",
+    },
+    ...(who ? {
+      actor: {
+        kind: "cloud_principal",
+        name: who,
+        ...(identity.id ? { id: identity.id } : {}),
+      },
+    } : {}),
+    ...(resource ? { target: { kind: "other", name: resource } } : {}),
+    ...(ip ? { network: { source: { address: ip } } } : {}),
+    cloud: {
+      provider: "aws",
+      ...(identity.id ? { principalId: identity.id } : {}),
+      ...(identity.type ? { principalType: identity.type } : {}),
+      ...(identity.accountId ? { accountId: identity.accountId } : {}),
+      ...(region ? { region } : {}),
+      ...(resource ? { resource } : {}),
+    },
+    time: { observed: observedTimestamp, normalized: normalizedTimestamp },
+    evidence: {
+      rawRecords: [{
+        source: "aws-cloudtrail",
+        locator: `record:${recordIndex}`,
+        ...(str(getCI(rec, "eventID")).trim() ? { recordId: str(getCI(rec, "eventID")).trim() } : {}),
+      }],
+    },
+    producer: {
+      importer: "aws-cloudtrail",
+      parserVersion: "1",
+      mappingVersion: "cloudtrail-v1",
+      ruleVersions: ["cloudtrail-action-severity-v1"],
+    },
+    rawFieldMap: {
+      "event.action": ["eventName"],
+      "event.outcome": ["errorCode", "responseElements.ConsoleLogin"],
+      "time.observed": ["eventTime"],
+      ...(who ? { "actor.name": ["userIdentity.userName", "userIdentity.arn", "userIdentity.type"] } : {}),
+      ...(identity.id ? { "actor.id": ["userIdentity.principalId", "userIdentity.userId"] } : {}),
+      ...(ip ? { "network.source.address": ["sourceIPAddress"] } : {}),
+      "cloud.provider": ["eventSource"],
+      ...(region ? { "cloud.region": ["awsRegion"] } : {}),
+      ...(resource ? { "cloud.resource": ["requestParameters"] } : {}),
+    },
+  });
 
   return {
-    timestamp: normalizeTime(str(getCI(rec, "eventTime"))),
+    timestamp: normalizedTimestamp,
     description, severity, mitre,
+    canonical,
     aggKey: `aws|${name}|${who}|${ip || rawIp}|${errorCode}`.toLowerCase().slice(0, 400),
     sources: ["AWS CloudTrail"],
   };
@@ -182,8 +254,8 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  for (const rec of records) {
-    const m = mapRecord(rec, iocSink);
+  for (const [recordIndex, rec] of records.entries()) {
+    const m = mapRecord(rec, iocSink, recordIndex);
     if (m) mapped.push(m);
   }
   if (mapped.length === 0) {
@@ -195,13 +267,14 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events,
+    events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: finalEvents.length,
     dropped: Math.max(0, total - represented),
     groups,
     format: "cloudtrail",

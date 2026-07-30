@@ -67,6 +67,15 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report");          // report generation via the Export menu
   });
 
+  it("lets the analyst browse for an MCP evidence file and uses the upload run path", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('id="mcpRunBrowseBtn"');
+    expect(html).toMatch(/id="mcpRunFile"[^>]*type="file"/);
+    expect(html).toContain("/run-upload");
+    expect(html).toMatch(/fileToBase64\(browserFile\)/);
+    expect(html).toMatch(/mcpRunBrowseBtn[\s\S]{0,300}\.click\(\)/);
+  });
+
   it("makes the case-ID field a combo box (datalist of existing cases + free text)", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('list="caseList"');          // the input is bound to the datalist
@@ -804,5 +813,49 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
     const inlineOpeners = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)].map((m) => m[0]);
     expect(inlineOpeners.length).toBeGreaterThan(0);
     for (const tag of inlineOpeners) expect(tag).toContain('nonce="__CSP_NONCE__"');
+  });
+});
+
+describe("dashboard.html — plain-English MCP investigations", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("makes instruction and evidence the primary workflow", async () => {
+    const html = await load();
+    expect(html).toMatch(/id="mcpAgentPrompt"[\s\S]{0,300}Investigate this RAM dump/);
+    expect(html).toContain('id="mcpAgentBtn"');
+    expect(html).toContain("/mcp/agent-upload");
+    expect(html).toContain("/mcp/agent");
+  });
+
+  it("keeps tool names and JSON arguments in an advanced manual fallback", async () => {
+    const html = await load();
+    expect(html).toMatch(/<details[^>]*>[\s\S]{0,300}<summary>Advanced: call one MCP tool manually<\/summary>/);
+    expect(html).toContain('id="mcpRunTool"');
+    expect(html).toContain('id="mcpRunArgs"');
+  });
+
+  it("keeps long jobs visible and offers inline cancel and retry controls", async () => {
+    const html = await load();
+    expect(html).toContain('id="mcpRunCancelBtn"');
+    expect(html).toContain('id="mcpRunRetryBtn"');
+    expect(html).toContain("/cancel");
+    expect(html).toContain("function resumeMcpJob()");
+    expect(html).toContain("it may be stalled");
+    expect(html).not.toMatch(/tries\s*<\s*600/);
+  });
+
+  it("keeps imported analysis visible in a case history", async () => {
+    const html = await load();
+    expect(html).toContain('id="mcpReportHistory"');
+    expect(html).toContain("function loadMcpReports(");
+    expect(html).toContain("/mcp/reports");
+    expect(html).toContain("Imported and preserved in analysis history.");
+  });
+
+  it("exposes the configurable long-investigation timeout in Settings", async () => {
+    const html = await load();
+    expect(html).toContain('id="env-DFIR_MCP_AGENT_TIMEOUT_MS"');
+    expect(html).toContain("default 3600000 (1 hour)");
+    expect(html).toContain('fetch("/mcp/reconnect"');
   });
 });

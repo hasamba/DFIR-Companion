@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildEvidenceGraph, buildLateralPaths } from "../../src/analysis/evidenceGraph.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 
 const HASH = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 const HASH2 = "1111111122222222333333334444444455555555666666667777777788888888";
@@ -19,6 +20,31 @@ function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
 }
 
 describe("buildEvidenceGraph — spawned (process tree)", () => {
+  it("builds the process edge from canonical identities without legacy process fields or prose", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev({
+      id: "canonical-process",
+      description: "wording has no structured identity",
+      canonical: createCanonicalEvent({
+        event: { category: "process", type: "start" },
+        target: { kind: "host", name: "HOST-CANONICAL" },
+        process: { name: "child.exe", parent: { name: "parent.exe" } },
+        time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
+        evidence: { rawRecords: [{ source: "test", locator: "row:0" }] },
+        producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+      }),
+    }));
+
+    const graph = buildEvidenceGraph(s);
+    expect(graph.edges).toHaveLength(2);
+    expect(graph.edges).toContainEqual(expect.objectContaining({
+      type: "spawned",
+      source: "proc:host-canonical:parent.exe",
+      target: "proc:host-canonical:child.exe",
+    }));
+    expect(graph.edges).toContainEqual(expect.objectContaining({ type: "ran_on" }));
+  });
+
   it("chains parent→child→grandchild into one tree via shared process nodes", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(
@@ -69,6 +95,28 @@ describe("buildEvidenceGraph — spawned (process tree)", () => {
 });
 
 describe("buildEvidenceGraph — lateral_move", () => {
+  it("correlates canonical accounts even when descriptions contain no account", () => {
+    const s = emptyState("c1");
+    for (const [id, host] of [["e1", "HOST-A"], ["e2", "HOST-B"]] as const) {
+      s.forensicTimeline.push(ev({
+        id,
+        description: "authentication display text changed",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "CORP\\structured-user" },
+          target: { kind: "host", name: host },
+          time: { observed: "2026-05-20T09:00:00Z", normalized: "2026-05-20T09:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      }));
+    }
+
+    const edges = buildEvidenceGraph(s).edges.filter((edge) => edge.rule === "shared-account");
+    expect(edges).toHaveLength(2);
+    expect(edges.every((edge) => edge.source === "account:corp\\structured-user")).toBe(true);
+  });
+
   it("links hosts sharing the same binary hash (high confidence)", () => {
     const s = emptyState("c1");
     s.forensicTimeline.push(

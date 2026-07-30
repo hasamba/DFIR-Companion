@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canonicalEventEnvelopeSchema } from "./canonicalEvent.js";
 
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
@@ -59,6 +60,9 @@ export const deltaSchema = z.object({
     severity: severity.default("Info").catch("Info"),
     mitreTechniques: z.array(z.string()).default([]),
     relatedFindingIds: z.array(z.string()).default([]),
+    // Deterministic importers attach the canonical envelope. It remains optional so AI output and
+    // legacy cases keep parsing; persistence upgrades legacy events at the read boundary.
+    canonical: canonicalEventEnvelopeSchema.optional(),
     // Aggregation: when one event represents many collapsed occurrences (e.g. "20
     // failed logins"), count is the number of occurrences and endTimestamp the time
     // of the last one. Absent/1 means a single discrete event.

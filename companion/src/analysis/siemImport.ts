@@ -22,6 +22,12 @@
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
 import type { Severity } from "./stateTypes.js";
+import {
+  createCanonicalEvent,
+  mergeCanonicalEvents,
+  stampSourceArtifactHash,
+  type CanonicalEventEnvelope,
+} from "./canonicalEvent.js";
 import { toUtcIso } from "./timeUtc.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -46,6 +52,7 @@ export interface SiemEvent {
   description: string;
   severity: Severity;
   mitreTechniques: string[];
+  canonical?: CanonicalEventEnvelope;
   count?: number;
   endTimestamp?: string;
   sha256?: string;
@@ -561,6 +568,7 @@ export interface MappedEvent {
   severity: Severity;
   mitre: string[];
   aggKey: string;
+  canonical?: CanonicalEventEnvelope;
   sha256?: string;
   md5?: string;
   path?: string;
@@ -662,7 +670,17 @@ export function logonRisk(logonType: number, sourceIp: string): { typeName: stri
   }
 }
 
-export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>): MappedEvent | null {
+interface CanonicalRecordContext {
+  source: string;
+  recordIndex: number;
+}
+
+export function mapWindows(
+  rec: Row,
+  host: string,
+  iocSink: Map<string, SiemIoc>,
+  canonicalContext: CanonicalRecordContext = { source: "windows-event", recordIndex: 0 },
+): MappedEvent | null {
   const eidRaw = getCI(rec, "event_id") ?? getCI(rec, "EventID") ?? getPath(rec, "winlog.event_id") ?? getPath(rec, "event.code");
   const eid = Number(typeof eidRaw === "object" && isObject(eidRaw) ? getCI(eidRaw, "#text") : eidRaw);
   const channel = firstStr(rec, ["log_name", "channel", "Channel", "winlog.channel", "source_name"]);
@@ -774,6 +792,129 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   const pid = (!isSysmon && eid === 4688) ? parsePid(str(getCI(ed, "NewProcessId")))
     : (isSysmon && eid === 1) ? parsePid(str(getCI(ed, "ProcessId")))
     : undefined;
+  const commandLine = def.kind === "process" ? str(getCI(ed, "CommandLine")) : "";
+  const observedTimestamp = str(getCI(ed, "UtcTime")).trim() || firstStr(rec, TIME_KEYS);
+  const normalizedTimestamp = pickTimestamp(rec, ed);
+  const sourceIp = cleanIp(str(getCI(ed, "IpAddress")) || str(getCI(ed, "SourceIp")));
+  const destinationIp = cleanIp(str(getCI(ed, "DestinationIp")));
+  const destinationPort = Number(str(getCI(ed, "DestinationPort")));
+  const logonTypeRaw = str(getCI(ed, "LogonType")).trim();
+  const logonType = logonTypeRaw && Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
+  const isLogon = !isSysmon && (eid === 4624 || eid === 4625);
+  const accountName = accts[0];
+  const category = isLogon ? "authentication"
+    : def.kind === "process" || def.kind === "procaccess" ? "process"
+    : def.kind === "network" || def.kind === "dns" ? "network"
+    : def.kind === "file" ? "file"
+    : def.kind === "service" ? "service"
+    : str(getCI(ed, "TaskName")) ? "task"
+    : str(getCI(ed, "TargetObject")) ? "registry"
+    : "other";
+  const canonical = createCanonicalEvent({
+    event: {
+      category,
+      type: isLogon ? "logon"
+        : def.kind === "process" ? "start"
+        : def.kind === "procaccess" ? "access"
+        : def.kind === "network" ? "connection"
+        : def.kind === "dns" ? "query"
+        : def.kind ?? "event",
+      ...(isLogon ? { outcome: eid === 4624 ? "success" : "failed" } : {}),
+    },
+    ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
+    ...(host ? { target: { kind: "host" as const, name: host } } : {}),
+    ...(accountName ? {
+      account: {
+        name: accountName,
+        ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
+      },
+    } : {}),
+    ...(isLogon ? {
+      authentication: {
+        ...(logonType !== undefined ? { logonType } : {}),
+        ...(str(getCI(ed, "TargetLogonId")).trim() ? { sessionId: str(getCI(ed, "TargetLogonId")).trim() } : {}),
+      },
+      ...(str(getCI(ed, "WorkstationName")).trim()
+        ? { session: { terminal: str(getCI(ed, "WorkstationName")).trim() } }
+        : {}),
+    } : {}),
+    ...(sourceIp || destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0) ? {
+      network: {
+        ...(sourceIp ? { source: { address: sourceIp } } : {}),
+        ...(destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0) ? {
+          destination: {
+            ...(destinationIp ? { address: destinationIp } : {}),
+            ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+          },
+        } : {}),
+        ...(str(getCI(ed, "Protocol")).trim() ? { protocol: str(getCI(ed, "Protocol")).trim() } : {}),
+      },
+    } : {}),
+    ...(def.kind === "process" || def.kind === "procaccess" ? {
+      process: {
+        ...(pid !== undefined ? { pid } : {}),
+        ...(processName ? { name: processName } : {}),
+        ...(imagePath ? { executable: imagePath } : {}),
+        ...(commandLine ? { commandLine } : {}),
+        ...(parentName ? {
+          parent: {
+            name: parentName,
+            ...(str(getCI(ed, "ParentImage")).trim() ? { executable: str(getCI(ed, "ParentImage")).trim() } : {}),
+          },
+        } : {}),
+      },
+    } : {}),
+    ...(imagePath || sha256 || md5 ? {
+      file: {
+        ...(imagePath ? { path: imagePath, name: baseName(imagePath) } : {}),
+        ...(sha256 ? { sha256 } : {}),
+        ...(md5 ? { md5 } : {}),
+      },
+    } : {}),
+    ...(str(getCI(ed, "TargetObject")).trim() ? {
+      registry: {
+        key: str(getCI(ed, "TargetObject")).trim(),
+        ...(str(getCI(ed, "Details")).trim() ? { valueData: str(getCI(ed, "Details")).trim() } : {}),
+      },
+    } : {}),
+    ...(def.kind === "service" ? {
+      service: {
+        ...(str(getCI(ed, "ServiceName")).trim() ? { name: str(getCI(ed, "ServiceName")).trim() } : {}),
+        ...(str(getCI(ed, "ServiceFileName")).trim() ? { executable: str(getCI(ed, "ServiceFileName")).trim() } : {}),
+      },
+    } : {}),
+    ...(str(getCI(ed, "TaskName")).trim() ? {
+      task: {
+        name: str(getCI(ed, "TaskName")).trim(),
+        ...(commandLine ? { command: commandLine } : {}),
+      },
+    } : {}),
+    time: { observed: observedTimestamp, normalized: normalizedTimestamp },
+    evidence: {
+      rawRecords: [{
+        source: canonicalContext.source,
+        locator: `row:${canonicalContext.recordIndex}`,
+        ...(str(getCI(rec, "EventRecordID")).trim() ? { recordId: str(getCI(rec, "EventRecordID")).trim() } : {}),
+      }],
+    },
+    producer: {
+      importer: "windows-event",
+      parserVersion: "1",
+      mappingVersion: "windows-event-v1",
+      ruleVersions: ["windows-event-severity-v1"],
+    },
+    rawFieldMap: {
+      "time.observed": ["EventData.UtcTime", ...TIME_KEYS],
+      ...(accountName ? { "actor.name": ["EventData.TargetDomainName", "EventData.TargetUserName"] } : {}),
+      ...(host ? { "target.name": ["Computer", "host.name"] } : {}),
+      ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
+      ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
+      ...(destinationIp ? { "network.destination.address": ["EventData.DestinationIp"] } : {}),
+      ...(processName ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] } : {}),
+      ...(pid !== undefined ? { "process.pid": ["EventData.ProcessId", "EventData.NewProcessId"] } : {}),
+      ...(commandLine ? { "process.commandLine": ["EventData.CommandLine"] } : {}),
+    },
+  });
 
   // IOCs from the structured fields.
   for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress"]) {
@@ -796,10 +937,11 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns)) addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
 
   return {
-    timestamp: pickTimestamp(rec, ed),
+    timestamp: normalizedTimestamp,
     description,
     severity,
     mitre,
+    canonical,
     // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
     // than aggregating into one — preserving per-process granularity and enabling pid correlation.
     aggKey: `win|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}`.toLowerCase(),
@@ -811,7 +953,7 @@ export function mapWindows(rec: Row, host: string, iocSink: Map<string, SiemIoc>
     ...(def.kind === "process" && parentName ? { parentName } : {}),
     ...(pid !== undefined ? { pid } : {}),
     // Command line on process-creation events → chainSignature for cross-tool correlation (#68).
-    ...(def.kind === "process" && str(getCI(ed, "CommandLine")) ? { commandLine: str(getCI(ed, "CommandLine")) } : {}),
+    ...(commandLine ? { commandLine } : {}),
   };
 }
 
@@ -1089,6 +1231,7 @@ export function createEventAggregator(
         if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
         if (!existing.artifactName && m.artifactName) existing.artifactName = m.artifactName; // first-wins provenance
         if (!existing.message && m.message) existing.message = m.message; // first-wins full detail
+        existing.canonical = mergeCanonicalEvents(existing.canonical, m.canonical);
       } else {
         byKey.set(key, {
           id: "",
@@ -1096,6 +1239,7 @@ export function createEventAggregator(
           description: m.description,
           severity: m.severity,
           mitreTechniques: [...m.mitre],
+          ...(m.canonical ? { canonical: m.canonical } : {}),
           count: 1,
           aggKey: m.aggKey,
           ...(m.sha256 ? { sha256: m.sha256 } : {}),
@@ -1152,7 +1296,12 @@ export function aggregateEvents(
 // generic field auto-detection fallback, aggregation + caps). Shared by parseSiemExport (which
 // unwraps JSON/NDJSON containers first) and the Windows-Event-XML importer (which parses the XML
 // envelope to the same record shape) so both produce an identical SiemParseResult. Pure.
-export function buildSiemResult(records: Row[], format: string, opts: SiemImportOptions = {}): SiemParseResult {
+export function buildSiemResult(
+  records: Row[],
+  format: string,
+  opts: SiemImportOptions = {},
+  sourceText?: string,
+): SiemParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const total = records.length;
 
@@ -1160,11 +1309,11 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
 
-  for (const rec of records) {
+  for (const [recordIndex, rec] of records.entries()) {
     const host = pickHost(rec);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapWindows(rec, host, rowSink) ?? mapGeneric(rec, host, rowSink);
+    const m = mapWindows(rec, host, rowSink, { source: format, recordIndex }) ?? mapGeneric(rec, host, rowSink);
     mergeRowIocs(iocSink, rowSink, m.aggKey);
     mapped.push(m);
   }
@@ -1175,11 +1324,12 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const finalEvents = sourceText ? stampSourceArtifactHash(events, sourceText) : events;
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   return {
-    events,
+    events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
     kept: events.length,
@@ -1192,5 +1342,5 @@ export function buildSiemResult(records: Row[], format: string, opts: SiemImport
 
 export function parseSiemExport(text: string, opts: SiemImportOptions = {}): SiemParseResult {
   const { records, format } = extractRecords(text);
-  return buildSiemResult(records, format, opts);
+  return buildSiemResult(records, format, opts, text);
 }

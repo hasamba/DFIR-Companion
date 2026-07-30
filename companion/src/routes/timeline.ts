@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
+import { once } from "node:events";
 import { logActivity } from "../analysis/activityLog.js";
-import { toTimesketchJsonlFromList } from "../integrations/timesketch/timesketchMap.js";
+import { mapForensicEvent } from "../integrations/timesketch/timesketchMap.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -163,7 +164,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
       // "promoted" means this event's id is already there) so the UI can show persistent state instead
       // of a fire-and-forget button that gives no lasting feedback.
       const promotedIds = options.stateStore
-        ? new Set((await options.stateStore.load(req.params.id)).forensicTimeline.map((e) => e.id))
+        ? await options.stateStore.hasForensicEventIds(req.params.id, result.events.map((event) => event.id))
         : new Set<string>();
       const events = result.events.map((e) => ({ ...e, promoted: promotedIds.has(e.id) }));
       return res.status(200).json({ ...result, events });
@@ -178,14 +179,24 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/super-timeline.jsonl", async (req: Request, res: Response) => {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     try {
-      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
-      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
-      const jsonl = toTimesketchJsonlFromList(events);
       res.type("application/x-ndjson; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="timesketch-super-timeline.jsonl"');
       res.setHeader("Cache-Control", "private, no-cache");
-      return res.send(jsonl);
+      for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) {
+        for (const event of batch) {
+          const mapped = mapForensicEvent(event);
+          if (mapped && !res.write(`${JSON.stringify(mapped)}\n`)) {
+            if (res.destroyed) return;
+            await once(res, "drain");
+          }
+        }
+      }
+      return res.end();
     } catch (err) {
+      if (res.headersSent) {
+        res.destroy(err as Error);
+        return;
+      }
       return res.status(500).json({ error: (err as Error).message });
     }
   });

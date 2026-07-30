@@ -61,7 +61,9 @@ nav:
     - Case Management: reference/cases.md
     - Evidence Capture: reference/evidence-capture.md
     - Importing Evidence: reference/importing.md
+    - Canonical Event Data: reference/canonical-events.md
     - AI Analysis: reference/ai-analysis.md
+    - MCP Analysis: reference/mcp-analysis.md
     - Presidio & PII Masking: reference/presidio.md
     - Dashboard Panels: reference/dashboard.md
     - IOC Enrichment: reference/ioc-enrichment.md

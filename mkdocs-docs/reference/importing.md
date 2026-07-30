@@ -41,6 +41,10 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 
 All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI call** — they map the tool's own verdict/fields, not re-detect threats.
 
+Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
+structured identities and field-level provenance. This lets graphs and cross-source correlation use
+the source facts rather than parsing the displayed description back into data.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

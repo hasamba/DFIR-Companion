@@ -1,7 +1,12 @@
 import { mkdir, readdir, stat, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "./atomicWrite.js";
-import { SNAPSHOT_STATE_FILES } from "../analysis/investigationStateFiles.js";
+import {
+  SNAPSHOT_BINARY_STATE_FILES,
+  SNAPSHOT_STATE_FILES,
+} from "../analysis/investigationStateFiles.js";
+import { caseSqliteWorker } from "../analysis/caseSqliteWorker.js";
+import { INVESTIGATION_DB_FILENAME } from "../analysis/stateStore.js";
 import type { CaseStore } from "./caseStore.js";
 
 export type BackupTrigger = "pre-synthesis" | "pre-import" | "scheduled" | "shutdown";
@@ -20,13 +25,13 @@ export interface BackupSummary {
   totalBytes: number;
 }
 
-// Backups are full copies of investigation.json (hundreds of MB on large cases) and fire on every
+// Backups include a consistent SQLite snapshot (potentially many GB on large cases) and fire on every
 // synthesis plus an hourly timer, so "keep everything" fills the disk. When the operator asks for
 // unlimited (retain=0) we substitute this cap instead — raise DFIR_STATE_BACKUP_RETAIN for more.
 export const RETAIN_FALLBACK_CAP = 100;
 
-// A count cap does not bound disk: at the ~512 MB state-load ceiling a single bundle is huge, so
-// retain + preSynthRetain entries can still run to tens of GB per case (#295). 10 GiB is far above
+// A count cap does not bound disk: a single indexed case can be huge, so retain +
+// preSynthRetain entries can still run to tens of GB per case (#295). 10 GiB is far above
 // what a normal case ever reaches — it binds only on the runaway shape the cap exists to catch.
 export const DEFAULT_MAX_BYTES = 10 * 1024 * 1024 * 1024;
 
@@ -105,6 +110,32 @@ function backupFilename(createdAt: string, trigger: BackupTrigger): string {
   return `${safeTimestamp(createdAt)}_${trigger}.json`;
 }
 
+function binaryBackupFilename(manifestFilename: string, stateFilename: string): string {
+  return `${manifestFilename.slice(0, -".json".length)}.${stateFilename}`;
+}
+
+interface BackupBundle {
+  createdAt: string;
+  trigger: BackupTrigger;
+  files: Record<string, unknown>;
+  // state filename -> sibling backup filename. Binary payloads stay out of this JSON so a large
+  // database never crosses V8's string limit during backup or restore.
+  binaryFiles?: Record<string, string>;
+}
+
+function binaryBackupEntries(
+  manifestFilename: string,
+  bundle: BackupBundle,
+): Array<[string, string]> {
+  return Object.entries(bundle.binaryFiles ?? {}).map(([name, sidecar]) => {
+    if (!(SNAPSHOT_BINARY_STATE_FILES as readonly string[]).includes(name) ||
+        sidecar !== binaryBackupFilename(manifestFilename, name)) {
+      throw new Error(`backup contains an invalid binary sidecar reference: ${name}`);
+    }
+    return [name, sidecar];
+  });
+}
+
 // Returns null if the name does not match the expected pattern.
 function parseBackupFilename(filename: string): { createdAt: string; trigger: BackupTrigger } | null {
   const m = filename.match(/^(\d{4}-\d{2}-\d{2}T[\d-]+Z)_([a-z-]+)\.json$/);
@@ -158,8 +189,44 @@ export class BackupManager {
     await this.deps.mkdir(dir, { recursive: true });
 
     const stateDir = this.cases.stateDir(caseId);
+    const filename = backupFilename(now, trigger);
+    const binaryFiles: Record<string, string> = {};
+    const writtenBinary: string[] = [];
+    try {
+      for (const name of SNAPSHOT_BINARY_STATE_FILES) {
+        try {
+          const sidecar = binaryBackupFilename(filename, name);
+          const sourcePath = join(stateDir, name);
+          const sidecarPath = join(dir, sidecar);
+          if (name === INVESTIGATION_DB_FILENAME) {
+            const created = await caseSqliteWorker.request<boolean>({
+              op: "backupDatabase",
+              dbPath: sourcePath,
+              targetPath: sidecarPath,
+            });
+            if (!created) continue;
+          } else {
+            await atomicWrite(sidecarPath, await readFile(sourcePath));
+          }
+          binaryFiles[name] = sidecar;
+          writtenBinary.push(sidecar);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        }
+      }
+    } catch (err) {
+      for (const sidecar of writtenBinary) {
+        await unlink(join(dir, sidecar)).catch(() => {});
+      }
+      throw err;
+    }
+
     const files: Record<string, unknown> = {};
     for (const name of SNAPSHOT_STATE_FILES) {
+      // Once SQLite is authoritative, the retained migration source must not be parsed and copied
+      // into every backup. It can be near V8's string ceiling; the consistent database snapshot
+      // above is the complete current state. Pre-migration cases still back up the legacy JSON.
+      if (name === "investigation.json" && binaryFiles[INVESTIGATION_DB_FILENAME]) continue;
       try {
         const content = await this.deps.readFile(join(stateDir, name), "utf8");
         files[name] = JSON.parse(content) as unknown;
@@ -169,12 +236,26 @@ export class BackupManager {
       }
     }
 
-    const bundle = { createdAt: now, trigger, files };
-    const filename = backupFilename(now, trigger);
+    const bundle: BackupBundle = {
+      createdAt: now,
+      trigger,
+      files,
+      ...(Object.keys(binaryFiles).length ? { binaryFiles } : {}),
+    };
     const json = JSON.stringify(bundle);
-    await this.deps.atomicWrite(join(dir, filename), json);
+    try {
+      await this.deps.atomicWrite(join(dir, filename), json);
+    } catch (err) {
+      for (const sidecar of writtenBinary) {
+        await unlink(join(dir, sidecar)).catch(() => {});
+      }
+      throw err;
+    }
 
-    const sizeBytes = Buffer.byteLength(json, "utf8");
+    let sizeBytes = Buffer.byteLength(json, "utf8");
+    for (const sidecar of writtenBinary) {
+      sizeBytes += (await stat(join(dir, sidecar))).size;
+    }
     const prune = await this.pruneBackups(caseId);
     return { filename, createdAt: now, trigger, sizeBytes, prune };
   }
@@ -196,7 +277,17 @@ export class BackupManager {
       if (!parsed) continue;
       try {
         const s = await this.deps.stat(join(dir, name));
-        infos.push({ filename: name, ...parsed, sizeBytes: s.size });
+        let sizeBytes = s.size;
+        try {
+          const bundle = JSON.parse(await this.deps.readFile(join(dir, name), "utf8")) as BackupBundle;
+          for (const [, sidecar] of binaryBackupEntries(name, bundle)) {
+            sizeBytes += (await this.deps.stat(join(dir, sidecar))).size;
+          }
+        } catch {
+          // A legacy manifest has no binary sidecars. If a referenced sidecar disappeared, listing
+          // still exposes the manifest; restore will report the missing file explicitly.
+        }
+        infos.push({ filename: name, ...parsed, sizeBytes });
       } catch {
         // File disappeared between readdir and stat — skip
       }
@@ -214,7 +305,7 @@ export class BackupManager {
     if (!parseBackupFilename(filename)) throw new Error(`invalid backup filename: ${filename}`);
 
     const backupPath = join(this.backupDir(caseId), filename);
-    let bundle: { createdAt: string; trigger: BackupTrigger; files: Record<string, unknown> };
+    let bundle: BackupBundle;
     try {
       const raw = await this.deps.readFile(backupPath, "utf8");
       bundle = JSON.parse(raw) as typeof bundle;
@@ -223,12 +314,63 @@ export class BackupManager {
       throw err;
     }
 
+    for (const name of Object.keys(bundle.files ?? {})) {
+      if (!(SNAPSHOT_STATE_FILES as readonly string[]).includes(name)) {
+        throw new Error(`backup contains an invalid state file reference: ${name}`);
+      }
+    }
+    // Validate every binary reference before replacing any live file.
+    const binaryEntries = binaryBackupEntries(filename, bundle);
     const stateDir = this.cases.stateDir(caseId);
     const restored: string[] = [];
+    const binaryRestores: Array<{ name: string; sidecarPath: string }> = [];
+    for (const [name, sidecar] of binaryEntries) {
+      try {
+        const sidecarPath = join(this.backupDir(caseId), sidecar);
+        await this.deps.stat(sidecarPath);
+        if (name === INVESTIGATION_DB_FILENAME) {
+          const check = await caseSqliteWorker.request<{ ok: boolean; message: string }>({
+            op: "integrity",
+            dbPath: sidecarPath,
+          });
+          if (!check.ok) throw new Error(`backup database failed integrity_check: ${check.message}`);
+        }
+        binaryRestores.push({ name, sidecarPath });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error(`backup is incomplete: missing ${sidecar}`);
+        }
+        throw err;
+      }
+    }
+    for (const { name, sidecarPath } of binaryRestores) {
+      if (name === INVESTIGATION_DB_FILENAME) {
+        await caseSqliteWorker.request<boolean>({
+          op: "restoreDatabase",
+          sourcePath: sidecarPath,
+          targetPath: join(stateDir, name),
+        });
+      } else {
+        await atomicWrite(join(stateDir, name), await readFile(sidecarPath));
+      }
+      restored.push(name);
+    }
+    const restoredDatabase = binaryRestores.some(({ name }) => name === INVESTIGATION_DB_FILENAME);
     for (const [name, content] of Object.entries(bundle.files ?? {})) {
-      // Compact, matching how StateStore writes investigation.json. Pretty-printing here would
-      // re-inflate a restored state file by ~35% — and restoring a backup is exactly the recovery
-      // path for a case that grew past the ~512 MB load ceiling, so it must not push it back over.
+      if (name === "investigation.json" && !restoredDatabase) {
+        if (!content || typeof content !== "object" || Array.isArray(content)) {
+          throw new Error("legacy investigation backup is not a JSON object");
+        }
+        // A pre-SQLite backup restored over a migrated case must replace the current database too;
+        // otherwise StateStore would keep serving the newer DB and silently ignore the restored JSON.
+        await caseSqliteWorker.request<void>({
+          op: "saveState",
+          dbPath: join(stateDir, INVESTIGATION_DB_FILENAME),
+          state: { ...(content as Record<string, unknown>), caseId },
+        });
+      }
+      // Keep legacy JSON sidecars compact. The primary database is restored byte-for-byte above;
+      // old pre-SQLite backups still use this path for investigation.json.
       await this.deps.atomicWrite(join(stateDir, name), JSON.stringify(content));
       restored.push(name);
     }
@@ -306,6 +448,16 @@ export class BackupManager {
     let deleted = 0;
     for (const filename of doomed) {
       try {
+        try {
+          const bundle = JSON.parse(
+            await this.deps.readFile(join(this.backupDir(caseId), filename), "utf8"),
+          ) as BackupBundle;
+          for (const [, sidecar] of binaryBackupEntries(filename, bundle)) {
+            await this.deps.unlink(join(this.backupDir(caseId), sidecar)).catch(() => {});
+          }
+        } catch {
+          // Malformed/vanished manifests are still removed below.
+        }
         await this.deps.unlink(join(this.backupDir(caseId), filename));
         deleted++;
       } catch {

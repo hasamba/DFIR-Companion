@@ -109,10 +109,37 @@ describe("SuperTimelineStore", () => {
     expect(r.labelsAvailable.sort()).toEqual(["tag0", "tag1", "tag2", "tag3", "tag4", "tag5"]);
   });
 
-  it("tolerates a malformed events file (returns empty rather than throwing)", async () => {
+  it("keeps SQLite authoritative when the retained legacy file is later damaged", async () => {
     await store.append("c1", [ev({ id: "e1", timestamp: "2026-06-01T00:00:00Z" })]);
     await writeFile(join(cases.stateDir("c1"), "super-timeline.json"), "{ not json", "utf8");
     const r = await store.query("c1", {});
-    expect(r.total).toBe(0);
+    expect(r.total).toBe(1);
+    expect(r.events[0].id).toBe("e1");
+  });
+
+  it("migrates legacy events and labels before the first indexed query", async () => {
+    await writeFile(join(cases.stateDir("c1"), "super-timeline.json"), JSON.stringify([
+      ev({ id: "legacy", timestamp: "2026-06-01T00:00:00Z", artifactName: "Windows.Events" }),
+    ]));
+    await writeFile(join(cases.stateDir("c1"), "super-timeline-labels.json"), JSON.stringify({
+      legacy: ["key-evidence"],
+    }));
+
+    const r = await store.query("c1", { labels: ["key-evidence"] });
+    expect(r.events.map((event) => event.id)).toEqual(["legacy"]);
+    expect(r.labelsAvailable).toEqual(["key-evidence"]);
+  });
+
+  it("caps one query page while cursor batches cover the complete store", async () => {
+    const events = Array.from({ length: 650 }, (_, i) =>
+      ev({ id: `e${i}`, timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString() }));
+    await store.append("c1", events);
+
+    const page = await store.query("c1", {});
+    expect(page.total).toBe(650);
+    expect(page.events).toHaveLength(500);
+    let batched = 0;
+    for await (const batch of store.eventBatches("c1", 73)) batched += batch.length;
+    expect(batched).toBe(650);
   });
 });

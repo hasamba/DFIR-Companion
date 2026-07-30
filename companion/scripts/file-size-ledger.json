@@ -1,14 +1,16 @@
 {
-  "analysis/memoryImport.ts": 1214,
-  "analysis/pipeline.ts": 6168,
+  "analysis/caseSqliteWorker.ts": 812,
+  "analysis/memoryImport.ts": 1265,
+  "analysis/pipeline.ts": 6167,
   "analysis/seedDemoCase.ts": 822,
-  "analysis/siemImport.ts": 1197,
+  "analysis/siemImport.ts": 1347,
   "analysis/velociraptorImport.ts": 1503,
   "integrations/velociraptor/velociraptorApi.ts": 1086,
   "reports/markdown.ts": 1461,
   "routes/aiSynthesis.ts": 865,
-  "routes/caseLifecycle.ts": 1313,
+  "routes/caseLifecycle.ts": 1323,
   "routes/import.ts": 1784,
+  "routes/mcp.ts": 854,
   "routes/velociraptor.ts": 888,
-  "server.ts": 4276
+  "server.ts": 4301
 }
