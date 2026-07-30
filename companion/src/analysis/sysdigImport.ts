@@ -190,6 +190,9 @@ function mapSysdigEvent(rec: Row, iocSink: Map<string, SiemIoc>): MappedEvent {
     sources: ["sysdig"],
     ...(exe && exe.includes("/") ? { path: exe } : {}),
     ...(procName ? { processName: procName } : {}),
+    // Matches mapFalcoAlert above, which attaches the same value. Without it a sysdig-format
+    // import produced events with no affected asset, so nothing correlated them to a host.
+    ...(host ? { asset: host } : {}),
   };
 }
 

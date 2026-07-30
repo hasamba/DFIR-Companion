@@ -13,7 +13,7 @@ function h(partial: Partial<Hypothesis> & { id: string; title: string }): Hypoth
     description: "", expectedOutcome: "", status: "open", relatedTechniques: [], relatedEventIds: [],
     relatedIocIds: [], contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
     assignee: "", notes: "", source: "synthesis", analystTouched: false, needsReview: false,
-    createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", ...partial,
+    createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", statusHistory: [], ...partial,
   };
 }
 const NOW = "2026-02-02T00:00:00Z";

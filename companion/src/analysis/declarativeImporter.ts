@@ -202,7 +202,7 @@ function buildParse(spec: ImporterSpec): ExternalImporter["parse"] {
         ...opt("parentName", "parentName"),
         ...opt("srcIp", "srcIp"),
         ...opt("dstIp", "dstIp"),
-        ...(m.port ? (() => { const v = bindStr(rec, m.port!); const n = Number(v); return Number.isFinite(n) && v ? { port: n } : {}; })() : {}),
+        ...(m.port ? (() => { const v = bindStr(rec, m.port); const n = Number(v); return Number.isFinite(n) && v ? { port: n } : {}; })() : {}),
       });
 
       for (const rule of m.iocs ?? []) {

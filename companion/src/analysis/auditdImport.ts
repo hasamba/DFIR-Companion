@@ -284,7 +284,7 @@ function account(f: Fields): string {
 function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEvent {
   const f = ev.fields;
   const ptype = primaryType(ev.types);
-  const def = AUDIT_TYPES[ptype] ?? { label: ptype.replace(/_/g, " ").toLowerCase(), severity: "Info" as Severity };
+  const def = AUDIT_TYPES[ptype] ?? { label: ptype.replace(/_/g, " ").toLowerCase(), severity: "Info" };
 
   const exe = (f["exe"] ?? "").trim();
   const comm = (f["comm"] ?? "").trim();

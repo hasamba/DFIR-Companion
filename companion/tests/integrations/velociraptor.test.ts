@@ -736,7 +736,10 @@ describe("VelociraptorClient.listClientArtifacts caching", () => {
   it("hands each caller its own array — a mutation cannot poison the cache", async () => {
     const { runner } = countingRunner();
     const client = new VelociraptorClient(cfg, runner);
-    (await client.listClientArtifacts("client")).push({ name: "Injected", description: "" });
+    // The mutation IS the test: it proves the getter hands out a copy, which is the guarantee
+    // the rule generalises to getters nobody has written a test for.
+    // eslint-disable-next-line no-restricted-syntax
+    (await client.listClientArtifacts("client")).push({ name: "Injected", description: "", parameters: [] });
     expect((await client.listClientArtifacts("client")).map((a) => a.name)).toEqual(["Windows.System.Pslist"]);
   });
 });

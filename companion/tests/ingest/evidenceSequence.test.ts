@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -60,7 +60,7 @@ describe("capture sequence allocation (#214)", () => {
     const files = await readdir(store.screenshotsDir(CASE));
     expect(files).toHaveLength(CONCURRENT);
     for (let i = 0; i < CONCURRENT; i++) {
-      const bytes = await readFile(join(store.screenshotsDir(CASE), results[i].screenshotFile!));
+      const bytes = await readFile(join(store.screenshotsDir(CASE), results[i].screenshotFile));
       expect(bytes.equals(Buffer.from(imageFor(i), "base64")), `capture ${i} content`).toBe(true);
     }
 

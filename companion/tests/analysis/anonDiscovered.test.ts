@@ -62,7 +62,7 @@ describe("DiscoveredEntitiesStore", () => {
     expect((await store.load("c1")).discovered).toHaveLength(2);
 
     await store.suppress("c1", "config\\PowershellInfo.log");
-    let cur = await store.load("c1");
+    const cur = await store.load("c1");
     expect(cur.discovered.map((e) => e.value)).toEqual(["WIN11"]);
     expect(cur.suppressed).toEqual(["config\\powershellinfo.log"]);
 

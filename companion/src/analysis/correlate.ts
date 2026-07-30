@@ -77,7 +77,7 @@ function epoch(ts: string): number | undefined {
 class DSU {
   private parent: number[];
   constructor(n: number) { this.parent = Array.from({ length: n }, (_, i) => i); }
-  find(x: number): number { while (this.parent[x] !== x) { this.parent[x] = this.parent[this.parent[x]]; x = this.parent[x]; } return x; }
+  find(x: number): number { let i = x; while (this.parent[i] !== i) { this.parent[i] = this.parent[this.parent[i]]; i = this.parent[i]; } return i; }
   union(a: number, b: number): void { const ra = this.find(a), rb = this.find(b); if (ra !== rb) this.parent[Math.max(ra, rb)] = Math.min(ra, rb); }
 }
 

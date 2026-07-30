@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { computeCaseStats } from "../../src/analysis/caseStats.js";
 import type { ImportMetadata } from "../../src/types.js";
 
-function ev(id: string, asset: string, sources: string[]): any {
+function ev(id: string, asset: string, sources: string[]): ForensicEvent {
   return {
     id,
     timestamp: "2024-03-18T15:24:38Z",

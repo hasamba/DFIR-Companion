@@ -5,7 +5,6 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import {
   EMPTY_PERSISTED_HUNTS,
   type PersistedPlaybookHunts,
-  type PlaybookHuntSuggestion,
 } from "./playbookHunt.js";
 
 // Per-case store for the AI-suggested Velociraptor hunts (#70) so they SURVIVE a page refresh instead
@@ -27,8 +26,8 @@ export class PlaybookHuntStore {
       const parsed = JSON.parse(await readFile(this.path(caseId), "utf8")) as Partial<PersistedPlaybookHunts>;
       return {
         generatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : "",
-        suggestions: Array.isArray(parsed.suggestions) ? (parsed.suggestions as PlaybookHuntSuggestion[]) : [],
-        taskHashes: parsed.taskHashes && typeof parsed.taskHashes === "object" ? (parsed.taskHashes as Record<string, string>) : {},
+        suggestions: Array.isArray(parsed.suggestions) ? (parsed.suggestions) : [],
+        taskHashes: parsed.taskHashes && typeof parsed.taskHashes === "object" ? (parsed.taskHashes) : {},
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ...EMPTY_PERSISTED_HUNTS };

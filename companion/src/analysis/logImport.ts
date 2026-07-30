@@ -12,7 +12,7 @@ export interface ParsedLog {
 // and ignores BOM at the start of the file. Lines are NOT deduplicated — the
 // same line can recur (e.g. firewall heartbeat) and each occurrence is evidence.
 export function parseLogLines(text: string): ParsedLog {
-  const cleaned = text.replace(/^﻿/, "");
+  const cleaned = text.replace(/^\uFEFF/, "");
   const lines = cleaned
     .split(/\r\n|\r|\n/)
     .map((l) => l.trimEnd()) // keep leading whitespace (indented stack traces, etc.)

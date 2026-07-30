@@ -17,8 +17,10 @@ export class StateLock {
       () => {},
     );
     this.tails.set(caseId, settled);
-    // Drop the entry once drained so the map can't grow without bound across cases.
-    settled.finally(() => {
+    // Drop the entry once drained so the map can't grow without bound across cases. Deliberately
+    // not awaited — the cleanup outlives this call, and `settled` cannot reject (it is the tail of
+    // a chain that already swallows failures).
+    void settled.finally(() => {
       if (this.tails.get(caseId) === settled) this.tails.delete(caseId);
     });
     return next;

@@ -190,11 +190,15 @@ export class MispPushClient implements MispPushClientLike {
   // prior event could never be found, and every push created a duplicate event carrying a full
   // duplicate copy of the timeline. restSearch honours the tag filter and wraps each hit in `Event`.
   async findEventByTag(tag: string): Promise<string | null> {
-    const body = await this.req<{ response?: Array<{ Event?: { id?: string } }> }>(
+    type RestSearchBody = { response?: Array<{ Event?: { id?: string } }> };
+    // Annotated rather than asserted on the `{}` fallback: without a declared type the catch
+    // branch widens the awaited value to `RestSearchBody | {}`, on which `.response` does not
+    // exist. A non-auth failure means "no prior event", which is what the empty object says.
+    const body: RestSearchBody | unknown[] = await this.req<RestSearchBody>(
       "POST", "/events/restSearch", { returnFormat: "json", tags: [tag], limit: 1 },
     ).catch((err: unknown) => {
       if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
-      return {} as { response?: Array<{ Event?: { id?: string } }> };
+      return {};
     });
     // Tolerate either wrapping — restSearch returns {response:[{Event:{...}}]}, but be lenient in
     // case a MISP version hands back the flat array instead.

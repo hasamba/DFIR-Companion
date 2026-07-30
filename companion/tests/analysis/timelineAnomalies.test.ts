@@ -3,7 +3,6 @@ import {
   detectTimelineAnomalies,
   DEFAULT_BUCKET_MINUTES,
   DEFAULT_SPIKE_FACTOR,
-  DEFAULT_MIN_EVENTS,
 } from "../../src/analysis/timelineAnomalies.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 

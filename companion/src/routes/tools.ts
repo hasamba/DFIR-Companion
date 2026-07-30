@@ -252,7 +252,7 @@ export function registerToolsRoutes(app: Express, ctx: RouteContext): void {
       options.onForensicGate?.(req.params.id);
       const perCase = (await options.forensicGateControlStore.load(req.params.id)).minSeverity ?? null;
       const effective = resolveForensicMinSeverity(perCase ?? undefined, process.env.DFIR_FORENSIC_MIN_SEVERITY);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings", action: "forensic-gate", detail: perCase === null ? "forensic gate cleared (using global default)" : `forensic gate set to ${perCase}`,
       });
       return res.status(200).json({ minSeverity: perCase, effective });

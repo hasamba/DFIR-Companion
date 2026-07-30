@@ -59,7 +59,7 @@ export function registerSessionSegmentationRoutes(app: Express, ctx: RouteContex
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       const result = await options.pipeline.sessionSummary(req.params.id, req.params.sid);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai",
         action: "session-summary",
         detail: `session ${req.params.sid} summarized (${result.usedEvents}/${result.eventCount} events)`,

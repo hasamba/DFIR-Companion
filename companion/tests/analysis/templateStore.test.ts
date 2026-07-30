@@ -26,7 +26,7 @@ describe("TemplateStore", () => {
     });
 
     it("includes custom templates after saving", async () => {
-      await store.save({ name: "My Template", description: "test", recommendedImports: [], initialKeyQuestions: ["Q1"], severityFloor: null, huntPlatforms: [] });
+      await store.save({ name: "My Template", description: "test", recommendedImports: [], initialKeyQuestions: ["Q1"], initialNextSteps: [], severityFloor: null, huntPlatforms: [] });
       const templates = await store.list();
       const custom = templates.filter((t) => !t.builtIn);
       expect(custom).toHaveLength(1);
@@ -54,7 +54,7 @@ describe("TemplateStore", () => {
     });
 
     it("returns a saved custom template by id", async () => {
-      const saved = await store.save({ name: "Custom", description: "desc", recommendedImports: ["thor"], initialKeyQuestions: ["Q?"], severityFloor: "High", huntPlatforms: ["Velociraptor"] });
+      const saved = await store.save({ name: "Custom", description: "desc", recommendedImports: ["thor"], initialKeyQuestions: ["Q?"], initialNextSteps: [], severityFloor: "High", huntPlatforms: ["Velociraptor"] });
       const fetched = await store.get(saved.id);
       expect(fetched).not.toBeNull();
       expect(fetched!.name).toBe("Custom");
@@ -65,18 +65,18 @@ describe("TemplateStore", () => {
 
   describe("save()", () => {
     it("assigns a uuid when id is omitted", async () => {
-      const t = await store.save({ name: "A", description: "", recommendedImports: [], initialKeyQuestions: [], severityFloor: null, huntPlatforms: [] });
+      const t = await store.save({ name: "A", description: "", recommendedImports: [], initialKeyQuestions: [], initialNextSteps: [], severityFloor: null, huntPlatforms: [] });
       expect(t.id).toBeTruthy();
       expect(t.builtIn).toBe(false);
     });
 
     it("uses the provided id", async () => {
-      const t = await store.save({ id: "my-tmpl", name: "B", description: "", recommendedImports: [], initialKeyQuestions: [], severityFloor: null, huntPlatforms: [] });
+      const t = await store.save({ id: "my-tmpl", name: "B", description: "", recommendedImports: [], initialKeyQuestions: [], initialNextSteps: [], severityFloor: null, huntPlatforms: [] });
       expect(t.id).toBe("my-tmpl");
     });
 
     it("persists the template so a new store instance can read it", async () => {
-      await store.save({ id: "persistent", name: "P", description: "d", recommendedImports: [], initialKeyQuestions: ["Q"], severityFloor: null, huntPlatforms: [] });
+      await store.save({ id: "persistent", name: "P", description: "d", recommendedImports: [], initialKeyQuestions: ["Q"], initialNextSteps: [], severityFloor: null, huntPlatforms: [] });
       const store2 = new TemplateStore(root);
       const fetched = await store2.get("persistent");
       expect(fetched?.name).toBe("P");
@@ -85,7 +85,7 @@ describe("TemplateStore", () => {
 
   describe("delete()", () => {
     it("deletes a custom template (returns true)", async () => {
-      const t = await store.save({ name: "Del", description: "", recommendedImports: [], initialKeyQuestions: [], severityFloor: null, huntPlatforms: [] });
+      const t = await store.save({ name: "Del", description: "", recommendedImports: [], initialKeyQuestions: [], initialNextSteps: [], severityFloor: null, huntPlatforms: [] });
       expect(await store.delete(t.id)).toBe(true);
       expect(await store.get(t.id)).toBeNull();
     });

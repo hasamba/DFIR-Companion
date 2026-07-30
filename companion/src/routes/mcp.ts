@@ -390,7 +390,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           // effects, do the thing twice.
           await stagePreview(caseId, job?.jobId ?? "", { server: server.id, tool, label, kind, outName, text: outcome.text });
           if (job) options.jobManager?.finish(job.jobId);
-          logActivity(options.activityLogStore, options.onActivity, caseId, {
+          void logActivity(options.activityLogStore, options.onActivity, caseId, {
             category: "import", action: "mcp-preview",
             detail: `${server.id}/${tool} on ${label} → ${outcome.text.length} byte(s), detected as "${kind}" — awaiting review`
               + (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
@@ -408,7 +408,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           },
         });
         if (job) options.jobManager?.finish(job.jobId);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import", action: "mcp-run",
           detail: `${server.id}/${tool} on ${label} → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`
             + (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
@@ -416,7 +416,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       } catch (err) {
         if (job) options.jobManager?.fail(job.jobId, err);
         recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import", action: "mcp-run",
           detail: `${server.id}/${tool} on ${label} FAILED: ${(err as Error).message}`,
         });
@@ -515,7 +515,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           text: p.reportText ?? p.text, counts: r,
         });
         await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${p.tool} imported after review → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
@@ -531,7 +531,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         server: p.server, tool: p.tool, label: p.label, kind: p.kind, text: p.text, counts,
       });
       await markPreviewImported(caseId, req.params.jobId, p, report.id, report.importedAt);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "import", action: "mcp-run",
         detail: `${p.server}/${p.tool} on ${p.label} imported after review → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`,
       });
@@ -550,7 +550,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (p?.importedAt) return res.status(409).json({ error: "an imported analysis report cannot be discarded" });
     await dropPreview(req.params.id, req.params.jobId);
     if (p) {
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "import", action: "mcp-preview",
         detail: `${p.server}/${p.tool} on ${p.label} discarded after review — nothing imported`,
       });
@@ -716,7 +716,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             reportText: result.rawText,
           });
           if (job) options.jobManager?.finish(job.jobId);
-          logActivity(options.activityLogStore, options.onActivity, caseId, {
+          void logActivity(options.activityLogStore, options.onActivity, caseId, {
             category: "ai", action: "mcp-agent",
             detail: `agent on ${servers.map((s) => s.id).join(", ")} → awaiting review`,
           });
@@ -733,13 +733,13 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           counts: r,
         });
         if (job) options.jobManager?.finish(job.jobId);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
       } catch (err) {
         if (job) options.jobManager?.fail(job.jobId, err);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,
         });

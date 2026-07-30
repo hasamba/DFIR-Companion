@@ -52,7 +52,7 @@ function dataset(map: Record<string, D3fendCountermeasure[]>, over: Partial<D3fe
 }
 
 function stateWith(techniques: string[]): InvestigationState {
-  return { ...emptyState(), findings: [finding("F1", techniques)] };
+  return { ...emptyState("c1"), findings: [finding("F1", techniques)] };
 }
 
 describe("d3fendTechniqueUrl", () => {
@@ -165,7 +165,7 @@ describe("buildD3fendResult", () => {
   it("collects techniques from findings, events, and the mitre table", () => {
     const ds = dataset({ T1003: [cm("CredHard", "Harden")], T1486: [cm("BackupRestore", "Restore")] });
     const state: InvestigationState = {
-      ...emptyState(),
+      ...emptyState("c1"),
       findings: [finding("F1", ["T1003"])],
       forensicTimeline: [ev("E1", ["T1486"])],
     };
@@ -175,7 +175,7 @@ describe("buildD3fendResult", () => {
 
   it("returns empty (but well-formed) when the case has no techniques", () => {
     const ds = dataset({ T1059: [cm("DetectA", "Detect")] });
-    const result = buildD3fendResult(emptyState(), ds);
+    const result = buildD3fendResult(emptyState("c1"), ds);
     expect(result.caseTechniqueCount).toBe(0);
     expect(result.techniques).toEqual([]);
     expect(result.byTactic).toEqual([]);

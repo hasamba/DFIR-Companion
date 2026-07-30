@@ -24,6 +24,8 @@ function seed(over: Partial<HypothesisSeed> & { title: string }): HypothesisSeed
     relatedTechniques: over.relatedTechniques ?? [],
     relatedEventIds: over.relatedEventIds ?? [],
     relatedIocIds: over.relatedIocIds ?? [],
+    contradictingEventIds: over.contradictingEventIds ?? [],
+    discriminator: over.discriminator ?? "",
   };
 }
 

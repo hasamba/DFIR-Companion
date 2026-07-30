@@ -76,7 +76,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         caseId,
         event: rawEvent,
       });
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "custody-record", actor: collectedBy || "analyst",
         detail: `recorded custody for ${artifactPath} (${sha256.slice(0, 12)}…)`,
       });
@@ -113,7 +113,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
         mismatches.length ? `${mismatches.length} mismatch(es)` : "",
         chainBreaks.length ? `${chainBreaks.length} chain break(s)` : "",
       ].filter(Boolean);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "custody-verify",
         detail: problems.length === 0 ? "integrity verified — no mismatches, chain intact" : problems.join(", "),
       });

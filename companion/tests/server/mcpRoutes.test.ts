@@ -114,7 +114,7 @@ describe("POST /mcp/discover", () => {
   // Claude Code being unavailable is an answer, not a server error.
   it("reports a missing CLI as 200 with ok:false and how to fix it", async () => {
     const enoent = Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
-    const app = appWith(async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent as NodeJS.ErrnoException }));
+    const app = appWith(async () => ({ code: null, stdout: "", stderr: "", spawnError: enoent }));
 
     const res = await request(app).post("/mcp/discover");
 

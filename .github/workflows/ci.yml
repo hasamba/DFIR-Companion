@@ -4,6 +4,11 @@ name: CI
 # (release-artifacts.yml) runs at tag time — this just runs them earlier, on a clean cloud box
 # (fresh `npm ci`), so a red change is caught at the offending PR instead of at release.
 #
+# Each gate is its own step, and lint/format/structure live in their own JOB (#385), so the check
+# name in the PR says what broke: "Companion build + test" failing means the code is wrong,
+# "Companion lint + format + structure" failing means it is untidy. Merging those into one step
+# would make every failure look equally alarming and train people to skim past them.
+#
 # Node 22 to match release-artifacts.yml / docker-publish.yml and the Node 22.5+ case-storage floor.
 
 on:
@@ -21,6 +26,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Quality gates, separated from build+test so a red check names the thing that is actually wrong
+  # (#385). They run as their own job rather than as extra steps on `companion` for two reasons:
+  # they are fast and fail early, and a formatting nit must never mask a broken build in the UI.
+  companion-quality:
+    name: Companion lint + format + structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # format:check diffs against the merge base with master. The default shallow clone has no
+          # merge base, so the check would silently degrade to "no changed files" and pass always.
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      # Typed rules (no-floating-promises, request-boundary validation, the forbidden unbounded
+      # timeline read from #373). See companion/eslint.config.mjs for what each rule is for.
+      - name: Lint (eslint)
+        working-directory: companion
+        run: npm run lint
+
+      # Only files this branch changed, so adopting Prettier did not require reformatting 877 files.
+      # See the header of companion/scripts/format-changed.mjs.
+      - name: Format check (prettier, changed files)
+        working-directory: companion
+        run: npm run format:check
+
+      # Ratchets that #384 (decompose pipeline.ts) needs in place before it can enforce anything:
+      # no source file may grow past its recorded size, and no NEW runtime import cycle may appear.
+      - name: File-size ratchet
+        working-directory: companion
+        run: npm run check:size
+
+      - name: Circular-import ratchet
+        working-directory: companion
+        run: npm run check:imports
+
   companion:
     name: Companion build + test
     runs-on: ubuntu-latest
@@ -46,7 +98,7 @@ jobs:
       # `npm run build` only covers src/ — it is the emit config. Without this step no test file
       # is ever type-checked, which is how CARD/PHONE/NATID went missing from four AnonPolicy
       # `categories` literals and silently disabled those detectors in the tests covering them.
-      # See companion/tsconfig.test.json for what is and is not in scope.
+      # As of #385 this covers EVERY test file: tsconfig.test.json has no exclude list.
       - name: Type-check tests (tsc)
         working-directory: companion
         run: npm run typecheck

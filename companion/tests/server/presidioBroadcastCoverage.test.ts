@@ -12,6 +12,7 @@ import type { PresidioClient } from "../../src/analysis/presidio.js";
 
 class StubProvider implements AIProvider {
   readonly name = "stub";
+  readonly model = "mock-model";
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     // explainEventSchema requires these fields; content is irrelevant — the gate fires before
     // this is ever parsed.
@@ -102,6 +103,7 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
 
     class BrokenProvider implements AIProvider {
       readonly name = "broken";
+      readonly model = "mock-model";
       async analyze(): Promise<AnalyzeResult> {
         throw new Error("provider exploded");
       }
@@ -203,6 +205,7 @@ describe("sendPipelineError broadcasts ai_status:error for PresidioApprovalRequi
 
     class BrokenProvider implements AIProvider {
       readonly name = "broken";
+      readonly model = "mock-model";
       async analyze(): Promise<AnalyzeResult> {
         throw new Error("provider exploded");
       }

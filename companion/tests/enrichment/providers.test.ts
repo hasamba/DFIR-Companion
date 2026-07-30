@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { VirusTotalProvider } from "../../src/enrichment/virustotal.js";
 import { HuntingChProvider } from "../../src/enrichment/huntingch.js";
 import { CrowdStrikeProvider } from "../../src/enrichment/crowdstrike.js";
@@ -6,14 +7,11 @@ import { AbuseIpdbProvider } from "../../src/enrichment/abuseipdb.js";
 import { MispProvider } from "../../src/enrichment/misp.js";
 import { RockyRaccoonProvider } from "../../src/enrichment/rockyraccoon.js";
 import { YetiProvider } from "../../src/enrichment/yeti.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
+import type { EnrichmentResult } from "../../src/enrichment/provider.js";
 
 describe("VirusTotalProvider", () => {
   it("maps last_analysis_stats to a malicious verdict with detections and a link", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       data: { id: "abc", attributes: {
         last_analysis_stats: { malicious: 52, suspicious: 1, harmless: 10, undetected: 10 },
         popular_threat_classification: { suggested_threat_label: "trojan.mimikatz" },
@@ -29,25 +27,25 @@ describe("VirusTotalProvider", () => {
   });
 
   it("returns null on 404 (unknown indicator) and throws on 429 (rate limit)", async () => {
-    const nf = new VirusTotalProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 404 })) });
+    const nf = new VirusTotalProvider({ apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 404 })) });
     expect(await nf.lookup("ip", "1.2.3.4")).toBeNull();
-    const rl = new VirusTotalProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 429 })) });
+    const rl = new VirusTotalProvider({ apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 429 })) });
     await expect(rl.lookup("hash", "x")).rejects.toThrow(/rate limit/i);
   });
 
   it("throws a RateLimitError carrying the parsed Retry-After on 429 (#78)", async () => {
     const rl = new VirusTotalProvider({
       apiKey: "k",
-      fetchFn: vi.fn(async () => new Response("", { status: 429, headers: { "retry-after": "20" } })),
+      fetchFn: fetchMock(async () => new Response("", { status: 429, headers: { "retry-after": "20" } })),
     });
     await expect(rl.lookup("hash", "x")).rejects.toMatchObject({ name: "RateLimitError", retryAfterMs: 20_000 });
   });
 
   it("addresses a URL by unpadded base64url", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ data: { id: "u", attributes: { last_analysis_stats: { malicious: 0, harmless: 80 } } } }));
+    const fetchFn = fetchMock(async () => jsonResponse({ data: { id: "u", attributes: { last_analysis_stats: { malicious: 0, harmless: 80 } } } }));
     const vt = new VirusTotalProvider({ apiKey: "k", fetchFn });
     await vt.lookup("url", "http://evil.test/x");
-    const calledUrl = fetchFn.mock.calls[0][0] as string;
+    const calledUrl = fetchFn.mock.calls[0][0];
     expect(calledUrl).toContain("/urls/");
     expect(calledUrl).not.toContain("=");           // base64url, no padding
   });
@@ -56,7 +54,7 @@ describe("VirusTotalProvider", () => {
 describe("HuntingChProvider (abuse.ch unified hunt)", () => {
   // Route an abuse.ch POST by its host to the right per-platform fixture.
   function huntFetch(byHost: Record<string, unknown>, opts: { authFail?: boolean; failHosts?: string[] } = {}) {
-    return vi.fn(async (url: string, init?: RequestInit) => {
+    return fetchMock(async (url: string, init?: RequestInit) => {
       // Every back-end must carry the unified Auth-Key.
       expect((init!.headers as Record<string, string>)["Auth-Key"]).toBe("k");
       if (opts.authFail) return new Response("", { status: 403 });
@@ -78,13 +76,13 @@ describe("HuntingChProvider (abuse.ch unified hunt)", () => {
     const h = new HuntingChProvider({ apiKey: "k", fetchFn });
     const r = await h.lookup("hash", "00c3e0990cada07e01a3b842cf3d36f36c6ec7dd7d3c1aba430c08d885d66567");
     expect(Array.isArray(r)).toBe(true);
-    const bySource = Object.fromEntries((r as Array<{ source: string }>).map((e) => [e.source, e]));
+    const bySource = Object.fromEntries((r as EnrichmentResult[]).map((e) => [e.source, e]));
     expect(Object.keys(bySource).sort()).toEqual(["MalwareBazaar", "ThreatFox", "URLhaus", "YARAify"]);
     expect(bySource["MalwareBazaar"]).toMatchObject({ verdict: "malicious", link: "https://bazaar.abuse.ch/sample/ABCD/" });
     expect(bySource["YARAify"]).toMatchObject({ verdict: "malicious", link: "https://yaraify.abuse.ch/sample/ABCD/" });
-    expect((bySource["YARAify"] as { score: string }).score).toContain("YARA rule");
-    expect((bySource["URLhaus"] as { link: string }).link).toContain("urlhaus.abuse.ch");
-    expect((bySource["ThreatFox"] as { link: string }).link).toBe("https://threatfox.abuse.ch/ioc/9/");
+    expect(bySource["YARAify"].score).toContain("YARA rule");
+    expect(bySource["URLhaus"].link).toContain("urlhaus.abuse.ch");
+    expect(bySource["ThreatFox"].link).toBe("https://threatfox.abuse.ch/ioc/9/");
   });
 
   it("an IP queries only ThreatFox + URLhaus(host); platforms with no hit are omitted", async () => {
@@ -119,7 +117,7 @@ describe("HuntingChProvider (abuse.ch unified hunt)", () => {
   it("still returns YARAify (anonymous) even when the key-gated platforms 401", async () => {
     // A missing/expired key 401s MalwareBazaar/ThreatFox/URLhaus, but YARAify needs no key —
     // its hit must NOT be discarded by the others' auth failure.
-    const fetchFn = vi.fn(async (url: string) => {
+    const fetchFn = fetchMock(async (url: string) => {
       if (new URL(url).host === "yaraify-api.abuse.ch") {
         return jsonResponse({ query_status: "ok", data: { metadata: { sha256_hash: "ABCD" }, tasks: [{ static_results: [{ rule_name: "MALWARE_Win_X" }] }] } });
       }
@@ -144,7 +142,7 @@ describe("HuntingChProvider (abuse.ch unified hunt)", () => {
 describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
   // Route the OAuth token exchange + the two intel back-ends by URL.
   function csFetch(routes: { intel?: unknown; malquery?: unknown; intelStatus?: number; malqueryStatus?: number; tokenStatus?: number; base?: string }) {
-    return vi.fn(async (url: string, init?: RequestInit) => {
+    return fetchMock(async (url: string, init?: RequestInit) => {
       const u = new URL(url);
       if (u.pathname === "/oauth2/token") {
         if (routes.base) expect(`${u.protocol}//${u.host}`).toBe(routes.base);
@@ -191,7 +189,7 @@ describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
     expect(r[0].verdict).toBe("suspicious");
     expect(fetchFn.mock.calls.some((c) => String(c[0]).includes("/malquery/"))).toBe(false);
     // FQL filter built from the value.
-    const intelCall = fetchFn.mock.calls.find((c) => String(c[0]).includes("/intel/combined/indicators"))![0] as string;
+    const intelCall = fetchFn.mock.calls.find((c) => String(c[0]).includes("/intel/combined/indicators"))![0];
     expect(decodeURIComponent(intelCall)).toContain("indicator:'evil.test'");
   });
 
@@ -222,7 +220,7 @@ describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
 
 describe("AbuseIpdbProvider", () => {
   it("maps a high confidence score to malicious", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ data: { abuseConfidenceScore: 100, totalReports: 42, countryCode: "RU" } }));
+    const fetchFn = fetchMock(async () => jsonResponse({ data: { abuseConfidenceScore: 100, totalReports: 42, countryCode: "RU" } }));
     const ab = new AbuseIpdbProvider({ apiKey: "k", fetchFn });
     const r = await ab.lookup("ip", "1.2.3.4");
     expect(r).toMatchObject({ source: "AbuseIPDB", verdict: "malicious", detections: 42 });
@@ -232,14 +230,14 @@ describe("AbuseIpdbProvider", () => {
   });
 
   it("maps a zero score to harmless", async () => {
-    const ab = new AbuseIpdbProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ data: { abuseConfidenceScore: 0 } })) });
+    const ab = new AbuseIpdbProvider({ apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ data: { abuseConfidenceScore: 0 } })) });
     expect((await ab.lookup("ip", "8.8.8.8"))!.verdict).toBe("harmless");
   });
 });
 
 describe("MispProvider", () => {
   it("reports a matched attribute (to_ids) as malicious with event tags + link", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       response: { Attribute: [
         { type: "sha256", value: "abcd", to_ids: true, event_id: "42",
           Event: { id: "42", info: "TrickBot campaign", threat_level_id: "1" },
@@ -259,37 +257,37 @@ describe("MispProvider", () => {
   });
 
   it("treats a match without to_ids / high threat level as suspicious", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ response: { Attribute: [{ type: "ip-dst", value: "1.2.3.4", to_ids: false, Event: { id: "7", threat_level_id: "3" } }] } }));
+    const fetchFn = fetchMock(async () => jsonResponse({ response: { Attribute: [{ type: "ip-dst", value: "1.2.3.4", to_ids: false, Event: { id: "7", threat_level_id: "3" } }] } }));
     const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn });
     expect((await misp.lookup("ip", "1.2.3.4"))!.verdict).toBe("suspicious");
   });
 
   it("returns null when the indicator is not present on the instance, and does not support process names", async () => {
-    const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ response: { Attribute: [] } })) });
+    const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ response: { Attribute: [] } })) });
     expect(await misp.lookup("domain", "evil.test")).toBeNull();
     expect(misp.supports("hash")).toBe(true);
     expect(misp.supports("process")).toBe(false);
   });
 
   it("probe() hits the version endpoint with auth; resolves when up, throws on 401 / unreachable", async () => {
-    const okFetch = vi.fn(async () => jsonResponse({ version: "2.4.190" }));
+    const okFetch = fetchMock(async () => jsonResponse({ version: "2.4.190" }));
     const misp = new MispProvider({ baseUrl: "https://misp.example.org/", apiKey: "k", fetchFn: okFetch });
     await expect(misp.probe()).resolves.toBeUndefined();
     expect(okFetch.mock.calls[0][0]).toBe("https://misp.example.org/servers/getVersion");
     expect((okFetch.mock.calls[0][1] as RequestInit).method).toBe("GET");
     expect(((okFetch.mock.calls[0][1] as RequestInit).headers as Record<string, string>).Authorization).toBe("k");
 
-    const auth = new MispProvider({ baseUrl: "https://m", apiKey: "bad", fetchFn: vi.fn(async () => new Response("", { status: 403 })) });
+    const auth = new MispProvider({ baseUrl: "https://m", apiKey: "bad", fetchFn: fetchMock(async () => new Response("", { status: 403 })) });
     await expect(auth.probe()).rejects.toThrow(/auth failed/i);
 
-    const dead = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: vi.fn(async () => { throw new Error("fetch failed"); }) });
+    const dead = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn: fetchMock(async () => { throw new Error("fetch failed"); }) });
     await expect(dead.probe()).rejects.toThrow(/fetch failed/i);
   });
 
   // The probe message becomes the `detail` on the /system health card, so a wrong DFIR_MISP_URL
   // has to be diagnosable from it — same defect the push-side ping had (issue #179).
   it("probe() names the URL and DFIR_MISP_URL when the instance answers 400", async () => {
-    const misp = new MispProvider({ baseUrl: "http://misp.example.org", apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 400 })) });
+    const misp = new MispProvider({ baseUrl: "http://misp.example.org", apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 400 })) });
     const msg = await misp.probe().catch((e: Error) => e.message);
     expect(msg).toContain("http://misp.example.org/servers/getVersion");
     expect(msg).toMatch(/scheme/i);
@@ -297,7 +295,7 @@ describe("MispProvider", () => {
   });
 
   it("probe() reports a refused connection with the URL instead of a bare 'fetch failed'", async () => {
-    const refused = vi.fn(async () => {
+    const refused = fetchMock(async () => {
       throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
     });
     const misp = new MispProvider({ baseUrl: "https://misp.example.org", apiKey: "k", fetchFn: refused });
@@ -309,7 +307,7 @@ describe("MispProvider", () => {
 
 describe("RockyRaccoonProvider (process intel)", () => {
   it("only supports process IOCs and flags a LOLBIN as suspicious with context", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       process_name: "powershell.exe",
       classification: { category: "Scripting", is_lolbin: true, risk_level: "high", expected_parent: "explorer.exe" },
       intel: { mitre_techniques: ["T1059.001"] },
@@ -328,29 +326,29 @@ describe("RockyRaccoonProvider (process intel)", () => {
   });
 
   it("marks a common low-risk process harmless and an unknown process as 'uncommon'", async () => {
-    const low = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ classification: { risk_level: "low" }, executions: { total: 45821093 } })) });
+    const low = new RockyRaccoonProvider({ apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ classification: { risk_level: "low" }, executions: { total: 45821093 } })) });
     expect((await low.lookup("process", "svchost.exe"))!.verdict).toBe("harmless");
 
-    const nf = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 404 })) });
+    const nf = new RockyRaccoonProvider({ apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 404 })) });
     const r = await nf.lookup("process", "weird-thing.exe");
     expect(r).toMatchObject({ verdict: "unknown" });
     expect(r!.score).toContain("uncommon");
   });
 
   it("extracts the basename when a full path is passed", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ classification: { risk_level: "low" } }));
+    const fetchFn = fetchMock(async () => jsonResponse({ classification: { risk_level: "low" } }));
     const rr = new RockyRaccoonProvider({ apiKey: "k", fetchFn });
     await rr.lookup("process", "C:\\Windows\\System32\\svchost.exe");
     expect(fetchFn.mock.calls[0][0]).toContain("/v1/process/svchost.exe");
   });
 
   it("checkParentChild reports observed vs anomalous relationships", async () => {
-    const seen = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ observed: true, percentage: 98.7 })) });
+    const seen = new RockyRaccoonProvider({ apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ observed: true, percentage: 98.7 })) });
     const ok = await seen.checkParentChild("services.exe", "svchost.exe");
     expect(ok).toMatchObject({ observed: true });
     expect(ok!.note).toContain("98.7%");
 
-    const anomalous = new RockyRaccoonProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({ observed: false, common_parents: [{ parent: "explorer.exe", percentage: 80 }] })) });
+    const anomalous = new RockyRaccoonProvider({ apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({ observed: false, common_parents: [{ parent: "explorer.exe", percentage: 80 }] })) });
     const bad = await anomalous.checkParentChild("excel.exe", "powershell.exe");
     expect(bad).toMatchObject({ observed: false });
     expect(bad!.note).toContain("NOT observed");
@@ -361,7 +359,7 @@ describe("RockyRaccoonProvider (process intel)", () => {
 describe("YetiProvider", () => {
   // A fetch mock that routes the two-step auth + search by URL.
   function yetiFetch(searchBody: unknown, searchStatus = 200) {
-    return vi.fn(async (url: string, init?: RequestInit) => {
+    return fetchMock(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/api/v2/auth/api-token")) {
         expect((init!.headers as Record<string, string>)["x-yeti-apikey"]).toBe("apikey123");
         return jsonResponse({ access_token: "jwt-abc" });
@@ -422,7 +420,7 @@ describe("YetiProvider", () => {
 
   it("probe() forces a fresh API-token exchange; resolves when up, throws the 405 when down", async () => {
     // Up: the token endpoint returns a JWT → probe resolves.
-    const upFetch = vi.fn(async (url: string) => {
+    const upFetch = fetchMock(async (url: string) => {
       if (url.endsWith("/api/v2/auth/api-token")) return jsonResponse({ access_token: "jwt-abc" });
       throw new Error("unexpected url " + url);
     });
@@ -431,13 +429,13 @@ describe("YetiProvider", () => {
     expect(upFetch.mock.calls[0][0]).toBe("https://yeti.example.org/api/v2/auth/api-token");
 
     // Down: the instance answers 405 on the auth endpoint (as in the field report) → probe throws.
-    const down = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn: vi.fn(async () => new Response("", { status: 405 })) });
+    const down = new YetiProvider({ baseUrl: "https://y", apiKey: "apikey123", fetchFn: fetchMock(async () => new Response("", { status: 405 })) });
     await expect(down.probe()).rejects.toThrow(/YETI auth HTTP 405/);
   });
 
   it("refreshes the token once on a 401 from search", async () => {
     let searchCalls = 0;
-    const fetchFn = vi.fn(async (url: string) => {
+    const fetchFn = fetchMock(async (url: string) => {
       if (url.endsWith("/auth/api-token")) return jsonResponse({ access_token: "jwt-abc" });
       searchCalls += 1;
       return searchCalls === 1 ? new Response("", { status: 401 }) : jsonResponse({ observables: [{ id: "z", tags: ["malware"] }] });

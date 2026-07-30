@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildGeoMap } from "../../src/analysis/geoMap.js";
 import type { InvestigationState, IOC, ForensicEvent } from "../../src/analysis/stateTypes.js";
 
-function ip(id: string, value: string, enr: Partial<IOC["enrichments"][number]> = {}): IOC {
+function ip(id: string, value: string, enr: Partial<NonNullable<IOC["enrichments"]>[number]> = {}): IOC {
   return {
     id, type: "ip", value, firstSeen: "2026-01-01T00:00:00Z",
     enrichments: [{ source: "GeoIP", verdict: "unknown", fetchedAt: "2026-01-01T00:00:00Z", ...enr }],

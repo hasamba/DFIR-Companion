@@ -171,7 +171,8 @@ function sampleReport(): DiagnosticsReport {
       level: "none",
       thresholds: { warnPct: 70, dangerPct: 85, criticalPct: 95 },
     },
-    cases: { count: 3, open: 2, closed: 1 },
+    cases: { count: 3, open: 2, closed: 1, archived: 0 },
+    backups: { enabled: false, totalCount: 0, totalBytes: 0, retain: 0, maxBytes: 0, overBudgetCases: 0 },
     queue: { bufferedCaptures: 4, casesBuffering: 1, oldestBufferedAgeMs: 90_000, synthInFlight: 1, pendingAnalysisCases: 0 },
     ai: {
       configured: true,
@@ -200,7 +201,8 @@ function sampleReport(): DiagnosticsReport {
       loadErrors: [],
     },
     evidenceIntegrity: {
-      enabled: true, intervalMs: 86_400_000, lastRunAt: null, lastDurationMs: null,
+      enabled: true, intervalMs: 86_400_000, verifyOnOpen: false, onOpenThrottleMs: 0,
+      lastRunAt: null, lastDurationMs: null, casesVerified: 0,
       artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
     },
   };

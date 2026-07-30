@@ -135,12 +135,12 @@ describe("slack/teams/email/telegram formatters", () => {
 
 describe("postWebhook", () => {
   it("succeeds on 2xx and surfaces the body on failure", async () => {
-    const ok = await postWebhook((async () => new Response("ok", { status: 200 })) as typeof fetch, "https://x", { a: 1 });
+    const ok = await postWebhook((async () => new Response("ok", { status: 200 })), "https://x", { a: 1 });
     expect(ok.ok).toBe(true);
-    const bad = await postWebhook((async () => new Response("invalid_payload", { status: 400 })) as typeof fetch, "https://x", {});
+    const bad = await postWebhook((async () => new Response("invalid_payload", { status: 400 })), "https://x", {});
     expect(bad.ok).toBe(false);
     expect(bad.error).toContain("invalid_payload");
-    const net = await postWebhook((async () => { throw new Error("boom"); }) as typeof fetch, "https://x", {});
+    const net = await postWebhook((async () => { throw new Error("boom"); }), "https://x", {});
     expect(net.ok).toBe(false);
     expect(net.error).toContain("network error");
   });

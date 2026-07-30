@@ -754,7 +754,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       await enrichControl.save(caseId, { providers });
       if (providers.length > 0) ctx.enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
       else ctx.enrichPending().delete(caseId);                    // disabled — stop the poller from waiting on a down provider for this case
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "enrichment", action: "enrich-control",
         detail: providers.length ? `enrichment enabled: ${providers.join(", ")}` : "enrichment disabled (no providers)",
       });

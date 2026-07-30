@@ -217,11 +217,11 @@ function inlineRuns(
         break;
       }
       case "strong": {
-        out.push(...inlineRuns((t as Tokens.Strong).tokens as Tokens.Generic[], { ...ctx, bold: true }));
+        out.push(...inlineRuns((t as Tokens.Strong).tokens, { ...ctx, bold: true }));
         break;
       }
       case "em": {
-        out.push(...inlineRuns((t as Tokens.Em).tokens as Tokens.Generic[], { ...ctx, italic: true }));
+        out.push(...inlineRuns((t as Tokens.Em).tokens, { ...ctx, italic: true }));
         break;
       }
       case "codespan": {
@@ -291,7 +291,7 @@ function listItemParagraphs(
     const nested: Tokens.List[] = [];
     for (const child of item.tokens) {
       if (child.type === "list") nested.push(child as Tokens.List);
-      else para.push(child as Tokens.Generic);
+      else para.push(child);
     }
     out.push(new Paragraph({
       children: inlineRuns(para),
@@ -319,13 +319,13 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
           heading: cls.level,
           pageBreakBefore: cls.pageBreakBefore,
           spacing: cls.spacingBefore > 0 ? { before: cls.spacingBefore } : undefined,
-          children: inlineRuns(h.tokens as Tokens.Generic[]),
+          children: inlineRuns(h.tokens),
         }));
         break;
       }
       case "paragraph": {
         out.push(new Paragraph({
-          children: inlineRuns((tok as Tokens.Paragraph).tokens as Tokens.Generic[]),
+          children: inlineRuns((tok as Tokens.Paragraph).tokens),
         }));
         break;
       }
@@ -334,7 +334,7 @@ export function tokensToDocxChildren(tokens: TokensList): DocxChild[] {
         for (const inner of bq.tokens) {
           if (inner.type === "paragraph") {
             out.push(new Paragraph({
-              children: inlineRuns((inner as Tokens.Paragraph).tokens as Tokens.Generic[], { italic: true }),
+              children: inlineRuns((inner as Tokens.Paragraph).tokens, { italic: true }),
               indent: { left: 360 },
               border: { left: { style: BorderStyle.SINGLE, size: 12, color: "C7CCD4", space: 8 } },
             }));

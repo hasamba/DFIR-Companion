@@ -5,7 +5,7 @@ import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 function ev(p: Partial<ForensicEvent> & { id: string; severity: ForensicEvent["severity"] }): ForensicEvent {
   return { timestamp: "t", description: "", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
 }
-const ioc = (id: string, type: IOC["type"], value: string): IOC => ({ id, type, value });
+const ioc = (id: string, type: IOC["type"], value: string): IOC => ({ id, type, value, firstSeen: "" });
 
 describe("deriveIocProvenance", () => {
   it("classes an IOC seen in a High event as detection-linked", () => {

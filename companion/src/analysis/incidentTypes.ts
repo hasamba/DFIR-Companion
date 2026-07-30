@@ -96,7 +96,7 @@ export const incidentTypeSchema = z.object({
 // analyst-editable files and must never crash the whole listing over a single bad one.
 export function parseIncidentType(raw: unknown): IncidentType | null {
   const parsed = incidentTypeSchema.safeParse(raw);
-  return parsed.success ? (parsed.data as IncidentType) : null;
+  return parsed.success ? (parsed.data) : null;
 }
 
 // The prefix that marks a key question as seeded by an incident type rather than written by the

@@ -11,7 +11,7 @@ interface Recorded { url: string; method: string; body: unknown }
 function mockFetch(responses: Array<{ status?: number; json?: unknown }>): { fetchFn: FetchFn; calls: Recorded[] } {
   const calls: Recorded[] = [];
   let i = 0;
-  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+  const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
     const next = responses[Math.min(i, responses.length - 1)];
     i += 1;
     calls.push({
@@ -25,7 +25,7 @@ function mockFetch(responses: Array<{ status?: number; json?: unknown }>): { fet
       status,
       json: async () => next.json ?? {},
     } as unknown as Response;
-  }) as unknown as FetchFn;
+  };
   return { fetchFn, calls };
 }
 

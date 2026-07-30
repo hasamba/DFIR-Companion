@@ -11,6 +11,7 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 
 class StubProvider implements AIProvider {
   readonly name = "stub";
+  readonly model = "mock-model";
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     return {
       rawText: JSON.stringify({

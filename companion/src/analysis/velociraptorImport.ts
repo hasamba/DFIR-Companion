@@ -99,7 +99,7 @@ function unflattenDotted(row: Row): Row {
     for (let i = 0; i < parts.length - 1; i++) {
       const next = cur[parts[i]];
       if (next === undefined) { const o: Row = {}; cur[parts[i]] = o; cur = o; }
-      else if (isObject(next)) { cur = next as Row; }
+      else if (isObject(next)) { cur = next; }
       else { ok = false; break; } // collision — a leaf sits where a branch is needed
     }
     const leaf = parts[parts.length - 1];
@@ -320,7 +320,7 @@ function vrTime(v: unknown): string {
     return Number.isNaN(d.getTime()) ? "" : d.toISOString();
   }
   if (isObject(v)) {
-    const st = getCI(v, "SystemTime") ?? getPath(v as Row, "#attributes.SystemTime");
+    const st = getCI(v, "SystemTime") ?? getPath(v, "#attributes.SystemTime");
     return st != null ? vrTime(st) : "";
   }
   return normalizeTime(str(v));
@@ -370,7 +370,7 @@ function pickTime(row: Row): string {
   const scan = (obj: Row, prefix: string, depth: number): void => {
     for (const [k, v] of Object.entries(obj)) {
       if (v == null) continue;
-      if (isObject(v)) { if (depth < 1) scan(v as Row, `${prefix}${k}.`, depth + 1); continue; }
+      if (isObject(v)) { if (depth < 1) scan(v, `${prefix}${k}.`, depth + 1); continue; }
       if (Array.isArray(v)) continue;
       if (!TIME_NAME_RE.test(prefix + k)) continue;
       const t = vrTime(v);
@@ -1166,7 +1166,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
 
   // FileHash is a nested object {MD5, SHA1, SHA256} in the Velociraptor artifact
   const hashObj = getCI(row, "FileHash");
-  const { sha256, md5 } = isObject(hashObj) ? vrHashes(hashObj as Row) : vrHashes(row);
+  const { sha256, md5 } = isObject(hashObj) ? vrHashes(hashObj) : vrHashes(row);
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
 

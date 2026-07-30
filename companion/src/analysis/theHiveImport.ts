@@ -106,7 +106,7 @@ function renderCustomFields(cf: unknown): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(cf)) {
     if (!isObject(v)) continue;
-    const val = getCI(v as Row, "value") ?? getCI(v as Row, "string") ?? getCI(v as Row, "number");
+    const val = getCI(v, "value") ?? getCI(v, "string") ?? getCI(v, "number");
     if (val != null && str(val).trim()) parts.push(`${k}: ${str(val).trim()}`);
   }
   return parts.length ? ` [${parts.join("; ")}]` : "";

@@ -297,8 +297,8 @@ export class CaseStore {
 
   /** Atomically patch case.json with the given fields. Unknown fields are preserved. */
   async updateCaseMeta(caseId: string, patch: Partial<CaseMeta>): Promise<CaseMeta> {
-    const existing = (await this.getCaseMeta(caseId)) ?? { caseId, name: "", createdAt: "", investigator: "", aiProvider: null } as CaseMeta;
-    const updated = { ...existing, ...patch, caseId } as CaseMeta;
+    const existing = (await this.getCaseMeta(caseId)) ?? { caseId, name: "", createdAt: "", investigator: "", aiProvider: null };
+    const updated = { ...existing, ...patch, caseId };
     await atomicWrite(this.caseMetaPath(caseId), JSON.stringify(updated, null, 2));
     return updated;
   }

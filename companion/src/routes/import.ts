@@ -65,7 +65,7 @@ import type { RouteContext } from "./context.js";
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
     store, options, recordImportFailure, recordAiError, getControl,
-    runToolAndIngest, pushImportCheckpoint, moveDropFile,
+     pushImportCheckpoint, moveDropFile,
     dispatchImport, demoteForensicForCase, resynthesizeInBackground,
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
   } = ctx;
@@ -241,7 +241,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
 
-      const pipeline = options.pipeline;
       // #225: track the import as a job. Only AI imports (CSV/log — an LLM call) are cancellable;
       // deterministic imports parse synchronously and finish before a cancel could arrive.
       const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, cancellable: aiDependent });
@@ -305,7 +304,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
                 options.onImportMeta?.(caseId);
               }
-              logActivity(options.activityLogStore, options.onActivity, caseId, {
+              void logActivity(options.activityLogStore, options.onActivity, caseId, {
                 category: "import", action: "import",
                 detail: `${kind} (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)`,
               });

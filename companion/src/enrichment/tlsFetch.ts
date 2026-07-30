@@ -66,5 +66,5 @@ export function buildTlsFetch(opts: TlsFetchOptions, deps: TlsFetchDeps = {}): F
   const dispatcher = (deps.makeDispatcher ?? ((c) => new Agent({ connect: c })))(connect);
   const base = deps.baseFetch ?? (undiciFetch as unknown as FetchFn);
   return ((input, init) =>
-    base(input, { ...(init ?? {}), dispatcher } as RequestInit)) as FetchFn;
+    base(input, { ...(init ?? {}), dispatcher } as RequestInit));
 }

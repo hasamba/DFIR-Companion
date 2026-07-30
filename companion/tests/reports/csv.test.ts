@@ -66,7 +66,7 @@ describe("geoMapCsv (#133)", () => {
   it("emits a header and one row per marker", () => {
     const data: GeoMapData = {
       markers: [
-        { iocId: "i1", ip: "8.8.8.8", lat: 37.4, lon: -122.1, country: "US", city: "Mountain View", asn: "AS15169", severity: "High", color: "red", verdict: "malicious", internal: false, legitimate: false, eventCount: 2, sources: ["Suricata"] },
+        { iocId: "i1", ip: "8.8.8.8", lat: 37.4, lon: -122.1, country: "US", city: "Mountain View", asn: "AS15169", severity: "High", color: "red", verdict: "malicious", internal: false, falsePositive: false, eventCount: 2, sources: ["Suricata"] },
       ],
       flows: [],
       countries: [],
@@ -84,7 +84,7 @@ describe("geoMapCsv (#133)", () => {
   it("emits approximate:yes for a country-level marker", () => {
     const data: GeoMapData = {
       markers: [
-        { iocId: "i2", ip: "1.2.3.4", lat: 51.17, lon: 10.45, country: "Germany", asn: undefined, severity: "Info", color: "gray", verdict: undefined, internal: false, legitimate: false, eventCount: 0, sources: [], approximate: true },
+        { iocId: "i2", ip: "1.2.3.4", lat: 51.17, lon: 10.45, country: "Germany", asn: undefined, severity: "Info", color: "gray", verdict: undefined, internal: false, falsePositive: false, eventCount: 0, sources: [], approximate: true },
       ],
       flows: [],
       countries: [],

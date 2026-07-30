@@ -43,7 +43,7 @@ export interface IocRiskSignals {
   suspiciousDomain: boolean;    // risky-TLD / DGA-like domain heuristic (domain/url only)
 }
 
-const { Low, Medium, High, Critical } = SEVERITY_RANK;
+const { Medium, High, Critical } = SEVERITY_RANK;
 
 // Points → tier. A weighted sum keeps the rubric transparent and easy to reason about in tests.
 const CRITICAL_AT = 7;

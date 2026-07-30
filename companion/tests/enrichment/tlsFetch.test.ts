@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { fetchMock } from "../helpers/fetchMock.js";
 import { buildTlsFetch } from "../../src/enrichment/tlsFetch.js";
 
 // Construction-level tests: no disk, no network — the file reader, dispatcher factory, and
@@ -14,7 +15,7 @@ describe("buildTlsFetch", () => {
     const pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----";
     const readFile = vi.fn(() => pem);
     const makeDispatcher = vi.fn((c) => ({ tag: "agent", connect: c }));
-    const baseFetch = vi.fn(async () => new Response("{}"));
+    const baseFetch = fetchMock(async () => new Response("{}"));
 
     const f = buildTlsFetch(
       { caCertPath: "/etc/ssl/internal-ca.pem" },

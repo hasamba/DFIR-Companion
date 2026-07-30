@@ -242,10 +242,10 @@ export class CustomerExposureStore {
         targets: sanitizeTargets(raw.targets),
         results: Array.isArray(raw.results) ? raw.results.map((r) => safeResult(r as CustomerExposureResult)) : [],
         errors: Array.isArray(raw.errors) ? raw.errors.map((e) => ({
-          provider: String((e as CustomerExposureError).provider ?? ""),
-          targetType: (e as CustomerExposureError).targetType === "domain" ? "domain" : "email",
-          target: String((e as CustomerExposureError).target ?? ""),
-          error: String((e as CustomerExposureError).error ?? ""),
+          provider: String(e.provider ?? ""),
+          targetType: e.targetType === "domain" ? "domain" : "email",
+          target: String(e.target ?? ""),
+          error: String(e.error ?? ""),
         })) : [],
       };
     } catch (err) {

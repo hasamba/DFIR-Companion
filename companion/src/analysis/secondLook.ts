@@ -291,7 +291,7 @@ export function resolveSecondLookRequests(
       if (!hostMatches(e, request.host)) continue;
       let h = hay.get(e.id);
       if (h === undefined) { h = eventHaystack(e); hay.set(e.id, h); }
-      if (!request.keywords.some((k) => h!.includes(k))) continue;
+      if (!request.keywords.some((k) => h.includes(k))) continue;
       matched.push(e);
     }
     // Undated rows sort last (Infinity) so a capped request keeps the dated, placeable evidence first.

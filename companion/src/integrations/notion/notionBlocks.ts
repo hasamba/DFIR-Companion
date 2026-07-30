@@ -33,9 +33,6 @@ export type NotionColor =
   | "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red"
   | "gray_background" | "red_background" | "orange_background" | "yellow_background" | "blue_background";
 
-const SEV_COLOR: Record<Severity, NotionColor> = {
-  Critical: "red", High: "orange", Medium: "yellow", Low: "blue", Info: "gray",
-};
 const SEV_BG: Record<Severity, NotionColor> = {
   Critical: "red_background", High: "orange_background", Medium: "yellow_background", Low: "blue_background", Info: "gray_background",
 };

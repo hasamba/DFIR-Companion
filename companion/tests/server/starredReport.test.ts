@@ -13,6 +13,7 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 
 class CapturingProvider implements AIProvider {
   readonly name = "capture";
+  readonly model = "mock-model";
   lastReq?: AnalyzeRequest;
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.lastReq = req;

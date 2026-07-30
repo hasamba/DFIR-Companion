@@ -128,7 +128,7 @@ function parseDetailCell(cell: string): Row {
 // the "¦" separator so Proc/Parent/Tgt fields become individually usable; otherwise keep the raw
 // string under `Details` (genericIocs still scans its value for hashes/IPs/URLs).
 function detailObj(v: unknown): Row {
-  if (isObject(v)) return v as Row;
+  if (isObject(v)) return v;
   if (v == null) return {};
   const s = str(v);
   const parsed = s.includes("¦") ? parseDetailCell(s) : {};

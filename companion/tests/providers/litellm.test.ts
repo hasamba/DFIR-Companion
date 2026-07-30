@@ -1,14 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { LiteLlmProvider } from "../../src/providers/litellm.js";
 import { buildProviderFrom } from "../../src/server.js";
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
-
 describe("LiteLlmProvider", () => {
   it("targets the local LiteLLM proxy by default and is OpenAI-compatible", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: '{"summary":"ok"}' } }] }));
     const p = new LiteLlmProvider({ apiKey: "", model: "ollama/llama3.1", fetchFn });
     expect(p.name).toBe("litellm");
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
@@ -22,7 +19,7 @@ describe("LiteLlmProvider", () => {
   });
 
   it("honours a custom base URL (remote / non-default port)", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     const p = new LiteLlmProvider({ apiKey: "sk-virtual", model: "gpt-4o", baseUrl: "http://10.0.0.5:8000/v1", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(fetchFn.mock.calls[0][0]).toBe("http://10.0.0.5:8000/v1/chat/completions");
@@ -31,7 +28,7 @@ describe("LiteLlmProvider", () => {
   });
 
   it("labels its errors 'LiteLLM', not 'OpenAI'", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ error: "model not found" }, 400));
+    const fetchFn = fetchMock(async () => jsonResponse({ error: "model not found" }, 400));
     const p = new LiteLlmProvider({ apiKey: "", model: "nope", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: Error) => {
       expect(e.message).toContain("LiteLLM");

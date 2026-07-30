@@ -80,7 +80,7 @@ export class HashlookupProvider implements EnrichmentProvider {
 
     const fileName = typeof json.FileName === "string" ? json.FileName.trim() : "";
     const source = typeof json.source === "string" ? json.source.trim()
-      : typeof json.db === "string" ? (json.db as string).trim() : "";
+      : typeof json.db === "string" ? json.db.trim() : "";
     const trustRaw = json["hashlookup:trust"];
     const trust = typeof trustRaw === "number" ? trustRaw : Number(trustRaw);
     const hasTrust = Number.isFinite(trust);

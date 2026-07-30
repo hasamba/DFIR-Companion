@@ -69,7 +69,7 @@ export class SlackSocketMode {
   constructor(options: SlackSocketModeOptions) {
     this.opts = options;
     this.fetchFn = options.fetchFn ?? fetch;
-    this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url) as unknown as SocketLike);
+    this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.sleepFn = options.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms).unref?.()));
   }
 
@@ -126,7 +126,10 @@ export class SlackSocketMode {
       try {
         socket = this.socketFactory(url);
       } catch (err) {
-        reject(err as Error);
+        // socketFactory is injected, so a caller can throw anything. The whole rejection path
+        // here feeds the reconnect backoff, which reads `.message` — a non-Error would surface
+        // as "undefined" in the log with no way back to the cause.
+        reject(err instanceof Error ? err : new Error(String(err)));
         return;
       }
       this.socket = socket;

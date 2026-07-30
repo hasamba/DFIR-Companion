@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { pushCaseToMisp } from "../../src/integrations/misp/mispPush.js";
-import type { MispPushInput } from "../../src/integrations/misp/mispPush.js";
+import type {} from "../../src/integrations/misp/mispPush.js";
 import type { MispPushClientLike, MispEventCreate, MispAttrRef, MispAttrBody } from "../../src/integrations/misp/mispPushClient.js";
 import { emptyState, type InvestigationState, type IOC, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 

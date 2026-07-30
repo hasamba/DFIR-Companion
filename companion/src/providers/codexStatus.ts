@@ -105,7 +105,7 @@ function unrefIfPossible(stream: unknown): void {
     typeof stream === "object" &&
     stream !== null &&
     "unref" in stream &&
-    typeof (stream as { unref: unknown }).unref === "function"
+    typeof stream.unref === "function"
   ) {
     (stream as { unref: () => void }).unref();
   }

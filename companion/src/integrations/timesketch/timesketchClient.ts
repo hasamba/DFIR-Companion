@@ -130,7 +130,7 @@ export class TimesketchClient {
         body,
         redirect: opts.redirect ?? "follow",
         signal: AbortSignal.timeout(this.timeoutMs),
-      } as RequestInit);
+      });
     } catch (err) {
       throw new TimesketchApiError(`Timesketch request failed: ${describeFetchError(err)}`, 0, "network");
     }
@@ -219,7 +219,7 @@ export class TimesketchClient {
     const res = await this.send("GET", `${this.apiRoot}/sketches/${sketchId}/`);
     if (!res.ok) throw await this.errorFor(res, "get sketch");
     const sketch = firstObject(await res.json().catch(() => ({})));
-    const timelines = Array.isArray(sketch?.timelines) ? (sketch!.timelines as Array<Record<string, unknown>>) : [];
+    const timelines = Array.isArray(sketch?.timelines) ? (sketch.timelines as Array<Record<string, unknown>>) : [];
     return timelines.map((t) => ({ id: Number(t.id), name: String(t.name ?? "") }));
   }
 

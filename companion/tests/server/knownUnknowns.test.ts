@@ -40,7 +40,7 @@ describe("GET /cases/:id/known-unknowns (#9)", () => {
     const uncovered = items.filter((i) => i.kind === "uncovered_tactic");
     expect(uncovered.length).toBeGreaterThan(0);
     expect(uncovered.some((i) => i.tactic === "Initial Access")).toBe(true);
-    expect((uncovered[0].collect as unknown[]).length).toBeGreaterThan(0);
+    expect((uncovered[0].collect).length).toBeGreaterThan(0);
   });
 
   it("returns an empty item list for a fresh low-signal case", async () => {

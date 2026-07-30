@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response, type NextFunction, type CookieOptions } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 // Patch Express 4's router so async route handlers that throw or reject are forwarded to the
 // terminal error middleware (see the end of createApp) instead of hanging the client connection
 // or surfacing an UnhandledPromiseRejection. Side-effect-only import; must load before any route
@@ -8,11 +8,10 @@ import { config as loadDotenv } from "dotenv";
 import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { writeFile, readFile, rm, readdir, stat, lstat, open, copyFile, mkdir, mkdtemp, rename } from "node:fs/promises";
+import { writeFile, readFile, rm, readdir, stat, lstat, open, copyFile, mkdir, rename } from "node:fs/promises";
 import { ZodError } from "zod";
-import { CaseStore, isValidCaseId } from "./storage/caseStore.js";
+import { CaseStore } from "./storage/caseStore.js";
 import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
-import { atomicWrite } from "./storage/atomicWrite.js";
 import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext, ImportBase } from "./routes/context.js";
 import { registerSystemRoutes } from "./routes/system.js";
@@ -61,13 +60,6 @@ import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "./analys
 import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
 import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
 import {
-  exportEncryptedCase,
-  importEncryptedCase,
-  CaseImportConflictError,
-  MIN_PASSWORD_LENGTH,
-  dfircaseFilename,
-} from "./analysis/caseExportArchive.js";
-import {
   verifyUnlockToken,
   isRememberedUnlockToken,
   unlockCookieName,
@@ -104,11 +96,11 @@ import { HashlookupProvider } from "./enrichment/hashlookup.js";
 import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, Severity, ForensicEvent, IOC, Finding } from "./analysis/stateTypes.js";
+import type { InvestigationState, Severity, ForensicEvent } from "./analysis/stateTypes.js";
 import type { CaptureMetadata } from "./types.js";
 import type { StateStore } from "./analysis/stateStore.js";
 import type { ReportWriter } from "./reports/reportWriter.js";
-import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "./reports/iocBlocklist.js";
+import type {} from "./reports/iocBlocklist.js";
 import { ReportMetaStore } from "./reports/reportMeta.js";
 import { ReportVersionStore } from "./reports/reportVersionStore.js";
 import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
@@ -116,7 +108,7 @@ import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
 import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
 import { ActivityLogStore } from "./analysis/activityLog.js";
 import { CommentsStore } from "./analysis/comments.js";
-import { TagsStore, type Tag } from "./analysis/tags.js";
+import { TagsStore } from "./analysis/tags.js";
 import { PinnedFindingsStore } from "./analysis/pinnedFindings.js";
 import { FindingWorkflowStore } from "./analysis/findingWorkflow.js";
 import { NotebookStore } from "./analysis/notebookStore.js";
@@ -152,7 +144,7 @@ import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { DropStatusStore, type DropFailure, type PendingRawInput } from "./analysis/dropStatus.js";
 import {
-  selectReadyFiles, classifyDropFile, rawToolInputExt, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
+  selectReadyFiles, classifyDropFile, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
   DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
 } from "./analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
@@ -161,7 +153,7 @@ import {
 } from "./integrations/tools/toolConfig.js";
 import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
 import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
-import { CustomToolStore, customToolToConfig, normalizeExt, type CustomTool } from "./integrations/tools/customToolStore.js";
+import { CustomToolStore, customToolToConfig, type CustomTool } from "./integrations/tools/customToolStore.js";
 import { extractZipEntries } from "./analysis/zipExtract.js";
 import {
   md5Buffer, probeAnalysis, uploadBuffer, checkStatus, fetchVerdicts,
@@ -187,7 +179,6 @@ import { diffIocs } from "./analysis/iocsDiff.js";
 import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
 import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
 import { whitelistMatches } from "./analysis/iocWhitelist.js";
-import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "./analysis/iocExclude.js";
 import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
 import { nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
 import { KevStore } from "./analysis/kevStore.js";
@@ -207,7 +198,7 @@ import {
   type CustomerExposureProvider,
 } from "./analysis/customerExposure.js";
 import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, ALL_CLIENTS, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
+import { VelociraptorClient, buildVelociraptorClient, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
 import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
 import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
@@ -226,11 +217,9 @@ import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
-import { JiraClient } from "./integrations/jira/jiraClient.js";
-import { type JiraPushInput, type JiraPushResult, pushFindingToJira } from "./integrations/jira/jiraPush.js";
+import { JiraClient, type JiraClientLike } from "./integrations/jira/jiraClient.js";
 import { JiraExportStore } from "./integrations/jira/jiraExportStore.js";
-import { ServiceNowClient } from "./integrations/servicenow/servicenowClient.js";
-import { type ServiceNowPushInput, type ServiceNowPushResult, pushFindingToServiceNow } from "./integrations/servicenow/servicenowPush.js";
+import { ServiceNowClient, type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
 import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
@@ -632,12 +621,18 @@ export interface AppOptions {
   clickupOptions?: { defaultListId?: string };
   // Jira export (issue #272): push individual findings as Jira issues. Configured via
   // DFIR_JIRA_URL, DFIR_JIRA_USER, DFIR_JIRA_TOKEN, and DFIR_JIRA_PROJECT_KEY.
-  jiraClient?: JiraClient;
+  // Typed as the INTERFACE, not the concrete client: everything downstream
+  // (pushFindingToJira / pushFindingsToJira / the `configured` flag) needs only me() +
+  // createIssue() + updateIssue(), and naming the class here forced the route tests to
+  // launder their stub through an `as unknown as` cast, which is what kept them out of the
+  // typecheck (#385). Production still passes a real JiraClient.
+  jiraClient?: JiraClientLike;
   jiraExportStore?: JiraExportStore;
   jiraOptions?: { projectKey?: string; issueType?: string };
   // ServiceNow export (issue #272): push individual findings as ServiceNow incidents. Configured via
   // DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD.
-  servicenowClient?: ServiceNowClient;
+  // Interface rather than the concrete client, for the same reason as jiraClient above.
+  servicenowClient?: ServiceNowClientLike;
   servicenowExportStore?: ServiceNowExportStore;
   servicenowOptions?: { caller?: string; category?: string; subcategory?: string };
   // Notifications (issue #58): a GLOBAL channel store (Slack/Teams webhooks + SMTP email) + a
@@ -1416,7 +1411,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       case "syslog": return pipeline.importSyslog(caseId, text, base);
       case "csv": return pipeline.analyzeCsv(caseId, text, base);
       case "log": return pipeline.analyzeLog(caseId, text, base);
-      default: return Promise.reject(new Error(`unhandled import kind: ${kind as string}`));
+      default: return Promise.reject(new Error(`unhandled import kind: ${kind}`));
     }
   }
 

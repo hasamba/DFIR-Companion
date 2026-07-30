@@ -69,14 +69,14 @@ async function postJson(url: string, body: unknown, fetchFn: FetchFn): Promise<u
  * `{status: "processing", phase: ""}`, which is why the poller carries its own attempt ceiling.
  */
 export async function probeAnalysis(
-  baseUrl: string, md5: string, fetchFn: FetchFn = fetch as FetchFn,
+  baseUrl: string, md5: string, fetchFn: FetchFn = fetch,
 ): Promise<SocratesStatus> {
   return await getJson(`${trimBase(baseUrl)}/api/status?md5=${encodeURIComponent(md5)}`, fetchFn) as SocratesStatus;
 }
 
 /** Upload a file for analysis as multipart/form-data. */
 export async function uploadBuffer(
-  baseUrl: string, data: Buffer, filename: string, fetchFn: FetchFn = fetch as FetchFn,
+  baseUrl: string, data: Buffer, filename: string, fetchFn: FetchFn = fetch,
 ): Promise<SocratesUploadResult> {
   const form = new FormData();
   // Copy into a plain Uint8Array: a Buffer's underlying store is ArrayBufferLike, which may be a
@@ -94,7 +94,7 @@ export async function uploadBuffer(
 
 /** Poll whether analysis has finished. */
 export async function checkStatus(
-  baseUrl: string, md5: string, fetchFn: FetchFn = fetch as FetchFn,
+  baseUrl: string, md5: string, fetchFn: FetchFn = fetch,
 ): Promise<SocratesStatus> {
   return await postJson(`${trimBase(baseUrl)}/api/check-status`, { md5 }, fetchFn) as SocratesStatus;
 }
@@ -120,7 +120,7 @@ async function fetchAllPages(url: string, fetchFn: FetchFn): Promise<Record<stri
  * Every row is stamped `_Source: "SO-CRATES"` so importDetect's isSocrates() claims the blob.
  */
 export async function fetchVerdicts(
-  baseUrl: string, md5: string, fetchFn: FetchFn = fetch as FetchFn,
+  baseUrl: string, md5: string, fetchFn: FetchFn = fetch,
 ): Promise<SocratesVerdicts> {
   const base = trimBase(baseUrl);
   const q = encodeURIComponent(md5);

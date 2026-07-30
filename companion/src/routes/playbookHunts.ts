@@ -109,7 +109,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const control = await options.playbookControlStore.set(req.params.id, { useTemplates: req.body.useTemplates });
       const tasks = await syncPlaybook(req.params.id);   // re-derive immediately under the new mode
       options.onPlaybook?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings", action: "playbook-control", detail: `IR templates ${control.useTemplates ? "enabled" : "disabled"}`,
       });
       return res.status(200).json({ control, tasks: withBlockedState(tasks), stats: playbookStats(tasks) });
@@ -265,7 +265,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const task = await options.playbookStore.add(req.params.id, input);
       options.onPlaybook?.(req.params.id);
       dispatchNotify(playbookTaskEvent(req.params.id, task, "added", new Date().toISOString()));
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "playbook", action: "task-added",
         detail: `task added: "${task.title}"`, targetType: "playbook-task", targetId: task.id,
       });
@@ -295,7 +295,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       if (patch.status) {
         dispatchNotify(playbookTaskEvent(req.params.id, updated, updated.status === "done" ? "completed" : "updated", new Date().toISOString()));
       }
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "playbook", action: "task-updated",
         detail: `task "${updated.title}" — ${Object.keys(patch).join(", ")} changed${patch.status ? ` (status: ${updated.status})` : ""}`,
         targetType: "playbook-task", targetId: updated.id,
@@ -313,7 +313,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const removed = await options.playbookStore.remove(req.params.id, req.params.taskId);
       if (!removed) return res.status(404).json({ error: "playbook task not found" });
       options.onPlaybook?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "playbook", action: "task-removed", detail: `task ${req.params.taskId} removed`,
         targetType: "playbook-task", targetId: req.params.taskId,
       });

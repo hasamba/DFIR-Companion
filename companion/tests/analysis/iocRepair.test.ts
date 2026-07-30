@@ -7,12 +7,12 @@ describe("dedupeIocsById", () => {
     const state = {
       ...emptyState("c1"),
       iocs: [
-        { id: "i001", type: "process" as const, value: "OneDrive.exe" },
-        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain" },
-        { id: "i200", type: "other" as const, value: "C:\\AkiraSim\\" },
-        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain" },
-        { id: "i201", type: "process" as const, value: "cloudflare.exe" },
-        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain" },
+        { id: "i001", type: "process" as const, value: "OneDrive.exe", firstSeen: "" },
+        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain", firstSeen: "" },
+        { id: "i200", type: "other" as const, value: "C:\\AkiraSim\\", firstSeen: "" },
+        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain", firstSeen: "" },
+        { id: "i201", type: "process" as const, value: "cloudflare.exe", firstSeen: "" },
+        { id: "i016", type: "domain" as const, value: "desktop-mnnuhhu.localdomain", firstSeen: "" },
       ],
     };
     const { state: repaired, removed } = dedupeIocsById(state);
@@ -27,8 +27,8 @@ describe("dedupeIocsById", () => {
     const state = {
       ...emptyState("c1"),
       iocs: [
-        { id: "i001", type: "ip" as const, value: "10.0.0.5" },
-        { id: "i002", type: "domain" as const, value: "evil.example" },
+        { id: "i001", type: "ip" as const, value: "10.0.0.5", firstSeen: "" },
+        { id: "i002", type: "domain" as const, value: "evil.example", firstSeen: "" },
       ],
     };
     const { state: repaired, removed } = dedupeIocsById(state);

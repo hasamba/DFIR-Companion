@@ -120,7 +120,7 @@ describe("buildRedactedExport", () => {
     // entity. Without it, "GlobalTech Industries" survived unredacted while globaltech.com was
     // tokenized to ANON_DOMAIN_n.
     const d = deps({
-      reportMetaStore: { load: async () => ({ organization: "GlobalTech Industries" }) } as RedactedExportDeps["reportMetaStore"],
+      reportMetaStore: { load: async () => ({ organization: "GlobalTech Industries" }) },
       reportWriter: {
         redactedReportContents: async (_caseId: string, redact: (s: string) => string) => ({
           markdown: redact("Incident at GlobalTech Industries involving GlobalTech Industries servers"),

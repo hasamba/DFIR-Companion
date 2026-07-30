@@ -112,7 +112,7 @@ export class PlaybookStore {
     let dependsOn: string[] | undefined;
     if (patch.dependsOn !== undefined) {
       const validation = validateDependsOn(tasks, taskId, patch.dependsOn);
-      if (!validation.ok) throw new PlaybookValidationError(validation.error!);
+      if (!validation.ok) throw new PlaybookValidationError(validation.error);
       dependsOn = validation.dependsOn;
     }
     let updated: PlaybookTask | null = null;
@@ -152,8 +152,8 @@ export class PlaybookStore {
     // source still exists. Mark them skipped instead so the analyst's intent persists across
     // re-syncs; the "Open only" filter hides them. Custom tasks are removed outright.
     if (task.source !== "custom") {
-      const next = tasks.map((t) =>
-        t.id === taskId ? { ...t, status: "skipped" as PlaybookStatus, updatedAt: new Date().toISOString() } : t,
+      const next: PlaybookTask[] = tasks.map((t) =>
+        t.id === taskId ? { ...t, status: "skipped", updatedAt: new Date().toISOString() } : t,
       );
       await this.save(caseId, next);
     } else {

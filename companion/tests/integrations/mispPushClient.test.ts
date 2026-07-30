@@ -34,7 +34,7 @@ function stubFetch(handler: (call: Call) => { status?: number; json: unknown }) 
 }
 
 const client = (fetchFn: typeof fetch) =>
-  new MispPushClient({ baseUrl: "https://misp.test", apiKey: "k", fetchFn: fetchFn as never });
+  new MispPushClient({ baseUrl: "https://misp.test", apiKey: "k", fetchFn: fetchFn });
 
 describe("MispPushClient HTTP handling", () => {
   it("treats HTTP 200 with saved:false as a failure, not a success", async () => {
@@ -114,9 +114,9 @@ describe("MispPushClient HTTP handling", () => {
 // A fetch that fails at the transport layer the way undici really does: the message is ALWAYS
 // the useless "fetch failed" and the actionable reason lives on `cause`.
 function failingFetch(cause: unknown): typeof fetch {
-  return (async () => {
+  return async () => {
     throw Object.assign(new TypeError("fetch failed"), { cause });
-  }) as unknown as typeof fetch;
+  };
 }
 
 const netError = (code: string, message = code) => Object.assign(new Error(message), { code });

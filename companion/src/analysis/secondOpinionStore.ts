@@ -59,7 +59,7 @@ export class SecondOpinionStore {
 
   async load(caseId: string): Promise<SecondOpinion | null> {
     try {
-      return secondOpinionSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8"))) as SecondOpinion;
+      return secondOpinionSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;

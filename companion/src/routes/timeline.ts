@@ -73,7 +73,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "hypothesize-gaps", detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
       });
       return res.status(200).json(result);

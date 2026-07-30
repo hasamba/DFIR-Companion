@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { storeFilePath } from "../storage/safeStoreId.js";
-import type { Severity, InvestigationQuestion, QuestionStatus, NextStep, StepPriority } from "./stateTypes.js";
+import type { Severity, InvestigationQuestion, NextStep, StepPriority } from "./stateTypes.js";
 
 export interface TemplateNextStep {
   action: string;
@@ -168,7 +168,7 @@ export function buildInitialQuestions(template: CaseTemplate): InvestigationQues
   return template.initialKeyQuestions.map((q) => ({
     id: randomUUID(),
     question: q,
-    status: "unknown" as QuestionStatus,
+    status: "unknown",
     answer: "",
     pointer: "",
     pinned: true,

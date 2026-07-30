@@ -8,7 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ClockSkewStore } from "../../src/analysis/clockSkewStore.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
-import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return { id, timestamp, description: "", severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...extra };
@@ -40,7 +40,7 @@ async function makeApp(opts: { withStore?: boolean; timeline?: ForensicEvent[] }
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   if (opts.timeline) {
     const state = await stateStore.load("c1");
-    await stateStore.save({ ...state, forensicTimeline: opts.timeline } as InvestigationState);
+    await stateStore.save({ ...state, forensicTimeline: opts.timeline });
   }
   return { app, store, stateStore, clockSkewStore };
 }

@@ -4,7 +4,7 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 
 function ev(over: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
-    id: over.id, timestamp: "2026-05-26T12:25:36Z", description: "desc", severity: "Info",
+    timestamp: "2026-05-26T12:25:36Z", description: "desc", severity: "Info",
     mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over,
   };
 }

@@ -21,6 +21,9 @@ async function extractFn(name: string): Promise<(s: unknown) => string> {
   const src = html.slice(start, end + 1);
   // esc() is escAttr's dependency; include it so the extracted source resolves.
   const escSrc = name === "esc" ? "" : (await extractSource("esc"));
+  // Compiling the dashboard's own esc()/escAttr() out of the shipped HTML is the point: the test
+  // asserts the REAL escaper's behaviour rather than a copy of it that can drift.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   return new Function(`${escSrc}\n${src}\nreturn ${name};`)() as (s: unknown) => string;
 }
 

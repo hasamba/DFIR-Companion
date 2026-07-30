@@ -17,7 +17,6 @@ import {
   aggregateEvents,
   cleanIp,
   addIoc,
-  worst,
   str,
   isObject,
   getCI,

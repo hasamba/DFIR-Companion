@@ -91,7 +91,7 @@ async function makeApp() {
 
 async function counts(stateStore: StateStore, superStore: SuperTimelineStore) {
   const state = await stateStore.load("c1");
-  const sup = await superStore.query("c1", { limit: 1000 } as never) as unknown as { total?: number };
+  const sup = await superStore.query("c1", { limit: 1000 }) as unknown as { total?: number };
   return { forensic: state.forensicTimeline.length, super: sup.total ?? 0 };
 }
 

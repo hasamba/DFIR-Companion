@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 
 // ── M365 Unified Audit Log records (Search-UnifiedAuditLog shape: AuditData JSON string) ──
-function ualRow(auditData: object, outer: object = {}): object {
-  return { RecordType: 1, CreationDate: "2023-05-01T10:00:00", UserIds: "attacker@victim.com", Operations: (auditData as any).Operation, AuditData: JSON.stringify(auditData), ...outer };
+function ualRow(auditData: Record<string, unknown>, outer: object = {}): object {
+  return { RecordType: 1, CreationDate: "2023-05-01T10:00:00", UserIds: "attacker@victim.com", Operations: auditData.Operation as string | undefined, AuditData: JSON.stringify(auditData), ...outer };
 }
 function inboxRule(): object {
   return ualRow({

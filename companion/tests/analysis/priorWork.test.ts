@@ -20,7 +20,7 @@ function task(partial: Partial<PlaybookTask>): PlaybookTask {
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...partial,
-  } as PlaybookTask;
+  };
 }
 
 function hyp(partial: Partial<Hypothesis>): Hypothesis {

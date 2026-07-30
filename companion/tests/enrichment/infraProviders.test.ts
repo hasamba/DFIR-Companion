@@ -1,12 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { ReverseDnsProvider } from "../../src/enrichment/reverseDns.js";
 import { RdapProvider } from "../../src/enrichment/rdap.js";
 import { GeoIpProvider } from "../../src/enrichment/geoip.js";
 import { ShodanProvider } from "../../src/enrichment/shodan.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
 
 describe("ReverseDnsProvider", () => {
   it("resolves an IP to its PTR hostname(s) as an unknown-verdict context result", async () => {
@@ -44,7 +41,7 @@ describe("ReverseDnsProvider", () => {
 
 describe("RdapProvider (WHOIS over RDAP)", () => {
   it("extracts net name, CIDR, country, ASN and the nested abuse contact", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       name: "GOGL", handle: "NET-8-8-8-0-1", country: "US",
       startAddress: "8.8.8.0", endAddress: "8.8.8.255",
       cidr0_cidrs: [{ v4prefix: "8.8.8.0", length: 24 }],
@@ -68,33 +65,33 @@ describe("RdapProvider (WHOIS over RDAP)", () => {
   });
 
   it("falls back to start–end range when no CIDR is given", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ name: "RIPE-BLOCK", country: "DE", startAddress: "203.0.113.0", endAddress: "203.0.113.127" }));
+    const fetchFn = fetchMock(async () => jsonResponse({ name: "RIPE-BLOCK", country: "DE", startAddress: "203.0.113.0", endAddress: "203.0.113.127" }));
     const r = await new RdapProvider({ fetchFn }).lookup("ip", "203.0.113.5");
     expect(r!.tags).toContain("203.0.113.0 – 203.0.113.127");
   });
 
   it("honors a custom base URL", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ name: "X", country: "FR" }));
+    const fetchFn = fetchMock(async () => jsonResponse({ name: "X", country: "FR" }));
     await new RdapProvider({ baseUrl: "https://rdap.db.ripe.net/", fetchFn }).lookup("ip", "2.2.2.2");
     expect(fetchFn.mock.calls[0][0]).toBe("https://rdap.db.ripe.net/ip/2.2.2.2");
   });
 
   it("returns null on 404 (no allocation) and throws on 429 (rate limit)", async () => {
-    const nf = new RdapProvider({ fetchFn: vi.fn(async () => new Response("", { status: 404 })) });
+    const nf = new RdapProvider({ fetchFn: fetchMock(async () => new Response("", { status: 404 })) });
     expect(await nf.lookup("ip", "192.0.2.1")).toBeNull();
-    const rl = new RdapProvider({ fetchFn: vi.fn(async () => new Response("", { status: 429 })) });
+    const rl = new RdapProvider({ fetchFn: fetchMock(async () => new Response("", { status: 429 })) });
     await expect(rl.lookup("ip", "192.0.2.1")).rejects.toThrow(/rate limit/i);
   });
 
   it("returns null for an empty RDAP object (nothing to report)", async () => {
-    const r = await new RdapProvider({ fetchFn: vi.fn(async () => jsonResponse({})) }).lookup("ip", "192.0.2.9");
+    const r = await new RdapProvider({ fetchFn: fetchMock(async () => jsonResponse({})) }).lookup("ip", "192.0.2.9");
     expect(r).toBeNull();
   });
 });
 
 describe("GeoIpProvider", () => {
   it("maps the default ipinfo.io shape (country code + 'AS… Org' org) and hits the /json template", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       ip: "8.8.8.8", hostname: "dns.google", city: "Mountain View", region: "California",
       country: "US", org: "AS15169 Google LLC",
     }));
@@ -109,7 +106,7 @@ describe("GeoIpProvider", () => {
   });
 
   it("tolerates the ipwho.is shape (full country name + numeric connection.asn)", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       success: true, country: "United States", country_code: "US",
       region: "California", city: "Mountain View",
       connection: { asn: 15169, org: "Google LLC", isp: "Google LLC" },
@@ -121,7 +118,7 @@ describe("GeoIpProvider", () => {
   });
 
   it("tolerates the ip-api.com shape (countryCode / as string / regionName) and append-style base", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       status: "success", country: "Germany", countryCode: "DE", regionName: "Hesse",
       city: "Frankfurt", as: "AS24940 Hetzner Online GmbH", isp: "Hetzner", org: "Hetzner Online GmbH",
     }));
@@ -132,24 +129,24 @@ describe("GeoIpProvider", () => {
   });
 
   it("returns null on a non-success/error body (reserved/invalid IP) and appends the optional key as ?token=", async () => {
-    const miss = new GeoIpProvider({ fetchFn: vi.fn(async () => jsonResponse({ error: { title: "Wrong ip" } })) });
+    const miss = new GeoIpProvider({ fetchFn: fetchMock(async () => jsonResponse({ error: { title: "Wrong ip" } })) });
     expect(await miss.lookup("ip", "10.0.0.1")).toBeNull();
-    const fetchFn = vi.fn(async () => jsonResponse({ country: "US", org: "AS15169 Google LLC" }));
+    const fetchFn = fetchMock(async () => jsonResponse({ country: "US", org: "AS15169 Google LLC" }));
     await new GeoIpProvider({ apiKey: "secret", fetchFn }).lookup("ip", "8.8.4.4");
     expect(fetchFn.mock.calls[0][0]).toBe("https://ipinfo.io/8.8.4.4/json?token=secret");
   });
 
   it("throws on auth / rate-limit statuses", async () => {
-    const auth = new GeoIpProvider({ fetchFn: vi.fn(async () => new Response("", { status: 403 })) });
+    const auth = new GeoIpProvider({ fetchFn: fetchMock(async () => new Response("", { status: 403 })) });
     await expect(auth.lookup("ip", "1.1.1.1")).rejects.toThrow(/auth failed/i);
-    const rl = new GeoIpProvider({ fetchFn: vi.fn(async () => new Response("", { status: 429 })) });
+    const rl = new GeoIpProvider({ fetchFn: fetchMock(async () => new Response("", { status: 429 })) });
     await expect(rl.lookup("ip", "1.1.1.1")).rejects.toThrow(/rate limit/i);
   });
 });
 
 describe("ShodanProvider (host lookup)", () => {
   it("summarizes hostnames, ports, products, ASN and CVEs as context", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       ip_str: "1.2.3.4", hostnames: ["web.evil.test"], domains: ["evil.test"],
       ports: [22, 80, 443], org: "Evil Hosting", isp: "Evil Hosting", asn: "AS66666",
       country_name: "Russia", vulns: ["CVE-2021-44228"],
@@ -163,30 +160,30 @@ describe("ShodanProvider (host lookup)", () => {
     expect(r!.score).toContain("1 CVE");
     expect(r!.tags).toEqual(expect.arrayContaining(["Russia", "AS66666", "Evil Hosting", "web.evil.test", "ports 22,80,443", "CVE-2021-44228"]));
     expect(r!.link).toBe("https://www.shodan.io/host/1.2.3.4");
-    const calledUrl = fetchFn.mock.calls[0][0] as string;
+    const calledUrl = fetchFn.mock.calls[0][0];
     expect(calledUrl).toContain("/shodan/host/1.2.3.4");
     expect(calledUrl).toContain("key=k");
   });
 
   it("returns null on 404 (IP not in Shodan) and throws on auth / rate-limit", async () => {
-    const nf = new ShodanProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 404 })) });
+    const nf = new ShodanProvider({ apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 404 })) });
     expect(await nf.lookup("ip", "203.0.113.7")).toBeNull();
-    const auth = new ShodanProvider({ apiKey: "bad", fetchFn: vi.fn(async () => new Response("", { status: 401 })) });
+    const auth = new ShodanProvider({ apiKey: "bad", fetchFn: fetchMock(async () => new Response("", { status: 401 })) });
     await expect(auth.lookup("ip", "1.2.3.4")).rejects.toThrow(/auth failed/i);
-    const rl = new ShodanProvider({ apiKey: "k", fetchFn: vi.fn(async () => new Response("", { status: 429 })) });
+    const rl = new ShodanProvider({ apiKey: "k", fetchFn: fetchMock(async () => new Response("", { status: 429 })) });
     await expect(rl.lookup("ip", "1.2.3.4")).rejects.toThrow(/rate limit/i);
   });
 
   it("throws a RateLimitError carrying the parsed Retry-After on 429 (#78)", async () => {
     const rl = new ShodanProvider({
       apiKey: "k",
-      fetchFn: vi.fn(async () => new Response("", { status: 429, headers: { "retry-after": "5" } })),
+      fetchFn: fetchMock(async () => new Response("", { status: 429, headers: { "retry-after": "5" } })),
     });
     await expect(rl.lookup("ip", "1.2.3.4")).rejects.toMatchObject({ name: "RateLimitError", retryAfterMs: 5000 });
   });
 
   it("only supports IP IOCs", async () => {
-    const sh = new ShodanProvider({ apiKey: "k", fetchFn: vi.fn(async () => jsonResponse({})) });
+    const sh = new ShodanProvider({ apiKey: "k", fetchFn: fetchMock(async () => jsonResponse({})) });
     expect(sh.supports("ip")).toBe(true);
     expect(sh.supports("domain")).toBe(false);
     expect(await sh.lookup("hash", "abcd")).toBeNull();

@@ -74,7 +74,7 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
         await writeFile(join(store.reportsDir(req.params.id), CUSTODY_MANIFEST_FILENAME), JSON.stringify(manifest, null, 2), "utf8");
       }
       dispatchNotify(milestoneEvent(req.params.id, "Report generated", ["The case report (Markdown + HTML) was (re)generated."], new Date().toISOString()));
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "export", action: "report-generated", detail: "report (Markdown + HTML) regenerated",
       });
       return res.status(200).json(paths);

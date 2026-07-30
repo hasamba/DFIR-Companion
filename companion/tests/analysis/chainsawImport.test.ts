@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseChainsawReport } from "../../src/analysis/chainsawImport.js";
 
 // ── A Chainsaw hunt detection: a Sigma rule matched on an embedded Sysmon process-create.
-function sigmaPowershell(): object {
+function sigmaPowershell() {
   return {
     group: "Sigma",
     kind: "individual",
@@ -105,7 +105,7 @@ describe("parseChainsawReport — Chainsaw hunt detections", () => {
   it("keeps two DIFFERENT rules on the same underlying event as separate events", () => {
     const a = sigmaPowershell();
     const b = sigmaPowershell();
-    (b as any).rule = { name: "Office Spawning PowerShell", level: "critical", tags: ["attack.t1059"] };
+    b.rule = { name: "Office Spawning PowerShell", level: "critical", tags: ["attack.t1059"] };
     const r = parseChainsawReport(JSON.stringify([a, b]));
     expect(r.events).toHaveLength(2);
     expect(r.events.some((e) => e.description.includes("Office Spawning PowerShell"))).toBe(true);

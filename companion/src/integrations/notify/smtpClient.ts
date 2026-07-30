@@ -160,7 +160,7 @@ export function dotStuff(message: string): string {
 // code); "NNN-" lines are continuations. Exported for the real reader + tests.
 export function parseReplies(buffer: string): { replies: SmtpReply[]; rest: string } {
   const replies: SmtpReply[] = [];
-  let lines = buffer.split("\r\n");
+  const lines = buffer.split("\r\n");
   const rest = lines.pop() ?? "";   // trailing partial line (no CRLF yet)
 
   let current: string[] = [];

@@ -149,7 +149,7 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
       },
     },
   });
-  const body = marked.parse(markdown, { async: false }) as string;
+  const body = marked.parse(markdown, { async: false });
 
   const graphSvg = renderAssetGraphSvg(buildAssetGraph(state));
   const graphSection = graphSvg

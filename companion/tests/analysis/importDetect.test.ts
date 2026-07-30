@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectImportKind } from "../../src/analysis/importDetect.js";
-import { detectImportWithCustom, buildDetectContext } from "../../src/analysis/importDetect.js";
+import { detectImportWithCustom } from "../../src/analysis/importDetect.js";
 import { buildImporter } from "../../src/analysis/declarativeImporter.js";
 import { EXAMPLE_IMPORTER_SPEC, parseImporterSpec } from "../../src/analysis/importerSpec.js";
 

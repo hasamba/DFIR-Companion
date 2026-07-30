@@ -138,7 +138,7 @@ export async function deliver(server: McpServer, localPath: string, ctx: Deliver
     return { remotePath, destination };
   }
 
-  const { host, remoteDir, port, timeoutMs } = server.delivery;
+  const { remoteDir, port, timeoutMs } = server.delivery;
   const remotePath = posix.join(remoteDir, safeRemoteName(localPath));
   const login = remoteLogin(server);
   const destination = `${login}:${remotePath}`;
