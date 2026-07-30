@@ -24,7 +24,8 @@ http://127.0.0.1:4773/dashboard. On startup it logs the resolved cases root, e.g
 > `npm run dev`; server code loads once at startup, so changes need a restart.
 
 > If you see `EADDRINUSE`, a companion is already running. Reuse it, or free the port:
-> `Get-NetTCPConnection -LocalPort 4773 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`
+> Windows — `Get-NetTCPConnection -LocalPort 4773 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`;
+> Linux/macOS — `kill $(lsof -ti tcp:4773)` (or, Linux: `fuser -k 4773/tcp`).
 
 ## Configuration (`companion/.env`, gitignored)
 
