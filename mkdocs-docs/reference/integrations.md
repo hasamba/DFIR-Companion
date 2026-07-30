@@ -1,6 +1,20 @@
 # Integrations
 
-All integrations are configured in **Settings → Integrations** (or via the Setup Wizard). Each is optional — removing credentials from `.env` disables the integration.
+Most integrations are configured in **Settings → Integrations** (or via the Setup Wizard). Each is
+optional—removing credentials from `.env` disables it. MCP analysis is the exception: configure the
+connection in Claude Code, then allow it in **Settings → All → Tools**.
+
+---
+
+## MCP Analysis
+
+Connect Claude Code to an external forensic analysis environment, then use plain-English requests
+from a case to investigate an evidence file. Companion supports separate evidence delivery by
+shared path or SCP and records the transfer in the chain of custody.
+
+See [MCP Analysis](mcp-analysis.md) for the complete setup and recommended
+[REMnux](https://github.com/REMnux/remnux-mcp-server) and
+[SIFT MCP](https://github.com/AppliedIR/sift-mcp) servers.
 
 ---
 

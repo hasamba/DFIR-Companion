@@ -4322,7 +4322,7 @@
         <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
           ⚠ The run/update commands you configure are executed on this machine (no shell — args are tokenized). Only point them at trusted binaries.
         </div>
-        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
+        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* and DFIR_MCP_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
         <div id="toolsStatus" style="font-size:12px;color:var(--text-muted);margin-bottom:12px">—</div>
 
         <div class="settings-group-head">Hayabusa <span style="color:var(--text-dim);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
@@ -4410,6 +4410,37 @@
           <div class="sfield"><label>Auto-run on drop<span class="sfield-hint">on = run without asking; blank/off = ask first</span></label><input id="ctAutoRun" placeholder="off" /></div>
         </div>
         <div style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
+
+        <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--text-dim);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
+        <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
+        <div class="sfield-row" style="margin-bottom:10px">
+          <div class="sfield"><label>Investigation timeout (ms)<span class="sfield-hint">DFIR_MCP_AGENT_TIMEOUT_MS — default 3600000 (1 hour), range 60000–86400000</span></label><input id="env-DFIR_MCP_AGENT_TIMEOUT_MS" placeholder="3600000" /></div>
+        </div>
+        <div id="mcpServerList" style="margin-bottom:10px">—</div>
+        <div style="margin:4px 0 12px"><button id="mcpDiscoverBtn" type="button" title="Ask Claude Code which MCP servers it is configured with">↻ Refresh from Claude Code</button> <span id="mcpDiscoverMsg" class="manual-msg"></span></div>
+
+        <div class="settings-group-head" style="font-size:12px;margin-top:6px">Allow one of Claude Code's servers</div>
+        <div class="sgrid">
+          <div class="sfield"><label>Server<span class="sfield-hint">as named in Claude Code &mdash; press Refresh above to load the list</span><select id="mcpServerName"></select></label></div>
+          <div class="sfield"><label>Label<span class="sfield-hint">optional display name; blank = the server name</span></label><input id="mcpLabel" placeholder="SIFT workstation" /></div>
+          <div class="sfield"><label>Restrict to tools <span style="color:var(--text-dim)">(optional)</span><span class="sfield-hint">comma-separated; blank = every tool the server offers</span></label><input id="mcpAllowedTools" placeholder="(all)" /></div>
+          <div class="sfield"><label>Restrict to commands <span style="color:var(--text-dim)">(optional)</span><span class="sfield-hint">binaries a command runner may invoke; blank = no restriction</span></label><input id="mcpAllowedCommands" placeholder="(all)" /></div>
+        </div>
+        <div class="settings-group-head" style="font-size:12px;margin-top:8px">How evidence reaches it</div>
+        <div class="sgrid">
+          <div class="sfield"><label>Delivery<span class="sfield-hint">shared mount, or push the file over scp</span>
+            <select id="mcpDeliveryMode"><option value="remote-path">Shared path (no copy)</option><option value="scp">scp (push the file)</option></select>
+          </label></div>
+          <div class="sfield"><label>Local prefix<span class="sfield-hint">shared path only &mdash; this side of the mount; blank = same path both sides</span></label><input id="mcpLocalPrefix" placeholder="/srv/cases" /></div>
+          <div class="sfield"><label>Remote prefix<span class="sfield-hint">shared path only &mdash; the analysis host's side of the mount</span></label><input id="mcpRemotePrefix" placeholder="/mnt/dfir" /></div>
+          <div class="sfield"><label>SSH host<span class="sfield-hint">scp only &mdash; its host key must already be trusted (no prompting)</span></label><input id="mcpHost" placeholder="sift.lab" /></div>
+          <div class="sfield"><label>SSH user<span class="sfield-hint">scp only &mdash; optional</span></label><input id="mcpUser" placeholder="analyst" /></div>
+          <div class="sfield"><label>SSH port<span class="sfield-hint">scp only &mdash; blank = 22</span></label><input id="mcpPort" placeholder="22" /></div>
+          <div class="sfield"><label>Identity file<span class="sfield-hint">scp only &mdash; key path; passphrase-free or agent-loaded (never prompts)</span></label><input id="mcpIdentityFile" placeholder="/home/dfir/.ssh/lab" /></div>
+          <div class="sfield"><label>Remote staging dir<span class="sfield-hint">scp only &mdash; absolute path; the copy is deleted after the run</span></label><input id="mcpRemoteDir" placeholder="/cases/incoming" /></div>
+        </div>
+        <div style="margin:6px 0 4px"><button id="mcpAddBtn" type="button">＋ Allow this server</button> <span id="mcpMsg" class="manual-msg"></span></div>
       </div>
 
       <!-- IOC Whitelist (Phase 2 of #35) -->
@@ -6040,6 +6071,68 @@
         </select>
       </div>
       <div id="activityLogPanel">—</div>
+    </section>
+    <section id="sec-mcp" style="grid-column: 1 / -1" class="collapsed"><h2>MCP Analysis<span class="ev-sub">describe the investigation in plain English and let your MCP app choose the tools &mdash; results import into the case and evidence transfer is written to the chain of custody</span></h2>
+      <div id="mcpRunUnavailable" style="display:none;font-size:12px;color:var(--text-muted)">No MCP servers allowed yet &mdash; configure them in Claude Code, then allow one in Settings &rarr; Tools.</div>
+      <div id="mcpRunForm" style="display:none">
+        <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--text-muted)">What should the MCP app investigate?
+          <textarea id="mcpAgentPrompt" rows="3" style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:4px" placeholder="Investigate this RAM dump for signs of compromise, persistence, and suspicious processes."></textarea>
+        </label>
+        <div class="sgrid">
+          <div class="sfield"><label>MCP app<span class="sfield-hint">an allowed and enabled server; it chooses the tools</span><select id="mcpRunServer"></select></label></div>
+          <div class="sfield">
+            <label>Evidence file<span class="sfield-hint">enter a path inside this case, or browse to upload a local file; leave blank if none is needed</span></label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="mcpRunTarget" list="mcpRunTargets" placeholder="imports/memory.raw" style="min-width:0;flex:1" />
+              <button id="mcpRunBrowseBtn" type="button" title="Choose a local evidence file to upload">Browse…</button>
+              <input id="mcpRunFile" type="file" style="display:none" />
+            </div>
+            <datalist id="mcpRunTargets"></datalist>
+          </div>
+        </div>
+        <div style="margin:6px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="mcpAgentBtn" type="button">&#9654; Investigate</button>
+          <label style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px" title="Show the proposed findings here first. Nothing reaches the case until you approve it.">
+            <input type="checkbox" id="mcpRunPreview" checked /> Preview before importing
+          </label>
+          <span id="mcpRunMsg" class="manual-msg"></span>
+        </div>
+        <details style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
+          <summary>Advanced: call one MCP tool manually</summary>
+          <div class="sgrid" style="margin-top:8px">
+            <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
+          </div>
+          <label style="display:block;margin-top:6px;font-size:12px;color:var(--text-muted)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
+            <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
+          </label>
+          <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="mcpRunBtn" type="button">&#9654; Run manual call</button>
+            <button id="mcpRunListToolsBtn" type="button" title="Ask Claude Code which tools this server offers">&#8635; List tools</button>
+          </div>
+        </details>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
+          <div id="mcpRunJob" style="font-size:12px;color:var(--text-muted)"></div>
+          <button id="mcpRunCancelBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Cancel</button>
+          <button id="mcpRunRetryBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Retry</button>
+        </div>
+        <div id="mcpPreviewPanel" style="display:none;margin-top:8px;border:1px solid var(--border-color);border-radius:6px;padding:8px">
+          <div id="mcpPreviewHead" style="font-size:12px;color:var(--text-muted);margin-bottom:6px"></div>
+          <pre id="mcpPreviewText" style="max-height:260px;overflow:auto;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button id="mcpPreviewImportBtn" type="button">&#10003; Import into the case</button>
+            <button id="mcpPreviewDiscardBtn" type="button" style="background:var(--bg-tertiary);border-color:var(--border-color);color:var(--text-muted)">Discard</button>
+            <span id="mcpPreviewMsg" class="manual-msg"></span>
+          </div>
+        </div>
+      </div>
+      <details id="mcpReportHistory" style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
+        <summary>Imported analysis history <span id="mcpReportCount" class="ev-sub"></span></summary>
+        <div id="mcpReportList" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"></div>
+        <div id="mcpReportView" style="display:none">
+          <div id="mcpReportHead" style="font-size:12px;color:var(--text-muted);margin-bottom:6px"></div>
+          <pre id="mcpReportText" style="max-height:320px;overflow:auto;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+        </div>
+      </details>
     </section>
     <section id="sec-custody" style="grid-column: 1 / -1"><h2>Chain of Custody<span class="ev-sub">every stored artifact, its hash, and each event that touched it &mdash; the appendix that ships in the report</span></h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
@@ -12792,6 +12885,378 @@
     }
 
     // ── Background jobs (#225) ──────────────────────────────────────────────────
+    // MCP Analysis section (#296): the analyst states the forensic goal and the MCP-backed agent
+    // chooses tools and arguments. A manual single-tool call remains under Advanced for debugging
+    // and tightly constrained workflows.
+    let _mcpRunServers = [];
+    let _mcpWatchToken = 0;
+    let _mcpActiveJobId = "";
+    let _mcpRetry = null;
+    const MCP_BROWSER_FILE_MAX_MB = 180; // base64 overhead keeps this under the default 256 MB JSON limit
+    function mcpRunCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
+    function mcpRunBrowserFile() {
+      const el = document.getElementById("mcpRunFile");
+      return el && el.files && el.files[0] ? el.files[0] : null;
+    }
+    function mcpRunFileChanged() {
+      const file = mcpRunBrowserFile();
+      if (!file) return;
+      const target = document.getElementById("mcpRunTarget");
+      target.value = file.name;
+      target.dataset.browserFile = file.name;
+      document.getElementById("mcpRunMsg").textContent =
+        `${file.name} selected from this browser (${Math.max(1, Math.round(file.size / 1024))} KB)`;
+    }
+    function mcpRunTargetChanged() {
+      const target = document.getElementById("mcpRunTarget");
+      const file = mcpRunBrowserFile();
+      // Typing after a Browse selection switches back to the case-path mode. Otherwise the visible
+      // path and the bytes actually uploaded could silently name two different files.
+      if (file && target.value.trim() !== file.name) {
+        document.getElementById("mcpRunFile").value = "";
+        delete target.dataset.browserFile;
+      }
+    }
+    function loadMcpRun() {
+      const form = document.getElementById("mcpRunForm");
+      const none = document.getElementById("mcpRunUnavailable");
+      if (!form || !none) return;
+      resumeMcpJob();
+      fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
+        _mcpRunServers = ((j && j.servers) || []).filter(s => s.enabled);
+        if (!_mcpRunServers.length) { form.style.display = "none"; none.style.display = ""; return; }
+        none.style.display = "none"; form.style.display = "";
+        const sel = document.getElementById("mcpRunServer");
+        const keep = sel.value;
+        sel.innerHTML = _mcpRunServers.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("");
+        if (keep && _mcpRunServers.some(s => s.id === keep)) sel.value = keep;
+        mcpRunServerChanged();
+      }).catch(() => { form.style.display = "none"; none.style.display = ""; });
+      loadMcpRunTargets();
+      loadMcpReports();
+    }
+    // The evidence already under custody is the best available answer to "what can I point this at",
+    // and it needs no new endpoint. Free text still works for anything not yet recorded.
+    function loadMcpRunTargets() {
+      const dl = document.getElementById("mcpRunTargets");
+      const cid = mcpRunCaseId();
+      if (!dl || !cid) return;
+      fetch(`/cases/${encodeURIComponent(cid)}/custody`).then(r => r.ok ? r.json() : null).then(j => {
+        const paths = [...new Set(((j && j.records) || []).map(r => r.artifactPath).filter(Boolean))];
+        dl.innerHTML = paths.map(p => `<option value="${esc(p)}"></option>`).join("");
+      }).catch(() => {});
+    }
+    function mcpRunServerChanged() {
+      const server = _mcpRunServers.find(s => s.id === document.getElementById("mcpRunServer").value);
+      const msg = document.getElementById("mcpRunMsg");
+      if (!server) return;
+      fillMcpRunTools(server);
+      // A server with no allowlist may run everything it offers, so there is nothing to warn about.
+      // Only an allowlist the operator DID set can be narrower than what they want.
+      msg.textContent = "";
+      mcpRunToolChanged();
+    }
+    // Names come from whatever Claude Code last reported for this server, narrowed by the allowlist
+    // when one is set. The field stays free text either way — the list is a convenience, not a gate.
+    function fillMcpRunTools(server) {
+      const dl = document.getElementById("mcpRunTools");
+      if (!dl) return;
+      const offered = server.tools || [];
+      const allowed = server.allowedTools || [];
+      const names = allowed.length
+        ? (offered.length ? offered.filter(t => allowed.includes(t)) : allowed)
+        : offered;
+      dl.innerHTML = names.map(t => `<option value="${esc(t)}"></option>`).join("");
+    }
+    function mcpRunToolChanged() {
+      const box = document.getElementById("mcpRunArgs");
+      if (!box) return;
+      // Only prefill an untouched box — never clobber something the analyst is editing.
+      if (box.value.trim() && box.dataset.touched === "1") return;
+      box.value = "{}";
+    }
+    function listMcpRunTools() {
+      const server = document.getElementById("mcpRunServer").value;
+      const msg = document.getElementById("mcpRunMsg");
+      const btn = document.getElementById("mcpRunListToolsBtn");
+      if (!server) return;
+      btn.disabled = true; msg.textContent = "asking Claude Code…";
+      fetch(`/mcp/servers/${encodeURIComponent(server)}/tools`, { method: "POST" })
+        .then(r => r.json()).then(j => {
+          btn.disabled = false;
+          if (!j.ok) { msg.textContent = j.error || "could not list tools"; return; }
+          msg.textContent = `${(j.tools || []).length} tool(s) offered`;
+          // Refresh from /mcp/status so the cached list and the allowlist stay in one place.
+          loadMcpRun();
+        }).catch(e => { btn.disabled = false; msg.textContent = "could not list tools: " + e.message; });
+    }
+    async function runMcpTool() {
+      const cid = mcpRunCaseId();
+      const msg = document.getElementById("mcpRunMsg");
+      const jobEl = document.getElementById("mcpRunJob");
+      const btn = document.getElementById("mcpRunBtn");
+      if (!cid) { msg.textContent = "connect a case first"; return; }
+      const serverId = document.getElementById("mcpRunServer").value;
+      const tool = document.getElementById("mcpRunTool").value;
+      if (!tool) { msg.textContent = "name a tool to run — press List tools to see what this server offers"; return; }
+      let args;
+      try { args = JSON.parse(document.getElementById("mcpRunArgs").value || "{}"); }
+      catch (e) { msg.textContent = "arguments are not valid JSON: " + e.message; return; }
+      const targetPath = (document.getElementById("mcpRunTarget").value || "").trim();
+      const browserFile = mcpRunBrowserFile();
+      if (browserFile && browserFile.size > MCP_BROWSER_FILE_MAX_MB * 1024 * 1024) {
+        msg.textContent = `${browserFile.name} is too large for browser upload — enter its path inside the case instead`;
+        return;
+      }
+
+      const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
+      _mcpRetry = runMcpTool;
+      btn.disabled = true; msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting…"; jobEl.textContent = "";
+      hideMcpPreview();
+      let endpoint = `/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run`;
+      let body = { tool, args, preview, ...(targetPath ? { targetPath } : {}) };
+      if (browserFile) {
+        try {
+          const dataBase64 = await fileToBase64(browserFile);
+          endpoint = `/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run-upload`;
+          body = { tool, args, preview, filename: browserFile.name, dataBase64 };
+        } catch (e) {
+          btn.disabled = false;
+          msg.textContent = `could not read ${browserFile.name}: ${e.message}`;
+          return;
+        }
+      }
+      msg.textContent = "starting…";
+      fetch(endpoint, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        btn.disabled = false;
+        if (!ok) { msg.textContent = (j && j.error) || "run failed"; return; }
+        msg.textContent = `running ${serverId}/${tool}…`;
+        watchMcpJob(cid, j.jobId, preview);
+      }).catch(e => { btn.disabled = false; msg.textContent = "run failed: " + e.message; });
+    }
+    async function runMcpAgent() {
+      const cid = mcpRunCaseId();
+      const msg = document.getElementById("mcpRunMsg");
+      const jobEl = document.getElementById("mcpRunJob");
+      const btn = document.getElementById("mcpAgentBtn");
+      if (!cid) { msg.textContent = "connect a case first"; return; }
+      const serverId = document.getElementById("mcpRunServer").value;
+      const prompt = (document.getElementById("mcpAgentPrompt").value || "").trim();
+      if (!prompt) { msg.textContent = "describe what you want investigated"; return; }
+      const targetPath = (document.getElementById("mcpRunTarget").value || "").trim();
+      const browserFile = mcpRunBrowserFile();
+      if (browserFile && browserFile.size > MCP_BROWSER_FILE_MAX_MB * 1024 * 1024) {
+        msg.textContent = `${browserFile.name} is too large for browser upload — enter its path inside the case instead`;
+        return;
+      }
+      const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
+      _mcpRetry = runMcpAgent;
+      btn.disabled = true;
+      msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting investigation…";
+      jobEl.textContent = "";
+      hideMcpPreview();
+      let endpoint = `/cases/${encodeURIComponent(cid)}/mcp/agent`;
+      let body = { prompt, servers: [serverId], preview, ...(targetPath ? { targetPath } : {}) };
+      if (browserFile) {
+        try {
+          const dataBase64 = await fileToBase64(browserFile);
+          endpoint = `/cases/${encodeURIComponent(cid)}/mcp/agent-upload`;
+          body = { prompt, servers: [serverId], preview, filename: browserFile.name, dataBase64 };
+        } catch (e) {
+          btn.disabled = false;
+          msg.textContent = `could not read ${browserFile.name}: ${e.message}`;
+          return;
+        }
+      }
+      msg.textContent = "investigation started…";
+      fetch(endpoint, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+        btn.disabled = false;
+        if (!ok) { msg.textContent = (j && j.error) || "investigation failed"; return; }
+        msg.textContent = `investigating with ${serverId}…`;
+        watchMcpJob(cid, j.jobId, preview);
+      }).catch(e => { btn.disabled = false; msg.textContent = "investigation failed: " + e.message; });
+    }
+    let _mcpPreviewJob = null;
+    function hideMcpPreview() {
+      _mcpPreviewJob = null;
+      const p = document.getElementById("mcpPreviewPanel"); if (p) p.style.display = "none";
+      const m = document.getElementById("mcpPreviewMsg"); if (m) m.textContent = "";
+    }
+    // Show what the run fetched, before any of it reaches the case. A tool that returns a capability
+    // listing rather than evidence is indistinguishable to any detector — both are timestamp-free
+    // JSON — so the analyst who asked for it is the only reliable judge.
+    function showMcpPreview(caseIdStr, jobId) {
+      fetch(`/cases/${encodeURIComponent(caseIdStr)}/mcp/preview/${encodeURIComponent(jobId)}`)
+        .then(r => r.ok ? r.json() : null).then(p => {
+          if (!p) { document.getElementById("mcpRunMsg").textContent = "preview unavailable"; return; }
+          _mcpPreviewJob = jobId;
+          document.getElementById("mcpPreviewHead").textContent =
+            `${p.server}/${p.tool} — ${p.bytes} byte(s), would import as "${p.kind}"${p.truncated ? " (showing the first 8 KB)" : ""}`;
+          document.getElementById("mcpPreviewText").textContent = p.text;
+          document.getElementById("mcpPreviewPanel").style.display = "";
+          document.getElementById("mcpPreviewImportBtn").style.display = p.imported ? "none" : "";
+          document.getElementById("mcpPreviewDiscardBtn").style.display = p.imported ? "none" : "";
+          document.getElementById("mcpPreviewMsg").textContent = p.imported
+            ? "Imported and preserved in analysis history."
+            : "";
+          document.getElementById("mcpRunMsg").textContent = p.imported
+            ? "analysis imported"
+            : "review the output, then import or discard";
+        }).catch(() => {});
+    }
+    function importMcpPreview() {
+      const cid = mcpRunCaseId(); const jobId = _mcpPreviewJob;
+      const m = document.getElementById("mcpPreviewMsg");
+      if (!cid || !jobId) return;
+      m.textContent = "importing…";
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/preview/${encodeURIComponent(jobId)}/import`, { method: "POST" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          if (!ok) { m.textContent = (j && j.error) || "import failed"; return; }
+          document.getElementById("mcpPreviewImportBtn").style.display = "none";
+          document.getElementById("mcpPreviewDiscardBtn").style.display = "none";
+          m.textContent = "Imported and preserved in analysis history.";
+          const updated = j.updatedFindings ? `, ${j.updatedFindings} finding(s) updated` : "";
+          document.getElementById("mcpRunMsg").textContent = `imported — ${j.addedFindings || 0} finding(s) added${updated}, ${j.addedEvents} event(s), ${j.addedIocs} IOC(s)`;
+          loadMcpRunTargets();
+          loadMcpReports(j.reportId);
+        }).catch(e => { m.textContent = "import failed: " + e.message; });
+    }
+    function discardMcpPreview() {
+      const cid = mcpRunCaseId(); const jobId = _mcpPreviewJob;
+      if (!cid || !jobId) return;
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/preview/${encodeURIComponent(jobId)}`, { method: "DELETE" })
+        .then(() => { hideMcpPreview(); document.getElementById("mcpRunMsg").textContent = "discarded — nothing was imported"; })
+        .catch(() => {});
+    }
+    function showMcpReport(reportId) {
+      const cid = mcpRunCaseId();
+      if (!cid || !reportId) return;
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/reports/${encodeURIComponent(reportId)}`)
+        .then(r => r.ok ? r.json() : null).then(report => {
+          if (!report) return;
+          const counts = report.counts || {};
+          document.getElementById("mcpReportHead").textContent =
+            `${new Date(report.importedAt).toLocaleString()} — ${report.server}/${report.tool} — ` +
+            `${counts.addedFindings || 0} finding(s) added, ${counts.updatedFindings || 0} updated, ` +
+            `${counts.addedEvents || 0} event(s), ${counts.addedIocs || 0} IOC(s)`;
+          document.getElementById("mcpReportText").textContent = report.text || "";
+          document.getElementById("mcpReportView").style.display = "";
+          document.getElementById("mcpReportHistory").open = true;
+        }).catch(() => {});
+    }
+    function loadMcpReports(openReportId) {
+      const cid = mcpRunCaseId();
+      const list = document.getElementById("mcpReportList");
+      if (!list) return;
+      list.textContent = "";
+      if (!cid) { document.getElementById("mcpReportCount").textContent = ""; return; }
+      fetch(`/cases/${encodeURIComponent(cid)}/mcp/reports`).then(r => r.ok ? r.json() : { reports: [] }).then(j => {
+        const reports = Array.isArray(j.reports) ? j.reports : [];
+        document.getElementById("mcpReportCount").textContent = reports.length ? `(${reports.length})` : "(none yet)";
+        reports.forEach(report => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.style.cssText = "padding:3px 8px;font-size:11px";
+          button.textContent = `${new Date(report.importedAt).toLocaleString()} — ${report.server}/${report.tool}`;
+          button.onclick = () => showMcpReport(report.id);
+          list.appendChild(button);
+        });
+        if (openReportId) showMcpReport(openReportId);
+      }).catch(() => {});
+    }
+    function mcpJobDuration(ms) {
+      const seconds = Math.max(0, Math.floor(ms / 1000));
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    }
+    function setMcpJobButtons(job) {
+      const cancel = document.getElementById("mcpRunCancelBtn");
+      const retry = document.getElementById("mcpRunRetryBtn");
+      const running = job && (job.status === "running" || job.status === "queued");
+      cancel.style.display = running && job.cancellable ? "" : "none";
+      retry.style.display = job && (job.status === "error" || job.status === "cancelled") ? "" : "none";
+    }
+    function cancelMcpJob() {
+      if (!_mcpActiveJobId) return;
+      const btn = document.getElementById("mcpRunCancelBtn");
+      btn.disabled = true;
+      fetch(`/api/jobs/${encodeURIComponent(_mcpActiveJobId)}/cancel`, { method: "POST" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          btn.disabled = false;
+          if (!ok) document.getElementById("mcpRunMsg").textContent = (j && j.error) || "cancel failed";
+        }).catch(e => { btn.disabled = false; document.getElementById("mcpRunMsg").textContent = "cancel failed: " + e.message; });
+    }
+    function retryMcpJob() {
+      document.getElementById("mcpRunRetryBtn").style.display = "none";
+      (_mcpRetry || runMcpAgent)();
+    }
+    function resumeMcpJob() {
+      const cid = mcpRunCaseId();
+      if (!cid) return;
+      const token = ++_mcpWatchToken;
+      fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`).then(r => r.ok ? r.json() : null).then(d => {
+        if (token !== _mcpWatchToken) return;
+        const job = ((d && d.jobs) || []).find(j => j.kind === "mcp" && (j.status === "running" || j.status === "queued"));
+        if (!job) return;
+        _mcpRetry = (job.label || "").startsWith("agent (") ? runMcpAgent : runMcpTool;
+        watchMcpJob(cid, job.id, /\(preview\)/.test(job.label || ""));
+      }).catch(() => {});
+    }
+    // The run is a background job (a real Volatility run outlives any request), so follow it here.
+    // Monitoring has no arbitrary retry cap: a multi-hour memory run remains visible until the
+    // backend records a terminal state, and loadMcpRun reattaches after a page refresh.
+    function watchMcpJob(caseIdStr, jobId, preview) {
+      const jobEl = document.getElementById("mcpRunJob");
+      const msg = document.getElementById("mcpRunMsg");
+      if (!jobId) return;
+      const token = ++_mcpWatchToken;
+      _mcpActiveJobId = jobId;
+      const tick = () => {
+        if (token !== _mcpWatchToken) return;
+        fetch(`/api/jobs?caseId=${encodeURIComponent(caseIdStr)}`).then(r => r.ok ? r.json() : null).then(d => {
+          if (token !== _mcpWatchToken) return;
+          const job = ((d && d.jobs) || []).find(x => x.id === jobId);
+          if (!job) { setTimeout(tick, 1500); return; }
+          const elapsed = job.startedAt ? mcpJobDuration(Date.now() - Date.parse(job.startedAt)) : "";
+          const activityAge = job.updatedAt ? Date.now() - Date.parse(job.updatedAt) : 0;
+          const stale = (job.status === "running" || job.status === "queued") && activityAge > 20000
+            ? ` — no update for ${mcpJobDuration(activityAge)}; it may be stalled`
+            : "";
+          const progress = job.progress && job.progress.total ? ` [${job.progress.done}/${job.progress.total}]` : "";
+          jobEl.textContent = `${job.status}${progress}${job.detail ? " — " + job.detail : ""}${elapsed ? " — total " + elapsed : ""}${stale}`;
+          setMcpJobButtons(job);
+          if (job.status === "running" || job.status === "queued") { setTimeout(tick, 1000); return; }
+          _mcpActiveJobId = "";
+          if (job.status === "done" && preview) { showMcpPreview(caseIdStr, jobId); }
+          else if (job.status === "done") { msg.textContent = "done — result imported"; loadMcpRunTargets(); }
+          else { msg.textContent = job.status === "cancelled" ? "cancelled" : (job.error || "failed"); }
+        }).catch(() => { if (token === _mcpWatchToken) setTimeout(tick, 3000); });
+      };
+      tick();
+    }
+    {
+      const s = document.getElementById("mcpRunServer"); if (s) s.onchange = mcpRunServerChanged;
+      const t = document.getElementById("mcpRunTool"); if (t) t.onchange = mcpRunToolChanged;
+      const lt = document.getElementById("mcpRunListToolsBtn"); if (lt) lt.onclick = listMcpRunTools;
+      const a = document.getElementById("mcpRunArgs"); if (a) a.oninput = () => { a.dataset.touched = "1"; };
+      const browse = document.getElementById("mcpRunBrowseBtn"); if (browse) browse.onclick = () => document.getElementById("mcpRunFile").click();
+      const file = document.getElementById("mcpRunFile"); if (file) file.onchange = mcpRunFileChanged;
+      const target = document.getElementById("mcpRunTarget"); if (target) target.oninput = mcpRunTargetChanged;
+      const agent = document.getElementById("mcpAgentBtn"); if (agent) agent.onclick = runMcpAgent;
+      const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
+      const i = document.getElementById("mcpPreviewImportBtn"); if (i) i.onclick = importMcpPreview;
+      const d = document.getElementById("mcpPreviewDiscardBtn"); if (d) d.onclick = discardMcpPreview;
+      const c = document.getElementById("mcpRunCancelBtn"); if (c) c.onclick = cancelMcpJob;
+      const r = document.getElementById("mcpRunRetryBtn"); if (r) r.onclick = retryMcpJob;
+    }
+
     // A toolbar badge shows the count of RUNNING heavy operations (import / synthesis / enrichment);
     // clicking it opens a popover to view recent jobs and cancel a long/stuck one. Fed by GET
     // /api/jobs and refreshed on the job_changed WS event.
@@ -18107,6 +18572,7 @@
       loadImportMeta(caseId);
       loadDropStatus(caseId);
       loadJobs(caseId);   // #225 background-jobs badge/popover
+      loadMcpRun();       // #296 MCP Analysis section — servers + this case's evidence paths
       loadUndoStack(caseId);
       loadCustomerExposure(caseId);
       const lifecycleLoadPromise = loadCaseLifecycle(caseId, loadSignal);
@@ -20702,6 +21168,7 @@
       { id: "sec-notebook",     label: "Analyst Notebook" },
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
+      { id: "sec-mcp",          label: "MCP Analysis" },
       { id: "sec-custody",      label: "Chain of Custody" },
       { id: "sec-case-details", label: "Case Details" },
     ];
@@ -22656,6 +23123,7 @@
         wire();
       }).catch(() => wire());
       loadCustomTools();
+      loadMcpServers();
     }
     // Custom tools (#211): list existing + wire delete; the add form posts /tools/custom.
     function loadCustomTools() {
@@ -22700,6 +23168,106 @@
         .then(() => loadCustomTools()).catch(() => {});
     }
     { const b = document.getElementById("ctAddBtn"); if (b) b.onclick = addCustomTool; }
+
+    // MCP servers (#296). The Companion holds no URL and no token — Claude Code is configured with
+    // the servers and does the talking. /mcp/status is cache-only, so opening this tab never spawns
+    // the CLI; "Refresh from Claude Code" is what asks.
+    let _mcpDiscovered = [];
+    function loadMcpServers() {
+      const el = document.getElementById("mcpServerList");
+      if (!el) return;
+      fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
+        if (!j || !j.enabled) { el.innerHTML = `<div style="color:var(--text-dim);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; return; }
+        _mcpDiscovered = (j.claudeCode && j.claudeCode.servers) || [];
+        fillMcpServerPicker(j.servers || []);
+        const banner = j.claudeCode && j.claudeCode.error
+          ? `<div style="font-size:12px;color:#f0776c;margin-bottom:6px">Claude Code: ${esc(j.claudeCode.error)}</div>`
+          : (!j.claudeCode ? `<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">Claude Code not asked yet — press Refresh to load its server list.</div>` : "");
+        const servers = j.servers || [];
+        if (!servers.length) { el.innerHTML = banner + `<div style="color:var(--text-dim);font-size:12px">No servers allowed yet.</div>`; return; }
+        el.innerHTML = banner + servers.map(s => {
+          // Three states, deliberately distinct: not asked, asked and absent, asked and present.
+          const known = s.knownToClaudeCode === null
+            ? `<span style="color:var(--text-dim)">not checked</span>`
+            : !s.knownToClaudeCode
+              ? `<span style="color:#f0776c" title="Claude Code has no server by this name">not in Claude Code</span>`
+              : (s.connected ? `<span style="color:#7fd08a">connected</span>` : `<span style="color:#d29922">${esc(s.status || "not connected")}</span>`);
+          const tools = (s.allowedTools || []).length ? esc(s.allowedTools.join(", ")) : "all";
+          const cmds = (s.allowedCommands || []).length ? esc(s.allowedCommands.join(", ")) : "all";
+          const delivery = s.delivery && s.delivery.mode === "scp"
+            ? `scp → ${esc((s.delivery.user ? s.delivery.user + "@" : "") + s.delivery.host + ":" + s.delivery.remoteDir)}`
+            : (s.delivery && s.delivery.localPrefix ? `shared path ${esc(s.delivery.localPrefix)} → ${esc(s.delivery.remotePrefix)}` : `shared path (same both sides)`);
+          return `<div style="padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px">
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+              <strong>${esc(s.label || s.id)}</strong>
+              <code style="font-size:11px;color:var(--text-dim)">${esc(s.id)}</code>
+              <span style="font-size:12px;color:var(--text-muted)">${known}${s.enabled ? ` · plain-English analysis allowed` : ` · <span style="color:#d29922">disabled</span>`}</span>
+              <button class="mcp-del" data-id="${esc(s.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Remove</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:3px">
+              ${esc(delivery)} · tools: ${tools} · commands: ${cmds}
+            </div>
+          </div>`;
+        }).join("");
+        el.querySelectorAll(".mcp-del").forEach(b => b.onclick = () => deleteMcpServer(b.getAttribute("data-id")));
+      }).catch(() => { el.innerHTML = `<div style="color:var(--text-dim);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; });
+    }
+    // Offer Claude Code's real server names rather than asking for free text — a typo here is a
+    // policy entry that silently never matches anything.
+    function fillMcpServerPicker(already) {
+      const sel = document.getElementById("mcpServerName");
+      if (!sel) return;
+      const taken = new Set((already || []).map(s => s.id));
+      const free = _mcpDiscovered.filter(d => !taken.has(d.name));
+      sel.innerHTML = free.length
+        ? free.map(d => `<option value="${esc(d.name)}">${esc(d.name)}${d.connected ? "" : " (not connected)"}</option>`).join("")
+        : `<option value="">${_mcpDiscovered.length ? "(all of Claude Code's servers are already listed)" : "(press Refresh to load Claude Code's servers)"}</option>`;
+    }
+    function addMcpServer() {
+      const msg = document.getElementById("mcpMsg");
+      const val = (id) => (document.getElementById(id) || {}).value ? document.getElementById(id).value.trim() : "";
+      const mode = val("mcpDeliveryMode") || "remote-path";
+      const port = parseInt(val("mcpPort"), 10);
+      const body = {
+        id: val("mcpServerName"), label: val("mcpLabel"),
+        allowedTools: val("mcpAllowedTools"), allowedCommands: val("mcpAllowedCommands"),
+        delivery: {
+          mode,
+          ...(mode === "scp"
+            ? { host: val("mcpHost"), user: val("mcpUser"), remoteDir: val("mcpRemoteDir"), identityFile: val("mcpIdentityFile"), ...(port > 0 ? { port } : {}) }
+            : { localPrefix: val("mcpLocalPrefix"), remotePrefix: val("mcpRemotePrefix") }),
+        },
+      };
+      if (!body.id) { if (msg) msg.textContent = "pick one of Claude Code's servers — press Refresh if the list is empty"; return; }
+      if (msg) msg.textContent = "saving…";
+      fetch("/mcp/servers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          if (!ok) { if (msg) msg.textContent = (j && j.error ? j.error : "save failed") + " — restart the companion server if this 404s"; return; }
+          if (msg) msg.textContent = `allowed "${j.server.label}"`;
+          ["mcpLabel","mcpAllowedTools","mcpAllowedCommands","mcpLocalPrefix","mcpRemotePrefix","mcpHost","mcpUser","mcpPort","mcpIdentityFile","mcpRemoteDir"]
+            .forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; });
+          loadMcpServers();
+        }).catch(e => { if (msg) msg.textContent = "save failed: " + e.message; });
+    }
+    function deleteMcpServer(id) {
+      if (!id) return;
+      fetch(`/mcp/servers/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => loadMcpServers()).catch(() => {});
+    }
+    { const b = document.getElementById("mcpAddBtn"); if (b) b.onclick = addMcpServer; }
+    {
+      const b = document.getElementById("mcpDiscoverBtn");
+      if (b) b.onclick = () => {
+        const msg = document.getElementById("mcpDiscoverMsg");
+        if (msg) msg.textContent = "asking Claude Code…";
+        b.disabled = true;
+        fetch("/mcp/discover", { method: "POST" }).then(r => r.json()).then(j => {
+          b.disabled = false;
+          // Claude Code being unavailable is an answer, not a failure — render it.
+          if (msg) msg.textContent = j.ok ? `${(j.servers || []).length} server(s) configured in Claude Code` : j.error;
+          loadMcpServers();
+        }).catch(e => { b.disabled = false; if (msg) msg.textContent = "refresh failed: " + e.message; });
+      };
+    }
     function updateToolRules(toolId, btn) {
       const caseId = (document.getElementById("caseId").value || "").trim();
       const msg = document.getElementById("toolsMsg");
@@ -22721,8 +23289,15 @@
         return;
       }
       if (msg) msg.textContent = "applying…";
-      fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })
+      Promise.all([
+        fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.json()),
+        fetch("/mcp/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.json()),
+      ]).then(([tools, mcp]) => {
+        if (msg) msg.textContent = tools.ok && mcp.ok
+          ? `applied — ${(tools.configured || []).length} local tool(s), MCP settings refreshed`
+          : (tools.error || mcp.error || "reconnect failed");
+        loadTools(); loadMcpServers();
+      })
         .catch(e => { if (msg) msg.textContent = "reconnect failed: " + e.message + " — restart the companion server if this 404s"; });
     };
 

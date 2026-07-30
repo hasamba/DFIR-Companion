@@ -16,6 +16,9 @@ export interface ClaudeRunOptions {
   stdin: string;      // written to the child's stdin, which is then closed
   timeoutMs: number;
   signal?: AbortSignal; // external cancellation (#225)
+  /** Optional live stream taps. Callers must not persist raw chunks without sanitizing them. */
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }
 
 export type ClaudeRunner = (opts: ClaudeRunOptions) => Promise<ClaudeRunResult>;
@@ -43,8 +46,16 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     const done = (r: ClaudeRunResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
 
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
-    child.stdout.on("data", (d) => { stdout += d.toString(); });
-    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.stdout.on("data", (d) => {
+      const chunk = d.toString();
+      stdout += chunk;
+      opts.onStdout?.(chunk);
+    });
+    child.stderr.on("data", (d) => {
+      const chunk = d.toString();
+      stderr += chunk;
+      opts.onStderr?.(chunk);
+    });
     child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
 
     child.stdin.on("error", () => { /* ignore EPIPE if the child exits before we finish writing */ });

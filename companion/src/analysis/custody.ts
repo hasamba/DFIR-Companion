@@ -233,6 +233,53 @@ export class CustodyStore {
     return this.appendChained(caseId, inputs);
   }
 
+  /**
+   * Record that named artifacts left this machine for somewhere else — the event for shipping
+   * evidence to an analysis host: a remote sandbox, a colleague's workstation, an MCP-fronted
+   * SIFT/REMnux box (#296). The companion otherwise keeps evidence on the box it was imported on,
+   * so a transfer is the moment that stops being true and the chain has to say so.
+   *
+   * Deliberately narrower than recordExport, which derives its own artifact list because an export
+   * packages up everything under custody. A transfer moves the specific things the caller named;
+   * sweeping the whole case would claim artifacts that never went anywhere.
+   *
+   * Each artifact is re-hashed for the same reason the export re-hashes: the record must state the
+   * bytes that actually travelled, which is what the receiving end can be checked against.
+   *
+   * Unlike recordExport, an unreadable artifact is an ERROR rather than a skip — and nothing is
+   * appended, not even for the artifacts that hashed fine before it. A file missing during an export
+   * simply did not leave in the package; a file missing here means the caller asked to send
+   * something that cannot be attested to, and half a transfer recorded as a whole one is a worse
+   * chain than no entry at all. Call this AFTER the transfer succeeds, so a failed send never logs
+   * one that happened.
+   */
+  async recordTransfer(
+    caseId: string,
+    opts: { artifactPaths: string[]; transferredBy: string; destination: string; trigger?: string },
+  ): Promise<CustodyRecord[]> {
+    const transferredAt = new Date().toISOString();
+    const inputs: CustodyRecordInput[] = [];
+
+    for (const artifactPath of new Set(opts.artifactPaths)) {
+      let sha256: string;
+      try {
+        sha256 = await hashFile(artifactPath);
+      } catch (err) {
+        throw new Error(`cannot record transfer of "${artifactPath}": ${(err as Error).message}`);
+      }
+      inputs.push({
+        artifactPath, sha256, caseId, event: "transferred",
+        collectedBy: opts.transferredBy, collectedAt: transferredAt,
+        // `source` is the chain's free-text "where" field. For a collection that is where the
+        // evidence came FROM; for a transfer it is where it went — same column, read either way
+        // depending on the event beside it, which is how the report appendix renders it.
+        source: opts.destination,
+        trigger: opts.trigger ?? "transfer",
+      });
+    }
+    return this.appendChained(caseId, inputs);
+  }
+
   async load(caseId: string): Promise<CustodyRecord[]> {
     let text: string;
     try {
