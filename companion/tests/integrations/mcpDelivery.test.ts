@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   deliver, rewriteToRemote, safeRemoteName, shellQuote,
   type TransferRunner, type TransferResult,
@@ -164,6 +167,35 @@ describe("deliver — scp mode", () => {
     const controller = new AbortController();
     await deliver(server(SCP), "/cases/c1/mem.raw", { runner, signal: controller.signal });
     expect(calls[0].signal).toBe(controller.signal);
+  });
+
+  it("reports byte progress by polling the staged file size over SSH", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-mcp-progress-"));
+    const localPath = join(dir, "mem.raw");
+    await writeFile(localPath, Buffer.alloc(1024));
+    const progress: Array<[number, number]> = [];
+    const pollingRunner: TransferRunner = async (binary, args, opts) => {
+      calls.push({ binary, args, timeoutMs: opts.timeoutMs, signal: opts.signal });
+      if (binary === "scp") {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "512\n", stderr: "", code: 0 };
+    };
+    try {
+      await deliver(server(SCP), localPath, {
+        runner: pollingRunner,
+        progressIntervalMs: 5,
+        onProgress: (done, total) => { progress.push([done, total]); },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    expect(calls.some((c) => c.binary === "ssh" && c.args.includes("stat"))).toBe(true);
+    expect(progress[0]).toEqual([0, 1024]);
+    expect(progress).toContainEqual([512, 1024]);
+    expect(progress.at(-1)).toEqual([1024, 1024]);
   });
 
   it("fails with what scp said when the copy fails", async () => {

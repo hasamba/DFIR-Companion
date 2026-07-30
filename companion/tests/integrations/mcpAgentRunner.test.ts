@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  runMcpAgent, allowedToolPatterns, parseDelta, DEFAULT_MAX_TURNS,
+  runMcpAgent, allowedToolPatterns, parseDelta, DEFAULT_MAX_TURNS, DEFAULT_AGENT_TIMEOUT_MS,
 } from "../../src/integrations/mcp/mcpAgentRunner.js";
 import { finalText } from "../../src/integrations/mcp/mcpBridge.js";
 import { DEFAULT_DELIVERY, type McpServer } from "../../src/integrations/mcp/mcpServerStore.js";
@@ -160,6 +160,32 @@ describe("runMcpAgent", () => {
       servers: [server()], prompt: "go", timeoutMs: 5000,
       runner: async () => ({ code: null, stdout: "", stderr: "", timedOut: true }),
     })).rejects.toThrow(/exceeded 5000ms/);
+  });
+
+  it("uses a one-hour default timeout for long memory and disk investigations", async () => {
+    await runMcpAgent({ servers: [server()], prompt: "go", runner: runnerReturning(stdoutWith(DELTA)) });
+    expect(seen[0].timeoutMs).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it("streams sanitized tool activity without exposing arguments or tool output", async () => {
+    const progress: string[] = [];
+    const runner: ClaudeRunner = async (opts) => {
+      opts.onStdout?.(JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "tool-1", name: "mcp__sift-mcp__run_command", input: { command: "secret" } }] },
+      }) + "\n");
+      opts.onStdout?.(JSON.stringify({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "sensitive evidence" }] },
+      }) + "\n");
+      opts.onStdout?.(JSON.stringify({ type: "result", subtype: "success", result: DELTA }) + "\n");
+      return { code: 0, stderr: "", stdout: stdoutWith(DELTA) };
+    };
+
+    await runMcpAgent({ servers: [server()], prompt: "go", runner, onProgress: (s) => progress.push(s) });
+
+    expect(progress).toEqual(["running run_command", "run_command completed; reviewing result", "finalizing report"]);
+    expect(progress.join(" ")).not.toMatch(/secret|sensitive evidence/);
   });
 
   it("exposes several servers at once", async () => {

@@ -27,6 +27,8 @@ import type { McpServer } from "./mcpServerStore.js";
 
 /** Bounds the loop. A runaway agent is a cost and a blast-radius problem, not just a slow one. */
 export const DEFAULT_MAX_TURNS = 40;
+/** Memory and disk analysis regularly exceeds the old 15-minute process timeout. */
+export const DEFAULT_AGENT_TIMEOUT_MS = 3_600_000;
 /** A short, tool-free continuation reserved for turning collected evidence into the required JSON. */
 const FINAL_REPORT_TURNS = 3;
 
@@ -40,6 +42,8 @@ export interface McpAgentOptions {
   maxTurns?: number;
   runner?: ClaudeRunner;
   signal?: AbortSignal;
+  /** Sanitized phase/tool activity suitable for a job status line. */
+  onProgress?: (detail: string) => void;
 }
 
 export interface McpAgentResult {
@@ -83,6 +87,57 @@ interface TerminalResult {
   is_error?: boolean;
   result?: string;
   session_id?: string;
+}
+
+interface StreamEvent {
+  type?: string;
+  message?: {
+    content?: Array<{
+      type?: string;
+      name?: string;
+      id?: string;
+      tool_use_id?: string;
+    }>;
+  };
+}
+
+function displayToolName(name: string): string {
+  const withoutPrefix = name.replace(/^mcp__.*__/, "");
+  return withoutPrefix.replace(/[^\w.-]/g, "").slice(0, 80) || "MCP tool";
+}
+
+/**
+ * Consume Claude Code's NDJSON incrementally and emit only safe activity labels. Arguments and tool
+ * output are deliberately ignored: both may contain evidence, credentials, or attacker text.
+ */
+function streamProgress(onProgress?: (detail: string) => void): (chunk: string) => void {
+  let pending = "";
+  const tools = new Map<string, string>();
+  return (chunk) => {
+    pending += chunk;
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event: StreamEvent;
+      try { event = JSON.parse(line) as StreamEvent; } catch { continue; }
+      if (event.type === "system") {
+        onProgress?.("connected to Claude Code");
+        continue;
+      }
+      for (const block of event.message?.content ?? []) {
+        if (block.type === "tool_use" && block.name) {
+          const name = displayToolName(block.name);
+          if (block.id) tools.set(block.id, name);
+          onProgress?.(`running ${name}`);
+        } else if (block.type === "tool_result") {
+          const name = block.tool_use_id ? tools.get(block.tool_use_id) : undefined;
+          onProgress?.(`${name ?? "MCP tool"} completed; reviewing result`);
+        }
+      }
+      if (event.type === "result") onProgress?.("finalizing report");
+    }
+  };
 }
 
 /** The last result event, including the session id Claude Code provides for a continuation. */
@@ -138,8 +193,9 @@ async function finalizeMaxTurnRun(
         }],
       },
     }) + "\n",
-    timeoutMs: opts.timeoutMs ?? 900_000,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
@@ -231,12 +287,13 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
   const run = await runner({
     bin: opts.bin?.trim() || "claude",
     args, stdin,
-    timeoutMs: opts.timeoutMs ?? 900_000,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
-  if (run.timedOut) throw new Error(`the agent run exceeded ${opts.timeoutMs ?? 900_000}ms and was stopped`);
+  if (run.timedOut) throw new Error(`the agent run exceeded ${opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS}ms and was stopped`);
 
   const terminal = terminalResult(run.stdout);
   let rawText: string;

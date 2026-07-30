@@ -23,6 +23,7 @@ export interface Job {
   progress?: { done: number; total: number };
   detail?: string; // human-readable current step
   startedAt: string; // ISO
+  updatedAt: string; // ISO, refreshed by progress/heartbeat transitions
   endedAt?: string; // ISO, set on any terminal transition
   error?: string;
   // Only AI/network jobs can be aborted mid-flight (synthesis, enrichment, CSV/log import). A
@@ -65,6 +66,7 @@ export function createJob(table: JobTable, input: CreateJobInput): JobTable {
     detail: input.detail,
     status: "running",
     startedAt: input.now,
+    updatedAt: input.now,
     cancellable: input.cancellable ?? false,
   };
   return { jobs: [...table.jobs, job] };
@@ -86,16 +88,22 @@ export function progressJob(
   id: string,
   progress: { done: number; total: number },
   detail?: string,
+  now?: string,
 ): JobTable {
   return patchJob(table, id, (j) =>
-    isTerminal(j.status) ? j : { ...j, progress, ...(detail !== undefined ? { detail } : {}) },
+    isTerminal(j.status) ? j : {
+      ...j, progress,
+      ...(detail !== undefined ? { detail } : {}),
+      ...(now !== undefined ? { updatedAt: now } : {}),
+    },
   );
 }
 
 // Mark a job terminal. A no-op if the job is already terminal (so a late finish can't clobber a
 // prior cancel, and a double-cancel is harmless).
 function terminate(table: JobTable, id: string, status: JobStatus, now: string, extra: Partial<Job> = {}): JobTable {
-  return patchJob(table, id, (j) => (isTerminal(j.status) ? j : { ...j, ...extra, status, endedAt: now }));
+  return patchJob(table, id, (j) =>
+    (isTerminal(j.status) ? j : { ...j, ...extra, status, updatedAt: now, endedAt: now }));
 }
 
 export function finishJob(table: JobTable, id: string, now: string): JobTable {

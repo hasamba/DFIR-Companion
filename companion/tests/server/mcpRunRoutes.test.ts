@@ -335,6 +335,32 @@ describe("POST /cases/:id/mcp/agent", () => {
     expect(state.body.iocs.some((i: { value: string }) => i.value === "10.2.3.4")).toBe(true);
   });
 
+  it("publishes live sanitized tool activity on the background job", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const runner: ClaudeRunner = async (run) => {
+      run.onStdout?.(JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "t1", name: "mcp__sift-mcp__windows.pslist", input: { path: "secret" } }] },
+      }) + "\n");
+      await gate;
+      return { code: 0, stderr: "", stdout: JSON.stringify({ type: "result", subtype: "success", result: AGENT_JSON }) + "\n" };
+    };
+    const { app, jobManager } = await agentHarness({ runner });
+    const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
+
+    for (let i = 0; i < 50 && !jobManager.get(res.body.jobId)?.detail?.includes("windows.pslist"); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const running = jobManager.get(res.body.jobId)!;
+    expect(running.detail).toContain("running windows.pslist");
+    expect(running.detail).not.toContain("secret");
+    expect(running.progress).toEqual({ done: 2, total: 4 });
+
+    release();
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+  });
+
   it("makes an agent run undoable", async () => {
     const { app, jobManager } = await agentHarness();
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });

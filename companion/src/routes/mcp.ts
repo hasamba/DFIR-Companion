@@ -1,12 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { listServers, listTools, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
 import { deliver, spawnTransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import { runMcpTool } from "../integrations/mcp/mcpRun.js";
-import { runMcpAgent } from "../integrations/mcp/mcpAgentRunner.js";
+import { runMcpAgent, DEFAULT_AGENT_TIMEOUT_MS } from "../integrations/mcp/mcpAgentRunner.js";
 import { mergeDelta } from "../analysis/stateMerge.js";
 import { deltaSchema, type AnalysisDelta } from "../analysis/responseSchema.js";
 import type { McpServer } from "../integrations/mcp/mcpServerStore.js";
@@ -43,6 +43,28 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   const transferRunner = options.mcpTransferRunner ?? spawnTransferRunner();
   const claudeBin = process.env.DFIR_AI_CLAUDE_CODE_BIN;
   const claudeModel = process.env.DFIR_MCP_MODEL;
+
+  function mcpAgentTimeoutMs(): number {
+    const configured = Number(process.env.DFIR_MCP_AGENT_TIMEOUT_MS);
+    return Number.isFinite(configured) && configured >= 60_000 && configured <= 86_400_000
+      ? Math.floor(configured)
+      : DEFAULT_AGENT_TIMEOUT_MS;
+  }
+
+  function compactDuration(ms: number): string {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+
+  function compactBytes(bytes: number): string {
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let value = Math.max(0, bytes);
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+  }
 
   // Policy plus whatever Claude Code last reported. Never spawns anything: discovery is a cached
   // `claude mcp list`, so opening the Settings tab cannot hang behind a slow MCP server starting up.
@@ -545,6 +567,22 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       caseId, kind: "mcp", label: `agent (${servers.map((s) => s.id).join(", ")})${preview ? " (preview)" : ""}`,
       detail: "starting", cancellable: true,
     });
+    const startedAt = Date.now();
+    const timeoutMs = mcpAgentTimeoutMs();
+    let activity = "starting";
+    let phase = 0;
+    const reportProgress = (next: string, nextPhase = phase) => {
+      activity = next;
+      phase = nextPhase;
+      if (job) {
+        options.jobManager?.progress(
+          job.jobId, phase, 4,
+          `${activity} — ${compactDuration(Date.now() - startedAt)} elapsed (limit ${compactDuration(timeoutMs)})`,
+        );
+      }
+    };
+    const heartbeat = setInterval(() => reportProgress(activity), 5_000);
+    heartbeat.unref();
 
     void (async () => {
       let cleanupRemote: (() => Promise<void>) | undefined;
@@ -552,10 +590,18 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         let prompt = request.prompt;
         if (targetPath) {
           if (servers.length !== 1) throw new Error("choose one MCP server when investigating an evidence file");
-          if (job) options.jobManager?.progress(job.jobId, 0, 1, "delivering evidence");
+          const bytes = await stat(targetPath).then((s) => s.size).catch(() => 0);
+          reportProgress(`transferring evidence${bytes ? ` (${compactBytes(bytes)})` : ""} to ${servers[0].label}`, 1);
           const delivered = await deliver(servers[0], targetPath, {
             runner: transferRunner,
             signal: job?.signal,
+            onProgress: (done, total) => {
+              const percent = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0;
+              reportProgress(
+                `transferring evidence to ${servers[0].label}: ${compactBytes(done)} / ${compactBytes(total)} (${percent}%)`,
+                1,
+              );
+            },
             recordTransfer: options.custodyStore
               ? async (destination) => {
                 await options.custodyStore!.recordTransfer(caseId, {
@@ -575,14 +621,17 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             delivered.remotePath,
             "Use that path when choosing and calling the appropriate MCP tools. Do not ask the analyst for a tool name or arguments.",
           ].join("\n");
-          if (job) options.jobManager?.progress(job.jobId, 0, 1, "investigating");
+          reportProgress("evidence delivered; starting investigation", 2);
         }
+        if (!targetPath) reportProgress("starting investigation", 2);
         const result = await runMcpAgent({
           servers, prompt,
           ...(claudeBin ? { bin: claudeBin } : {}),
           ...(process.env.DFIR_MCP_AGENT_MODEL ? { model: process.env.DFIR_MCP_AGENT_MODEL } : {}),
+          timeoutMs,
           ...(options.mcpAgentRunner ? { runner: options.mcpAgentRunner } : {}),
           ...(job?.signal ? { signal: job.signal } : {}),
+          onProgress: (detail) => reportProgress(detail, detail === "finalizing report" ? 3 : 2),
         });
 
         if (preview) {
@@ -611,6 +660,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,
         });
       } finally {
+        clearInterval(heartbeat);
         await cleanupRemote?.().catch(() => { /* best-effort */ });
         await onDone?.().catch(() => { /* best-effort */ });
       }

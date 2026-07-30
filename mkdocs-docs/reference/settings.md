@@ -167,7 +167,9 @@ contained to the case directory. Master kill-switch: `DFIR_TOOL_AUTO_RUN=off`.
 MCP servers are configured in Claude Code, then allowed under
 **Settings → All → Tools → MCP servers**. Companion stores policy and evidence-delivery settings,
 not the MCP endpoint or token. Leaving **Restrict to tools** blank allows all tools offered by an
-enabled server; use the field only when you want a narrower allowlist.
+enabled server; use the field only when you want a narrower allowlist. **Investigation timeout**
+sets `DFIR_MCP_AGENT_TIMEOUT_MS`; it defaults to 3,600,000 ms (one hour) because memory and disk
+analysis routinely outlast ordinary AI requests.
 
 See [MCP Analysis](mcp-analysis.md) for recommended REMnux and SIFT servers, Claude Code
 registration, shared-path and SCP configuration, validation, security notes, and plain-English

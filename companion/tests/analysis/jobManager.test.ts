@@ -30,6 +30,7 @@ describe("JobManager", () => {
     const { jobId } = m.register({ caseId: "c1", kind: "import" });
     m.progress(jobId, 2, 5, "extracting");
     expect(m.get(jobId)!.progress).toEqual({ done: 2, total: 5 });
+    expect(m.get(jobId)!.updatedAt).toBe("2026-07-05T00:00:01.000Z");
     m.finish(jobId);
     expect(m.get(jobId)!.status).toBe("done");
     expect(onJob).toHaveBeenCalledTimes(3); // register + progress + finish

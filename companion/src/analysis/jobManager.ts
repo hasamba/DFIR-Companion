@@ -100,7 +100,7 @@ export class JobManager {
 
   progress(jobId: string, done: number, total: number, detail?: string): void {
     const before = getJob(this.table, jobId);
-    this.table = progressJob(this.table, jobId, { done, total }, detail);
+    this.table = progressJob(this.table, jobId, { done, total }, detail, this.now());
     if (before) this.emit(before.caseId);
   }
 

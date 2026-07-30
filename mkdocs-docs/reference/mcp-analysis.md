@@ -238,6 +238,33 @@ manually** only when you deliberately need to test a specific tool or reproduce 
 
 ---
 
+## Monitor a long investigation
+
+Memory and disk investigations can run for tens of minutes. The MCP Analysis panel remains attached
+to the background job until it finishes, including after a dashboard refresh. It shows:
+
+- the current phase and four-step progress;
+- bytes transferred, total size, and percentage while SCP delivery is in progress (measured from
+  the staged file with GNU `stat`; hosts without it still show total size and elapsed time);
+- elapsed time and the configured time limit;
+- sanitized MCP activity such as the tool name being run, without displaying its arguments or raw
+  forensic output;
+- a warning when the backend has stopped sending heartbeats;
+- **Cancel** while the process is active and **Retry** after a failure or cancellation.
+
+The default agent timeout is one hour. Change **Settings → All → Tools → MCP servers →
+Investigation timeout**, or set `DFIR_MCP_AGENT_TIMEOUT_MS` to a value from `60000` (one minute) to
+`86400000` (24 hours), then click **Reconnect / apply**. The limit stops the Claude Code process; it
+does not guarantee that a remote MCP command will stop if that server detached the command into its
+own background process.
+
+If a job says it may be stalled, first check whether its last tool is legitimately slow. If the
+activity age keeps increasing, cancel the job and check the Companion log, Claude Code
+authentication, MCP server health, and analysis-host process list before retrying. A provider error
+such as HTTP 529 is upstream failure, not evidence that the remote forensic command completed.
+
+---
+
 ## Prompt examples
 
 Good prompts state the evidence type, scope, safety boundary, expected checks, and required proof.

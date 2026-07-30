@@ -833,4 +833,21 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toContain('id="mcpRunTool"');
     expect(html).toContain('id="mcpRunArgs"');
   });
+
+  it("keeps long jobs visible and offers inline cancel and retry controls", async () => {
+    const html = await load();
+    expect(html).toContain('id="mcpRunCancelBtn"');
+    expect(html).toContain('id="mcpRunRetryBtn"');
+    expect(html).toContain("/cancel");
+    expect(html).toContain("function resumeMcpJob()");
+    expect(html).toContain("it may be stalled");
+    expect(html).not.toMatch(/tries\s*<\s*600/);
+  });
+
+  it("exposes the configurable long-investigation timeout in Settings", async () => {
+    const html = await load();
+    expect(html).toContain('id="env-DFIR_MCP_AGENT_TIMEOUT_MS"');
+    expect(html).toContain("default 3600000 (1 hour)");
+    expect(html).toContain('fetch("/mcp/reconnect"');
+  });
 });

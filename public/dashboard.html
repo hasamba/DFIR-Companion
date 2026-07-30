@@ -4322,7 +4322,7 @@
         <div style="background:#211405;border:1px solid #5a4a1a;border-radius:6px;padding:6px 9px;font-size:12px;color:#ffce8a;margin-bottom:12px">
           ⚠ The run/update commands you configure are executed on this machine (no shell — args are tokenized). Only point them at trusted binaries.
         </div>
-        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
+        <div style="margin:0 0 12px"><button id="toolsReconnectBtn" type="button" title="Re-read DFIR_TOOL_* and DFIR_MCP_* from .env and apply without a companion restart">🔌 Reconnect / apply</button> <span id="toolsMsg" class="manual-msg"></span></div>
         <div id="toolsStatus" style="font-size:12px;color:var(--text-muted);margin-bottom:12px">—</div>
 
         <div class="settings-group-head">Hayabusa <span style="color:var(--text-dim);font-weight:400">(EVTX → csv/json-timeline · <a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">repo</a>)</span></div>
@@ -4414,6 +4414,9 @@
         <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--c-7e8aa0);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
         <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
         <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
+        <div class="sfield-row" style="margin-bottom:10px">
+          <div class="sfield"><label>Investigation timeout (ms)<span class="sfield-hint">DFIR_MCP_AGENT_TIMEOUT_MS — default 3600000 (1 hour), range 60000–86400000</span></label><input id="env-DFIR_MCP_AGENT_TIMEOUT_MS" placeholder="3600000" /></div>
+        </div>
         <div id="mcpServerList" style="margin-bottom:10px">—</div>
         <div style="margin:4px 0 12px"><button id="mcpDiscoverBtn" type="button" title="Ask Claude Code which MCP servers it is configured with">↻ Refresh from Claude Code</button> <span id="mcpDiscoverMsg" class="manual-msg"></span></div>
 
@@ -6107,7 +6110,11 @@
             <button id="mcpRunListToolsBtn" type="button" title="Ask Claude Code which tools this server offers">&#8635; List tools</button>
           </div>
         </details>
-        <div id="mcpRunJob" style="font-size:12px;color:var(--c-9aa4b2)"></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
+          <div id="mcpRunJob" style="font-size:12px;color:var(--c-9aa4b2)"></div>
+          <button id="mcpRunCancelBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Cancel</button>
+          <button id="mcpRunRetryBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Retry</button>
+        </div>
         <div id="mcpPreviewPanel" style="display:none;margin-top:8px;border:1px solid var(--c-2a2f3a);border-radius:6px;padding:8px">
           <div id="mcpPreviewHead" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px"></div>
           <pre id="mcpPreviewText" style="max-height:260px;overflow:auto;background:var(--c-0d1117);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
@@ -12874,6 +12881,9 @@
     // chooses tools and arguments. A manual single-tool call remains under Advanced for debugging
     // and tightly constrained workflows.
     let _mcpRunServers = [];
+    let _mcpWatchToken = 0;
+    let _mcpActiveJobId = "";
+    let _mcpRetry = null;
     const MCP_BROWSER_FILE_MAX_MB = 180; // base64 overhead keeps this under the default 256 MB JSON limit
     function mcpRunCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
     function mcpRunBrowserFile() {
@@ -12903,6 +12913,7 @@
       const form = document.getElementById("mcpRunForm");
       const none = document.getElementById("mcpRunUnavailable");
       if (!form || !none) return;
+      resumeMcpJob();
       fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
         _mcpRunServers = ((j && j.servers) || []).filter(s => s.enabled);
         if (!_mcpRunServers.length) { form.style.display = "none"; none.style.display = ""; return; }
@@ -12990,6 +13001,7 @@
       }
 
       const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
+      _mcpRetry = runMcpTool;
       btn.disabled = true; msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting…"; jobEl.textContent = "";
       hideMcpPreview();
       let endpoint = `/cases/${encodeURIComponent(cid)}/mcp/${encodeURIComponent(serverId)}/run`;
@@ -13032,6 +13044,7 @@
         return;
       }
       const preview = !!(document.getElementById("mcpRunPreview") || {}).checked;
+      _mcpRetry = runMcpAgent;
       btn.disabled = true;
       msg.textContent = browserFile ? `reading ${browserFile.name}…` : "starting investigation…";
       jobEl.textContent = "";
@@ -13101,23 +13114,74 @@
         .then(() => { hideMcpPreview(); document.getElementById("mcpRunMsg").textContent = "discarded — nothing was imported"; })
         .catch(() => {});
     }
+    function mcpJobDuration(ms) {
+      const seconds = Math.max(0, Math.floor(ms / 1000));
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    }
+    function setMcpJobButtons(job) {
+      const cancel = document.getElementById("mcpRunCancelBtn");
+      const retry = document.getElementById("mcpRunRetryBtn");
+      const running = job && (job.status === "running" || job.status === "queued");
+      cancel.style.display = running && job.cancellable ? "" : "none";
+      retry.style.display = job && (job.status === "error" || job.status === "cancelled") ? "" : "none";
+    }
+    function cancelMcpJob() {
+      if (!_mcpActiveJobId) return;
+      const btn = document.getElementById("mcpRunCancelBtn");
+      btn.disabled = true;
+      fetch(`/api/jobs/${encodeURIComponent(_mcpActiveJobId)}/cancel`, { method: "POST" })
+        .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => {
+          btn.disabled = false;
+          if (!ok) document.getElementById("mcpRunMsg").textContent = (j && j.error) || "cancel failed";
+        }).catch(e => { btn.disabled = false; document.getElementById("mcpRunMsg").textContent = "cancel failed: " + e.message; });
+    }
+    function retryMcpJob() {
+      document.getElementById("mcpRunRetryBtn").style.display = "none";
+      (_mcpRetry || runMcpAgent)();
+    }
+    function resumeMcpJob() {
+      const cid = mcpRunCaseId();
+      if (!cid) return;
+      const token = ++_mcpWatchToken;
+      fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`).then(r => r.ok ? r.json() : null).then(d => {
+        if (token !== _mcpWatchToken) return;
+        const job = ((d && d.jobs) || []).find(j => j.kind === "mcp" && (j.status === "running" || j.status === "queued"));
+        if (!job) return;
+        _mcpRetry = (job.label || "").startsWith("agent (") ? runMcpAgent : runMcpTool;
+        watchMcpJob(cid, job.id, /\(preview\)/.test(job.label || ""));
+      }).catch(() => {});
+    }
     // The run is a background job (a real Volatility run outlives any request), so follow it here.
-    // The toolbar jobs badge shows it too — this is the inline copy for whoever pressed the button.
+    // Monitoring has no arbitrary retry cap: a multi-hour memory run remains visible until the
+    // backend records a terminal state, and loadMcpRun reattaches after a page refresh.
     function watchMcpJob(caseIdStr, jobId, preview) {
       const jobEl = document.getElementById("mcpRunJob");
       const msg = document.getElementById("mcpRunMsg");
       if (!jobId) return;
-      let tries = 0;
+      const token = ++_mcpWatchToken;
+      _mcpActiveJobId = jobId;
       const tick = () => {
+        if (token !== _mcpWatchToken) return;
         fetch(`/api/jobs?caseId=${encodeURIComponent(caseIdStr)}`).then(r => r.ok ? r.json() : null).then(d => {
+          if (token !== _mcpWatchToken) return;
           const job = ((d && d.jobs) || []).find(x => x.id === jobId);
-          if (!job) { if (++tries < 600) setTimeout(tick, 1000); return; }
-          jobEl.textContent = `${job.status}${job.detail ? " — " + job.detail : ""}`;
-          if (job.status === "running" || job.status === "queued") { if (++tries < 600) setTimeout(tick, 1000); return; }
+          if (!job) { setTimeout(tick, 1500); return; }
+          const elapsed = job.startedAt ? mcpJobDuration(Date.now() - Date.parse(job.startedAt)) : "";
+          const activityAge = job.updatedAt ? Date.now() - Date.parse(job.updatedAt) : 0;
+          const stale = (job.status === "running" || job.status === "queued") && activityAge > 20000
+            ? ` — no update for ${mcpJobDuration(activityAge)}; it may be stalled`
+            : "";
+          const progress = job.progress && job.progress.total ? ` [${job.progress.done}/${job.progress.total}]` : "";
+          jobEl.textContent = `${job.status}${progress}${job.detail ? " — " + job.detail : ""}${elapsed ? " — total " + elapsed : ""}${stale}`;
+          setMcpJobButtons(job);
+          if (job.status === "running" || job.status === "queued") { setTimeout(tick, 1000); return; }
+          _mcpActiveJobId = "";
           if (job.status === "done" && preview) { showMcpPreview(caseIdStr, jobId); }
           else if (job.status === "done") { msg.textContent = "done — result imported"; loadMcpRunTargets(); }
           else { msg.textContent = job.status === "cancelled" ? "cancelled" : (job.error || "failed"); }
-        }).catch(() => {});
+        }).catch(() => { if (token === _mcpWatchToken) setTimeout(tick, 3000); });
       };
       tick();
     }
@@ -13133,6 +13197,8 @@
       const b = document.getElementById("mcpRunBtn"); if (b) b.onclick = runMcpTool;
       const i = document.getElementById("mcpPreviewImportBtn"); if (i) i.onclick = importMcpPreview;
       const d = document.getElementById("mcpPreviewDiscardBtn"); if (d) d.onclick = discardMcpPreview;
+      const c = document.getElementById("mcpRunCancelBtn"); if (c) c.onclick = cancelMcpJob;
+      const r = document.getElementById("mcpRunRetryBtn"); if (r) r.onclick = retryMcpJob;
     }
 
     // A toolbar badge shows the count of RUNNING heavy operations (import / synthesis / enrichment);
@@ -23167,8 +23233,15 @@
         return;
       }
       if (msg) msg.textContent = "applying…";
-      fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(r => r.json()).then(j => { if (msg) msg.textContent = j.ok ? `applied — ${(j.configured || []).length} tool(s) configured` : (j.error || "reconnect failed"); loadTools(); })
+      Promise.all([
+        fetch("/tools/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.json()),
+        fetch("/mcp/reconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.json()),
+      ]).then(([tools, mcp]) => {
+        if (msg) msg.textContent = tools.ok && mcp.ok
+          ? `applied — ${(tools.configured || []).length} local tool(s), MCP settings refreshed`
+          : (tools.error || mcp.error || "reconnect failed");
+        loadTools(); loadMcpServers();
+      })
         .catch(e => { if (msg) msg.textContent = "reconnect failed: " + e.message + " — restart the companion server if this 404s"; });
     };
 
