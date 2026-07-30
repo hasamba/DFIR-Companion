@@ -10,6 +10,7 @@ import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
+import { mergeCanonicalEvents } from "./canonicalEvent.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -201,6 +202,7 @@ export function mergeDelta(
     mitreTechniques: [...e.mitreTechniques],
     relatedFindingIds: [...e.relatedFindingIds],
     sourceScreenshots: [...e.sourceScreenshots],
+    ...(e.canonical ? { canonical: e.canonical } : {}),
   }));
   // Index by id for O(1) dedup lookup. A linear `forensicTimeline.find(...)` per incoming event is
   // O(n²) and melts down on large deterministic imports (e.g. a full MFT/USN with DFIR_MAX_EVENTS
@@ -239,6 +241,9 @@ export function mergeDelta(
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
+      if (incoming.commandLine) existing.commandLine = incoming.commandLine;
+      if (incoming.chainSignature) existing.chainSignature = incoming.chainSignature;
+      existing.canonical = mergeCanonicalEvents(existing.canonical, incoming.canonical);
       if (incoming.action) existing.action = incoming.action;
       if (incoming.srcIp) existing.srcIp = incoming.srcIp;
       if (incoming.dstIp) existing.dstIp = incoming.dstIp;
@@ -265,6 +270,9 @@ export function mergeDelta(
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
+        ...(incoming.commandLine ? { commandLine: incoming.commandLine } : {}),
+        ...(incoming.chainSignature ? { chainSignature: incoming.chainSignature } : {}),
+        ...(incoming.canonical ? { canonical: incoming.canonical } : {}),
         ...(incoming.action ? { action: incoming.action } : {}),
         ...(incoming.srcIp ? { srcIp: incoming.srcIp } : {}),
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),

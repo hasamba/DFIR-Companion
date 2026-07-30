@@ -15,6 +15,7 @@
 // Events are tagged "Suricata" / "Zeek" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -158,7 +159,7 @@ function suricataIocs(row: Row, etype: string, sink: Map<string, SiemIoc>): void
   if (isObject(fi)) { addHash(sink, getCI(fi, "sha256")); addHash(sink, getCI(fi, "md5")); addFile(sink, getCI(fi, "filename")); }
 }
 
-function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent {
   const sig = str(getPath(row, "alert.signature")) || "alert";
   const category = str(getPath(row, "alert.category"));
   const sigId = str(getPath(row, "alert.signature_id"));
@@ -174,12 +175,63 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>): M
   if (src && dst) description += ` - ${src}${sp ? `:${sp}` : ""} → ${dst}${dp ? `:${dp}` : ""}${proto ? ` ${proto}` : ""}`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
+  const sourcePort = Number(sp);
+  const destinationPort = Number(dp);
+  const observedTimestamp = str(getCI(row, "timestamp"));
+  const normalizedTimestamp = netTime(getCI(row, "timestamp"));
+  const canonical = createCanonicalEvent({
+    event: { category: "network", type: "alert", action: sig },
+    ...(src ? { actor: { kind: "network", address: src } } : {}),
+    ...(dst ? { target: { kind: "network", address: dst, ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}) } } : {}),
+    network: {
+      ...(src ? {
+        source: {
+          address: src,
+          ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { port: sourcePort } : {}),
+        },
+      } : {}),
+      ...(dst ? {
+        destination: {
+          address: dst,
+          ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+        },
+      } : {}),
+      ...(proto ? { protocol: proto } : {}),
+    },
+    time: { observed: observedTimestamp, normalized: normalizedTimestamp },
+    evidence: {
+      rawRecords: [{
+        source: "suricata-eve",
+        locator: `record:${recordIndex}`,
+        ...(str(getCI(row, "flow_id")).trim() ? { recordId: str(getCI(row, "flow_id")).trim() } : {}),
+      }],
+    },
+    producer: {
+      importer: "network",
+      parserVersion: "1",
+      mappingVersion: "suricata-alert-v1",
+      ruleVersions: ["suricata-severity-v1"],
+    },
+    rawFieldMap: {
+      "event.action": ["alert.signature"],
+      "time.observed": ["timestamp"],
+      ...(src ? { "actor.address": ["src_ip"], "network.source.address": ["src_ip"] } : {}),
+      ...(dst ? { "target.address": ["dest_ip"], "network.destination.address": ["dest_ip"] } : {}),
+      ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { "network.source.port": ["src_port"] } : {}),
+      ...(Number.isInteger(destinationPort) && destinationPort > 0 ? {
+        "target.port": ["dest_port"],
+        "network.destination.port": ["dest_port"],
+      } : {}),
+      ...(proto ? { "network.protocol": ["proto"] } : {}),
+    },
+  });
 
   return {
-    timestamp: netTime(getCI(row, "timestamp")),
+    timestamp: normalizedTimestamp,
     description,
     severity,
     mitre,
+    canonical,
     aggKey: `suricata|${sigId || sig.toLowerCase()}|${src}|${dst}|${dp}`.slice(0, 400),
     sources: ["Suricata"],
     ...(host ? { asset: host } : {}),
@@ -216,7 +268,7 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
   }
 }
 
-function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent {
   const note = str(getCI(row, "note")) || "notice";
   const msg = str(getCI(row, "msg"));
   const sub = str(getCI(row, "sub"));
@@ -228,12 +280,39 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): Mapp
   if (src && dst) description += ` [${src} → ${dst}]`;
   if (host) description += ` @ ${host}`;
   description = description.slice(0, 600);
+  const observedTimestamp = str(getCI(row, "ts"));
+  const normalizedTimestamp = netTime(getCI(row, "ts"));
+  const canonical = createCanonicalEvent({
+    event: { category: "network", type: "notice", action: note },
+    ...(src ? { actor: { kind: "network", address: src } } : {}),
+    ...(dst ? { target: { kind: "network", address: dst } } : {}),
+    network: {
+      ...(src ? { source: { address: src } } : {}),
+      ...(dst ? { destination: { address: dst } } : {}),
+    },
+    time: { observed: observedTimestamp, normalized: normalizedTimestamp },
+    evidence: {
+      rawRecords: [{
+        source: "zeek-notice",
+        locator: `record:${recordIndex}`,
+        ...(str(getCI(row, "uid")).trim() ? { recordId: str(getCI(row, "uid")).trim() } : {}),
+      }],
+    },
+    producer: { importer: "network", parserVersion: "1", mappingVersion: "zeek-notice-v1" },
+    rawFieldMap: {
+      "event.action": ["note"],
+      "time.observed": ["ts"],
+      ...(src ? { "actor.address": ["src"], "network.source.address": ["src"] } : {}),
+      ...(dst ? { "target.address": ["dst"], "network.destination.address": ["dst"] } : {}),
+    },
+  });
 
   return {
-    timestamp: netTime(getCI(row, "ts")),
+    timestamp: normalizedTimestamp,
     description,
     severity: "Medium", // a Zeek notice is, by definition, worth surfacing
     mitre: mitreFromText(note, msg),
+    canonical,
     aggKey: `zeek|${note.toLowerCase()}|${src}|${dst}`.slice(0, 400),
     sources: ["Zeek"],
     ...(host ? { asset: host } : {}),
@@ -301,6 +380,43 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
     ` — ${f.count} connection${f.count === 1 ? "" : "s"},` +
     ` ${humanBytes(f.origBytes)} sent, ${humanBytes(f.respBytes)} received`;
   if (host) description += ` @ ${host}`;
+  const destinationPort = Number(f.port);
+  const canonical = createCanonicalEvent({
+    event: { category: "network", type: "flow", action: "connect" },
+    ...(f.src ? { actor: { kind: "network", address: f.src } } : {}),
+    ...(f.dst ? {
+      target: {
+        kind: "network",
+        address: f.dst,
+        ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+      },
+    } : {}),
+    network: {
+      ...(f.src ? { source: { address: f.src } } : {}),
+      ...(f.dst ? {
+        destination: {
+          address: f.dst,
+          ...(Number.isInteger(destinationPort) && destinationPort > 0 ? { port: destinationPort } : {}),
+        },
+      } : {}),
+      ...(f.proto ? { protocol: f.proto } : {}),
+    },
+    time: { observed: f.firstTs, normalized: f.firstTs },
+    evidence: {
+      rawRecords: [{ source: "zeek-conn", locator: `flow:${f.src}|${f.dst}|${f.port}|${f.proto}` }],
+    },
+    producer: { importer: "network", parserVersion: "1", mappingVersion: "zeek-flow-v1" },
+    rawFieldMap: {
+      "time.observed": ["ts"],
+      ...(f.src ? { "actor.address": ["id.orig_h"], "network.source.address": ["id.orig_h"] } : {}),
+      ...(f.dst ? { "target.address": ["id.resp_h"], "network.destination.address": ["id.resp_h"] } : {}),
+      ...(Number.isInteger(destinationPort) && destinationPort > 0 ? {
+        "target.port": ["id.resp_p"],
+        "network.destination.port": ["id.resp_p"],
+      } : {}),
+      ...(f.proto ? { "network.protocol": ["proto"] } : {}),
+    },
+  });
   return {
     timestamp: f.firstTs,
     description: description.slice(0, 600),
@@ -309,6 +425,7 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
     // a flow on its own asserts nothing about technique.
     severity: "Info",
     mitre: [],
+    canonical,
     // Already unique per flow, so the shared aggregator passes these straight through rather than
     // re-folding them (and the description, not `count`, carries the connection tally).
     aggKey: `zeek|conn|${f.src}|${f.dst}|${f.port}|${f.proto}`.slice(0, 400),
@@ -348,7 +465,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   // Per-stream Zeek JSON (no `_path`): the filename is the authoritative stream for the whole file.
   const fileStream = opts.filename ? zeekStreamFromName(opts.filename) : "";
 
-  for (const row of records) {
+  for (const [recordIndex, row] of records.entries()) {
     const host = pickHost(row);
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
 
@@ -360,7 +477,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
       sawSuricata = true;
       suricataIocs(row, etype, rowSink);
       if (etype === "alert") {
-        const m = mapSuricataAlert(row, host, rowSink);
+        const m = mapSuricataAlert(row, host, rowSink, recordIndex);
         mergeRowIocs(iocSink, rowSink, m.aggKey);
         mapped.push(m);
         alerts++;
@@ -373,7 +490,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
       sawZeek = true;
       zeekIocs(row, zstream, rowSink);
       if (zstream === "notice") {
-        const m = mapZeekNotice(row, host, rowSink);
+        const m = mapZeekNotice(row, host, rowSink, recordIndex);
         mergeRowIocs(iocSink, rowSink, m.aggKey);
         mapped.push(m);
         alerts++;
@@ -403,16 +520,17 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   const format = sawSuricata && sawZeek ? "mixed" : sawSuricata ? "suricata" : sawZeek ? "zeek" : "empty";
 
   return {
-    events,
+    events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: finalEvents.length,
     dropped: Math.max(0, total - represented),
     groups,
     alerts,

@@ -13,6 +13,7 @@ import {
   type SuperQueryResult,
 } from "./superTimeline.js";
 import { eventMatchesExclude, eventMatchesSearch } from "./searchFilter.js";
+import { upgradeForensicEvent } from "./canonicalEvent.js";
 
 // The super-timeline remains logically separate from the forensic timeline: it has a distinct
 // entity kind, query API, labels, cap, and no path into synthesis. Sharing the case database is a
@@ -73,7 +74,7 @@ export class SuperTimelineStore {
     return caseSqliteWorker.request<number>({
       op: "appendSuper",
       dbPath: this.databasePath(caseId),
-      events,
+      events: events.map(upgradeForensicEvent),
       max: this.max,
     });
   }
@@ -131,11 +132,12 @@ export class SuperTimelineStore {
 
   async get(caseId: string, id: string): Promise<ForensicEvent | null> {
     await this.ensureMigrated(caseId);
-    return caseSqliteWorker.request({
+    const event = await caseSqliteWorker.request<ForensicEvent | null>({
       op: "getSuper",
       dbPath: this.databasePath(caseId),
       id,
     });
+    return event ? upgradeForensicEvent(event) : null;
   }
 
   // Compatibility method for the tagger and targeted AI lookup. New large-case consumers should
@@ -187,7 +189,7 @@ export class SuperTimelineStore {
           limit: Math.max(1, Math.min(MAX_QUERY_PAGE, Math.floor(batchSize))),
         },
       });
-      for (const row of result.rows) yield row;
+      for (const row of result.rows) yield { ...row, event: upgradeForensicEvent(row.event) };
       cursor = result.nextCursor;
     } while (cursor);
   }

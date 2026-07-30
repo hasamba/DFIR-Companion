@@ -140,5 +140,5 @@ export function parseWinEventXml(text: string): Row[] {
 // Parse a Windows Event Log XML export into a SIEM result (identical shape to parseSiemExport).
 export function parseEvtxXml(text: string, opts: SiemImportOptions = {}): SiemParseResult {
   const records = parseWinEventXml(text);
-  return buildSiemResult(records, "winevent-xml", opts);
+  return buildSiemResult(records, "winevent-xml", opts, text);
 }

@@ -1,13 +1,11 @@
 import type { ForensicEvent } from "./stateTypes.js";
 import { LOGON_TYPES, logonRisk } from "./siemImport.js";
+import { upgradeForensicEvent } from "./canonicalEvent.js";
 
 // Builds the Login Graph (Timesketch-style directed account → host logon graph) from the
-// super-timeline. PARSES the deterministic descriptions mapWindows() rendered at import time
-// ("{tool} Successful logon (EID 4624) - DOMAIN\\user - LogonType=N - IpAddress=… @ host") —
-// no new import-time field, so existing stored cases get the graph with no re-import.
-// Pure + deterministic, no AI, no I/O. Sibling of assetGraph.ts.
-
-const LOGON_MARKER = /(Successful|Failed) logon \(EID (?:4624|4625)\)/;
+// super-timeline. Identity/session facts come from the canonical envelope; the legacy upgrader is
+// the only place allowed to recover them from pre-schema display text. Description wording is
+// therefore no longer a graph contract. Pure + deterministic, no AI, no I/O.
 
 export interface ParsedLogon {
   account: string;                  // full form as rendered, e.g. "CORP\\jdoe", "NT AUTHORITY\\SYSTEM"
@@ -19,39 +17,31 @@ export interface ParsedLogon {
   workstation?: string;
 }
 
-// Parse one super-timeline row. Returns null when the row is not a 4624/4625 logon, carries no
-// account segment, or has no asset — malformed rows are skipped, never fatal.
+// Read one structured login event. Returns null for non-logon or incomplete rows.
 export function parseLoginEvent(e: ForensicEvent): ParsedLogon | null {
-  const m = LOGON_MARKER.exec(e.description);
-  if (!m) return null;
-  // Injection guard: on a genuine row the marker sits in the `${tool} ${label} (EID n)` prefix,
-  // BEFORE the first ` - ` separator (channelLabel values and event labels are ` - `-free, and every
-  // importer path routes through mapWindows). A marker AFTER it is log content echoed into a field
-  // value (e.g. a CommandLine containing "Successful logon (EID 4624) - EVIL\\fake @ x") — an
-  // attacker-controlled string that must not plant a fake account→host edge in the graph.
-  const sep = e.description.indexOf(" - ");
-  if (sep !== -1 && m.index > sep) return null;
-  const host = (e.asset ?? "").trim();
-  if (!host) return null;
-  // Accounts segment: everything after the marker up to the first `Key=value` field, the ` @ host`
-  // suffix, or the 4624 ` [TypeName …]` overlay. mapWindows renders accounts (when present) as the
-  // first ` - `-joined segment, comma-separated, TARGET account first (winAccounts pair order).
-  const rest = e.description.slice(m.index + m[0].length);
-  const seg = rest.replace(/^ - /, "").split(/ - (?=[A-Za-z]+=)| @ | \[/)[0]?.trim() ?? "";
-  const account = seg.split(", ")[0]?.trim();
-  if (!account || account.includes("=")) return null;   // no accounts rendered on this row
-  const lt = /\bLogonType=(\d+)\b/.exec(e.description);
-  const logonType = lt ? Number(lt[1]) : undefined;
-  const ip = /\bIpAddress=(\S+)/.exec(e.description)?.[1];
-  const ws = /\bWorkstationName=(\S+)/.exec(e.description)?.[1];
+  const canonical = upgradeForensicEvent(e).canonical;
+  if (canonical?.event.category !== "authentication" || canonical.event.type !== "logon") return null;
+  const account = (
+    canonical.actor?.kind === "account" ? canonical.actor.name : undefined
+  ) ?? canonical.account?.name;
+  const host = (
+    canonical.target?.kind === "host" ? canonical.target.name : undefined
+  ) ?? e.asset;
+  const cleanAccount = account?.trim() ?? "";
+  const cleanHost = host?.trim() ?? "";
+  if (!cleanAccount || !cleanHost) return null;
+  const logonType = canonical.authentication?.logonType;
+  const sourceIp = canonical.network?.source?.address;
+  const workstation = canonical.session?.terminal;
+  const outcome = canonical.event.outcome === "failed" ? "failed" : "success";
   return {
-    account,
-    host,
+    account: cleanAccount,
+    host: cleanHost,
     ...(logonType !== undefined ? { logonType } : {}),
     typeName: logonType !== undefined ? (LOGON_TYPES[logonType] ?? `type ${logonType}`) : "Unknown",
-    outcome: m[1] === "Successful" ? "success" : "failed",
-    ...(ip ? { sourceIp: ip } : {}),
-    ...(ws ? { workstation: ws } : {}),
+    outcome,
+    ...(sourceIp ? { sourceIp } : {}),
+    ...(workstation ? { workstation } : {}),
   };
 }
 

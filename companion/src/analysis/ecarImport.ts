@@ -28,6 +28,7 @@
 // aggregates, sorts, and caps identically to every other deterministic importer.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -166,6 +167,8 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
         ...(procName ? { processName: procName } : {}),
         ...(parentName ? { parentName } : {}),
         ...(pid !== undefined ? { pid } : {}),
+        ...(cmd ? { commandLine: cmd } : {}),
+        ...(image ? { path: image } : {}),
       };
     }
 
@@ -311,6 +314,126 @@ export function mapEcarRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent
   }
 }
 
+function canonicalizeEcarRecord(rec: Row, mapped: MappedEvent, recordIndex: number): MappedEvent {
+  const p = props(rec);
+  const object = oneLine(str(rec["object"])).toLowerCase();
+  const action = oneLine(str(rec["action"])).toLowerCase();
+  const host = oneLine(str(rec["hostname"]));
+  const principal = oneLine(str(rec["principal"]));
+  const image = prop(p, "image_path");
+  const parentImage = prop(p, "parent_image_path");
+  const commandLine = prop(p, "command_line");
+  const processName = mapped.processName || baseName(image) || undefined;
+  const parentName = mapped.parentName || baseName(parentImage) || undefined;
+  const registryKey = prop(p, "registry_key");
+  const registryValue = prop(p, "registry_value");
+  const filePath = prop(p, "file_path") || mapped.path;
+  const srcIp = mapped.srcIp || cleanIp(prop(p, "src_ip"));
+  const dstIp = mapped.dstIp || cleanIp(prop(p, "dst_ip"));
+  const destinationPort = mapped.port ?? portNum(prop(p, "dst_port"));
+  const sourcePort = portNum(prop(p, "src_port"));
+  const logonTypeRaw = prop(p, "logon_type");
+  const logonType = Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
+  const outcome = prop(p, "outcome").toLowerCase();
+  const category = object === "process" || object === "thread" ? "process"
+    : object === "flow" ? "network"
+    : object === "user_session" ? "authentication"
+    : object === "registry" ? "registry"
+    : object === "file" || object === "module" ? "file"
+    : "other";
+  const type = object === "process" && action === "create" ? "start"
+    : object === "process" && action === "terminate" ? "stop"
+    : object === "user_session" && action === "login" ? "logon"
+    : action || "event";
+  const observedTimestamp = str(rec["timestamp_ms"]);
+  const canonical = createCanonicalEvent({
+    event: {
+      category,
+      type,
+      ...(action ? { action } : {}),
+      ...(object === "user_session" && action === "login"
+        ? { outcome: /fail/.test(outcome) || !!prop(p, "failure_reason") ? "failed" : "success" }
+        : {}),
+    },
+    ...(principal ? { actor: { kind: "account", name: principal }, account: { name: principal } } : {}),
+    ...(host ? { target: { kind: "host", name: host } } : {}),
+    ...(category === "authentication" ? {
+      authentication: {
+        ...(logonType !== undefined ? { logonType } : {}),
+        ...(prop(p, "session_id") ? { sessionId: prop(p, "session_id") } : {}),
+      },
+    } : {}),
+    ...(srcIp || dstIp || destinationPort || sourcePort ? {
+      network: {
+        ...(srcIp || sourcePort ? {
+          source: {
+            ...(srcIp ? { address: srcIp } : {}),
+            ...(sourcePort ? { port: sourcePort } : {}),
+          },
+        } : {}),
+        ...(dstIp || destinationPort ? {
+          destination: {
+            ...(dstIp ? { address: dstIp } : {}),
+            ...(destinationPort ? { port: destinationPort } : {}),
+          },
+        } : {}),
+        ...(prop(p, "protocol") ? { protocol: prop(p, "protocol") } : {}),
+      },
+    } : {}),
+    ...(category === "process" ? {
+      process: {
+        ...(mapped.pid ? { pid: mapped.pid } : {}),
+        ...(processName ? { name: processName } : {}),
+        ...(image ? { executable: image } : {}),
+        ...(commandLine ? { commandLine } : {}),
+        ...(parentName || parentImage ? {
+          parent: {
+            ...(parentName ? { name: parentName } : {}),
+            ...(parentImage ? { executable: parentImage } : {}),
+          },
+        } : {}),
+      },
+    } : {}),
+    ...(filePath ? { file: { path: filePath, name: baseName(filePath) } } : {}),
+    ...(registryKey ? {
+      registry: {
+        key: registryKey,
+        ...(registryValue ? { valueData: registryValue } : {}),
+      },
+    } : {}),
+    time: {
+      observed: observedTimestamp,
+      normalized: mapped.timestamp,
+      timezone: "UTC",
+      precision: "millisecond",
+    },
+    evidence: {
+      rawRecords: [{ source: "ecar", locator: `record:${recordIndex}` }],
+    },
+    producer: {
+      importer: "ecar",
+      parserVersion: "1",
+      mappingVersion: "ecar-v1",
+      ruleVersions: ["ecar-tradecraft-v1"],
+    },
+    rawFieldMap: {
+      "event.action": ["action"],
+      "time.observed": ["timestamp_ms"],
+      ...(principal ? { "actor.name": ["principal"], "account.name": ["principal"] } : {}),
+      ...(host ? { "target.name": ["hostname"] } : {}),
+      ...(mapped.pid ? { "process.pid": ["pid"] } : {}),
+      ...(processName ? { "process.name": ["properties.image_path", "properties.command_line"] } : {}),
+      ...(image ? { "process.executable": ["properties.image_path"] } : {}),
+      ...(commandLine ? { "process.commandLine": ["properties.command_line"] } : {}),
+      ...(srcIp ? { "network.source.address": ["properties.src_ip"] } : {}),
+      ...(dstIp ? { "network.destination.address": ["properties.dst_ip"] } : {}),
+      ...(filePath ? { "file.path": ["properties.file_path", "properties.image_path"] } : {}),
+      ...(registryKey ? { "registry.key": ["properties.registry_key"] } : {}),
+    },
+  });
+  return { ...mapped, canonical };
+}
+
 // Is this NDJSON/array of records ECAR? The signature is the (timestamp_ms + object + action) triple —
 // distinctive to the ECAR schema and absent from the other JSON feeds. Pure; used by importDetect.
 export function isEcarRecord(rec: unknown): boolean {
@@ -329,13 +452,13 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
 
-  for (const rec of records) {
+  for (const [recordIndex, rec] of records.entries()) {
     if (!rec || typeof rec !== "object") continue;
     const r = rec as Row;
     const host = oneLine(str(r["hostname"]));
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const m = mapEcarRecord(r, sink);
-    if (m) mapped.push(m);
+    if (m) mapped.push(canonicalizeEcarRecord(r, m, recordIndex));
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -343,15 +466,16 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   return {
-    events,
+    events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
     total: records.length,
-    kept: events.length,
+    kept: finalEvents.length,
     dropped: Math.max(0, records.length - represented),
     groups,
     format,

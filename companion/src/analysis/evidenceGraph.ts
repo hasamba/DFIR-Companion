@@ -1,6 +1,13 @@
 import type { InvestigationState, ForensicEvent, Severity } from "./stateTypes.js";
-import { extractAccounts, filterTimeline, type TimeWindow } from "./assetGraph.js";
+import { filterTimeline, type TimeWindow } from "./assetGraph.js";
 import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import {
+  canonicalAccounts,
+  canonicalFile,
+  canonicalNetwork,
+  canonicalProcess,
+  upgradeForensicEvent,
+} from "./canonicalEvent.js";
 
 // Derives the EVIDENCE CHAIN GRAPH — the *causal* view of an incident, complementing the
 // chronological forensic timeline and the (associative) asset↔IoC graph. Where the asset
@@ -127,10 +134,28 @@ function isPseudoAccount(acct: string): boolean {
   return PSEUDO_ACCT_DOMAIN.test(domain.trim()) || PSEUDO_ACCT_USER.test(user.trim());
 }
 
+function eventAsset(event: ForensicEvent): string {
+  const target = event.canonical?.target;
+  return ((target?.kind === "host" ? target.name : undefined) ?? event.asset ?? "").trim();
+}
+
+function eventHash(event: ForensicEvent): string {
+  const file = canonicalFile(event);
+  return (file?.sha256 ?? file?.md5 ?? "").trim().toLowerCase();
+}
+
+function eventPath(event: ForensicEvent): string {
+  return (canonicalFile(event)?.path ?? "").trim();
+}
+
+function eventAction(event: ForensicEvent): string {
+  return event.canonical?.event.action ?? event.action ?? "";
+}
+
 export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindow): EvidenceGraph {
   // Scope the timeline to the requested window (#83) once, up front; every derivation pass below
   // reads `timeline` instead of state.forensicTimeline, so edges/nodes only form from in-window events.
-  const timeline = filterTimeline(state.forensicTimeline, window);
+  const timeline = filterTimeline(state.forensicTimeline, window).map(upgradeForensicEvent);
   // Nodes are materialized lazily so only those that participate in ≥1 edge are emitted.
   const nodeMap = new Map<string, EvidenceNode>();
   function mergeNode(id: string, kind: EvidenceNodeKind, label: string, asset: string | undefined, eventIds: readonly string[], sev: Severity): EvidenceNode {
@@ -159,10 +184,11 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
 
   // ── spawned: parent→child from each event's own process pair ──────────────────────────
   for (const e of timeline) {
-    if (!e.parentName || !e.processName) continue;
-    const parent = e.parentName.trim(), child = e.processName.trim();
+    const process = canonicalProcess(e);
+    if (!process?.parent?.name || !process.name) continue;
+    const parent = process.parent.name.trim(), child = process.name.trim();
     if (!parent || !child || parent.toLowerCase() === child.toLowerCase()) continue; // skip self-spawn
-    const asset = (e.asset ?? "").trim();
+    const asset = eventAsset(e);
     const pId = procNodeId(asset, parent), cId = procNodeId(asset, child);
     ensureNode(pId, "process", parent, asset || undefined, e);
     ensureNode(cId, "process", child, asset || undefined, e);
@@ -176,8 +202,8 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   // ── lateral_move (hash): same binary on ≥2 distinct hosts ─────────────────────────────
   const byHash = new Map<string, Map<string, ForensicEvent>>(); // hash -> assetLower -> a backing event
   for (const e of timeline) {
-    const h = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
-    const asset = (e.asset ?? "").trim();
+    const h = eventHash(e);
+    const asset = eventAsset(e);
     if (!h || !asset) continue;
     const hosts = byHash.get(h) ?? new Map();
     if (!hosts.has(asset.toLowerCase())) hosts.set(asset.toLowerCase(), e);
@@ -188,12 +214,13 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     const entries = [...hosts.entries()].sort((a, b) => a[0].localeCompare(b[0])); // [assetLower, event]
     for (let i = 1; i < entries.length; i++) {
       const [, ea] = entries[i - 1], [, eb] = entries[i]; // chain consecutive hosts → k-1 edges
-      const aNode = ensureNode(hostNodeId(ea.asset!.trim()), "host", ea.asset!.trim(), undefined, ea);
-      const bNode = ensureNode(hostNodeId(eb.asset!.trim()), "host", eb.asset!.trim(), undefined, eb);
+      const aAsset = eventAsset(ea), bAsset = eventAsset(eb);
+      const aNode = ensureNode(hostNodeId(aAsset), "host", aAsset, undefined, ea);
+      const bNode = ensureNode(hostNodeId(bAsset), "host", bAsset, undefined, eb);
       addEdge({
         id: `lateral|hash:${h}|${aNode.id}|${bNode.id}`, type: "lateral_move",
         source: aNode.id, target: bNode.id, confidence: "high", rule: "shared-hash",
-        basis: `same binary ${shortHash(h)} on ${ea.asset!.trim()} + ${eb.asset!.trim()}`, eventId: eb.id,
+        basis: `same binary ${shortHash(h)} on ${aAsset} + ${bAsset}`, eventId: eb.id,
       });
     }
   }
@@ -201,9 +228,9 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   // ── lateral_move (account): same account active on ≥2 distinct hosts (account → host star) ──
   const byAccount = new Map<string, Map<string, ForensicEvent>>(); // account -> assetLower -> event
   for (const e of timeline) {
-    const asset = (e.asset ?? "").trim();
+    const asset = eventAsset(e);
     if (!asset) continue;
-    for (const acct of extractAccounts(e.description)) {
+    for (const acct of canonicalAccounts(e)) {
       if (isPseudoAccount(acct)) continue;   // skip DWM/UMFD/MSI… virtual principals — not users
       const hosts = byAccount.get(acct) ?? new Map();
       if (!hosts.has(asset.toLowerCase())) hosts.set(asset.toLowerCase(), e);
@@ -214,12 +241,13 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     if (hosts.size < 2) continue;
     const acctId = accountNodeId(acct);
     for (const [, e] of [...hosts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const asset = eventAsset(e);
       ensureNode(acctId, "account", acct, undefined, e);
-      const hNode = ensureNode(hostNodeId(e.asset!.trim()), "host", e.asset!.trim(), undefined, e);
+      const hNode = ensureNode(hostNodeId(asset), "host", asset, undefined, e);
       addEdge({
         id: `lateral|acct:${acct}|${hNode.id}`, type: "lateral_move",
         source: acctId, target: hNode.id, confidence: "medium", rule: "shared-account",
-        basis: `${acct} active on ${e.asset!.trim()}`, eventId: e.id,
+        basis: `${acct} active on ${asset}`, eventId: e.id,
       });
     }
   }
@@ -230,25 +258,26 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   const writesByHash = new Map<string, ForensicEvent[]>();
   const execsByHash = new Map<string, ForensicEvent[]>();
   for (const e of timeline) {
-    if (!e.action) continue;
-    const h = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
+    const action = eventAction(e);
+    if (!action) continue;
+    const h = eventHash(e);
     if (!h) continue;
-    if (e.action === "write") {
+    if (action === "write") {
       const arr = writesByHash.get(h) ?? []; arr.push(e); writesByHash.set(h, arr);
-    } else if (e.action === "execute") {
+    } else if (action === "execute") {
       const arr = execsByHash.get(h) ?? []; arr.push(e); execsByHash.set(h, arr);
     }
   }
   for (const [h, writes] of writesByHash) {
     const execs = execsByHash.get(h);
     if (!execs?.length) continue;
-    const samplePath = writes.find((e) => e.path)?.path ?? execs.find((e) => e.path)?.path;
+    const samplePath = writes.map(eventPath).find(Boolean) ?? execs.map(eventPath).find(Boolean);
     const fileName = samplePath?.split(/[/\\]/).pop() ?? shortHash(h);
     const fId = fileNodeId(h);
     // mergeNode is only called when an edge is about to be created so the file node never
     // ends up in the graph without at least one edge referencing it.
     for (const we of writes) {
-      const wAsset = (we.asset ?? "").trim();
+      const wAsset = eventAsset(we);
       if (!wAsset) continue;
       mergeNode(fId, "file", fileName, undefined, [we.id], we.severity);
       const wHId = hostNodeId(wAsset);
@@ -260,13 +289,14 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
       });
     }
     for (const xe of execs) {
-      const xAsset = (xe.asset ?? "").trim();
+      const xAsset = eventAsset(xe);
       if (!xAsset) continue;
       mergeNode(fId, "file", fileName, undefined, [xe.id], xe.severity);
       let xNodeId: string;
-      if (xe.processName) {
-        xNodeId = procNodeId(xAsset, xe.processName.trim());
-        ensureNode(xNodeId, "process", xe.processName.trim(), xAsset, xe);
+      const processName = canonicalProcess(xe)?.name?.trim();
+      if (processName) {
+        xNodeId = procNodeId(xAsset, processName);
+        ensureNode(xNodeId, "process", processName, xAsset, xe);
       } else {
         xNodeId = hostNodeId(xAsset);
         ensureNode(xNodeId, "host", xAsset, undefined, xe);
@@ -283,10 +313,11 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
   // Requires dstIp. Source is srcIp (network node) when present, otherwise the event's asset
   // (host node — the host that made the connection). Skips if source cannot be determined.
   for (const e of timeline) {
-    const dst = (e.dstIp ?? "").trim();
+    const network = canonicalNetwork(e);
+    const dst = (network?.destination?.address ?? "").trim();
     if (!dst) continue;
-    const srcIp = (e.srcIp ?? "").trim();
-    const srcAsset = (e.asset ?? "").trim();
+    const srcIp = (network?.source?.address ?? "").trim();
+    const srcAsset = eventAsset(e);
     const src = srcIp || srcAsset;
     if (!src || src === dst) continue;
     // Source: use a network node for an explicit srcIp, host node for the event's asset.
@@ -297,8 +328,9 @@ export function buildEvidenceGraph(state: InvestigationState, window?: TimeWindo
     } else {
       ensureNode(srcId, "host", srcAsset, undefined, e);
     }
-    const dstId = netNodeId(dst, e.port);
-    const dstLabel = dst + (e.port ? `:${e.port}` : "");
+    const port = network?.destination?.port;
+    const dstId = netNodeId(dst, port);
+    const dstLabel = dst + (port ? `:${port}` : "");
     mergeNode(dstId, "network", dstLabel, undefined, [e.id], e.severity);
     nodeMap.get(dstId)!.ip = dst;
     addEdge({
@@ -396,7 +428,7 @@ function timeOf(ts: string): number {
 }
 
 export function buildLateralPaths(state: InvestigationState, window?: TimeWindow): LateralPath[] {
-  const timeline = filterTimeline(state.forensicTimeline, window);
+  const timeline = filterTimeline(state.forensicTimeline, window).map(upgradeForensicEvent);
 
   // The EARLIEST event tying each host to a given hash/account (not just "a" event, as in
   // buildEvidenceGraph's byHash/byAccount — here the hop order depends on real chronology).
@@ -404,7 +436,7 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
     const byKey = new Map<string, Map<string, ForensicEvent>>();
     for (const e of timeline) {
       const key = (pick(e) ?? "").trim().toLowerCase();
-      const asset = (e.asset ?? "").trim();
+      const asset = eventAsset(e);
       if (!key || !asset) continue;
       const hosts = byKey.get(key) ?? new Map<string, ForensicEvent>();
       const assetKey = asset.toLowerCase();
@@ -448,10 +480,10 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   );
   const provenance = new Map<string, { vendorOnly: boolean; hasPath: boolean; grave: boolean }>();
   for (const e of timeline) {
-    const key = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
+    const key = eventHash(e);
     if (!key) continue;
     const rec = provenance.get(key) ?? { vendorOnly: true, hasPath: false, grave: false };
-    const p = (e.path ?? "").trim();
+    const p = eventPath(e);
     if (p) {
       rec.hasPath = true;
       if (!VENDOR_INSTALL_ROOT.test(p)) rec.vendorOnly = false;
@@ -468,15 +500,15 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   // prefix). Falls back to the short hash when no path was recorded for the file.
   const binaryNameByHash = new Map<string, string>();
   for (const e of timeline) {
-    const key = (e.sha256 ?? e.md5 ?? "").trim().toLowerCase();
-    const p = (e.path ?? "").trim();
+    const key = eventHash(e);
+    const p = eventPath(e);
     if (!key || !p || binaryNameByHash.has(key)) continue;
     const base = p.split(/[\\/]/).pop();
     if (base) binaryNameByHash.set(key, base);
   }
 
   // shared-hash hops: chronological chain across every host the binary touched (high confidence).
-  const byHash = earliestPerHost((e) => e.sha256 ?? e.md5);
+  const byHash = earliestPerHost(eventHash);
   for (const [h, hosts] of byHash) {
     if (hosts.size < 2) continue;
     if (isInstalledSoftware(h)) continue;              // installed vendor software ≠ movement
@@ -484,12 +516,13 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
     const binary = binaryNameByHash.get(h) ?? shortHash(h);
     for (let i = 1; i < ordered.length; i++) {
       const from = ordered[i - 1], to = ordered[i];
+      const fromAsset = eventAsset(from), toAsset = eventAsset(to);
       hops.push({
-        from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
+        from: hostNodeId(fromAsset), to: hostNodeId(toAsset),
         fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
         confidence: "high", rule: "shared-hash",
         actor: binary, actorKind: "binary",
-        basis: `same binary ${shortHash(h)}: ${from.asset!.trim()} → ${to.asset!.trim()}`,
+        basis: `same binary ${shortHash(h)}: ${fromAsset} → ${toAsset}`,
         eventIds: [from.id, to.id],
       });
     }
@@ -499,9 +532,9 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
   // (medium confidence — a roaming account is signal, not proof of an attacker's hand).
   const byAccount = new Map<string, Map<string, ForensicEvent>>();
   for (const e of timeline) {
-    const asset = (e.asset ?? "").trim();
+    const asset = eventAsset(e);
     if (!asset) continue;
-    for (const acct of extractAccounts(e.description)) {
+    for (const acct of canonicalAccounts(e)) {
       if (isPseudoAccount(acct)) continue;
       const hosts = byAccount.get(acct) ?? new Map<string, ForensicEvent>();
       const assetKey = asset.toLowerCase();
@@ -515,12 +548,13 @@ export function buildLateralPaths(state: InvestigationState, window?: TimeWindow
     const ordered = [...hosts.values()].sort((a, b) => timeOf(a.timestamp) - timeOf(b.timestamp));
     for (let i = 1; i < ordered.length; i++) {
       const from = ordered[i - 1], to = ordered[i];
+      const fromAsset = eventAsset(from), toAsset = eventAsset(to);
       hops.push({
-        from: hostNodeId(from.asset!.trim()), to: hostNodeId(to.asset!.trim()),
+        from: hostNodeId(fromAsset), to: hostNodeId(toAsset),
         fromTimestamp: from.timestamp, toTimestamp: to.timestamp,
         confidence: "medium", rule: "shared-account",
         actor: acct, actorKind: "account",
-        basis: `${acct} active on ${from.asset!.trim()} then ${to.asset!.trim()}`,
+        basis: `${acct} active on ${fromAsset} then ${toAsset}`,
         eventIds: [from.id, to.id],
       });
     }

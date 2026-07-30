@@ -21,6 +21,7 @@
 // rows so a summary report still lands on the timeline rather than being dropped.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -353,17 +354,89 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
     .slice(0, 400);
 
   const procName = baseName(exe) || comm || undefined;
+  const timestamp = ev.tsMs > 0 ? new Date(ev.tsMs).toISOString() : "";
+  const pidRaw = Number(f["pid"]);
+  const pid = Number.isInteger(pidRaw) && pidRaw > 0 ? pidRaw : undefined;
+  const authEvent = ptype === "USER_LOGIN" || ptype === "USER_AUTH" || ptype === "USER_ACCT";
+  const sourceAddress = cleanIp(addr) || saddrInfo?.ip;
+  const canonical = createCanonicalEvent({
+    event: {
+      category: authEvent ? "authentication" : procName || cmdLine ? "process" : "other",
+      type: authEvent ? "logon" : procName || cmdLine ? "observation" : ptype.toLowerCase(),
+      ...(authEvent ? { outcome: failed ? "failed" : "success" } : {}),
+    },
+    ...(acct ? {
+      actor: {
+        kind: "account",
+        id: acct,
+        ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
+      },
+      account: {
+        id: acct,
+        ...(!/^\d+$/.test(acct) ? { name: acct } : {}),
+      },
+    } : {}),
+    ...(node ? { target: { kind: "host", name: node } } : {}),
+    ...(authEvent ? {
+      authentication: { sessionId: ev.serial, mechanism: ptype.toLowerCase() },
+      ...(term ? { session: { id: ev.serial, terminal: term } } : { session: { id: ev.serial } }),
+    } : {}),
+    ...(sourceAddress ? {
+      network: {
+        source: {
+          address: sourceAddress,
+          ...(saddrInfo?.port ? { port: saddrInfo.port } : {}),
+        },
+      },
+    } : {}),
+    ...(procName || exe || cmdLine || pid ? {
+      process: {
+        ...(pid ? { pid } : {}),
+        ...(procName ? { name: procName } : {}),
+        ...(exe ? { executable: exe } : {}),
+        ...(cmdLine ? { commandLine: cmdLine } : {}),
+      },
+    } : {}),
+    ...(ev.pathNames[0] ? {
+      file: { path: ev.pathNames[0], name: baseName(ev.pathNames[0]) },
+    } : {}),
+    time: {
+      observed: ev.tsMs > 0 ? String(ev.tsMs / 1000) : "",
+      normalized: timestamp,
+      timezone: "UTC",
+      precision: "millisecond",
+    },
+    evidence: {
+      rawRecords: [{ source: "auditd", locator: `serial:${ev.serial}`, recordId: ev.serial }],
+    },
+    producer: {
+      importer: "auditd",
+      parserVersion: "1",
+      mappingVersion: "auditd-v1",
+      ruleVersions: ["auditd-severity-v1"],
+    },
+    rawFieldMap: {
+      "time.observed": ["msg=audit"],
+      ...(acct ? { "actor.id": ["acct", "uid", "auid"], "account.id": ["acct", "uid", "auid"] } : {}),
+      ...(node ? { "target.name": ["node"] } : {}),
+      ...(procName ? { "process.name": ["exe", "comm"] } : {}),
+      ...(exe ? { "process.executable": ["exe"] } : {}),
+      ...(cmdLine ? { "process.commandLine": ["EXECVE.a0..aN", "proctitle", "cmd"] } : {}),
+      ...(sourceAddress ? { "network.source.address": ["addr", "hostname", "SOCKADDR.saddr"] } : {}),
+    },
+  });
   return {
-    timestamp: ev.tsMs > 0 ? new Date(ev.tsMs).toISOString() : "",
+    timestamp,
     description,
     severity,
     mitre,
     aggKey,
+    canonical,
     sources: ["auditd"],
     ...(node ? { asset: node } : {}),
     ...(exe && exe.includes("/") ? { path: exe } : {}),
     ...(procName ? { processName: procName } : {}),
-    ...(addr || saddrInfo ? { srcIp: cleanIp(addr) || saddrInfo?.ip } : {}),
+    ...(sourceAddress ? { srcIp: sourceAddress } : {}),
     ...(saddrInfo?.port ? { port: saddrInfo.port } : {}),
   };
 }
@@ -447,15 +520,16 @@ export function parseAuditdLog(text: string, opts: AuditdImportOptions = {}): Au
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const finalEvents = stampSourceArtifactHash(events, text);
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   return {
-    events,
+    events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: finalEvents.length,
     dropped: Math.max(0, total - represented),
     groups,
     format,

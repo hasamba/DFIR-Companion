@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import {
   parseLoginEvent, displayAccountName, isNoiseAccount,
   buildLoginGraph, loginEdgeEvents, DEFAULT_MAX_EDGES,
@@ -28,6 +29,34 @@ const LOGON = (acct: string, host: string, type: number, o: { failed?: boolean; 
   });
 
 describe("parseLoginEvent", () => {
+  it("reads identity from the canonical envelope when display wording changes", () => {
+    const event = ev({
+      description: "Authentication event wording deliberately changed",
+      asset: "legacy-wrong-host",
+      canonical: createCanonicalEvent({
+        event: { category: "authentication", type: "logon", outcome: "success" },
+        actor: { kind: "account", name: "CORP\\canonical-user" },
+        target: { kind: "host", name: "SRV-CANONICAL" },
+        authentication: { logonType: 10, sessionId: "0xabc" },
+        session: { terminal: "WKSTN-01" },
+        network: { source: { address: "203.0.113.20" } },
+        time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+        evidence: { rawRecords: [{ source: "test", locator: "row:0" }] },
+        producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+      }),
+    });
+
+    expect(parseLoginEvent(event)).toEqual({
+      account: "CORP\\canonical-user",
+      host: "SRV-CANONICAL",
+      logonType: 10,
+      typeName: "RemoteInteractive/RDP",
+      outcome: "success",
+      sourceIp: "203.0.113.20",
+      workstation: "WKSTN-01",
+    });
+  });
+
   it("parses a successful domain-account logon with type, source ip and workstation", () => {
     const p = parseLoginEvent(ev({
       description: "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=10 - IpAddress=203.0.113.7 - WorkstationName=WKSTN-02 @ SRV-01 [RemoteInteractive/RDP from 203.0.113.7]",

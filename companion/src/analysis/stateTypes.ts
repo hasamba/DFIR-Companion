@@ -1,4 +1,5 @@
 import type { IocExcludeRule } from "./iocExclude.js";
+import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 export type FindingStatus = "open" | "confirmed" | "dismissed";
@@ -142,6 +143,10 @@ export interface ForensicEvent {
   mitreTechniques: string[];
   relatedFindingIds: string[];
   sourceScreenshots: string[];
+  // Versioned structured envelope (#374). Legacy display/correlation fields remain during the
+  // incremental migration, but identity-aware consumers read this envelope so prose wording is
+  // never their data contract. StateStore upgrades older events on read without removing fields.
+  canonical?: CanonicalEventEnvelope;
   count?: number;               // occurrences when this event aggregates many collapsed lines (e.g. 20); absent ⇒ 1
   endTimestamp?: string;        // time of the last occurrence when aggregated (timestamp is the first)
   // Clock-skew projection (#228), set ONLY on read-path copies while timeline alignment is on and

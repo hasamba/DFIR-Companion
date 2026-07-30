@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
+import { upgradeForensicEvent } from "./canonicalEvent.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
 const LEGACY_STATE_FILENAME = "investigation.json";
@@ -150,14 +151,20 @@ export class StateStore implements InvestigationStateStorage {
         caseId,
       });
     }
-    return { ...emptyState(caseId), ...(parsed ?? {}), caseId };
+    const state = { ...emptyState(caseId), ...(parsed ?? {}), caseId };
+    return state.forensicTimeline.length
+      ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
+      : state;
   }
 
   async save(state: InvestigationState): Promise<void> {
+    const canonicalState = state.forensicTimeline.length
+      ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
+      : state;
     await caseSqliteWorker.request<void>({
       op: "saveState",
-      dbPath: this.databasePath(state.caseId),
-      state,
+      dbPath: this.databasePath(canonicalState.caseId),
+      state: canonicalState,
     });
     void this.onRetry;
   }
@@ -187,7 +194,7 @@ export class StateStore implements InvestigationStateStorage {
         includeTotal: query.includeTotal,
       },
     });
-    return page;
+    return { ...page, entities: page.entities.map(upgradeForensicEvent) };
   }
 
   async appendForensicEvents(caseId: string, events: readonly ForensicEvent[]): Promise<number> {
@@ -199,7 +206,7 @@ export class StateStore implements InvestigationStateStorage {
       op: "appendEntities",
       dbPath: this.databasePath(caseId),
       kind: "forensicTimeline",
-      entities: [...events],
+      entities: events.map(upgradeForensicEvent),
     });
   }
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { upgradeForensicEvent } from "../../src/analysis/canonicalEvent.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -48,14 +49,14 @@ describe("StateStore", () => {
       aliasValues: ["www.example.invalid"], extractedFrom: ["e1"], note: "sinkholed",
       enrichments: [{ source: "test", verdict: "suspicious", fetchedAt: "2026-07-30T11:00:00Z", tags: ["c2"] }],
     }];
-    state.forensicTimeline = [{
+    state.forensicTimeline = [upgradeForensicEvent({
       id: "e1", timestamp: "2026-07-30T10:00:00Z", endTimestamp: "2026-07-30T10:01:00Z",
       description: "PowerShell connected", message: "full event message", severity: "High",
       mitreTechniques: ["T1059.001"], relatedFindingIds: ["f1"], sourceScreenshots: ["one.png"],
       asset: "HOST-1", sources: ["EDR"], artifactName: "Windows.Events", processName: "powershell.exe",
       parentName: "winword.exe", pid: 42, commandLine: "powershell -enc AAAA", dstIp: "192.0.2.1",
       port: 443, provenance: ["second-look"],
-    }];
+    })];
     state.openThreads = [{ id: "t1", description: "scope", status: "closed", openedAt: "a", closedAt: "b" }];
     state.timeline = [{ timestamp: "2026-07-30T10:00:00Z", windowSequence: 1, description: "reviewed", sourceScreenshots: ["one.png"] }];
     state.mitreTechniques = [{ id: "T1059.001", name: "PowerShell", findingIds: ["f1"] }];
@@ -93,6 +94,31 @@ describe("StateStore", () => {
     await stateStore.save(next);
 
     expect(await new StateStore(caseStore).load("c1")).toEqual(next);
+  });
+
+  it("upgrades legacy timeline rows on load while preserving their display and legacy fields", async () => {
+    const state = emptyState("c1");
+    state.forensicTimeline = [{
+      id: "legacy-auth",
+      timestamp: "2026-07-30T10:00:00Z",
+      description: "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 @ SRV-01",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["auth.png"],
+      asset: "SRV-01",
+    }];
+    await stateStore.save(state);
+
+    const [loaded] = (await stateStore.load("c1")).forensicTimeline;
+    expect(loaded.description).toBe(state.forensicTimeline[0].description);
+    expect(loaded.sourceScreenshots).toEqual(["auth.png"]);
+    expect(loaded.asset).toBe("SRV-01");
+    expect(loaded.canonical).toMatchObject({
+      event: { category: "authentication", type: "logon", outcome: "success" },
+      actor: { name: "CORP\\jdoe" },
+      target: { name: "SRV-01" },
+    });
   });
 
   it("queries indexed event fields with a stable cursor", async () => {
