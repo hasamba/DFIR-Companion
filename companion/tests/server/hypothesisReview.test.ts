@@ -58,7 +58,9 @@ async function makeApp(opts: { ai?: boolean; seedHypothesis?: boolean } = {}) {
   });
   const provider = ai ? new MockProvider("mock", canned) : undefined;
   const pipeline = buildRuntimePipeline({
-    provider, synthesisProvider: provider, stateStore, store, hypothesisStore,
+    // No hypothesisStore here: buildRuntimePipeline derives its own from `store`, and both it
+    // and the one handed to createApp below read the same per-case file.
+    provider, synthesisProvider: provider, stateStore, store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, hypothesisStore, aiConfigured: ai });

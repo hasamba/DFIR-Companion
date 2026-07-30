@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildMobileSummary, worstVerdict, mobileSummaryEnvOptions } from "../../src/analysis/mobileSummary.js";
-import { emptyState, type Finding, type ForensicEvent, type IOC, type InvestigationState, type Severity, type IocEnrichment } from "../../src/analysis/stateTypes.js";
+import { emptyState, type Finding, type ForensicEvent, type IOC, type InvestigationState, type IocEnrichment } from "../../src/analysis/stateTypes.js";
 
 const finding = (over: Partial<Finding> & Pick<Finding, "id" | "severity">): Finding => ({
   title: "t", description: "d", relatedIocs: [], sourceScreenshots: [], mitreTechniques: [],

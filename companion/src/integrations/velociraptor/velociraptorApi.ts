@@ -461,7 +461,7 @@ export function normalizeClientRow(row: unknown): VeloClientRecord | null {
   const r = (row ?? {}) as { client_id?: unknown; ClientId?: unknown; os_info?: Record<string, unknown>; OsInfo?: Record<string, unknown>; last_seen_at?: unknown; LastSeen?: unknown };
   const clientId = String(r.client_id ?? r.ClientId ?? "");
   if (!CLIENT_RE.test(clientId)) return null;
-  const os = (r.os_info ?? r.OsInfo ?? {}) as Record<string, unknown>;
+  const os = (r.os_info ?? r.OsInfo ?? {});
   const hostname = String(os.hostname ?? os.Hostname ?? "").trim();
   const fqdn = String(os.fqdn ?? os.Fqdn ?? "").trim();
   const last = r.last_seen_at ?? r.LastSeen;

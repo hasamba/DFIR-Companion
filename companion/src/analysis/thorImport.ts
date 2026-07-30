@@ -202,7 +202,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
   }
 
   // Most-severe first, then keep input order; cap for safety.
-  let events = order.map((s) => bySig.get(s)!);
+  const events = order.map((s) => bySig.get(s)!);
   events.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
   const capped = events.slice(0, maxEvents);
 

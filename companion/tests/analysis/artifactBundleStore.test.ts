@@ -103,7 +103,7 @@ describe("ArtifactBundleStore", () => {
 
     it("persists timeScopeParamNames and drops malformed entries", async () => {
       const saved = await store.save({
-        name: "Scoped", artifacts: ["Windows.EventLogs.Evtx"],
+        name: "Scoped", description: "", artifacts: ["Windows.EventLogs.Evtx"],
         timeScopeParamNames: {
           "Windows.EventLogs.Evtx": { start: "EarliestTime", end: "LatestTime" },
           "Bad.Types": { start: 42, end: null },              // non-string → dropped
@@ -118,13 +118,13 @@ describe("ArtifactBundleStore", () => {
     });
 
     it("leaves timeScopeParamNames undefined when none are given", async () => {
-      const saved = await store.save({ name: "Plain", artifacts: ["Windows.NTFS.MFT"] });
+      const saved = await store.save({ name: "Plain", description: "", artifacts: ["Windows.NTFS.MFT"] });
       expect(saved.timeScopeParamNames).toBeUndefined();
     });
 
     it("keeps a timeScopeParamNames entry with only start or only end", async () => {
       const saved = await store.save({
-        name: "Partial", artifacts: ["A.B", "C.D"],
+        name: "Partial", description: "", artifacts: ["A.B", "C.D"],
         timeScopeParamNames: {
           "A.B": { start: "EarliestTime" },
           "C.D": { end: "LatestTime" },
@@ -139,7 +139,7 @@ describe("ArtifactBundleStore", () => {
     it("drops whitespace-only timeScopeParamNames values and truncates to 100 chars", async () => {
       const long = "X".repeat(150);
       const saved = await store.save({
-        name: "Edge", artifacts: ["A.B"],
+        name: "Edge", description: "", artifacts: ["A.B"],
         timeScopeParamNames: {
           "A.B": { start: "   ", end: long },
         },

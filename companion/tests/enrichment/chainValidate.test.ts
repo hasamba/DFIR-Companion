@@ -5,7 +5,7 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { ParentChildResult } from "../../src/enrichment/rockyraccoon.js";
 
 function ev(over: Partial<ForensicEvent> & { id: string }): ForensicEvent {
-  return { id: over.id, timestamp: "t", description: "d", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over };
+  return { timestamp: "t", description: "d", severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...over };
 }
 const noSleep = async () => {};
 const now = () => "2026-06-04T00:00:00Z";

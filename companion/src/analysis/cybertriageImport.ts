@@ -185,7 +185,7 @@ function addProc(sink: Map<string, SiemIoc>, name: string): string | undefined {
 function taskAction(rec: Row): string {
   const actions = getCI(rec, "actions");
   if (Array.isArray(actions) && actions.length && isObject(actions[0])) {
-    const a = actions[0] as Row;
+    const a = actions[0];
     const cmd = `${str(getCI(a, "path"))} ${str(getCI(a, "args"))}`.trim();
     if (cmd) return oneLine(cmd);
   }

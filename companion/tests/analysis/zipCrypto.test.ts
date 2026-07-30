@@ -23,7 +23,6 @@ function rawEntry(archive: Buffer): { data: Buffer; crc: number; modTime: number
   const modTime = archive.readUInt16LE(ptr + 12);
   const crc = archive.readUInt32LE(ptr + 16);
   const compSize = archive.readUInt32LE(ptr + 20);
-  const nameLen = archive.readUInt16LE(ptr + 28);
   const localOffset = archive.readUInt32LE(ptr + 42);
   const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
   return { data: archive.subarray(dataStart, dataStart + compSize), crc, modTime };

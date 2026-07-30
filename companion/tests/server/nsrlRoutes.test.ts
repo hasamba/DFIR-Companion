@@ -8,7 +8,6 @@ import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { NsrlStore } from "../../src/analysis/nsrlStore.js";
-import { NsrlDb } from "../../src/analysis/nsrlDb.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
 

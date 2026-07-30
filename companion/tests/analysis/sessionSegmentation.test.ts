@@ -5,7 +5,7 @@ import {
   DEFAULT_IOC_GRACE_FACTOR,
   UNKNOWN_HOST,
 } from "../../src/analysis/sessionSegmentation.js";
-import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
   return {

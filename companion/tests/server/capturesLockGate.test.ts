@@ -70,7 +70,7 @@ describe("POST /captures — case-password gate", () => {
     expect(login.status).toBe(200);
     const cookie = login.headers["set-cookie"]?.[0];
     expect(cookie).toBeTruthy();
-    const res = await request(app).post("/captures").set("Cookie", cookie!).send(CAPTURE_BODY);
+    const res = await request(app).post("/captures").set("Cookie", cookie).send(CAPTURE_BODY);
     expect(res.status).toBe(201);
   });
 
@@ -82,7 +82,7 @@ describe("POST /captures — case-password gate", () => {
   it("rate-limits brute-force: 5 wrong passwords via /captures then 429 lockout", async () => {
     await cases.updateCaseMeta("c1", { password: hashCasePassword("secret123") });
     // Hammer /captures with wrong passwords (the previously-unthrottled second entry point).
-    let statuses: number[] = [];
+    const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
       const res = await request(app).post("/captures").send({ ...CAPTURE_BODY, casePassword: `wrong${i}` });
       statuses.push(res.status);

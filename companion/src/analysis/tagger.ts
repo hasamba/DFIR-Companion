@@ -8,7 +8,7 @@
 // a tagger rule can never remove a technique or downgrade a severity the AI assigned.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { matchEvent, SEVERITIES, type CompiledRule, type CompiledRuleset } from "./taggerRules.js";
+import { matchEvent, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
 export interface RuleMatch {

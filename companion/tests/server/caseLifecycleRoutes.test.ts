@@ -123,7 +123,10 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
     const { app, store } = await harness();
     await seedCase(app, "INC-4c", "Case Four C");
     const originalArchiveCaseFolder = store.archiveCaseFolder.bind(store);
-    (store as any).archiveCaseFolder = async () => { throw new Error("simulated rename failure"); };
+    // Typed to the one method being swapped, so a rename of archiveCaseFolder breaks this test
+    // instead of silently leaving it patching a method that no longer exists.
+    const patch = store as { archiveCaseFolder: CaseStore["archiveCaseFolder"] };
+    patch.archiveCaseFolder = async () => { throw new Error("simulated rename failure"); };
     try {
       const res = await request(app)
         .post("/cases/INC-4c/export/encrypted")
@@ -132,7 +135,7 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
       expect(res.headers["x-case-removed-from-list"]).toBe("false");
       expect(res.body.length).toBeGreaterThan(0);
     } finally {
-      (store as any).archiveCaseFolder = originalArchiveCaseFolder;
+      patch.archiveCaseFolder = originalArchiveCaseFolder;
     }
   });
 });
@@ -276,7 +279,8 @@ describe("POST /cases/:id/delete", () => {
     await seedCase(app, "DEL-6", "Case Del Six");
     await request(app).patch("/cases/DEL-6/status").send({ status: "closed" });
     const original = store.deleteCaseFolder.bind(store);
-    (store as any).deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
+    patch.deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
     try {
       const res = await request(app).post("/cases/DEL-6/delete").send({ archiveFirst: "zip" });
       expect(res.status).toBe(200);
@@ -284,7 +288,7 @@ describe("POST /cases/:id/delete", () => {
       expect(res.body.deleteError).toBeTruthy();
       expect(res.body.archivePath).toContain("(no password).zip");
     } finally {
-      (store as any).deleteCaseFolder = original;
+      patch.deleteCaseFolder = original;
     }
   });
 
@@ -293,7 +297,8 @@ describe("POST /cases/:id/delete", () => {
     await seedCase(app, "DEL-6b", "Case Del Six B");
     await request(app).patch("/cases/DEL-6b/status").send({ status: "closed" });
     const original = store.deleteCaseFolder.bind(store);
-    (store as any).deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
+    const patch = store as { deleteCaseFolder: CaseStore["deleteCaseFolder"] };
+    patch.deleteCaseFolder = async () => { throw new Error("simulated delete failure"); };
     try {
       const res = await bufferRequest(
         request(app).post("/cases/DEL-6b/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
@@ -304,7 +309,7 @@ describe("POST /cases/:id/delete", () => {
       const s = await stat(join(store.casesRoot, "DEL-6b"));
       expect(s.isDirectory()).toBe(true);
     } finally {
-      (store as any).deleteCaseFolder = original;
+      patch.deleteCaseFolder = original;
     }
   });
 

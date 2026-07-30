@@ -254,7 +254,7 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   const maxIocs = opts.maxIocs ?? 5000;
   let root: unknown;
   try { root = JSON.parse(text.trim()); } catch { root = null; }
-  const reports: Row[] = Array.isArray(root) ? root.filter(isObject) as Row[] : isObject(root) ? [root] : [];
+  const reports: Row[] = Array.isArray(root) ? root.filter(isObject) : isObject(root) ? [root] : [];
   const total = reports.length;
   if (total === 0) {
     return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, signatures: 0, format: "empty" };

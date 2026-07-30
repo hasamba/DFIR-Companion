@@ -1,0 +1,29 @@
+# Generated, vendored and fixture data — never formatted, never format-checked (#385).
+node_modules/
+dist/
+coverage/
+cases/
+
+# Reference datasets refreshed by `npm run data:update-*` from ATT&CK / D3FEND / Natural Earth.
+# Reformatting them would produce a five-figure diff on the next refresh, every time.
+data/
+
+# Importer sample payloads. Their exact byte layout is part of what the importers are tested
+# against; a reformat is a silent change to the fixture.
+examples/
+
+# 9 MB of encoded Sigma rules, shipped as-is.
+encoded_rules.yml
+
+# Emitted by the packagers.
+dist-sea/
+dist-appimage/
+dist-choco/
+
+# Lockfile — npm owns its formatting.
+package-lock.json
+
+# Machine-written ratchet ledgers. `check-file-size.mjs --update` / `check-imports.mjs --update`
+# own their layout; formatting them here would make every --update produce a spurious diff.
+scripts/file-size-ledger.json
+scripts/import-cycles.json

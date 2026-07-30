@@ -38,7 +38,7 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
     if (!ruleset.rules.length) return;
 
     const mutateForensic = settings.scope !== "super" && !!stateStore;
-    const state = mutateForensic ? await stateStore!.load(caseId) : null;
+    const state = mutateForensic ? await stateStore.load(caseId) : null;
 
     const applied = await runAndApplyTagger({
       caseId,

@@ -98,7 +98,7 @@ export function registerComplianceRoutes(app: Express, ctx: RouteContext): void 
         // null restores "all frameworks"; an array (even empty) is a deliberate narrowing.
         if (raw === null) patch.frameworks = undefined;
         else if (Array.isArray(raw) && raw.every((f) => typeof f === "string")) {
-          patch.frameworks = raw as string[];
+          patch.frameworks = raw;
         } else {
           return res.status(400).json({ error: "frameworks must be an array of strings or null" });
         }

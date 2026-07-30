@@ -110,7 +110,7 @@ class FileLogWriter implements LogWriter {
       const stream = createWriteStream(path, { flags: "a" });
       stream.on("error", (err) => {
         this.streams.set(path, null);
-        console.error(`[log] file sink disabled for ${path}: ${(err as Error).message}`);
+        console.error(`[log] file sink disabled for ${path}: ${err.message}`);
       });
       return stream;
     } catch (err) {

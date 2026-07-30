@@ -75,7 +75,7 @@ export class NotificationConfigStore {
       return raw
         .map((c) => {
           const parsed = channelSchema.safeParse(c);
-          return parsed.success ? (parsed.data as NotificationChannel) : null;
+          return parsed.success ? (parsed.data) : null;
         })
         .filter((c): c is NotificationChannel => c !== null);
     } catch (err) {

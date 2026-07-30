@@ -1,4 +1,4 @@
-import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
+import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind } from "./provider.js";
 
 export interface HuntingChOptions {
   apiKey: string;    // unified abuse.ch Auth-Key (one key from https://auth.abuse.ch/)

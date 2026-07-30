@@ -525,11 +525,15 @@ describe("renderMarkdownReport", () => {
     const hyp = [
       { id: "h1", title: "Open lead", description: "", expectedOutcome: "proxy logs showing a click",
         status: "open" as const, relatedTechniques: ["T1566"], relatedEventIds: ["e1"], relatedIocIds: [],
-        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, createdAt: now, updatedAt: now },
+        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
+        assignee: "", notes: "", source: "analyst" as const, analystTouched: true, needsReview: false,
+        createdAt: now, updatedAt: now, statusHistory: [] },
       { id: "h2", title: "Initial access was phishing", description: "macro-laden attachment",
         expectedOutcome: "", status: "supported" as const, relatedTechniques: [], relatedEventIds: ["e2", "e3"],
         relatedIocIds: ["i1"], assignee: "", notes: "confirmed via prefetch", source: "synthesis" as const,
-        analystTouched: false, sourceKey: "synth:abc", createdAt: now, updatedAt: now },
+        contradictingEventIds: [], discriminator: "", exhausted: false, exhaustedReason: "",
+        analystTouched: false, needsReview: false, sourceKey: "synth:abc",
+        createdAt: now, updatedAt: now, statusHistory: [] },
     ];
     const md = renderMarkdownReport(s, undefined, undefined, undefined, undefined, undefined, undefined, undefined, hyp);
     expect(md).toContain("## Hypotheses");
@@ -651,7 +655,8 @@ describe("renderMarkdownReport", () => {
   });
 
   describe("synthesis coverage footnote (#62)", () => {
-    const coverage = { inWindow: 412, considered: 287, omittedBudget: 120, omittedLegitimate: 5, omittedScope: 0, omittedHighSeverity: 8, promptTokensEstimate: 61000 };
+    const coverage = { inWindow: 412, considered: 287, omittedBudget: 120, omittedLegitimate: 5, omittedScope: 0,
+      omittedHighSeverity: 8, omittedInfo: 0, groupEntries: 0, groupedEvents: 0, promptTokensEstimate: 61000 };
 
     it("renders the coverage section when a snapshot is passed", () => {
       const md = renderMarkdownReport(emptyState("c1"), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, [], coverage);

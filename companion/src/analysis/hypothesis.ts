@@ -422,7 +422,7 @@ export function reconsiderHypotheses(
   now: string,
 ): ReconsiderHypothesesResult {
   let changed = false;
-  const next = hypotheses.map((h) => {
+  const next: Hypothesis[] = hypotheses.map((h) => {
     const hits =
       h.relatedEventIds.some((id) => input.fpEventIds.has(id.trim().toLowerCase())) ||
       h.relatedIocIds.some((id) => input.fpIocIds.has(id));
@@ -434,7 +434,7 @@ export function reconsiderHypotheses(
       ...h,
       needsReview: true,
       ...(flipStatus
-        ? { status: "unknown" as HypothesisStatus, statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
+        ? { status: "unknown", statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
         : {}),
       updatedAt: now,
     };

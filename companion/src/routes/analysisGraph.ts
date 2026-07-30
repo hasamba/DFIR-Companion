@@ -95,6 +95,7 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     try {
       const raw = Number(s(req.query.maxEdges));
       const maxEdges = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_EDGES;
+      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
       const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
       return res.status(200).json({ ...buildLoginGraph(events, maxEdges), generatedAt: new Date().toISOString() });
     } catch (err) {
@@ -113,6 +114,7 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     try {
       const rawLimit = Number(s(req.query.limit));
       const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 50;
+      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
       const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
       return res.status(200).json(loginEdgeEvents(events, {
         account, host,

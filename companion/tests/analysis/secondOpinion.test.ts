@@ -9,7 +9,6 @@ import {
   buildReconcilePrompt,
   reconcileResponseSchema,
   setAllPendingStatus,
-  type SecondOpinion,
 } from "../../src/analysis/secondOpinion.js";
 
 function finding(over: Partial<Finding> & Pick<Finding, "id" | "title" | "severity">): Finding {
@@ -139,10 +138,6 @@ describe("buildSecondOpinion + mergeReconcileVerdicts", () => {
 });
 
 describe("applyAcceptedSecondOpinion", () => {
-  function recordWith(mutate: (so: SecondOpinion) => SecondOpinion): SecondOpinion {
-    return mutate(buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" }));
-  }
-
   it("does nothing for pending/rejected deltas", () => {
     const so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
     const out = applyAcceptedSecondOpinion(A, so);

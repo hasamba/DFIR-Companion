@@ -83,7 +83,7 @@ export function buildRfc822Message(opts: Rfc822Options): string {
 
 // RFC 2047 encoded-word for a non-ASCII subject; raw when it's plain ASCII.
 function encodeHeaderWord(s: string): string {
-  // eslint-disable-next-line no-control-regex
+   
   if (/^[\x20-\x7e]*$/.test(s)) return s;
   return `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`;
 }

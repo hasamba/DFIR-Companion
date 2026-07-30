@@ -283,6 +283,10 @@ async function createIco() {
   return icoPath;
 }
 
+// Not called: the main() flow deliberately skips the embed because rcedit hangs on the
+// postject-modified binary (see the comment above createIco() below). Kept so the working
+// rcedit invocation is not lost the day that is fixed.
+// eslint-disable-next-line no-unused-vars
 async function embedIcon(icoPath) {
   if (process.platform !== "win32") {
     console.log("[sea] skip icon embed (not Windows — run on Windows CI to get the icon)");

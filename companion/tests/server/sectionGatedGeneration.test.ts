@@ -15,6 +15,7 @@ import { emptyState, type InvestigationState } from "../../src/analysis/stateTyp
 // disabled report section never reaches the model — so `calls` must stay 0 on a gated request.
 class CountingProvider implements AIProvider {
   readonly name = "counting";
+  readonly model = "mock-model";
   calls = 0;
   async analyze(): Promise<AnalyzeResult> {
     this.calls++;

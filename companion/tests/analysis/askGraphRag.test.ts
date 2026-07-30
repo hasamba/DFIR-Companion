@@ -12,6 +12,7 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 // the model can trace multi-hop paths through real relationships, not just the flat timeline.
 class CapturingProvider implements AIProvider {
   readonly name = "capture";
+  readonly model = "mock-model";
   lastReq?: AnalyzeRequest;
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.lastReq = req;

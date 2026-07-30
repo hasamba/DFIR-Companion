@@ -54,7 +54,7 @@ describe("ProviderHealthCache", () => {
   });
 
   it("caches a DOWN result with the error detail and fires onProbe only on real probes", async () => {
-    let t = 0;
+    const t = 0;
     const events: Array<[string, ProviderHealth]> = [];
     const state = { up: false, probes: 0 };
     const cache = new ProviderHealthCache({ ttlMs: 1000, monotonic: () => t, onProbe: (n, h) => events.push([n, h]) });

@@ -97,7 +97,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
 
       options.onTags?.(caseId);
       if (summary.mutatedCount > 0) options.onState?.(await options.stateStore.load(caseId));
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "tagger-run", actor: "tagger",
         detail: `tagged ${summary.result.totalMatched} event(s), ${summary.tagsWritten} tag(s), ${summary.mutatedCount} severity/MITRE update(s)`,
       });
@@ -120,7 +120,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     try {
       const removed = await options.tagsStore.removeByAuthorPrefix(caseId, TAGGER_AUTHOR_PREFIX);
       if (removed) options.onTags?.(caseId);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "tagger-cleared", actor: "tagger", detail: `removed ${removed} tagger tag(s)`,
       });
       return res.status(200).json({ removed });
@@ -137,7 +137,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     if (!description) return res.status(400).json({ error: "description is required" });
     try {
       const outcome = await options.pipeline.suggestTaggerRule(req.params.id, description);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "tagger-suggest-rule",
         detail: `suggested rule from: "${description.slice(0, 120)}" — ${outcome.kind}`,
       });

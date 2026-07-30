@@ -21,7 +21,7 @@ describe("layoutOptions", () => {
     const o = layoutOptions({ layout: "concentric" });
     expect(typeof o.concentric).toBe("function");
     expect(typeof o.levelWidth).toBe("function");
-    expect(o.levelWidth()).toBe(1);
+    expect(o.levelWidth?.()).toBe(1);
   });
   it("marks breadthfirst as directed", () => {
     expect(layoutOptions({ layout: "breadthfirst" }).directed).toBe(true);

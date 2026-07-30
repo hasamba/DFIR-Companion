@@ -6,10 +6,10 @@ import {
   buildSatisfiedCollectionsBlock,
   type OpenCollectTarget,
 } from "../../src/analysis/collectSatisfaction.js";
-import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(p: Partial<ForensicEvent>): ForensicEvent {
-  return { id: p.id ?? "e1", timestamp: "2026-01-01T00:00:00Z", description: p.description ?? "", severity: p.severity ?? "Info" as Severity,
+  return { id: p.id ?? "e1", timestamp: "2026-01-01T00:00:00Z", description: p.description ?? "", severity: p.severity ?? "Info",
     mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
 }
 

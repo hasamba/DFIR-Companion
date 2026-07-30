@@ -21,6 +21,7 @@ beforeEach(async () => {
 function fakeAi(opts: { ok: boolean; name?: string; error?: string }): AIProvider {
   return {
     name: opts.name ?? "fake",
+    model: "mock-model",
     analyze: async () => {
       if (!opts.ok) throw new ProviderError(opts.error ?? "bad key", "auth");
       return { rawText: '{"ok":true}' };

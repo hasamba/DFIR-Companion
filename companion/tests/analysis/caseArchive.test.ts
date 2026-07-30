@@ -128,7 +128,7 @@ describe("archiveCase", () => {
 
   it("includes archive-manifest.json INSIDE the zip (in the manifest entry list)", async () => {
     const fs = makeFs({ "case.json": '{}' });
-    const result = await archiveCase("/cases", "c1", fs);
+    await archiveCase("/cases", "c1", fs);
     // The archive-manifest.json is added to the zip but NOT to the manifest file list
     // (it's generated, not a pre-existing file)
     const zipData = fs.written!.data;

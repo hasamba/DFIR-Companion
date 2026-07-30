@@ -286,7 +286,7 @@ describe("mergeDelta", () => {
     state = mergeDelta(state, {
       ...baseDelta,
       keyQuestions: [
-        { id: "q1", question: "Initial access?", status: "unknown", answer: "", pointer: "collect email logs" },
+        { id: "q1", question: "Initial access?", status: "unknown", answer: "", pointer: "collect email logs", relatedFindingIds: [] },
       ],
     }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
     expect(state.keyQuestions).toHaveLength(1);
@@ -296,7 +296,7 @@ describe("mergeDelta", () => {
     state = mergeDelta(state, {
       ...baseDelta,
       keyQuestions: [
-        { id: "q1", question: "Initial access?", status: "answered", answer: "phishing", pointer: "finding f3" },
+        { id: "q1", question: "Initial access?", status: "answered", answer: "phishing", pointer: "finding f3", relatedFindingIds: [] },
       ],
     }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
     expect(state.keyQuestions).toHaveLength(1);
@@ -313,7 +313,7 @@ describe("mergeDelta", () => {
     state = mergeDelta(state, {
       ...baseDelta,
       nextSteps: [
-        { id: "n1", priority: "high", action: "Pull $MFT on ALClient07", rationale: "confirm execution", pointer: "event e3" },
+        { id: "n1", priority: "high", action: "Pull $MFT on ALClient07", rationale: "confirm execution", pointer: "event e3", relatedFindingIds: [] },
       ],
     }, { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] });
     expect(state.nextSteps).toHaveLength(1);
@@ -323,7 +323,7 @@ describe("mergeDelta", () => {
     state = mergeDelta(state, {
       ...baseDelta,
       nextSteps: [
-        { id: "n2", priority: "critical", action: "Sandbox-detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2" },
+        { id: "n2", priority: "critical", action: "Sandbox-detonate Bubeus.exe", rationale: "find C2", pointer: "ioc i2", relatedFindingIds: [] },
       ],
     }, { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] });
     expect(state.nextSteps).toHaveLength(1);
@@ -484,12 +484,12 @@ describe("mergeDelta — forensic timeline dedup by id (map-indexed, O(n))", () 
 
   it("keeps distinct ids and dedups a re-import instead of doubling the timeline", () => {
     let state = emptyState("big");
-    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) } as AnalysisDelta,
+    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) },
       { windowSequence: -1, timestamp: "2026-01-01T00:00:00.000Z", sourceScreenshots: ["0001_mft.json"] });
     expect(state.forensicTimeline).toHaveLength(3000);
     // Re-import the SAME 3000 ids → must dedup (each incoming resolves via the id index, incl. events
     // pushed earlier in this very merge), not append duplicates.
-    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) } as AnalysisDelta,
+    state = mergeDelta(state, { ...baseDelta, forensicEvents: mkEvents(3000) },
       { windowSequence: -1, timestamp: "2026-01-02T00:00:00.000Z", sourceScreenshots: ["0002_mft.json"] });
     expect(state.forensicTimeline).toHaveLength(3000);
     const ids = new Set(state.forensicTimeline.map((e) => e.id));
@@ -498,7 +498,7 @@ describe("mergeDelta — forensic timeline dedup by id (map-indexed, O(n))", () 
 
   it("dedups duplicate ids WITHIN a single delta (map updated on push)", () => {
     const dupBatch = [...mkEvents(2), ...mkEvents(2)]; // ids v1e1,v1e2,v1e1,v1e2
-    const state = mergeDelta(emptyState("dup"), { ...baseDelta, forensicEvents: dupBatch } as AnalysisDelta,
+    const state = mergeDelta(emptyState("dup"), { ...baseDelta, forensicEvents: dupBatch },
       { windowSequence: -1, timestamp: "2026-01-01T00:00:00.000Z", sourceScreenshots: ["x.json"] });
     expect(state.forensicTimeline).toHaveLength(2);
   });

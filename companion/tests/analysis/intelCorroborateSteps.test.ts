@@ -28,7 +28,7 @@ describe("buildIntelCorroborationSteps (#7 deferred)", () => {
 
   it("returns nothing for a finding with behavioral corroboration or no verdict IOC", () => {
     const iocs = [ioc("i1", "203.0.113.9")];
-    const grounded = finding({ id: "f1", relatedIocs: ["i1"], corroboration: { distinctTools: 3, distinctHosts: 2, intelSources: 1, graphLinked: true } as Finding["corroboration"] });
+    const grounded = finding({ id: "f1", relatedIocs: ["i1"], corroboration: { distinctTools: 3, distinctHosts: 2, intelSources: 1, graphLinked: true } });
     expect(buildIntelCorroborationSteps({ findings: [grounded], iocs, scopedEvents: [], hostNames: new Set() })).toEqual([]);
 
     const noVerdict = finding({ id: "f2", relatedIocs: [] });

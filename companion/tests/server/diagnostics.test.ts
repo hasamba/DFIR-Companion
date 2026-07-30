@@ -277,6 +277,7 @@ describe("POST /diagnostics/ai-test", () => {
     let seen: { systemPrompt: string; userPrompt: string } | null = null;
     const fake: AIProvider = {
       name: "fake",
+      model: "mock-model",
       analyze: async (req) => { seen = { systemPrompt: req.systemPrompt, userPrompt: req.userPrompt }; return { rawText: '{"ok":true}' }; },
     };
     const app = createApp(store, { aiTestProvider: () => fake });
@@ -296,6 +297,7 @@ describe("POST /diagnostics/ai-test", () => {
   it("maps a ProviderError to an actionable kind without 500ing", async () => {
     const fake: AIProvider = {
       name: "fake",
+      model: "mock-model",
       analyze: async () => { throw new ProviderError("bad key", "auth"); },
     };
     const app = createApp(store, { aiTestProvider: () => fake });

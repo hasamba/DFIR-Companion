@@ -16,7 +16,7 @@ import { config as loadDotenv } from "dotenv";
 loadDotenv({ quiet: true });
 
 import { readFile } from "node:fs/promises";
-import { join, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";

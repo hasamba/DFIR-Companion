@@ -24,7 +24,7 @@ export class IocWhitelistStore {
           const o = r as Record<string, unknown>;
           const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : randomUUID();
           const addedAt = typeof o.addedAt === "string" && o.addedAt ? o.addedAt : new Date(0).toISOString();
-          return { id, addedAt, ...core } as IocWhitelistRule;
+          return { id, addedAt, ...core };
         })
         .filter((r): r is IocWhitelistRule => r !== null);
     } catch (err) {

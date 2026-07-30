@@ -21,7 +21,7 @@ export class UpdateCheckStore {
     if (this.cache) return this.cache;
     try {
       const raw = JSON.parse(await readFile(this.file, "utf8")) as unknown;
-      this.cache = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as UpdateCheckRecord) : {};
+      this.cache = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw) : {};
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") this.cache = {};
       else throw err;

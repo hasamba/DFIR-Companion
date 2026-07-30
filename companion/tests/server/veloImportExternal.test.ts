@@ -86,7 +86,7 @@ async function makeApp(
 
   const app = createApp(store, {
     pipeline, stateStore, superTimelineStore,
-    velociraptorClient: client as unknown as Parameters<typeof createApp>[1]["velociraptorClient"],
+    velociraptorClient: client as unknown as NonNullable<Parameters<typeof createApp>[1]>["velociraptorClient"],
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, getRowsFetchCalls: () => rowsFetchCalls };

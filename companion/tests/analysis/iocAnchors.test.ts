@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { rankConnectiveIocs, buildConnectiveIocDigest, looksSuspiciousDomain, isKnownHostAsset, shortHost } from "../../src/analysis/iocAnchors.js";
 
-function ev(id: string, asset: string, sources: string[], description: string): any {
+function ev(id: string, asset: string, sources: string[], description: string): ForensicEvent {
   return { id, timestamp: "2024-03-18T15:00:00Z", description, severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset, sources };
 }
 

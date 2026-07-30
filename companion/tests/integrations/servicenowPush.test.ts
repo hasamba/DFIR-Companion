@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
-import { pushFindingToServiceNow, pushFindingsToServiceNow, type ServiceNowClientLike, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
+import { pushFindingToServiceNow, pushFindingsToServiceNow, type ServiceNowExportStoreLike } from "../../src/integrations/servicenow/servicenowPush.js";
+import type { ServiceNowClientLike } from "../../src/integrations/servicenow/servicenowClient.js";
 
 function makeFinding(partial: Partial<Finding> = {}): Finding {
   return {

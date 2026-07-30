@@ -225,7 +225,10 @@ export class ShodanExposureProvider implements CustomerExposureProvider {
     this.maxMatches = opts.maxMatches ?? 50;
   }
 
-  async lookupEmail(): Promise<CustomerExposureResult[]> {
+  // Parameter kept (unused) so the concrete class matches the CustomerExposureProvider arity —
+  // dropping it made `new ShodanExposureProvider(...).lookupEmail(addr)` a compile error for
+  // anyone holding the class rather than the interface.
+  async lookupEmail(_email: string): Promise<CustomerExposureResult[]> {
     return [];   // Shodan maps exposed hosts/services, not email breaches
   }
 
@@ -251,7 +254,7 @@ export class ShodanExposureProvider implements CustomerExposureProvider {
       ]);
       return {
         provider: this.name,
-        targetType: "domain" as ExposureTargetType,
+        targetType: "domain",
         target: domain,
         breach: `${ip}:${port} ${service}`.trim(),
         breachDate: str(m.timestamp) || undefined,

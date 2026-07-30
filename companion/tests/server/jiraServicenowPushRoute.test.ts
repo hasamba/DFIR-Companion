@@ -8,22 +8,26 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { JiraExportStore } from "../../src/integrations/jira/jiraExportStore.js";
 import { ServiceNowExportStore } from "../../src/integrations/servicenow/servicenowExportStore.js";
-import type { JiraClientLike } from "../../src/integrations/jira/jiraPush.js";
-import type { ServiceNowClientLike } from "../../src/integrations/servicenow/servicenowPush.js";
+import type { JiraClientLike } from "../../src/integrations/jira/jiraClient.js";
+import type { ServiceNowClientLike } from "../../src/integrations/servicenow/servicenowClient.js";
 import type { Finding, InvestigationState } from "../../src/analysis/stateTypes.js";
 
 const sampleFinding: Finding = {
   id: "finding-1",
   title: "Test finding",
   description: "A test finding for ticket push.",
-  severity: "high",
+  // "high" here (lowercase) was NOT a Severity — the `as Finding` cast below swallowed it, and the
+  // ticket body this test asserts on renders whatever string it is handed (#385).
+  severity: "High",
   confidence: 80,
   relatedIocs: ["ioc-1"],
   relatedEventIds: ["evt-1"],
   sourceScreenshots: [],
   mitreTechniques: ["T1059"],
   firstSeen: "2026-07-24T10:00:00Z",
-} as Finding;
+  lastUpdated: "2026-07-24T10:00:00Z",
+  status: "open",
+};
 
 // A second finding, so a bulk push has an actual batch to work through.
 const otherFinding: Finding = { ...sampleFinding, id: "finding-2", title: "Persistence via Run key" };

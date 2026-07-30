@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderStructuredTags, buildBeaconDigest, buildAttackPhaseDigest } from "../../src/analysis/synthEvidence.js";
-import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { BeaconCandidate } from "../../src/analysis/beaconDetect.js";
 import type { AttackPhase } from "../../src/analysis/burstDetect.js";
 

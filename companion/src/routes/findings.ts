@@ -208,7 +208,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       }
       options.onFalsePositive?.(req.params.id);
       await recordLearnedPatterns(req.params.id, [marker]); // #65 accumulate the reasoned dismissal
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "mark-false-positive", actor: marker.markedBy ?? "",
         detail: `${marker.kind} ${marker.ref} (${marker.reason})`, targetType: marker.kind, targetId: marker.ref,
       });
@@ -251,7 +251,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
       await recordLearnedPatterns(req.params.id, built); // #65 accumulate the reasoned dismissals
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "mark-false-positive-batch", actor: fallbackMarkedBy ?? "",
         detail: `${built.length} item(s) marked false-positive`,
       });
@@ -271,7 +271,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const next = markers.filter((m) => m.id !== id);
       await falsePositives.save(req.params.id, next);
       options.onFalsePositive?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "unmark-false-positive",
         actor: typeof req.body?.actor === "string" ? req.body.actor : "",
         detail: removedMarker ? `${removedMarker.kind} ${removedMarker.ref}` : `marker ${id}`,
@@ -359,7 +359,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const scope: ScopeWindow = { start: norm(req.body?.start), end: norm(req.body?.end) };
       await scopeStore.save(req.params.id, scope);
       options.onScope?.(req.params.id, scope);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings", action: "scope-changed",
         detail: (scope.start || scope.end) ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}` : "scope cleared",
       });
@@ -383,9 +383,12 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   app.put("/cases/:id/correlation-profile", async (req, res) => {
     if (!options.correlationProfileStore) return res.status(501).json({ error: "correlation profile not configured" });
     try {
-      const { profileName, windowSeconds } = req.body as { profileName?: string; windowSeconds?: number };
+      const { profileName, windowSeconds } = req.body as { profileName?: unknown; windowSeconds?: unknown };
       const validNames = ["strict", "moderate", "aggressive", "custom"];
-      if (profileName !== undefined && !validNames.includes(profileName)) {
+      // Both checks now also reject the wrong TYPE, not just the wrong value: before, a POSTed
+      // `{"profileName": 42}` was typed `string`, sailed past includes() as "not in the list"
+      // only by luck, and a non-number windowSeconds reached the store.
+      if (profileName !== undefined && (typeof profileName !== "string" || !validNames.includes(profileName))) {
         return res.status(400).json({ error: "invalid profileName" });
       }
       if (windowSeconds !== undefined && (typeof windowSeconds !== "number" || windowSeconds < 0)) {
@@ -633,7 +636,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     try {
       const record = await options.findingWorkflowStore.patch(req.params.id, req.params.findingId, patch);
       options.onFindingWorkflow?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage", action: "finding-workflow", actor: patch.updatedBy ?? "",
         detail: record
           ? `finding ${req.params.findingId}: ${record.status ? `status=${record.status}` : "no status"}${record.assignee ? `, assignee=${record.assignee}` : ""}`

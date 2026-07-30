@@ -519,7 +519,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     return res.status(200).json({ disabled });
   });
   app.post("/diagnostics/preflight/control", async (req: Request, res: Response) => {
-    const { disabled } = req.body as { disabled?: boolean };
+    const { disabled } = req.body as { disabled?: unknown };
     if (typeof disabled !== "boolean") return res.status(400).json({ error: "disabled must be boolean" });
     await writePreflightControl({ disabled });
     preflightCache = null;

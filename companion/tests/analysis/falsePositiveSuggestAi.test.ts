@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
 function fakeProvider(rawText: string): AIProvider {
-  return { name: "fake", analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }) };
+  return { name: "fake", model: "mock-model", analyze: async (_req: AnalyzeRequest): Promise<AnalyzeResult> => ({ rawText }) };
 }
 
 describe("AnalysisPipeline.suggestFalsePositiveSimilarAi", () => {

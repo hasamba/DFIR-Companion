@@ -11,6 +11,7 @@ import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/provid
 
 class CapturingProvider implements AIProvider {
   readonly name = "capture";
+  readonly model = "mock-model";
   lastReq?: AnalyzeRequest;
   private readonly response: object;
   constructor(response: object = { markdown: "# Starred Events Report\n\nreport body" }) { this.response = response; }

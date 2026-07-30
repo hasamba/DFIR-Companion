@@ -1196,12 +1196,22 @@ npm run reanalyze -- mycase --reset \
 
 Planned work and ideas are tracked as **[GitHub Issues](https://github.com/hasamba/DFIR-Companion/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement)** under the `enhancement` label.
 
-## Tests
+## Tests and quality gates
 
 ```
 cd companion && npm test     # server unit tests
 cd extension && npm test     # extension unit tests
 ```
+
+CI runs six gates on every pull request — production build, test type-check, lint, format-check,
+and the file-size and circular-import ratchets. All of them run locally:
+
+```
+cd companion && npm run build && npm run typecheck && npm run lint && npm run format:check && npm run check:size && npm run check:imports && npm test
+```
+
+**[CONTRIBUTING.md](CONTRIBUTING.md)** explains what each gate is for and what to do when one
+fails — including the shared test helpers that make most type errors a one-line fix.
 
 ## Disclaimer
 

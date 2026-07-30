@@ -38,7 +38,6 @@ import {
   oneLine,
   str,
   type MappedEvent,
-  type SiemEvent,
   type SiemIoc,
   type SiemParseResult,
   maxEventsDefault,
@@ -331,7 +330,7 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
 
   for (const rec of records) {
     if (!rec || typeof rec !== "object") continue;
-    const r = rec as Row;
+    const r = rec;
     const host = oneLine(str(r["hostname"]));
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const m = mapEcarRecord(r, sink);

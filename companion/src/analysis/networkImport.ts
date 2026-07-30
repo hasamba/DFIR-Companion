@@ -158,7 +158,7 @@ function suricataIocs(row: Row, etype: string, sink: Map<string, SiemIoc>): void
   if (isObject(fi)) { addHash(sink, getCI(fi, "sha256")); addHash(sink, getCI(fi, "md5")); addFile(sink, getCI(fi, "filename")); }
 }
 
-function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+function mapSuricataAlert(row: Row, host: string, _sink: Map<string, SiemIoc>): MappedEvent {
   const sig = str(getPath(row, "alert.signature")) || "alert";
   const category = str(getPath(row, "alert.category"));
   const sigId = str(getPath(row, "alert.signature_id"));
@@ -216,7 +216,7 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
   }
 }
 
-function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+function mapZeekNotice(row: Row, host: string, _sink: Map<string, SiemIoc>): MappedEvent {
   const note = str(getCI(row, "note")) || "notice";
   const msg = str(getCI(row, "msg"));
   const sub = str(getCI(row, "sub"));

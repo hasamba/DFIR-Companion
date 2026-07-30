@@ -9,7 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { IncidentTypeStore } from "../../src/analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "../../src/analysis/collectionPlanStore.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
-import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(sources: string[]): ForensicEvent {
   return {
@@ -32,7 +32,7 @@ async function makeApp() {
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const withEvents = async (events: ForensicEvent[]) => {
     const s = await stateStore.load("c1");
-    await stateStore.save({ ...s, forensicTimeline: events } as InvestigationState);
+    await stateStore.save({ ...s, forensicTimeline: events });
   };
   return { app, stateStore, withEvents };
 }

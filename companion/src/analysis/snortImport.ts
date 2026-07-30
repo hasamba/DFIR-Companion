@@ -13,7 +13,8 @@
 // the ECAR/network importers, to keep the IOC list tight). Pure, no AI. Reuses siemImport's helpers.
 
 import type { Severity } from "./stateTypes.js";
-import { aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemEvent, type SiemIoc, type SiemParseResult,
+import {
+  aggregateEvents, addIoc, cleanIp, oneLine, type MappedEvent, type SiemIoc, type SiemParseResult,
   maxEventsDefault,
 } from "./siemImport.js";
 

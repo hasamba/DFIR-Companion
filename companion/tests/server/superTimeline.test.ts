@@ -14,6 +14,13 @@ import { EXAMPLE_IMPORTER_SPEC } from "../../src/analysis/importerSpec.js";
 import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+
+// Fills the three array fields every ForensicEvent carries but no super-timeline assertion in
+// this file reads, so each literal below stays about the fields the route actually filters on.
+function ev(p: Partial<ForensicEvent> & Pick<ForensicEvent, "id" | "timestamp" | "description" | "severity">): ForensicEvent {
+  return { mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], ...p };
+}
 
 // Harness mirrors tests/server/importerRoutes.test.ts (a real CaseStore + StateStore + a deterministic
 // runtime pipeline with NO AI provider, plus an ImporterStore so the EXAMPLE_IMPORTER_SPEC routes the
@@ -170,9 +177,9 @@ async function makeQueryApp() {
   const app = createApp(store, { pipeline, stateStore, superTimelineStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   await superTimelineStore.append("c1", [
-    { id: "e-early", timestamp: "2026-05-01T00:00:00Z", description: "early event", severity: "Low", sources: ["ToolA"] },
-    { id: "e-mid", timestamp: "2026-06-01T12:00:00Z", description: "in-range event", severity: "High", sources: ["ToolB"] },
-    { id: "e-late", timestamp: "2026-07-01T00:00:00Z", description: "late event", severity: "Low", sources: ["ToolA"] },
+    ev({ id: "e-early", timestamp: "2026-05-01T00:00:00Z", description: "early event", severity: "Low", sources: ["ToolA"] }),
+    ev({ id: "e-mid", timestamp: "2026-06-01T12:00:00Z", description: "in-range event", severity: "High", sources: ["ToolB"] }),
+    ev({ id: "e-late", timestamp: "2026-07-01T00:00:00Z", description: "late event", severity: "Low", sources: ["ToolA"] }),
   ]);
   return { app };
 }
@@ -256,8 +263,8 @@ async function makeTaggedApp() {
   const app = createApp(store, { pipeline, stateStore, superTimelineStore, tagsStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   await superTimelineStore.append("c1", [
-    { id: "e-tagme", timestamp: "2026-06-01T12:00:00Z", description: "event to tag", severity: "High", sources: ["ToolB"] },
-    { id: "e-other", timestamp: "2026-06-02T12:00:00Z", description: "untagged event", severity: "Low", sources: ["ToolA"] },
+    ev({ id: "e-tagme", timestamp: "2026-06-01T12:00:00Z", description: "event to tag", severity: "High", sources: ["ToolB"] }),
+    ev({ id: "e-other", timestamp: "2026-06-02T12:00:00Z", description: "untagged event", severity: "Low", sources: ["ToolA"] }),
   ]);
   return { app };
 }
@@ -313,7 +320,7 @@ async function makePromoteApp() {
   const app = createApp(store, { pipeline, stateStore, superTimelineStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   await superTimelineStore.append("c1", [
-    { id: "e-promote", timestamp: "2026-06-01T12:00:00Z", description: "raw MFT event", severity: "High", sources: ["ToolB"] },
+    ev({ id: "e-promote", timestamp: "2026-06-01T12:00:00Z", description: "raw MFT event", severity: "High", sources: ["ToolB"] }),
   ]);
   return { app, stateStore };
 }
@@ -500,7 +507,7 @@ async function makeCatalogApp(catalog: string[], bundleArtifacts: string[]) {
   const app = createApp(store, {
     pipeline, stateStore,
     // The route only touches listClientArtifacts + launchArtifactHunt on the client for this path.
-    velociraptorClient: client as unknown as Parameters<typeof createApp>[1]["velociraptorClient"],
+    velociraptorClient: client as unknown as NonNullable<Parameters<typeof createApp>[1]>["velociraptorClient"],
     artifactBundleStore: bundleStore,
     veloHuntStore: new VeloHuntStore(store),
   });

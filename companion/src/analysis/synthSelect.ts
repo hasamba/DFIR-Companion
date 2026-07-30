@@ -3,7 +3,7 @@ import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { extractCveIds, matchKevEntries, buildKevDigest, type KevCatalog } from "./kev.js";
-import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, isKnownHostAsset, classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
+import { rankConnectiveIocs, buildConnectiveIocDigest, shortHost, classifyVerdict, iocHasBehavioralEvent } from "./iocAnchors.js";
 import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 

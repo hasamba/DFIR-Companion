@@ -128,6 +128,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       // limit past the store cap so pagination returns the full set.
       let superEvents: ForensicEvent[] = [];
       if (options.superTimelineStore) {
+        // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
         superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
       }
       return res.status(200).json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
@@ -170,6 +171,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       const state = await options.stateStore.load(req.params.id);
       let superEvents: ForensicEvent[] = [];
       if (options.superTimelineStore) {
+        // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
         superEvents = (await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER })).events;
       }
       return res.status(200).json(buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings));
@@ -754,7 +756,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       await enrichControl.save(caseId, { providers });
       if (providers.length > 0) ctx.enrichInBackground(caseId);   // re-check; cache only queries newly-enabled / un-checked
       else ctx.enrichPending().delete(caseId);                    // disabled — stop the poller from waiting on a down provider for this case
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "enrichment", action: "enrich-control",
         detail: providers.length ? `enrichment enabled: ${providers.join(", ")}` : "enrichment disabled (no providers)",
       });

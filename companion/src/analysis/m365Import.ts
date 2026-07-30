@@ -24,7 +24,6 @@ import {
   aggregateEvents,
   cleanIp,
   addIoc,
-  firstStr,
   oneLine,
   str,
   isObject,
@@ -239,7 +238,7 @@ function mapAudit(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const result = pickStr(rec, ["result"]);
   const targets = getCI(rec, "targetResources");
   const target = Array.isArray(targets) && isObject(targets[0])
-    ? str(getCI(targets[0] as Row, "userPrincipalName") || getCI(targets[0] as Row, "displayName")) : "";
+    ? str(getCI(targets[0], "userPrincipalName") || getCI(targets[0], "displayName")) : "";
 
   const def = opSeverity(activity);
   if (initiatorIp) addIoc(sink, "ip", initiatorIp);

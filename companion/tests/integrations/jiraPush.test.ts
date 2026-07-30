@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Finding } from "../../src/analysis/stateTypes.js";
-import { pushFindingToJira, pushFindingsToJira, type JiraClientLike, type JiraExportStoreLike } from "../../src/integrations/jira/jiraPush.js";
+import { pushFindingToJira, pushFindingsToJira, type JiraExportStoreLike } from "../../src/integrations/jira/jiraPush.js";
+import type { JiraClientLike } from "../../src/integrations/jira/jiraClient.js";
 
 function makeFinding(partial: Partial<Finding> = {}): Finding {
   return {

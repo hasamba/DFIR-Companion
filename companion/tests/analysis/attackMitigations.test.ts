@@ -57,7 +57,7 @@ function dataset(
   };
 }
 
-const stateWith = (techniques: string[]): InvestigationState => ({ ...emptyState(), findings: [finding("F1", techniques)] });
+const stateWith = (techniques: string[]): InvestigationState => ({ ...emptyState("c1"), findings: [finding("F1", techniques)] });
 
 describe("buildMitigationsResult", () => {
   it("resolves a case technique to its mitigations with name/url/detail", () => {
@@ -112,7 +112,7 @@ describe("buildMitigationsResult", () => {
   it("collects techniques from findings, events, and the mitre table; counts coverage", () => {
     const ds = dataset([mit("M1049")], { T1486: [{ id: "M1049", detail: "AV" }] });
     const state: InvestigationState = {
-      ...emptyState(),
+      ...emptyState("c1"),
       findings: [finding("F1", ["T1486"])],
       forensicTimeline: [ev("E1", ["T9999"])], // unmapped
     };
@@ -124,7 +124,7 @@ describe("buildMitigationsResult", () => {
 
   it("returns an empty but well-formed result when the case has no techniques", () => {
     const ds = dataset([mit("M1026")], { T1003: [{ id: "M1026", detail: "x" }] });
-    const r = buildMitigationsResult(emptyState(), ds);
+    const r = buildMitigationsResult(emptyState("c1"), ds);
     expect(r.caseTechniqueCount).toBe(0);
     expect(r.byMitigation).toEqual([]);
     expect(r.techniques).toEqual([]);

@@ -479,7 +479,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       // #157: record the bundle deploy (no VQL — bundles are artifact lists; outcome filled on collect).
       await ctx.recordHuntDeploy(caseId, { source: "bundle", title: bundle.name, huntId: launch.huntId, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "hunt", action: "run-bundle", detail: `ran bundle "${bundle.name}" (${artifactsToRun.length} artifact(s))`,
       });
 
@@ -653,7 +653,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         // the deploy still excludes it from re-proposal and surfaces it in the hunting profile.
         await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, deployedAt: new Date().toISOString(), ...(relatedHypothesisId ? { relatedHypothesisId } : {}) });
         options.onVeloHunt?.(caseId);
-        logActivity(options.activityLogStore, options.onActivity, caseId, {
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "hunt", action: "deploy-collection", detail: `collection "${title}" on ${hostname}`,
         });
         return res.status(200).json({ mode, ...result });
@@ -682,7 +682,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       }
       await ctx.recordHuntDeploy(caseId, { source, title, vql, mitreTechniques, huntId: launch.huntId, deployedAt: new Date().toISOString(), ...(relatedHypothesisId ? { relatedHypothesisId } : {}) });
       options.onVeloHunt?.(caseId);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "hunt", action: "deploy-hunt", detail: `fleet hunt "${title}" deployed (${source})`,
       });
       return res.status(200).json({ mode, waitMinutes, ...launch });
@@ -715,7 +715,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       const result = await collectHostResolved(hostname, resolved.vql, title);
       await ctx.recordHuntDeploy(caseId, { source: "playbook", title, vql: resolved.vql, deployedAt: new Date().toISOString() });
       options.onVeloHunt?.(caseId);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "hunt", action: "deploy-collection", detail: `collection ${resolved.artifact} on ${hostname}`,
       });
       return res.status(200).json({ ...result, artifact: resolved.artifact, vql: resolved.vql });

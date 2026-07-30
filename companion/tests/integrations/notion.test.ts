@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseNotionPageId, NotionApiError, type NotionParent, type NotionPageRef, type NotionBlockRef, type NotionBotUser } from "../../src/integrations/notion/notionClient.js";
 import {
-  buildCompanionBlocks, batchBlocks, tables, paragraph, richText, callout, type NotionBlock,
+  buildCompanionBlocks, batchBlocks, tables, paragraph, richText, type NotionBlock,
 } from "../../src/integrations/notion/notionBlocks.js";
 import {
   pushCaseToNotion, type NotionClientLike, type NotionExportStoreLike,

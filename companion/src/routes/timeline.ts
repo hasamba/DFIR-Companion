@@ -72,7 +72,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
     try {
       const result = await options.pipeline.hypothesizeGaps(req.params.id);
       logLine(`[gaps] hypothesised ${result.hypotheses.length} timeline gap(s) for ${req.params.id}`);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "hypothesize-gaps", detail: `hypothesized ${result.hypotheses.length} timeline gap(s)`,
       });
       return res.status(200).json(result);
@@ -178,6 +178,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/super-timeline.jsonl", async (req: Request, res: Response) => {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     try {
+      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
       const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
       const jsonl = toTimesketchJsonlFromList(events);
       res.type("application/x-ndjson; charset=utf-8");

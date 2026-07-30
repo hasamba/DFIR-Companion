@@ -1,10 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { OpenAIProvider } from "../../src/providers/openai.js";
 import { ProviderError } from "../../src/providers/provider.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
 
 describe("OpenAIProvider — base URL validation (#246)", () => {
   // validateBaseUrl() has its own unit tests (urlValidation.test.ts); these confirm it's actually
@@ -26,7 +23,7 @@ describe("OpenAIProvider — base URL validation (#246)", () => {
 
 describe("OpenAIProvider", () => {
   it("sends images and returns assistant content", async () => {
-    const fetchFn = vi.fn(async () =>
+    const fetchFn = fetchMock(async () =>
       jsonResponse({ choices: [{ message: { content: '{"summary":"done"}' } }] }),
     );
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
@@ -44,7 +41,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("sends max_tokens when set (bounds cost / avoids OpenRouter 402), omits it otherwise", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     const withCap = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn, maxTokens: 8192 });
     await withCap.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).max_tokens).toBe(8192);
@@ -55,7 +52,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("honours an explicit imageDetail override", async () => {
-    const fetchFn = vi.fn(async () =>
+    const fetchFn = fetchMock(async () =>
       jsonResponse({ choices: [{ message: { content: "{}" } }] }),
     );
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn, imageDetail: "low" });
@@ -65,7 +62,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("context guard: throws a clear 'context' error when the prompt alone exceeds the window (no API call)", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 1000, maxTokens: 200 });
     // ~5000-token user prompt (20000 chars / 4) >> 1000-token context.
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "x".repeat(20_000), images: [] }))
@@ -78,7 +75,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("context guard: shrinks max_tokens so a large-but-fitting prompt still sends", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     // ctx 10000, margin 1000. Prompt ~2000 tokens (8000 chars). room = 10000-2000-1000 = 7000.
     const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 10_000, maxTokens: 16_000 });
     await p.analyze({ systemPrompt: "", userPrompt: "x".repeat(8_000), images: [] });
@@ -87,14 +84,14 @@ describe("OpenAIProvider", () => {
   });
 
   it("context guard: leaves max_tokens untouched when the request comfortably fits", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, contextTokens: 128_000, maxTokens: 16_000 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).max_tokens).toBe(16_000);
   });
 
   it("maps an upstream 400 about context length to an actionable message", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ error: { message: "This endpoint's maximum context length is 128000 tokens. However, you requested 251167" } }, 400));
+    const fetchFn = fetchMock(async () => jsonResponse({ error: { message: "This endpoint's maximum context length is 128000 tokens. However, you requested 251167" } }, 400));
     const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn });   // guard off (no contextTokens)
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: ProviderError) => {
       expect(e.message).toContain("context too large");
@@ -103,14 +100,14 @@ describe("OpenAIProvider", () => {
   });
 
   it("maps 429 to a rate_limit ProviderError", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ error: "slow down" }, 429));
+    const fetchFn = fetchMock(async () => jsonResponse({ error: "slow down" }, 429));
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
       .rejects.toMatchObject({ kind: "rate_limit" } as Partial<ProviderError>);
   });
 
   it("maps 402 to a 'billing' ProviderError with an actionable message", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ error: { message: "Insufficient credit balance" } }, 402));
+    const fetchFn = fetchMock(async () => jsonResponse({ error: { message: "Insufficient credit balance" } }, 402));
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
       .rejects.toMatchObject({ kind: "billing" } as Partial<ProviderError>);
@@ -127,7 +124,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("populates token usage from the response for every OpenAI-compatible provider", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       choices: [{ message: { content: "{}" } }],
       usage: { prompt_tokens: 120, completion_tokens: 45 },
     }));
@@ -137,7 +134,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("does not populate costUSD for the plain openai provider name, even if the response has it", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       choices: [{ message: { content: "{}" } }],
       usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 },
     }));
@@ -147,7 +144,7 @@ describe("OpenAIProvider", () => {
   });
 
   it("omits usage entirely when the response has none", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(result.usage).toBeUndefined();

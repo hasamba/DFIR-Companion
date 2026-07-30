@@ -1,15 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { OpenRouterProvider } from "../../src/providers/openrouter.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
 
 const OK = { choices: [{ message: { content: '{"summary":"done"}' } }] };
 
 describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
   it("defaults to the OpenRouter base URL and name", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new OpenRouterProvider({ apiKey: "k", model: "anthropic/claude-sonnet-4.6", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(p.name).toBe("openrouter");
@@ -17,7 +14,7 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
   });
 
   it("adds the unified `reasoning` field with the thinking budget when a CoT budget is set", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new OpenRouterProvider({ apiKey: "k", model: "anthropic/claude-sonnet-4.6", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
@@ -25,7 +22,7 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
   });
 
   it("omits `reasoning` without a budget or below the 1024-token minimum", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new OpenRouterProvider({ apiKey: "k", model: "m", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 500 });
@@ -35,7 +32,7 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
   });
 
   it("requests usage.include and populates costUSD from the response", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       choices: [{ message: { content: "{}" } }],
       usage: { prompt_tokens: 200, completion_tokens: 80, cost: 0.0123 },
     }));
@@ -47,7 +44,7 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
   });
 
   it("has no costUSD when OpenRouter's response omits cost", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       choices: [{ message: { content: "{}" } }],
       usage: { prompt_tokens: 200, completion_tokens: 80 },
     }));

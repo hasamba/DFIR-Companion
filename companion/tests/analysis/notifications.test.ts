@@ -237,21 +237,21 @@ describe("applyChannelPatch (secret preservation) + redactChannel", () => {
 
   it("redacts webhook URL + SMTP password for the client view", () => {
     const r = redactChannel(channel({ webhookUrl: "https://hooks.slack.com/x" }));
-    expect((r as Record<string, unknown>).webhookUrl).toBeUndefined();
+    expect(Object.hasOwn(r, "webhookUrl")).toBe(false);
     expect(r.hasWebhookUrl).toBe(true);
     const e = redactChannel(channel({ type: "email", webhookUrl: undefined, smtp: { host: "mx", port: 587, secure: false, from: "a", to: ["b"], password: "p" } }));
     expect(e.smtp?.hasPassword).toBe(true);
-    expect((e.smtp as Record<string, unknown>).password).toBeUndefined();
+    expect(Object.hasOwn(e.smtp!, "password")).toBe(false);
   });
 
   it("redacts telegram bot token for the client view", () => {
     const ch = channel({ type: "telegram", webhookUrl: undefined,
       telegram: { botToken: "secret-token", chatId: "@mychannel" } });
     const r = redactChannel(ch);
-    expect((r as Record<string, unknown>).telegram).toBeDefined();
+    expect(r.telegram).toBeDefined();
     expect(r.telegram?.hasBotToken).toBe(true);
     expect(r.telegram?.chatId).toBe("@mychannel");
-    expect((r.telegram as Record<string, unknown>).botToken).toBeUndefined();
+    expect(Object.hasOwn(r.telegram!, "botToken")).toBe(false);
   });
 });
 

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import { rankHosts, buildSignalConcentrationDigest } from "../../src/analysis/hostRanking.js";
 
-function ev(id: string, asset: string, severity: string, ts: string, mitre: string[], description: string): any {
+function ev(id: string, asset: string, severity: Severity, ts: string, mitre: string[], description: string): ForensicEvent {
   return { id, timestamp: ts, description, severity, mitreTechniques: mitre, relatedFindingIds: [], sourceScreenshots: [], asset, sources: ["Sysmon"] };
 }
 

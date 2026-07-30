@@ -40,7 +40,6 @@ import {
   baseName,
   cleanIp,
   oneLine,
-  str,
   isObject,
   getCI,
   normalizeTime,
@@ -228,7 +227,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
       const pid = pickPid(r); const nm = procName(r);
       if (pid && nm) pidIndex.set(pid, nm);
       const kids = getCI(r, "__children");
-      if (Array.isArray(kids)) index(kids.filter(isObject) as Row[]);
+      if (Array.isArray(kids)) index(kids.filter(isObject));
     }
   };
   index(rows);
@@ -263,7 +262,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
         });
       }
       const kids = getCI(r, "__children");
-      if (Array.isArray(kids)) walk(kids.filter(isObject) as Row[], name || parent);
+      if (Array.isArray(kids)) walk(kids.filter(isObject), name || parent);
     }
   };
   walk(rows, "");
@@ -603,7 +602,7 @@ function extractTables(text: string, filename: string | undefined): { tables: Ta
     if (isObject(root) && isVolatilityPluginMap(root)) {
       const tables = Object.entries(root)
         .filter(([, v]) => Array.isArray(v))
-        .map(([k, v]) => ({ plugin: k, rows: (v as unknown[]).filter(isObject) as Row[] }))
+        .map(([k, v]) => ({ plugin: k, rows: (v as unknown[]).filter(isObject) }))
         .filter((t) => t.rows.length > 0);
       return { tables, format: "volatility-map", tool: "Volatility" };
     }

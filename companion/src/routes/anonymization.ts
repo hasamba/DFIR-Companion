@@ -75,7 +75,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       const reqCats = (req.body?.categories ?? {}) as Record<string, unknown>;
       const categories = { ...cur.categories };
       for (const k of Object.keys(categories) as (keyof AnonControl["categories"])[]) {
-        if (typeof reqCats[k] === "boolean") categories[k] = reqCats[k] as boolean;
+        if (typeof reqCats[k] === "boolean") categories[k] = reqCats[k];
       }
       const next: AnonControl = {
         enabled: typeof req.body?.enabled === "boolean" ? req.body.enabled : cur.enabled,
@@ -87,7 +87,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
       }
       if (next.enabled !== cur.enabled) {
-        logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+        void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
           category: "anonymization", action: "anon-control", detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
         });
       }
@@ -218,7 +218,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       );
       await presidioPending.save(caseId, rest);
       logLine(`[presidio] approved a ${entities[0].category} finding for case ${caseId}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "anonymization", action: "presidio-approve", detail: `Approved a Presidio ${entities[0].category} finding for masking`,
       });
       return res.json({ pending: rest });
@@ -243,7 +243,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       );
       await presidioPending.save(caseId, rest);
       logLine(`[presidio] suppressed a finding for case ${caseId}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "anonymization", action: "presidio-suppress", detail: "Suppressed a Presidio finding (marked not PII)",
       });
       return res.json({ pending: rest });
@@ -267,7 +267,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       return res.status(400).json({ error: "invalid case id" });
     }
     try {
-      const exportOptions = resolveRedactedExportOptions(req.query as Record<string, unknown>);
+      const exportOptions = resolveRedactedExportOptions(req.query);
       const { zip } = await buildRedactedExport(
         {
           store,
@@ -335,7 +335,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
     try {
       const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
       logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "translate-query", detail: `translated: "${request.slice(0, 120)}" — ${result.queries.length} quer(y/ies)`,
       });
       return res.status(200).json(result);

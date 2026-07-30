@@ -1,7 +1,7 @@
 // Seed the rich demo case ("GlobalTech Industries — BEC & Ransomware Precursor, May 2026").
 // Shared between the CLI script (scripts/seed-demo-case.ts) and the POST /cases/seed-demo
 // server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
-import { writeFile, mkdir, appendFile, stat, rm } from "node:fs/promises";
+import { writeFile, mkdir, stat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -35,7 +35,6 @@ function ts(day: number, h: number, m = 0, s = 0): string {
 // ── fake but plausible hashes ────────────────────────────────────────────────
 const SHA_BEACON   = "3b4a5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b";
 const SHA_MIMIKATZ = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2";
-const SHA_PAYLOAD  = "f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180";
 const SHA_RANSOM   = "deadbeef1234567890abcdef1234567890abcdef1234567890abcdef12345678";
 // 64 hex chars, like the rest — a 66-char value is not a SHA-256 and any consumer that validates
 // digest length (MISP) rejects the whole indicator (#177).

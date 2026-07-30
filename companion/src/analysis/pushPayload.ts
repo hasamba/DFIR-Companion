@@ -38,7 +38,7 @@ export function extractPushPayload(body: unknown): PushPayload {
   }
 
   if (isPlainObject(body)) {
-    const source = sanitizeSource((body as Record<string, unknown>).source);
+    const source = sanitizeSource(body.source);
     const explicitName = typeof body.filename === "string" ? body.filename : "";
 
     // { source, events:[...] } and its aliases → serialize just the array.

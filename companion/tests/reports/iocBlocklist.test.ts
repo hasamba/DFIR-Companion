@@ -260,7 +260,7 @@ describe("buildIocBlocklistStix", () => {
     ];
     const bundle = buildIocBlocklistStix(state);
     expect(bundle.objects).toHaveLength(1);
-    expect((bundle.objects[0] as { name: string }).name).toBe("1.2.3.4");
+    expect(bundle.objects[0].name).toBe("1.2.3.4");
   });
 
   it("produces a valid STIX 2.1 spec_version on every object", () => {
@@ -295,7 +295,7 @@ describe("buildIocBlocklistStix", () => {
       ioc({ id: "i3", type: "ip", value: "2.3.4.5" }),
     ];
     const bundle = buildIocBlocklistStix(state, { minSeverity: "Info" });
-    const byName = Object.fromEntries(bundle.objects.map((o) => [(o as { name: string }).name, o]));
+    const byName = Object.fromEntries(bundle.objects.map((o) => [String(o.name), o]));
     expect((byName["1.2.3.4"].indicator_types as string[])).toContain("malicious-activity");
     expect((byName["evil.com"].indicator_types as string[])).toContain("anomalous-activity");
     expect((byName["2.3.4.5"].indicator_types as string[])).toContain("unknown");

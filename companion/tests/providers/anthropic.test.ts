@@ -1,10 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import { ProviderError } from "../../src/providers/provider.js";
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
 
 const OK = { content: [{ type: "text", text: '{"summary":"done"}' }] };
 
@@ -29,7 +26,7 @@ describe("AnthropicProvider — base URL validation (#246)", () => {
 
 describe("AnthropicProvider", () => {
   it("sends images and returns assistant text", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001", fetchFn });
     const result = await p.analyze({
       systemPrompt: "s", userPrompt: "u",
@@ -44,7 +41,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("caches ONLY the static system prompt — the breakpoint never sits on case content (OPSEC)", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn });
     await p.analyze({
       systemPrompt: "SYSTEM", userPrompt: "CASE EVIDENCE",
@@ -63,7 +60,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("parses cache usage back from the response so caching can be confirmed", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       ...OK,
       usage: {
         input_tokens: 12,
@@ -80,14 +77,14 @@ describe("AnthropicProvider", () => {
   });
 
   it("omits usage when the provider does not report it", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(result.usage).toBeUndefined();
   });
 
   it("sends max_tokens (bounds cost) and the anthropic-version header", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 8192 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     const init = fetchFn.mock.calls[0][1] as RequestInit;
@@ -96,7 +93,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("enables extended thinking and bumps max_tokens above the budget when a CoT budget is set (#121)", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn, maxTokens: 16000 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
@@ -105,7 +102,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("raises max_tokens so the budget always fits when the configured cap is too low", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 4000 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 10000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
@@ -113,7 +110,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("does NOT enable thinking without a budget, or below the 1024-token minimum", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(OK));
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
     const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 500 });
@@ -123,7 +120,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("returns the text answer even when a thinking block precedes it in the response", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({
+    const fetchFn = fetchMock(async () => jsonResponse({
       content: [
         { type: "thinking", thinking: "let me reason about this..." },
         { type: "text", text: '{"summary":"reasoned"}' },
@@ -135,7 +132,7 @@ describe("AnthropicProvider", () => {
   });
 
   it("maps 529 (overloaded) to a rate_limit ProviderError", async () => {
-    const fetchFn = vi.fn(async () => jsonResponse({ error: "overloaded" }, 529));
+    const fetchFn = fetchMock(async () => jsonResponse({ error: "overloaded" }, 529));
     const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn });
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }))
       .rejects.toMatchObject({ kind: "rate_limit" } as Partial<ProviderError>);

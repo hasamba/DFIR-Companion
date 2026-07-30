@@ -1,0 +1,14 @@
+{
+  "analysis/memoryImport.ts": 1214,
+  "analysis/pipeline.ts": 6168,
+  "analysis/seedDemoCase.ts": 822,
+  "analysis/siemImport.ts": 1197,
+  "analysis/velociraptorImport.ts": 1503,
+  "integrations/velociraptor/velociraptorApi.ts": 1086,
+  "reports/markdown.ts": 1461,
+  "routes/aiSynthesis.ts": 865,
+  "routes/caseLifecycle.ts": 1313,
+  "routes/import.ts": 1784,
+  "routes/velociraptor.ts": 888,
+  "server.ts": 4276
+}

@@ -14,6 +14,7 @@ import { emptyState, type InvestigationState } from "../../src/analysis/stateTyp
 // JSON for the Pass-2 (reconcile) call — distinguished by the RECONCILE system prompt marker.
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
+  readonly model = "mock-model";
   constructor(private readonly synth: string, private readonly reconcile: string) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     return { rawText: /RECONCILING/i.test(req.systemPrompt) ? this.reconcile : this.synth };

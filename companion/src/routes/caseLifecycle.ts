@@ -40,7 +40,7 @@ import { pushFindingToServiceNow, pushFindingsToServiceNow } from "../integratio
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
 import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
-import type { IocBlocklistFormat, IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
+import type {  IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -433,7 +433,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
     if (verdictOnly === "true") opts.verdictOnly = true;
     try {
-      const data = await options.reportWriter.iocBlocklist(req.params.id, fmt as IocBlocklistFormat, opts);
+      const data = await options.reportWriter.iocBlocklist(req.params.id, fmt, opts);
       const cid = req.params.id;
       res.setHeader("Cache-Control", "private, no-cache");
       if (fmt === "stix") {
@@ -443,11 +443,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       } else if (fmt === "csv") {
         res.type("text/csv; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="ioc-blocklist-${cid}.csv"`);
-        return res.send(data as string);
+        return res.send(data);
       } else {
         res.type("text/plain; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="ioc-blocklist-${cid}.txt"`);
-        return res.send(data as string);
+        return res.send(data);
       }
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -666,7 +666,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         `assets +${result.assets.added}/${result.assets.existing}, iocs +${result.iocs.added}/${result.iocs.existing}, ` +
         `timeline +${result.timeline.added}/${result.timeline.existing}, tasks +${result.tasks.added}/${result.tasks.existing}, ` +
         `notes ${result.notes}, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-iris", detail: `pushed to DFIR-IRIS case ${result.caseId} (${result.created ? "created" : "updated"})`,
       });
       return res.status(200).json(result);
@@ -715,7 +715,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const result = await pushCaseToTimesketch(options.timesketchClient, { sketchName: caseId, state }, options.timesketchOptions);
       logLine(`[timesketch] ${caseId} push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
         `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-timesketch", detail: `pushed to Timesketch sketch ${result.sketchId} (${result.created ? "created" : "updated"})`,
       });
       return res.status(200).json(result);
@@ -734,12 +734,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const caseId = req.params.id;
     try {
+      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
       const { events } = await options.superTimelineStore.query(caseId, { limit: Number.MAX_SAFE_INTEGER });
       logLine(`[timesketch] ${caseId} super-timeline push START`);
       const result = await pushSuperTimelineToTimesketch(options.timesketchClient, { sketchName: caseId, events }, options.timesketchOptions);
       logLine(`[timesketch] ${caseId} super-timeline push DONE -> sketch ${result.sketchId} (${result.created ? "created" : "updated"}); ` +
         `timeline "${result.timelineName}" events ${result.events}${result.replacedTimeline ? " (replaced)" : ""}, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-timesketch-super", detail: `pushed super-timeline to Timesketch sketch ${result.sketchId} (${result.created ? "created" : "updated"})`,
       });
       return res.status(200).json(result);
@@ -767,7 +768,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
       logLine(`[misp] ${caseId} push DONE -> event ${result.eventId} (${result.created ? "created" : "updated"}); ` +
         `attributes +${result.attributes.added}/${result.attributes.existing}, timeline +${result.timeline.added}/${result.timeline.existing}, tags +${result.tags}, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-misp", detail: `pushed to MISP event ${result.eventId} (${result.created ? "created" : "updated"})`,
       });
       return res.status(200).json(result);
@@ -823,7 +824,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       );
       logLine(`[notion] ${caseId} export DONE -> page ${result.pageId} (${result.created ? "created" : "updated"}); ` +
         `+${result.blocksAppended} block(s) in ${result.batches} batch(es), archived ${result.blocksArchived}, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-notion", detail: `pushed to Notion page ${result.pageId} (${result.created ? "created" : "updated"})`,
       });
       return res.status(200).json(result);
@@ -865,7 +866,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         new Date().toISOString(),
       );
       logLine(`[clickup] ${caseId} push DONE: +${result.created} created, ${result.updated} updated, ${result.skipped} skipped, warnings ${result.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-clickup", detail: `pushed playbook to ClickUp list ${listId} — +${result.created} created, ${result.updated} updated`,
       });
       return res.status(200).json(result);
@@ -909,7 +910,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         finding,
       });
       logLine(`[jira] ${caseId} finding ${findingId} push DONE -> ${result.issue.key}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-jira", detail: `pushed finding ${findingId} to Jira ${result.issue.key}`,
       });
       return res.status(200).json(result);
@@ -952,7 +953,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         warnings: [...result.warnings, ...missing.map((fid) => `finding ${fid}: not found in this case`)],
       };
       logLine(`[jira] ${caseId} bulk push DONE: +${body.created} created, ${body.updated} updated, ${body.skipped} skipped, warnings ${body.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-jira", detail: `pushed ${findings.length} finding(s) to Jira ${projectKey} — +${body.created} created, ${body.updated} updated`,
       });
       return res.status(200).json(body);
@@ -994,7 +995,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         subcategory: typeof req.body?.subcategory === "string" ? req.body.subcategory : options.servicenowOptions?.subcategory,
       });
       logLine(`[servicenow] ${caseId} finding ${findingId} push DONE -> ${result.incident.number}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-servicenow", detail: `pushed finding ${findingId} to ServiceNow ${result.incident.number}`,
       });
       return res.status(200).json(result);
@@ -1034,7 +1035,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         warnings: [...result.warnings, ...missing.map((fid) => `finding ${fid}: not found in this case`)],
       };
       logLine(`[servicenow] ${caseId} bulk push DONE: +${body.created} created, ${body.updated} updated, ${body.skipped} skipped, warnings ${body.warnings.length}`);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "export", action: "push-servicenow", detail: `pushed ${findings.length} finding(s) to ServiceNow — +${body.created} created, ${body.updated} updated`,
       });
       return res.status(200).json(body);
@@ -1237,7 +1238,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // only: each entry is configured when its mandatory key(s) are present. No external calls, no secret
   // values — only booleans. (Per-feature deep status/connectivity lives in /iris/status etc.)
   app.get("/setup/status", (_req: Request, res: Response) => {
-    const has = (k: string): boolean => !!(process.env[k] && process.env[k]!.trim());
+    const has = (k: string): boolean => !!(process.env[k] && process.env[k].trim());
     res.status(200).json({
       ai: !!hasAiProvider() || has("DFIR_VISION_PROVIDER") || has("DFIR_AI_PROVIDER"),
       velociraptor: !!options.velociraptorClient || has("DFIR_VELOCIRAPTOR_API_CONFIG"),

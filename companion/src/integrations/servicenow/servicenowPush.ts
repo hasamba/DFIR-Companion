@@ -48,7 +48,7 @@ function shortDescription(caseId: string, finding: Finding): string {
   return `[DFIR ${caseId}] ${finding.title}`.slice(0, 160);
 }
 
-function description(finding: Finding, caseId: string): string {
+function description(finding: Finding, _caseId: string): string {
   const lines = [
     `Finding ID: ${finding.id}`,
     `Severity: ${finding.severity}`,

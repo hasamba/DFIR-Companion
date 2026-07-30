@@ -32,12 +32,18 @@ function hyp(partial: Partial<Hypothesis> & { id: string; title: string }): Hypo
     relatedTechniques: [],
     relatedEventIds: [],
     relatedIocIds: [],
+    contradictingEventIds: [],
+    discriminator: "",
+    exhausted: false,
+    exhaustedReason: "",
+    needsReview: false,
     assignee: "",
     notes: "",
     source: "synthesis",
     analystTouched: false,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
+    statusHistory: [],
     ...partial,
   };
 }
@@ -201,7 +207,7 @@ describe("buildSecondLookPlan", () => {
 describe("summarizeSecondLook", () => {
   it("summarizes promotions with per-request tallies", () => {
     const plan = buildSecondLookPlan([
-      { request: { source: "hypothesis", tag: "[second-look: h2]", label: "", keywords: ["rsync", "nfs-01"], reason: "" } as SecondLookRequest,
+      { request: { source: "hypothesis", tag: "[second-look: h2]", label: "", keywords: ["rsync", "nfs-01"], reason: "" },
         matchedEventIds: ["s1"], promotable: [ev({ id: "s1" }), ev({ id: "s2" })] },
     ]);
     const line = summarizeSecondLook(plan);
@@ -211,7 +217,7 @@ describe("summarizeSecondLook", () => {
 
   it("reports leads when nothing was promoted", () => {
     const plan = buildSecondLookPlan([
-      { request: { source: "model", tag: "[second-look: model1]", label: "", keywords: ["x"], reason: "r" } as SecondLookRequest,
+      { request: { source: "model", tag: "[second-look: model1]", label: "", keywords: ["x"], reason: "r" },
         matchedEventIds: [], promotable: [] },
     ]);
     expect(summarizeSecondLook(plan)).toContain("collection lead");

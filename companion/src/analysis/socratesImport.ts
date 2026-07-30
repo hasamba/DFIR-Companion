@@ -133,7 +133,7 @@ function parseMatchedEvent(row: Row): Row | null {
     try {
       const o = JSON.parse(jd);
       const m = isObject(o) ? getCI(o, "matches") : null;
-      if (Array.isArray(m) && isObject(m[0])) return m[0] as Row;
+      if (Array.isArray(m) && isObject(m[0])) return m[0];
     } catch { /* fall through */ }
   }
   return null;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -313,11 +313,11 @@ describe("updateToolRules", () => {
 
 describe("SO-CRATES as an http-transport tool", () => {
   it("is off until DFIR_TOOL_SOCRATES_URL is set", () => {
-    expect(loadToolConfig("socrates", {} as NodeJS.ProcessEnv)).toBeNull();
+    expect(loadToolConfig("socrates", {})).toBeNull();
   });
 
   it("loads from a URL rather than a binary path", () => {
-    const cfg = loadToolConfig("socrates", { DFIR_TOOL_SOCRATES_URL: "http://localhost:8000/" } as NodeJS.ProcessEnv);
+    const cfg = loadToolConfig("socrates", { DFIR_TOOL_SOCRATES_URL: "http://localhost:8000/" });
     expect(cfg).not.toBeNull();
     expect(cfg!.transport).toBe("http");
     expect(cfg!.baseUrl).toBe("http://localhost:8000");   // trailing slash trimmed

@@ -38,7 +38,7 @@ function issueSummary(caseId: string, finding: Finding): string {
   return `[DFIR ${caseId}] ${finding.title}`.slice(0, 255);
 }
 
-function issueDescription(finding: Finding, caseId: string): string {
+function issueDescription(finding: Finding, _caseId: string): string {
   const lines = [
     `Finding ID: ${finding.id}`,
     `Severity: ${finding.severity}`,

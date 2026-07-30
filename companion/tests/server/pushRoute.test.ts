@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,6 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { PushTokenStore } from "../../src/analysis/pushTokenStore.js";
-import { hashCasePassword } from "../../src/analysis/casePassword.js";
 
 // A deterministic (no-AI) THOR alert the importer maps straight to a forensic event.
 const THOR_EVENT = {

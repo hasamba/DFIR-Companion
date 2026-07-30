@@ -189,7 +189,7 @@ function fieldValues(event: ForensicEvent, field: string): string[] {
     return raw.map((x) => cap(String(x))).filter((s) => s.length > 0);
   }
   if (NUMBER_SET.has(field)) {
-    return Number.isFinite(raw as number) ? [String(raw)] : [];
+    return Number.isFinite(raw) ? [String(raw)] : [];
   }
   const s = cap(String(raw));
   return s.length > 0 ? [s] : [];

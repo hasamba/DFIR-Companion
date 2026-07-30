@@ -10,7 +10,7 @@ import {
   LATERAL_UNCONFIRMED_CONFIDENCE_CAP,
   LATERAL_UNCONFIRMED_SEVERITY_FLOOR,
 } from "../../src/analysis/findingGrounding.js";
-import type { Finding, ForensicEvent, IOC, Severity } from "../../src/analysis/stateTypes.js";
+import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 function f(p: Partial<Finding>): Finding {
   return {
@@ -21,7 +21,7 @@ function f(p: Partial<Finding>): Finding {
 }
 function ev(p: Partial<ForensicEvent>): ForensicEvent {
   return {
-    id: p.id ?? "e1", timestamp: "2026-01-01T00:00:00Z", description: "x", severity: p.severity ?? "High" as Severity,
+    id: p.id ?? "e1", timestamp: "2026-01-01T00:00:00Z", description: "x", severity: p.severity ?? "High",
     mitreTechniques: [], relatedFindingIds: p.relatedFindingIds ?? [], sourceScreenshots: [], ...p,
   };
 }

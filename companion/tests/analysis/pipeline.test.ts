@@ -175,7 +175,7 @@ describe("AnalysisPipeline", () => {
     const anonStore = new AnonControlStore(caseStore);
     await anonStore.save("c1", {
       enabled: true,
-      categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true },
+      categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
       redactSecrets: true,
     });
 
@@ -267,6 +267,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
         sentPrompt = req.userPrompt;
         return { rawText: JSON.stringify({ suggestions: [
@@ -297,6 +298,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
         sentPrompt = req.userPrompt;
         return { rawText: JSON.stringify({ suggestions: [
@@ -315,7 +317,7 @@ describe("AnalysisPipeline", () => {
   it("suggestHunts returns [] without an AI call on an empty case", async () => {
     await stateStore.save(emptyState("c1"));
     let called = false;
-    const provider = { name: "spy", analyze: async () => { called = true; return { rawText: "{}" }; } };
+    const provider = { name: "spy", model: "mock-model", analyze: async () => { called = true; return { rawText: "{}" }; } };
     const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
 
     const hunts = await pipeline.suggestHunts("c1");
@@ -544,6 +546,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       // The model complies and re-answers, but omits relatedFindingIds/keyQuestions details we don't assert on here.
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
@@ -630,6 +633,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       // Non-compliant model: echoes findings/keyQuestions back unchanged, ignoring the reanswer instruction.
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
@@ -678,6 +682,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
         return { rawText: JSON.stringify({
@@ -707,6 +712,7 @@ describe("AnalysisPipeline", () => {
     let call = 0;
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async () => {
         call += 1;
         return { rawText: JSON.stringify({
@@ -771,6 +777,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
         return { rawText: JSON.stringify({
@@ -797,6 +804,7 @@ describe("AnalysisPipeline", () => {
     let sentPrompt = "";
     const provider = {
       name: "spy",
+      model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
         return { rawText: JSON.stringify({

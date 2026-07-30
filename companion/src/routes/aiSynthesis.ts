@@ -188,7 +188,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
       if (job) options.jobManager?.finish(job.jobId);
       aiStatus("idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "deep-pass",
         // batchesFailed rides along: a run that lost batches read LESS of the case than the event
         // count suggests, and the activity log is the durable record — omitting it here files a
@@ -252,7 +252,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         } catch { /* non-fatal */ }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "synthesis",
         detail: `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
@@ -275,7 +275,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         return res.status(499).json({ error: "synthesis cancelled" });
       }
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "synthesis", detail: (err as Error).message, outcome: "error",
       });
       return sendPipelineError(res, err);
@@ -298,7 +298,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const record = await options.pipeline.secondOpinion(caseId, { deepReasoning });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       options.onSecondOpinion?.(caseId);
-      logActivity(options.activityLogStore, options.onActivity, caseId, {
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai", action: "second-opinion",
         detail: `second opinion ran — ${record.deltas.length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
@@ -330,7 +330,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
       options.onSecondOpinion?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "second-opinion-apply", detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
       });
       return res.status(200).json(record);
@@ -350,7 +350,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "second-opinion-apply-all", detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
       });
       return res.status(200).json(record);
@@ -370,7 +370,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!question) return res.status(400).json({ error: "question is required" });
     try {
       const answer = await options.pipeline.ask(req.params.id, question);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "ask", detail: `asked: "${question.slice(0, 120)}"`,
       });
       return res.status(200).json(answer);
@@ -404,7 +404,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       return res.status(409).json({ error: "The Executive summary section is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "executiveSummary" });
     try {
       const result = await options.pipeline.executiveSummary(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "executive-summary", detail: "executive summary generated",
       });
       return res.status(200).json(result);
@@ -427,7 +427,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       const starredIds = [...new Set(tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL).map((t) => t.targetId))];
       if (!starredIds.length) return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
       const result = await options.pipeline.starredReport(req.params.id, starredIds);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "starred-report", detail: `starred events report generated (${result.usedEvents}/${result.eventCount} starred events)`,
       });
       return res.status(200).json(result);
@@ -459,7 +459,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const saved = { markdown, savedAt: new Date().toISOString(), eventCount: Number(req.body?.eventCount) || 0 };
       await options.starredReportStore.save(req.params.id, saved);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "starred-report-saved", detail: "starred events report saved to case",
       });
       return res.status(200).json(saved);
@@ -502,7 +502,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         }
       }
       const result = await options.pipeline.viewSummary(req.params.id, filters, tagLabelMap);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "view-summary", detail: `view summary generated (${result.usedEvents}/${result.eventCount} matching events)`,
       });
       return res.status(200).json(result);
@@ -521,7 +521,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for remediation plan" });
     try {
       const result = await options.pipeline.remediationPlan(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "remediation-plan", detail: "remediation plan generated",
       });
       return res.status(200).json(result);
@@ -538,7 +538,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.hypothesisStore) return res.status(501).json({ error: "hypotheses not configured" });
     try {
       const result = await options.pipeline.hypothesisReview(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "hypothesis-review", detail: `reviewed ${result.reviews.length} open hypothes${result.reviews.length === 1 ? "is" : "es"}`,
       });
       return res.status(200).json(result);
@@ -558,7 +558,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       return res.status(409).json({ error: "The Timeline section (which contains the narrative) is disabled in this case's report template — enable it in Settings → Report template to generate (skipped to save tokens).", sectionDisabled: true, section: "timeline" });
     try {
       const result = await options.pipeline.generateNarrative(req.params.id);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "narrative", detail: "narrative timeline generated",
       });
       return res.status(200).json(result);
@@ -746,7 +746,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       await options.confidenceControlStore.set(req.params.id, { minConfidence: cleared ? undefined : raw });
       options.onConfidenceControl?.(req.params.id);
       const minConfidence = (await options.confidenceControlStore.load(req.params.id)).minConfidence ?? null;
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "settings", action: "confidence-control", detail: minConfidence === null ? "minConfidence cleared" : `minConfidence set to ${minConfidence}`,
       });
       return res.status(200).json({ minConfidence });
@@ -795,7 +795,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const suggestions = await options.pipeline.suggestMemoryNextSteps(req.params.id);
       logLine(`[memory] suggested ${suggestions.length} next step(s) for ${req.params.id}`);
-      logActivity(options.activityLogStore, options.onActivity, req.params.id, {
+      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai", action: "memory-next-steps", detail: `suggested ${suggestions.length} next step(s)`,
       });
       return res.status(200).json({ suggestions });

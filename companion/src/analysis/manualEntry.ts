@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import type { ForensicEvent, IOC, Severity } from "./stateTypes.js";
+import type { ForensicEvent, IOC } from "./stateTypes.js";
 import { toUtcIso } from "./timeUtc.js";
 import { repairIocValue } from "./iocValue.js";
 
@@ -64,7 +64,7 @@ export function buildManualEvent(input: unknown, deps: BuildDeps = {}): Forensic
     id: `manual-${id()}`,
     timestamp: toUtcIso(p.timestamp),
     description: p.description.trim(),
-    severity: p.severity as Severity,
+    severity: p.severity,
     mitreTechniques: p.mitreTechniques,
     relatedFindingIds: [],
     sourceScreenshots: [],

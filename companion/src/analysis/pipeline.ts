@@ -90,7 +90,7 @@ import { parseEvtxXml } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
-import { parseVelociraptorJson, parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
+import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
 import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
 import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
 import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
@@ -4350,7 +4350,7 @@ export class AnalysisPipeline {
       ...sorted.slice(focalIdx + 1, focalIdx + 8),
     ];
     const sameAsset = event.asset
-      ? universe.filter((e) => e.id !== eventId && e.asset === event!.asset).slice(0, 10)
+      ? universe.filter((e) => e.id !== eventId && e.asset === event.asset).slice(0, 10)
       : [];
     const contextIds = new Set([...nearby.map((e) => e.id), ...sameAsset.map((e) => e.id)]);
     const contextEvents = [...contextIds]
@@ -4976,6 +4976,7 @@ export class AnalysisPipeline {
     if (!this.opts.superTimelineStore) throw new Error("super-timeline not configured");
     const loaded = await this.opts.stateStore.load(caseId);
     const { events: matched } = await this.opts.superTimelineStore.query(
+      // eslint-disable-next-line no-restricted-syntax -- known unbounded super-timeline read, removed by #373; the rule exists so the count can only go down
       caseId, { ...filters, offset: 0, limit: Number.MAX_SAFE_INTEGER }, labelMap);
     if (!matched.length) throw new Error("no events match the current filters");
 

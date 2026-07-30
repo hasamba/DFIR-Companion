@@ -141,11 +141,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   const ip = cleanIp(rawIp); // AWS-service callers ("ec2.amazonaws.com") yield no IP
 
   // Console-login failure → brute-force signal; root console login is notable.
-  let failed = !!errorCode;
   if (/^consolelogin$/i.test(name)) {
     const res = str(getPath(rec, "responseElements.ConsoleLogin"));
     if (/fail/i.test(res) || /failed authentication/i.test(str(getCI(rec, "errorMessage")))) {
-      severity = worst(severity, "Medium"); if (!mitre.includes("T1110")) mitre.push("T1110"); failed = true;
+      severity = worst(severity, "Medium"); if (!mitre.includes("T1110")) mitre.push("T1110");
     }
     if (isRoot) severity = worst(severity, "High");
   }

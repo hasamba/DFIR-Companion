@@ -187,7 +187,7 @@ function isSocrates(s: Row): boolean {
   return false;
 }
 function isHayabusaJson(s: Row): boolean {
-  if (!!getCI(s, "RuleTitle")) return true;
+  if (getCI(s, "RuleTitle")) return true;
   if (!!getCI(s, "Level") && (!!getCI(s, "MitreTactics") || !!getCI(s, "MitreTags"))) return true;
   // Velociraptor's `Windows.Hayabusa.Rules` artifact emits Hayabusa VERDICT rows: a rule `Title`
   // + `Level` over a Windows `Channel`/`EID`/`RecordID` (it uses `Title`, not `RuleTitle`, and
