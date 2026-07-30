@@ -4214,8 +4214,9 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       console.error(
         `\n[DFIR] Port ${port} is already in use — a DFIR companion is probably already running.\n` +
           `       Use the existing one (http://127.0.0.1:${port}/dashboard), or stop it first:\n` +
-          `       PowerShell:  Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
-          `ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n`,
+          `       PowerShell:   Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
+          `ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n` +
+          `       Linux/macOS:  kill $(lsof -ti tcp:${port})    (or, Linux: fuser -k ${port}/tcp)\n`,
       );
       process.exit(1);
     }
