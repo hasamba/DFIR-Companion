@@ -4,6 +4,31 @@ All panels are visible by default. Some are collapsed until they have data. Use 
 
 ---
 
+## Now — Decision Cockpit
+
+**Now** is the default dashboard view for a case that has no saved view preference. It answers the
+next-decision questions before exposing the full panel inventory:
+
+- the three highest-value active leads, ranked from current findings and open hypotheses;
+- evidence that contradicts or weakens the current explanation;
+- unresolved questions and uncertainty with the exact evidence or collection action needed next;
+- running or failed imports and analyses;
+- blockers that prevent the case from being report-ready; and
+- a concise digest of findings/imports/synthesis changes since this investigator last marked the
+  case reviewed.
+
+Every card opens its owning workspace and, where evidence exists, links to the exact forensic event.
+Lead cards can be pinned, dismissed, deferred, or assigned. These actions are kept with the case and
+retain their audit history; pinning or assigning a finding also updates the normal Findings panel, so
+the two views cannot disagree. **Mark reviewed** records a separate timestamp for each investigator
+when a name is configured under Settings.
+
+The existing **Analyst**, **Lead**, **Executive**, **Triage**, **Report**, **Deep-Dive**, and
+**Hunt Prep** views remain available from the dashboard-view picker. **Analyst** includes Now above
+the full workspace; the focused **Now** view shows only the cockpit.
+
+---
+
 ## Summary Bar
 
 The top of the dashboard shows:
