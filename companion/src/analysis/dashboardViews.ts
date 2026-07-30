@@ -41,6 +41,7 @@ export interface DashboardView {
 // (Conditionally-shown sections like sec-mem-nextsteps / sec-geomap / sec-huntprofile /
 // sec-velohunts are driven by their own logic and are intentionally NOT view-managed.)
 export const DASHBOARD_SECTION_IDS: readonly string[] = [
+  "sec-now",
   "sec-ask",
   "sec-nlquery",
   "sec-exec",
@@ -87,10 +88,19 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
   {
     // Default view for new installs / any case without a saved per-case preference — see
     // `applySavedViewForCase()` in `public/dashboard.html`.
+    id: "now",
+    name: "Now",
+    description: "Decision cockpit — active leads, contradictions, gaps, live work, changes and report blockers.",
+    sections: ["sec-now"],
+    defaultSort: "severity",
+    reportTemplateId: "standard",
+  },
+  {
     id: "analyst",
     name: "Analyst",
-    description: "Dense, deep-investigation layout. Default for new cases. No severity filter.",
+    description: "Dense, deep-investigation layout with the Now cockpit and every core workspace. No severity filter.",
     sections: [
+      "sec-now",
       "sec-ask",
       "sec-exec",
       "sec-narrative",

@@ -12,8 +12,9 @@ describe("dashboardViews — seed integrity", () => {
   const sectionIds = new Set(DASHBOARD_SECTION_IDS);
   const templateIds = new Set(builtInReportTemplateIds());
 
-  it("ships the seven canonical views with unique ids and names", () => {
+  it("ships the phase cockpit plus the seven existing canonical views with unique ids and names", () => {
     expect(BUILT_IN_DASHBOARD_VIEWS.map((v) => v.id)).toEqual([
+      "now",
       "analyst",
       "lead",
       "executive",
@@ -44,7 +45,8 @@ describe("dashboardViews — seed integrity", () => {
     }
   });
 
-  it("Analyst is the densest view and the default for new cases, in the app's curated order", () => {
+  it("Now is the focused default while Analyst remains the densest existing workspace", () => {
+    expect(getDashboardView("now")!.sections).toEqual(["sec-now"]);
     const analyst = getDashboardView("analyst");
     expect(analyst).toBeDefined();
     // Curated to match the default onboarding layout — excludes the handful of sections that are
@@ -55,6 +57,7 @@ describe("dashboardViews — seed integrity", () => {
       expect(analyst!.sections.includes(id), `analyst excludes ${id}`).toBe(false);
     }
     expect(analyst!.sections).toEqual([
+      "sec-now",
       "sec-ask",
       "sec-exec",
       "sec-narrative",
@@ -150,5 +153,13 @@ describe("sec-collection-plan registration (#347)", () => {
       const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
       expect(view.sections, `${id} is missing sec-collection-plan`).toContain("sec-collection-plan");
     }
+  });
+});
+
+describe("sec-now registration (#375)", () => {
+  it("is registered and included in the focused Now and comprehensive Analyst profiles", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-now");
+    expect(getDashboardView("now")!.sections).toEqual(["sec-now"]);
+    expect(getDashboardView("analyst")!.sections).toContain("sec-now");
   });
 });
