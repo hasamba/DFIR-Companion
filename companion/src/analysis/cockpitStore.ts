@@ -5,7 +5,6 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import type {
-  CockpitAction,
   CockpitActionInput,
   CockpitCardDecision,
   CockpitDecisionState,
@@ -136,7 +135,7 @@ export class CockpitStore {
       const updated = updateDecision(current, cardId, input, at);
       const cards = [...existing.cards.filter((card) => card.cardId !== cardId), updated];
       const history = [...existing.history, {
-        action: input.action as CockpitAction,
+        action: input.action,
         cardId,
         actor,
         at,
