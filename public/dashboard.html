@@ -4411,8 +4411,8 @@
         </div>
         <div style="margin:6px 0 4px"><button id="ctAddBtn" type="button">＋ Add custom tool</button> <span id="ctMsg" class="manual-msg"></span></div>
 
-        <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--c-7e8aa0);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
-        <p class="rm-hint" style="font-size:11px;color:var(--c-9aa4b2);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
+        <div class="settings-group-head" style="margin-top:18px">MCP servers <span style="color:var(--text-dim);font-weight:400">(point case evidence at the servers Claude Code is configured with)</span></div>
+        <p class="rm-hint" style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The Companion does not speak MCP and stores no server URL or token. <strong>Configure your MCP servers in Claude Code</strong>; the Companion asks Claude Code to call them. This needs Claude Code installed and authenticated on the machine running the Companion. What you set here is policy: which of those servers may be used, what they may run, and how evidence reaches them.</p>
         <p class="rm-hint" style="font-size:11px;margin:2px 0 10px;padding:6px 8px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08)">Allowing a server lets plain-English investigations choose from <strong>everything it offers</strong> — the same access Claude Code already gives you when you use it directly. Some servers expose a <em>command runner</em> (SIFT's <code>run_command</code>, REMnux's <code>run_tool</code>), so the investigation may choose command lines on that host. Restricting tools below narrows autonomous use. Command restrictions apply only to the advanced manual-call form because an autonomous MCP loop chooses its own arguments.</p>
         <div class="sfield-row" style="margin-bottom:10px">
           <div class="sfield"><label>Investigation timeout (ms)<span class="sfield-hint">DFIR_MCP_AGENT_TIMEOUT_MS — default 3600000 (1 hour), range 60000–86400000</span></label><input id="env-DFIR_MCP_AGENT_TIMEOUT_MS" placeholder="3600000" /></div>
@@ -4424,8 +4424,8 @@
         <div class="sgrid">
           <div class="sfield"><label>Server<span class="sfield-hint">as named in Claude Code &mdash; press Refresh above to load the list</span><select id="mcpServerName"></select></label></div>
           <div class="sfield"><label>Label<span class="sfield-hint">optional display name; blank = the server name</span></label><input id="mcpLabel" placeholder="SIFT workstation" /></div>
-          <div class="sfield"><label>Restrict to tools <span style="color:var(--c-7e8aa0)">(optional)</span><span class="sfield-hint">comma-separated; blank = every tool the server offers</span></label><input id="mcpAllowedTools" placeholder="(all)" /></div>
-          <div class="sfield"><label>Restrict to commands <span style="color:var(--c-7e8aa0)">(optional)</span><span class="sfield-hint">binaries a command runner may invoke; blank = no restriction</span></label><input id="mcpAllowedCommands" placeholder="(all)" /></div>
+          <div class="sfield"><label>Restrict to tools <span style="color:var(--text-dim)">(optional)</span><span class="sfield-hint">comma-separated; blank = every tool the server offers</span></label><input id="mcpAllowedTools" placeholder="(all)" /></div>
+          <div class="sfield"><label>Restrict to commands <span style="color:var(--text-dim)">(optional)</span><span class="sfield-hint">binaries a command runner may invoke; blank = no restriction</span></label><input id="mcpAllowedCommands" placeholder="(all)" /></div>
         </div>
         <div class="settings-group-head" style="font-size:12px;margin-top:8px">How evidence reaches it</div>
         <div class="sgrid">
@@ -6073,10 +6073,10 @@
       <div id="activityLogPanel">—</div>
     </section>
     <section id="sec-mcp" style="grid-column: 1 / -1" class="collapsed"><h2>MCP Analysis<span class="ev-sub">describe the investigation in plain English and let your MCP app choose the tools &mdash; results import into the case and evidence transfer is written to the chain of custody</span></h2>
-      <div id="mcpRunUnavailable" style="display:none;font-size:12px;color:var(--c-9aa4b2)">No MCP servers allowed yet &mdash; configure them in Claude Code, then allow one in Settings &rarr; Tools.</div>
+      <div id="mcpRunUnavailable" style="display:none;font-size:12px;color:var(--text-muted)">No MCP servers allowed yet &mdash; configure them in Claude Code, then allow one in Settings &rarr; Tools.</div>
       <div id="mcpRunForm" style="display:none">
-        <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--c-9aa4b2)">What should the MCP app investigate?
-          <textarea id="mcpAgentPrompt" rows="3" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:4px" placeholder="Investigate this RAM dump for signs of compromise, persistence, and suspicious processes."></textarea>
+        <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--text-muted)">What should the MCP app investigate?
+          <textarea id="mcpAgentPrompt" rows="3" style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font:inherit;font-size:13px;resize:vertical;box-sizing:border-box;margin-top:4px" placeholder="Investigate this RAM dump for signs of compromise, persistence, and suspicious processes."></textarea>
         </label>
         <div class="sgrid">
           <div class="sfield"><label>MCP app<span class="sfield-hint">an allowed and enabled server; it chooses the tools</span><select id="mcpRunServer"></select></label></div>
@@ -6092,18 +6092,18 @@
         </div>
         <div style="margin:6px 0 4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button id="mcpAgentBtn" type="button">&#9654; Investigate</button>
-          <label style="font-size:12px;color:var(--c-9aa4b2);display:flex;align-items:center;gap:4px" title="Show the proposed findings here first. Nothing reaches the case until you approve it.">
+          <label style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px" title="Show the proposed findings here first. Nothing reaches the case until you approve it.">
             <input type="checkbox" id="mcpRunPreview" checked /> Preview before importing
           </label>
           <span id="mcpRunMsg" class="manual-msg"></span>
         </div>
-        <details style="margin-top:10px;border-top:1px solid var(--c-2a2f3a);padding-top:8px">
+        <details style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
           <summary>Advanced: call one MCP tool manually</summary>
           <div class="sgrid" style="margin-top:8px">
             <div class="sfield"><label>Tool<span class="sfield-hint">pick one, or type a name &mdash; use &ldquo;List tools&rdquo; to load them</span><input id="mcpRunTool" list="mcpRunTools" placeholder="run_command" /><datalist id="mcpRunTools"></datalist></label></div>
           </div>
-          <label style="display:block;margin-top:6px;font-size:12px;color:var(--c-9aa4b2)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
-            <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--c-0d1117);color:var(--c-cdd9e5);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
+          <label style="display:block;margin-top:6px;font-size:12px;color:var(--text-muted)">Arguments (JSON) &mdash; put <code>&lt;target&gt;</code> where the tool expects the evidence path; it becomes the path on the analysis host
+            <textarea id="mcpRunArgs" rows="4" style="width:100%;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical;box-sizing:border-box;margin-top:4px"></textarea>
           </label>
           <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="mcpRunBtn" type="button">&#9654; Run manual call</button>
@@ -6111,26 +6111,26 @@
           </div>
         </details>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">
-          <div id="mcpRunJob" style="font-size:12px;color:var(--c-9aa4b2)"></div>
+          <div id="mcpRunJob" style="font-size:12px;color:var(--text-muted)"></div>
           <button id="mcpRunCancelBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Cancel</button>
           <button id="mcpRunRetryBtn" type="button" style="display:none;padding:1px 8px;font-size:11px">Retry</button>
         </div>
-        <div id="mcpPreviewPanel" style="display:none;margin-top:8px;border:1px solid var(--c-2a2f3a);border-radius:6px;padding:8px">
-          <div id="mcpPreviewHead" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px"></div>
-          <pre id="mcpPreviewText" style="max-height:260px;overflow:auto;background:var(--c-0d1117);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+        <div id="mcpPreviewPanel" style="display:none;margin-top:8px;border:1px solid var(--border-color);border-radius:6px;padding:8px">
+          <div id="mcpPreviewHead" style="font-size:12px;color:var(--text-muted);margin-bottom:6px"></div>
+          <pre id="mcpPreviewText" style="max-height:260px;overflow:auto;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
           <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <button id="mcpPreviewImportBtn" type="button">&#10003; Import into the case</button>
-            <button id="mcpPreviewDiscardBtn" type="button" style="background:var(--c-1c2330);border-color:var(--c-2f3741);color:var(--c-9aa4b2)">Discard</button>
+            <button id="mcpPreviewDiscardBtn" type="button" style="background:var(--bg-tertiary);border-color:var(--border-color);color:var(--text-muted)">Discard</button>
             <span id="mcpPreviewMsg" class="manual-msg"></span>
           </div>
         </div>
       </div>
-      <details id="mcpReportHistory" style="margin-top:10px;border-top:1px solid var(--c-2a2f3a);padding-top:8px">
+      <details id="mcpReportHistory" style="margin-top:10px;border-top:1px solid var(--border-color);padding-top:8px">
         <summary>Imported analysis history <span id="mcpReportCount" class="ev-sub"></span></summary>
         <div id="mcpReportList" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0"></div>
         <div id="mcpReportView" style="display:none">
-          <div id="mcpReportHead" style="font-size:12px;color:var(--c-9aa4b2);margin-bottom:6px"></div>
-          <pre id="mcpReportText" style="max-height:320px;overflow:auto;background:var(--c-0d1117);border:1px solid var(--c-2f3741);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+          <div id="mcpReportHead" style="font-size:12px;color:var(--text-muted);margin-bottom:6px"></div>
+          <pre id="mcpReportText" style="max-height:320px;overflow:auto;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:4px;padding:8px;font-size:11px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
         </div>
       </details>
     </section>
@@ -23177,18 +23177,18 @@
       const el = document.getElementById("mcpServerList");
       if (!el) return;
       fetch("/mcp/status").then(r => r.ok ? r.json() : null).then(j => {
-        if (!j || !j.enabled) { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; return; }
+        if (!j || !j.enabled) { el.innerHTML = `<div style="color:var(--text-dim);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; return; }
         _mcpDiscovered = (j.claudeCode && j.claudeCode.servers) || [];
         fillMcpServerPicker(j.servers || []);
         const banner = j.claudeCode && j.claudeCode.error
           ? `<div style="font-size:12px;color:#f0776c;margin-bottom:6px">Claude Code: ${esc(j.claudeCode.error)}</div>`
-          : (!j.claudeCode ? `<div style="font-size:12px;color:var(--c-7e8aa0);margin-bottom:6px">Claude Code not asked yet — press Refresh to load its server list.</div>` : "");
+          : (!j.claudeCode ? `<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">Claude Code not asked yet — press Refresh to load its server list.</div>` : "");
         const servers = j.servers || [];
-        if (!servers.length) { el.innerHTML = banner + `<div style="color:var(--c-7e8aa0);font-size:12px">No servers allowed yet.</div>`; return; }
+        if (!servers.length) { el.innerHTML = banner + `<div style="color:var(--text-dim);font-size:12px">No servers allowed yet.</div>`; return; }
         el.innerHTML = banner + servers.map(s => {
           // Three states, deliberately distinct: not asked, asked and absent, asked and present.
           const known = s.knownToClaudeCode === null
-            ? `<span style="color:var(--c-7e8aa0)">not checked</span>`
+            ? `<span style="color:var(--text-dim)">not checked</span>`
             : !s.knownToClaudeCode
               ? `<span style="color:#f0776c" title="Claude Code has no server by this name">not in Claude Code</span>`
               : (s.connected ? `<span style="color:#7fd08a">connected</span>` : `<span style="color:#d29922">${esc(s.status || "not connected")}</span>`);
@@ -23197,20 +23197,20 @@
           const delivery = s.delivery && s.delivery.mode === "scp"
             ? `scp → ${esc((s.delivery.user ? s.delivery.user + "@" : "") + s.delivery.host + ":" + s.delivery.remoteDir)}`
             : (s.delivery && s.delivery.localPrefix ? `shared path ${esc(s.delivery.localPrefix)} → ${esc(s.delivery.remotePrefix)}` : `shared path (same both sides)`);
-          return `<div style="padding:6px 8px;border:1px solid var(--c-2a2f3a);border-radius:6px;margin-bottom:6px">
+          return `<div style="padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px">
             <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
               <strong>${esc(s.label || s.id)}</strong>
-              <code style="font-size:11px;color:var(--c-7e8aa0)">${esc(s.id)}</code>
-              <span style="font-size:12px;color:var(--c-9aa4b2)">${known}${s.enabled ? ` · plain-English analysis allowed` : ` · <span style="color:#d29922">disabled</span>`}</span>
+              <code style="font-size:11px;color:var(--text-dim)">${esc(s.id)}</code>
+              <span style="font-size:12px;color:var(--text-muted)">${known}${s.enabled ? ` · plain-English analysis allowed` : ` · <span style="color:#d29922">disabled</span>`}</span>
               <button class="mcp-del" data-id="${esc(s.id)}" type="button" style="margin-left:auto;padding:1px 8px;font-size:11px">Remove</button>
             </div>
-            <div style="font-size:11px;color:var(--c-7e8aa0);margin-top:3px">
+            <div style="font-size:11px;color:var(--text-dim);margin-top:3px">
               ${esc(delivery)} · tools: ${tools} · commands: ${cmds}
             </div>
           </div>`;
         }).join("");
         el.querySelectorAll(".mcp-del").forEach(b => b.onclick = () => deleteMcpServer(b.getAttribute("data-id")));
-      }).catch(() => { el.innerHTML = `<div style="color:var(--c-7e8aa0);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; });
+      }).catch(() => { el.innerHTML = `<div style="color:var(--text-dim);font-size:12px">MCP unavailable — restart the companion server if this 404s.</div>`; });
     }
     // Offer Claude Code's real server names rather than asking for free text — a typo here is a
     // policy entry that silently never matches anything.
