@@ -104,13 +104,13 @@ export interface LoginGraph {
 
 export const DEFAULT_MAX_EDGES = 500;
 
-export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
-  const nodes = new Map<string, LoginGraphNode>();
-  const edges = new Map<string, LoginGraphEdge>();
+export class LoginGraphBuilder {
+  private readonly nodes = new Map<string, LoginGraphNode>();
+  private readonly edges = new Map<string, LoginGraphEdge>();
 
-  const ensureNode = (type: "account" | "host", full: string): LoginGraphNode => {
+  private ensureNode(type: "account" | "host", full: string): LoginGraphNode {
     const id = `${type}:${full.toLowerCase()}`;
-    let n = nodes.get(id);
+    let n = this.nodes.get(id);
     if (!n) {
       n = {
         id,
@@ -119,17 +119,21 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
         isNoise: type === "account" && isNoiseAccount(full),
         eventCount: 0,
       };
-      nodes.set(id, n);
+      this.nodes.set(id, n);
     }
     return n;
-  };
+  }
 
-  for (const e of events) {
+  add(events: readonly ForensicEvent[]): void {
+    for (const e of events) this.addOne(e);
+  }
+
+  private addOne(e: ForensicEvent): void {
     const p = parseLoginEvent(e);
-    if (!p) continue;
+    if (!p) return;
     const n = e.count ?? 1;
-    const acct = ensureNode("account", p.account);
-    const host = ensureNode("host", p.host);
+    const acct = this.ensureNode("account", p.account);
+    const host = this.ensureNode("host", p.host);
     acct.eventCount += n;
     host.eventCount += n;
 
@@ -143,9 +147,9 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     const tsMs = Date.parse(e.timestamp);
     const last = !Number.isNaN(endMs) && endMs > tsMs ? end : e.timestamp;
     const risky = p.logonType !== undefined && logonRisk(p.logonType, p.sourceIp ?? "").severity !== undefined;
-    const edge = edges.get(key);
+    const edge = this.edges.get(key);
     if (!edge) {
-      edges.set(key, {
+      this.edges.set(key, {
         source: acct.id, target: host.id, logonType: p.typeName, outcome: p.outcome,
         count: n, firstSeen: e.timestamp, lastSeen: last, risk: risky ? "medium" : "none",
       });
@@ -156,7 +160,7 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
       const firstSeen = !Number.isNaN(eFirstMs) && tsMs < eFirstMs ? e.timestamp : edge.firstSeen;
       const lastMs = Date.parse(last);
       const lastSeen = !Number.isNaN(lastMs) && !Number.isNaN(eLastMs) && lastMs > eLastMs ? last : edge.lastSeen;
-      edges.set(key, {
+      this.edges.set(key, {
         ...edge,
         count: edge.count + n,
         firstSeen,
@@ -166,17 +170,25 @@ export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEF
     }
   }
 
-  // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
-  const sorted = [...edges.values()].sort((a, b) =>
-    b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
-  const kept = sorted.slice(0, maxEdges);
-  const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
-  return {
-    nodes: [...nodes.values()].filter((n) => referenced.has(n.id)),
-    edges: kept,
-    totalEdges: sorted.length,
-    truncated: sorted.length > kept.length,
-  };
+  build(maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
+    // Tie-break beyond count so a truncated graph is stable across imports (stored event order can shift).
+    const sorted = [...this.edges.values()].sort((a, b) =>
+      b.count - a.count || a.source.localeCompare(b.source) || a.target.localeCompare(b.target) || a.logonType.localeCompare(b.logonType));
+    const kept = sorted.slice(0, maxEdges);
+    const referenced = new Set(kept.flatMap((e) => [e.source, e.target]));
+    return {
+      nodes: [...this.nodes.values()].filter((n) => referenced.has(n.id)),
+      edges: kept,
+      totalEdges: sorted.length,
+      truncated: sorted.length > kept.length,
+    };
+  }
+}
+
+export function buildLoginGraph(events: readonly ForensicEvent[], maxEdges = DEFAULT_MAX_EDGES): LoginGraph {
+  const builder = new LoginGraphBuilder();
+  builder.add(events);
+  return builder.build(maxEdges);
 }
 
 export interface LoginEdgeEvent {

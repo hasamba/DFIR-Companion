@@ -9,7 +9,7 @@
 //
 // The parser is dependency-free (no XML library — mirrors the hand-rolled MIME email importer):
 // the Windows event XML is highly regular, so a focused scan over `<Event>` blocks is robust and
-// avoids pulling an XML parser into the Node-20 floor / bundler graph. Pure.
+// avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
 import { buildSiemResult, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
 

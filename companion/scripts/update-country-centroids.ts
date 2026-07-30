@@ -12,7 +12,7 @@
 // Run:  npm run data:update-geo   (re-fetches and overwrites companion/data/country-centroids.json)
 //
 // It is run with tsx and is NOT in tsconfig `include`, so `tsc` won't type-check it — verify by
-// running. Keep it dependency-free (Node 20+ global fetch only).
+// running. Keep it dependency-free (Node 22.5+ global fetch only).
 // Override the source URL via DFIR_COUNTRY_CENTROIDS_URL.
 
 import { writeFile, mkdir } from "node:fs/promises";

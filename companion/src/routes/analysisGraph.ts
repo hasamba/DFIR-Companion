@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { AssetType } from "../analysis/assetGraph.js";
-import { buildLoginGraph, loginEdgeEvents, DEFAULT_MAX_EDGES } from "../analysis/loginGraph.js";
+import { LoginGraphBuilder, loginEdgeEvents, DEFAULT_MAX_EDGES, type LoginEdgeEvent } from "../analysis/loginGraph.js";
 import { mergeIocs } from "../analysis/iocMerge.js";
 import type { RouteContext } from "./context.js";
 
@@ -95,8 +95,9 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     try {
       const raw = Number(s(req.query.maxEdges));
       const maxEdges = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_EDGES;
-      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
-      return res.status(200).json({ ...buildLoginGraph(events, maxEdges), generatedAt: new Date().toISOString() });
+      const builder = new LoginGraphBuilder();
+      for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) builder.add(batch);
+      return res.status(200).json({ ...builder.build(maxEdges), generatedAt: new Date().toISOString() });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -113,13 +114,20 @@ export function registerAnalysisGraphRoutes(app: Express, ctx: RouteContext): vo
     try {
       const rawLimit = Number(s(req.query.limit));
       const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : 50;
-      const { events } = await options.superTimelineStore.query(req.params.id, { limit: Number.MAX_SAFE_INTEGER });
-      return res.status(200).json(loginEdgeEvents(events, {
+      const query = {
         account, host,
         type: type || "Unknown",
-        outcome: outcome === "failed" ? "failed" : "success",
+        outcome: outcome === "failed" ? "failed" as const : "success" as const,
         limit,
-      }));
+      };
+      let total = 0;
+      const events: LoginEdgeEvent[] = [];
+      for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) {
+        const partial = loginEdgeEvents(batch, query);
+        total += partial.total;
+        if (events.length < limit) events.push(...partial.events.slice(0, limit - events.length));
+      }
+      return res.status(200).json({ events, total });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

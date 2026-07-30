@@ -5,14 +5,13 @@ import { randomUUID } from "node:crypto";
 // syncing client (Dropbox / OneDrive), antivirus, or the search indexer can hold a file open
 // for a few ms exactly when we try to rename over it — so the atomic `rename(tmp → target)`
 // throws EPERM/EBUSY/EACCES even though the write itself is fine. Retrying clears it. (This
-// bites when DFIR_CASES_ROOT lives inside a synced folder; investigation.json is written
-// rapidly during analysis.)
+// bites when DFIR_CASES_ROOT lives inside a synced folder and JSON sidecars are written rapidly.)
 const TRANSIENT_LOCK = new Set(["EPERM", "EBUSY", "EACCES"]);
 
 // How many times to retry the rename before giving up. The backoff is linear and capped at
 // BACKOFF_CAP_MS, so the default 20 retries ≈ 8.4s of total wait — enough to ride out a Defender
-// real-time scan or search-indexer handle on a large (multi-MB) investigation.json, which is what
-// bit a 90 MB USN-journal import (the state write outlasted the old ~2.2s budget → EPERM). Operators
+// real-time scan or search-indexer handle on a large sidecar can outlast a short retry budget.
+// Operators
 // on especially aggressive AV / slow disks can raise it via DFIR_ATOMIC_WRITE_RETRIES.
 const DEFAULT_RETRIES = 20;
 const BACKOFF_CAP_MS = 1000;
@@ -25,7 +24,7 @@ export function atomicWriteRetries(): number {
 }
 
 export interface AtomicWriteDeps {
-  writeFile?: (path: string, content: string) => Promise<void>;
+  writeFile?: (path: string, content: string | Uint8Array) => Promise<void>;
   rename?: (from: string, to: string) => Promise<void>;
   unlink?: (path: string) => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
@@ -42,14 +41,18 @@ export interface AtomicWriteDeps {
 // lock that won't clear within the retry budget) is rethrown.
 //
 // The temp file gets a UNIQUE name per call (a uuid suffix). Without this, two concurrent
-// saves of the same target (e.g. a manual event add saving state while a background
-// enrichment/resynthesis also saves the same investigation.json) share one `${target}.tmp`,
+// saves of the same JSON sidecar share one `${target}.tmp`,
 // clobber each other's bytes, and leave a corrupted file — valid JSON followed by the tail of
 // the other write — which then breaks every endpoint that loads state. A unique tmp means each
 // write lands in its own file and the final `rename` replaces the target atomically; the worst
 // case is a lost update (last writer wins), never a malformed file.
-export async function atomicWrite(target: string, content: string, deps: AtomicWriteDeps = {}): Promise<void> {
-  const write = deps.writeFile ?? ((p, c) => fsWriteFile(p, c, "utf8"));
+export async function atomicWrite(
+  target: string,
+  content: string | Uint8Array,
+  deps: AtomicWriteDeps = {},
+): Promise<void> {
+  const write = deps.writeFile ?? ((p, c) =>
+    typeof c === "string" ? fsWriteFile(p, c, "utf8") : fsWriteFile(p, c));
   const rename = deps.rename ?? fsRename;
   const unlink = deps.unlink ?? fsUnlink;
   const sleep = deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));

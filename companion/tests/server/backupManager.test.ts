@@ -7,6 +7,8 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
 import { BackupManager, resolveBackupConfig, RETAIN_FALLBACK_CAP, DEFAULT_MAX_BYTES, type BackupConfig, type BackupManagerDeps, type BackupTrigger } from "../../src/storage/backupManager.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 
 // ── Pure unit tests ───────────────────────────────────────────────────────────
@@ -237,7 +239,9 @@ describe("BackupManager.restoreBackup", () => {
     const now = "2026-06-28T10:00:00.000Z";
     const info = await mgr.createBackup(caseId, "pre-synthesis", now);
 
-    // Overwrite investigation.json with different content
+    // Migrate and change the primary SQLite state, then also damage the retained legacy file.
+    const stateStore = new StateStore(store);
+    await stateStore.save({ ...emptyState(caseId), lastSummary: "newer SQLite state" });
     const stateDir = store.stateDir(caseId);
     await writeFile(join(stateDir, "investigation.json"), JSON.stringify({ caseId, corrupted: true }));
 
@@ -248,6 +252,7 @@ describe("BackupManager.restoreBackup", () => {
     const after = JSON.parse(await readFile(join(stateDir, "investigation.json"), "utf8")) as Record<string, unknown>;
     expect(after["corrupted"]).toBeUndefined();
     expect(after["forensicTimeline"]).toBeDefined();
+    expect((await stateStore.load(caseId)).lastSummary).toBe("");
   });
 
   it("throws on unknown backup filename", async () => {
@@ -260,6 +265,28 @@ describe("BackupManager.restoreBackup", () => {
     const { mgr, store } = await makeManager();
     const caseId = await makeCase(store);
     await expect(mgr.restoreBackup(caseId, "2026-06-28T10-00-00-000Z_pre-synthesis.json")).rejects.toThrow("backup not found");
+  });
+
+  it("snapshots and restores the SQLite case store without base64-loading it into the manifest", async () => {
+    const { mgr, store } = await makeManager();
+    const caseId = await makeCase(store);
+    const stateStore = new StateStore(store);
+    const before = { ...emptyState(caseId), lastSummary: "before backup" };
+    before.iocs = [{ id: "i1", type: "domain", value: "example.invalid", firstSeen: "2026-07-30T00:00:00Z" }];
+    await stateStore.save(before);
+
+    const info = await mgr.createBackup(caseId, "pre-synthesis", "2026-07-30T10:00:00.000Z");
+    const manifest = JSON.parse(
+      await readFile(join(mgr.backupDir(caseId), info.filename), "utf8"),
+    ) as { files?: Record<string, unknown>; binaryFiles?: Record<string, string> };
+    expect(manifest.binaryFiles?.["investigation.sqlite"]).toMatch(/investigation\.sqlite$/);
+    expect(manifest.files?.["investigation.json"]).toBeUndefined();
+    expect(JSON.stringify(manifest)).not.toContain("SQLite format 3");
+
+    await stateStore.save({ ...before, lastSummary: "after backup", iocs: [] });
+    const result = await mgr.restoreBackup(caseId, info.filename);
+    expect(result.restored).toContain("investigation.sqlite");
+    expect(await new StateStore(store).load(caseId)).toEqual(before);
   });
 });
 

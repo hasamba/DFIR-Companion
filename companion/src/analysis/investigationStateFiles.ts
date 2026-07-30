@@ -4,7 +4,7 @@
 // export ids, in-flight hunts, forensic-gate display preference). Used by BackupManager to decide
 // which files to snapshot before synthesis/import so a bad run can be rolled back.
 export const SNAPSHOT_STATE_FILES = [
-  "investigation.json",     // the core: forensic timeline, findings, IOCs, MITRE, attacker path, questions, next steps
+  "investigation.json",     // legacy pre-SQLite core; retained in snapshots while a case still has one
   "false-positive.json",    // analyst false-positive / known-good markers
   "scope.json",             // analyst investigation time-window
   "comments.json",          // investigator comments on entities
@@ -23,4 +23,10 @@ export const SNAPSHOT_STATE_FILES = [
   "hunt-run-snapshots.json", // #80 per-fingerprint latest run snapshot, so a hunt re-run diff stays in sync with hunt-outcomes.json across an undo
   "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
   "pinned-findings.json",   // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
+] as const;
+
+// Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A
+// multi-gigabyte SQLite case must never be turned into one V8 string merely to make a backup.
+export const SNAPSHOT_BINARY_STATE_FILES = [
+  "investigation.sqlite",
 ] as const;

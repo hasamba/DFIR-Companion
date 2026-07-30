@@ -198,6 +198,15 @@ describe("super-timeline query + label routes", () => {
     expect(paged.body.events.length).toBe(1);
   });
 
+  it("streams the complete Timesketch JSONL export in cursor order", async () => {
+    const { app } = await makeQueryApp();
+    const response = await request(app).get("/cases/c1/super-timeline.jsonl");
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("application/x-ndjson");
+    const lines = response.text.trim().split("\n").map((line) => JSON.parse(line) as { message: string });
+    expect(lines.map((line) => line.message)).toEqual(["early event", "in-range event", "late event"]);
+  });
+
   // The dashboard's main filter bar (search box + Exclude chips) narrows the super-timeline too, not
   // just the forensic timeline — wired via ?q= and ?excludeText=.
   it("q= narrows to events matching the main filter's free-text search", async () => {

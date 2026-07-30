@@ -683,7 +683,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // the cases root so "remember on this computer" survives a server restart.
   const instanceSecret = loadOrCreateInstanceSecret(store.casesRoot);
   const hasAiProvider = (): boolean => options.aiConfigured ?? Boolean(options.pipeline?.hasAiProvider());
-  // Serialize the load->save critical section for a case's investigation.json so concurrent
+  // Serialize the load->save critical section for a case's investigation state so concurrent
   // mutations (a manual event/IOC add while background enrichment or re-synthesis saves)
   // cannot clobber each other (lost update). No-op when no StateLock is wired (tests).
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
@@ -3057,6 +3057,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 }
 
 import { StateStore as StateStoreImpl } from "./analysis/stateStore.js";
+import { loadDatabaseSync } from "./analysis/sqliteRuntime.js";
 import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
 import { makeImageLoader } from "./analysis/imageLoader.js";
 import { ProviderRegistry, ProviderError } from "./providers/provider.js";
@@ -3573,6 +3574,9 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
+  // Case storage is SQLite-backed. Fail before binding the HTTP port so an unsupported runtime
+  // produces one actionable startup error instead of a dashboard that breaks on the first case.
+  loadDatabaseSync();
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
@@ -3593,9 +3597,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateLock = new StateLock();
-  const stateStore = new StateStoreImpl(store, (caseId, retries) =>
-    warnLine(`[state] ${caseId}: investigation.json save needed ${retries} rename retr${retries === 1 ? "y" : "ies"} — the state dir is contended (antivirus / search indexer / sync client). Consider excluding the cases root from real-time scanning, or raise DFIR_ATOMIC_WRITE_RETRIES.`),
-  );
+  const stateStore = new StateStoreImpl(store);
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
   // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
