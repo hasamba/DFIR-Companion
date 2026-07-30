@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Canonical forensic event schema** — versioned structured identities, timestamps, source pointers, artifact hashes, mapping versions, and field-level provenance now underpin representative Windows, Linux, cloud, network, email, memory, and EDR imports while legacy cases upgrade incrementally and graph joins no longer depend on description wording (closes #374).
 - **Indexed SQLite case storage** — investigation entities and the distinct super-timeline now use a worker-backed, cursor-paged database with atomic legacy-JSON migration, integrity-checked backups/restores, bounded timeline/graph reads, and a Node 22.5+ runtime floor (closes #373).
 - **One-click Jira / ServiceNow push from the finding panel** (#297) — the routes shipped in #272 finally have a UI: every finding row carries a **Jira** and a **SNow** chip, and the finding bulk bar gains **Push to Jira** / **Push to ServiceNow** for the whole selection via the new `POST /cases/:id/push/{jira,servicenow}/bulk` endpoints. A batch reports created / updated / skipped, and a finding the ticket system refuses is named rather than aborting the rest. Both sets of buttons stay hidden until the integration is configured; re-pushing still updates the ticket the Companion opened instead of duplicating it. The ten `DFIR_JIRA_*` / `DFIR_SERVICENOW_*` environment variables are now documented in `.env.example`, the README route table and the manual.
 

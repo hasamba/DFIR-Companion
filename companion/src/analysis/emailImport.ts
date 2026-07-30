@@ -23,6 +23,7 @@
 // export the message as `.eml`.
 
 import type { Severity } from "./stateTypes.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { addIoc, cleanIp, type SiemEvent, type SiemIoc } from "./siemImport.js";
 
 export interface EmailImportOptions {
@@ -522,6 +523,52 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
     const linkHosts = [...new Set(p.urls.map(urlHost).filter((h): h is string => !!h && !IPV4.test(h) && DOMAIN_RE.test(h)))];
     if (linkHosts.length) desc += ` linking ${linkHosts.slice(0, 5).join(", ")}`;
   }
+  const sender = p.from?.address;
+  const recipient = p.to[0]?.address;
+  const canonical = createCanonicalEvent({
+    event: { category: "email", type: "message", action: "receive" },
+    ...(sender ? { actor: { kind: "mailbox", name: sender } } : {}),
+    ...(recipient ? { target: { kind: "mailbox", name: recipient } } : {}),
+    ...(p.attachments[0] ? {
+      object: { kind: "file", name: p.attachments[0].filename },
+      file: {
+        name: p.attachments[0].filename,
+        ...(p.attachments[0].sha256 ? { sha256: p.attachments[0].sha256 } : {}),
+        ...(p.attachments[0].md5 ? { md5: p.attachments[0].md5 } : {}),
+      },
+    } : {}),
+    mailbox: {
+      ...(p.messageId ? { messageId: p.messageId } : {}),
+      ...(sender ? { sender } : {}),
+      ...(p.to.length ? { recipients: p.to.map((address) => address.address) } : {}),
+      ...(p.subject ? { subject: p.subject } : {}),
+    },
+    ...(p.originatingIp ? { network: { source: { address: p.originatingIp } } } : {}),
+    time: { observed: p.rawDate, normalized: p.date },
+    evidence: {
+      rawRecords: [{
+        source: p.format === "eml" ? "rfc822-message" : "outlook-msg",
+        locator: p.messageId ? `message-id:${p.messageId}` : "message:0",
+        ...(p.messageId ? { recordId: p.messageId } : {}),
+      }],
+    },
+    producer: {
+      importer: "email",
+      parserVersion: "1",
+      mappingVersion: "email-message-v1",
+      ruleVersions: ["email-auth-severity-v1"],
+    },
+    rawFieldMap: {
+      "time.observed": ["Date"],
+      ...(sender ? { "actor.name": ["From"], "mailbox.sender": ["From"] } : {}),
+      ...(recipient ? { "target.name": ["To"] } : {}),
+      ...(p.to.length ? { "mailbox.recipients": ["To", "Cc"] } : {}),
+      ...(p.messageId ? { "mailbox.messageId": ["Message-ID"] } : {}),
+      ...(p.subject ? { "mailbox.subject": ["Subject"] } : {}),
+      ...(p.originatingIp ? { "network.source.address": ["X-Originating-IP", "Received"] } : {}),
+      ...(p.attachments[0] ? { "object.name": ["Content-Disposition.filename"], "file.name": ["Content-Disposition.filename"] } : {}),
+    },
+  });
 
   return {
     id: "",
@@ -530,6 +577,7 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
     severity,
     mitreTechniques: mitre,
     sources: ["Email"],
+    canonical,
   };
 }
 
@@ -575,7 +623,7 @@ export function parseEmail(text: string, opts: EmailImportOptions = {}): EmailPa
   }
 
   const severity = emailSeverity(parsed);
-  const event = buildEvent(parsed, severity);
+  const [event] = stampSourceArtifactHash([buildEvent(parsed, severity)], text);
   const iocs = collectIocs(parsed, maxIocs);
 
   return {
