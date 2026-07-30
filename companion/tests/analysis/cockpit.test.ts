@@ -136,6 +136,7 @@ describe("deriveCockpit — investigator usability scenarios", () => {
         status: "error",
         startedAt: "2026-07-30T11:45:00.000Z",
         endedAt: "2026-07-30T11:46:00.000Z",
+        updatedAt: "2026-07-30T11:46:00.000Z",
         error: "Parser rejected the archive",
         cancellable: false,
       }],
