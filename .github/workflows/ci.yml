@@ -4,9 +4,7 @@ name: CI
 # (release-artifacts.yml) runs at tag time — this just runs them earlier, on a clean cloud box
 # (fresh `npm ci`), so a red change is caught at the offending PR instead of at release.
 #
-# Node 22 to match release-artifacts.yml / docker-publish.yml. The project's floor is Node 20,
-# but two NSRL tests hard-require `node:sqlite` (Node 22.5+) at import time, so a Node-20 leg
-# can't go green until those tests are guarded with skipIf — tracked as a follow-up to #126.
+# Node 22 to match release-artifacts.yml / docker-publish.yml and the Node 22.5+ case-storage floor.
 
 on:
   pull_request:

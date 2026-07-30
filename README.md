@@ -465,10 +465,10 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 ## Quick start
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **20 or later** (which ships with `npm`).
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.5 or later** (which ships with `npm`).
 > Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
-> One optional feature — the **NSRL RDS SQLite backend** — needs **Node 22.5+** for the
-> built-in `node:sqlite` module; everything else (including the flat NSRL hash list) runs on Node 20.
+> Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
+> cases. The portable build bundles a compatible runtime.
 
 1. **Companion** (the server):
 
@@ -1053,7 +1053,7 @@ npm run verify:ai -- mycase --provider openrouter --model openai/gpt-4o --key sk
 ### `npm run coverage -- [caseId]`
 
 Reports how many of a case's screenshots were analyzed vs. skipped (duplicates) vs.
-never touched. Reads only `captures.jsonl` and `investigation.json` — no AI calls.
+never touched. Reads only `captures.jsonl` and the indexed investigation state — no AI calls.
 
 | Arg | Default | Effect |
 | --- | --- | --- |
@@ -1234,4 +1234,3 @@ In short: you're free to use, study, modify, and share it — but if you distrib
 version **or run a modified version as a network service**, you must make your complete source
 code available to its users under the same license. (This is the DFIR-tooling norm — Velociraptor,
 MISP, and TheHive are AGPL too.)
-

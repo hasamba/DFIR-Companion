@@ -14,7 +14,7 @@
 // Run:  npm run data:update-d3fend   (re-fetches and overwrites companion/data/d3fend-map.json)
 //
 // It is run with tsx and is NOT in tsconfig `include`, so `tsc` won't type-check it — verify by
-// running. Keep it dependency-free (Node 20+ global fetch only).
+// running. Keep it dependency-free (Node 22.5+ global fetch only).
 
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";

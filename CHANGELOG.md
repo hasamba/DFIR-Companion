@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Indexed SQLite case storage** — investigation entities and the distinct super-timeline now use a worker-backed, cursor-paged database with atomic legacy-JSON migration, integrity-checked backups/restores, bounded timeline/graph reads, and a Node 22.5+ runtime floor (closes #373).
 - **One-click Jira / ServiceNow push from the finding panel** (#297) — the routes shipped in #272 finally have a UI: every finding row carries a **Jira** and a **SNow** chip, and the finding bulk bar gains **Push to Jira** / **Push to ServiceNow** for the whole selection via the new `POST /cases/:id/push/{jira,servicenow}/bulk` endpoints. A batch reports created / updated / skipped, and a finding the ticket system refuses is named rather than aborting the rest. Both sets of buttons stay hidden until the integration is configured; re-pushing still updates the ticket the Companion opened instead of duplicating it. The ten `DFIR_JIRA_*` / `DFIR_SERVICENOW_*` environment variables are now documented in `.env.example`, the README route table and the manual.
 
 ### Fixed
@@ -61,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action from one overlay; `>` filters by category, recently-run actions float to the top, and actions unavailable for the current case are hidden (closes #238).
 
 ### Changed
-- **Clearer error when a case's state file passes the ~512 MB load ceiling** — says the whole case is unreadable rather than just new imports, prints the absolute `state/backups/` path, and states the limit is permanent now that the SQLite-backed store (#237) is not planned.
+- **Actionable oversized legacy-state recovery** — if an unmigrated JSON case already exceeds V8's decode ceiling, startup explains how to restore a smaller backup and confirms that the original JSON and any incomplete SQLite migration remain untouched.
 
 ## [0.33.0] - 2026-07-24
 

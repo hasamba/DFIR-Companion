@@ -1,5 +1,5 @@
 // Per-case async mutex: serializes critical sections that read-modify-write the same case's
-// investigation.json (manual event/IOC adds, background enrichment, synthesis). Without it, two
+// investigation state (manual event/IOC adds, background enrichment, synthesis). Without it, two
 // concurrent read-modify-writes race — the second save clobbers the first (lost update), so an
 // analyst's just-added IOC/event can vanish when a background enrichment or re-synthesis save
 // lands a moment later. Only the short load->save critical section is held; AI calls and network

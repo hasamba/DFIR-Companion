@@ -6,6 +6,8 @@ import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
 import { encryptBuffer, decryptBuffer } from "./caseEncryption.js";
 import { getAppVersion } from "../version.js";
+import { caseSqliteWorker } from "./caseSqliteWorker.js";
+import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
 // AES-256-GCM encrypted (via caseEncryption.ts) into a single `.dfircase` file that another
@@ -124,10 +126,22 @@ export async function exportEncryptedCase(
     manifestFiles.push({ path: entry.path, sha256: createHash("sha256").update(entry.data).digest("hex"), bytes: entry.data.length });
     totalBytes += entry.data.length;
   }
+  const counts = countsFromEntries(entries);
+  const databaseCounts = await caseSqliteWorker.request<Record<string, number> | null>({
+    op: "entityCounts",
+    dbPath: join(caseDir, "state", INVESTIGATION_DB_FILENAME),
+    kinds: ["forensicTimeline", "findings", "iocs"],
+  });
+  if (databaseCounts) {
+    counts.forensicEvents = databaseCounts.forensicTimeline ?? counts.forensicEvents;
+    counts.findings = databaseCounts.findings ?? counts.findings;
+    counts.iocs = databaseCounts.iocs ?? counts.iocs;
+  }
   const manifest = {
     caseId,
     exportedAt: new Date().toISOString(),
     generatedBy: getAppVersion(),
+    counts,
     files: manifestFiles,
     totalFiles: manifestFiles.length,
     totalBytes,
@@ -162,11 +176,10 @@ function rewriteCaseIdInJsonl(data: Buffer, targetCaseId: string): Buffer {
   return Buffer.from(rewritten.length ? rewritten.join("\n") + "\n" : "", "utf8");
 }
 
-// Archive paths whose caseId must be rewritten on import, mapped to the indent they're written
-// back with. investigation.json is compact (undefined) to match how StateStore saves it — it can
-// reach hundreds of MB, and re-inflating it here would undo that and could push a case that is
-// near the ~512 MB load ceiling straight back over it. case.json is small and CaseStore writes it
-// pretty, so it stays pretty rather than flip-flopping format on the next save.
+// Legacy archive paths whose caseId must be rewritten on import, mapped to the indent they're
+// written back with. investigation.json stays compact because old archives can be near V8's string
+// ceiling. SQLite-backed imports normalize the database's caseId on first StateStore load.
+// case.json is small and CaseStore writes it pretty, so it stays pretty.
 const CASE_ID_JSON_PATHS = new Map<string, number | undefined>([
   ["case.json", 2],
   ["state/investigation.json", undefined],
@@ -202,6 +215,30 @@ function countsFromEntries(entries: ZipEntry[]): CaseImportCounts {
   };
 }
 
+function countsFromManifest(entry: ZipEntry | undefined): CaseImportCounts | null {
+  if (!entry) return null;
+  try {
+    const counts = (JSON.parse(entry.data.toString("utf8")) as { counts?: unknown }).counts;
+    if (!counts || typeof counts !== "object" || Array.isArray(counts)) return null;
+    const record = counts as Record<string, unknown>;
+    const keys: Array<keyof CaseImportCounts> = [
+      "forensicEvents", "findings", "iocs", "captures", "imports",
+    ];
+    if (!keys.every((key) => Number.isSafeInteger(record[key]) && Number(record[key]) >= 0)) {
+      return null;
+    }
+    return {
+      forensicEvents: Number(record.forensicEvents),
+      findings: Number(record.findings),
+      iocs: Number(record.iocs),
+      captures: Number(record.captures),
+      imports: Number(record.imports),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface ImportEncryptedCaseOptions {
   targetCaseId?: string;
 }
@@ -215,9 +252,9 @@ export interface ImportEncryptedCaseResult {
  * Restore a `.dfircase` file into a NEW case directory. Decrypts, unzips, and writes every entry
  * back verbatim (byte-for-byte) unless the target case id differs from the archive's own id, in
  * which case the handful of caseId-bearing files are rewritten to keep the imported case
- * internally consistent (case.json, state/investigation.json, each captures.jsonl/imports.jsonl
- * record). Everything else — screenshots, raw imports, every other state file — copies unchanged
- * either way.
+ * internally consistent (case.json, legacy state/investigation.json, and each captures.jsonl /
+ * imports.jsonl record; StateStore normalizes an imported SQLite database on first load).
+ * Everything else — screenshots, raw imports, every other state file — copies unchanged either way.
  */
 export async function importEncryptedCase(
   store: CaseStore,
@@ -226,7 +263,11 @@ export async function importEncryptedCase(
   options: ImportEncryptedCaseOptions = {},
 ): Promise<ImportEncryptedCaseResult> {
   const zip = decryptBuffer(fileBuffer, password);
-  const entries = readZip(zip).filter((e) => e.path !== "archive-manifest.json");
+  const archiveEntries = readZip(zip);
+  const manifestCounts = countsFromManifest(
+    archiveEntries.find((entry) => entry.path === "archive-manifest.json"),
+  );
+  const entries = archiveEntries.filter((e) => e.path !== "archive-manifest.json");
 
   const caseJsonEntry = entries.find((e) => e.path === "case.json");
   if (!caseJsonEntry) throw new Error("not a valid case archive: missing case.json");
@@ -281,7 +322,7 @@ export async function importEncryptedCase(
     }
   }
 
-  const counts = countsFromEntries(entries);
+  const counts = manifestCounts ?? countsFromEntries(entries);
   const caseDir = store.caseDir(targetCaseId);
   for (const dir of [
     store.screenshotsDir(targetCaseId),

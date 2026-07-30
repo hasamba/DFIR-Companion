@@ -1055,11 +1055,24 @@ describe("state and report routes", () => {
     const stateStore = new StateStore(store);
     const app = createApp(store, { stateStore });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const state = emptyState("c1");
+    state.forensicTimeline = Array.from({ length: 3 }, (_, index) => ({
+      id: `e${index}`, timestamp: `2026-07-30T0${index}:00:00Z`, description: `event ${index}`,
+      severity: "Info" as const, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    }));
+    await stateStore.save(state);
 
-    const res = await request(app).get("/cases/c1/state");
+    const res = await request(app).get("/cases/c1/state?timelineLimit=2");
     expect(res.status).toBe(200);
     expect(res.body.caseId).toBe("c1");
     expect(res.body.findings).toEqual([]);
+    expect(res.body.forensicTimeline.map((event: { id: string }) => event.id)).toEqual(["e0", "e1"]);
+    expect(res.body.forensicTimelineTotal).toBe(3);
+    expect(res.body.forensicTimelineNextCursor).toBe(1);
+
+    const next = await request(app).get("/cases/c1/state?timelineCursor=1&timelineLimit=2");
+    expect(next.body.forensicTimeline.map((event: { id: string }) => event.id)).toEqual(["e2"]);
+    expect(next.body.forensicTimelineTotal).toBe(3);
   });
 
   it("POST /cases/:id/report writes reports and returns paths", async () => {

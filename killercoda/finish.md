@@ -18,7 +18,7 @@ DFIR Companion runs locally on your machine:
 # Via Docker
 docker run -d -p 4773:4773 -v $(pwd)/cases:/data/cases ghcr.io/hasamba/dfir-companion:latest
 
-# Or from source (Node 20+)
+# Or from source (Node 22.5+)
 git clone https://github.com/hasamba/DFIR-Companion.git
 cd DFIR-Companion/companion && npm ci && npm run build
 node dist/server.js
