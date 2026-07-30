@@ -23,6 +23,7 @@ export const SNAPSHOT_STATE_FILES = [
   "hunt-run-snapshots.json", // #80 per-fingerprint latest run snapshot, so a hunt re-run diff stays in sync with hunt-outcomes.json across an undo
   "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
   "pinned-findings.json",   // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
+  "cockpit.json",           // #375 per-investigator review timestamps + audited cockpit decisions
 ] as const;
 
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A

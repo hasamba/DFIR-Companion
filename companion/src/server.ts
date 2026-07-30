@@ -45,6 +45,7 @@ import { registerClockSkewRoutes } from "./routes/clockSkew.js";
 import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
 import { registerComplianceRoutes } from "./routes/compliance.js";
 import { registerCoachRoutes } from "./routes/coach.js";
+import { registerCockpitRoutes } from "./routes/cockpit.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
@@ -1085,6 +1086,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCollectionPlanRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
+  registerCockpitRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
   registerSlashCommandRoutes(app, ctx);
   // Outbound-only command transports (#235) — neither needs an inbound URL. Opt-in, and gated on

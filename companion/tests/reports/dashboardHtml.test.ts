@@ -677,6 +677,31 @@ describe("dashboard.html — section visibility coverage", () => {
   });
 });
 
+describe("dashboard.html — Now investigator cockpit (#375)", () => {
+  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  it("is the default focused view and exposes actionable loading, error, review, and lead controls", async () => {
+    const html = await load();
+    expect(html).toContain('id="sec-now"');
+    expect(html).toContain('const DEFAULT_DASHBOARD_VIEW_ID = "now"');
+    expect(html).toContain("loadCockpit");
+    expect(html).toContain("renderCockpit");
+    expect(html).toContain("markCockpitReviewed");
+    expect(html).toMatch(/function cockpitOpenTarget[\s\S]*applyDashboardView/);
+    expect(html).toContain('data-question-id="${escAttr(q.id)}"');
+    expect(html).toMatch(/function cockpitOpenTarget[\s\S]*jumpToHypothesis/);
+    expect(html).toMatch(/function cockpitOpenTarget[\s\S]*jumpToQuestion/);
+    for (const workspace of ["Timeline", "Hunt", "Evidence", "Intelligence", "Report"]) {
+      expect(html).toContain(`>${workspace}</button>`);
+    }
+    for (const action of ["pin", "dismiss", "defer", "assign", "restore"]) {
+      expect(html).toContain(`data-cockpit-action="${action}"`);
+    }
+    expect(html).toContain("Cockpit could not load");
+    expect(html).toContain("Import evidence");
+  });
+});
+
 describe("dashboard.html — help icon", () => {
   const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
 

@@ -5132,6 +5132,49 @@
     <!-- Raw-file (EVTX/PCAP) prompts — shown at the top of the content so they're not buried in a section. #211 -->
     <div id="rawToolBanner" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
     <div id="dropStatus" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
+    <section id="sec-now" style="grid-column: 1 / -1">
+      <h2>Now
+        <span id="cockpitPhase" class="now-phase">triage</span>
+        <span id="cockpitReviewMeta" class="ev-sub">decision cockpit</span>
+        <button id="cockpitReviewBtn" type="button" data-stop-click title="Record that you reviewed the current changes; tracked separately for each investigator">✓ Mark reviewed</button>
+        <button id="cockpitRefreshBtn" type="button" data-stop-click title="Refresh the decision cockpit from current case state">↻ Refresh</button>
+      </h2>
+      <div id="cockpitBody" aria-live="polite"><div class="now-state">Connect to or create a case to see the next investigative decisions.</div></div>
+    </section>
+    <style>
+      #sec-now{border-color:color-mix(in oklab,var(--accent) 38%,var(--border-color));background:linear-gradient(145deg,color-mix(in oklab,var(--accent) 5%,var(--bg-secondary)),var(--bg-secondary) 45%)}
+      #sec-now h2{display:flex;align-items:center;gap:8px}
+      #sec-now h2 button{margin-left:0;padding:2px 9px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400}
+      #sec-now h2 #cockpitReviewBtn{margin-left:auto}
+      .now-phase{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:var(--accent-hover);background:var(--surface-selected);border:1px solid var(--accent-solid)}
+      .now-state{padding:16px;border:1px dashed var(--border-color);border-radius:8px;color:var(--text-muted)}
+      .now-workspaces{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:10px;color:var(--text-muted);font-size:11px}
+      .now-workspaces button{padding:3px 9px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:500;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-primary)}
+      .now-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:10px}
+      .now-group{grid-column:span 4;min-width:0;border:1px solid var(--border-subtle);border-radius:9px;background:color-mix(in oklab,var(--bg-primary) 35%,var(--bg-secondary));overflow:hidden}
+      .now-group.now-wide{grid-column:span 6}
+      .now-group-head{display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted)}
+      .now-group-count{margin-left:auto;padding:0 6px;border-radius:999px;background:var(--badge-bg-neutral);font-variant-numeric:tabular-nums}
+      .now-empty{padding:12px;color:var(--text-muted);font-size:12px}
+      .now-card{padding:9px 10px;border-bottom:1px solid var(--border-subtle);border-left:3px solid var(--border-color)}
+      .now-card:last-child{border-bottom:0}
+      .now-card.sev-Critical{border-left-color:var(--sev-critical)}
+      .now-card.sev-High{border-left-color:var(--sev-high)}
+      .now-card.sev-Medium{border-left-color:var(--sev-medium)}
+      .now-card-title{display:flex;align-items:flex-start;gap:6px;font-size:13px;color:var(--text-bright)}
+      .now-card-title strong{min-width:0;overflow-wrap:anywhere}
+      .now-card-title .now-pin{color:var(--badge-warning-text)}
+      .now-card-summary,.now-card-action{margin-top:4px;font-size:11px;line-height:1.4;color:var(--text-muted)}
+      .now-card-action{color:var(--badge-warning-text)}
+      .now-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:7px;font-size:10px;color:var(--text-faint)}
+      .now-card-meta button{padding:1px 6px;font-size:10px;text-transform:none;letter-spacing:0;font-weight:400;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-muted)}
+      .now-card-meta button:hover{color:var(--text-bright);border-color:var(--accent)}
+      .now-evidence{color:var(--accent-hover)!important}
+      .now-ready{padding:8px 10px;color:var(--badge-success-text);font-size:12px}
+      .now-parked{margin-top:10px}
+      @media(max-width:1100px){.now-group,.now-group.now-wide{grid-column:span 6}}
+      @media(max-width:700px){.now-group,.now-group.now-wide{grid-column:1 / -1}#sec-now h2{flex-wrap:wrap}#sec-now h2 #cockpitReviewBtn{margin-left:0}}
+    </style>
     <section id="sec-ask" style="grid-column: 1 / -1">
       <h2>Ask the LLM about this case</h2>
       <div class="ask-row">
@@ -6391,7 +6434,7 @@
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
     let activeView = null;                     // the currently-applied view (null = Custom / no preset)
-    const DEFAULT_DASHBOARD_VIEW_ID = "analyst"; // new installs / cases with no saved preference start here
+    const DEFAULT_DASHBOARD_VIEW_ID = "now";  // new installs / cases with no saved preference start in the decision cockpit
     const CUSTOM_VIEW_MARKER = "__custom__";     // persisted when Custom is explicitly chosen (vs. never chosen)
     let ws = null;
     let countTimer = null;
@@ -6399,6 +6442,7 @@
     let aiEnabled = false;   // AI defaults OFF per case; loadAiToggle() syncs the real state
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
+    let lastCockpit = null;                  // server-derived Now cockpit, including this investigator's review state
     let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
     let lastIocs = [];                        // last scoped IOC list, for the Host & Account Ranking expand view (#237)
@@ -16404,6 +16448,26 @@
       setTimeout(() => target.classList.remove("ev-flash"), 1600);
     }
 
+    function jumpToTrackedItem(sectionId, selector, attribute, id) {
+      const sec = document.getElementById(sectionId);
+      if (sec) sec.classList.remove("collapsed");
+      const target = [...document.querySelectorAll(selector)]
+        .find(element => element.getAttribute(attribute) === String(id));
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("ev-flash"); void target.offsetWidth;
+      target.classList.add("ev-flash");
+      setTimeout(() => target.classList.remove("ev-flash"), 1600);
+    }
+
+    function jumpToHypothesis(id) {
+      jumpToTrackedItem("sec-hypotheses", "#hypList .hyp", "data-id", id);
+    }
+
+    function jumpToQuestion(id) {
+      jumpToTrackedItem("sec-questions", "#keyQuestions .qrow", "data-question-id", id);
+    }
+
     // Set the investigation scope window to the currently visible time range, then apply it.
     function swScopeToView() {
       if (!swViewStartMs || !swViewEndMs) return;
@@ -18095,6 +18159,228 @@
       renderCollectionPlan();
     });
 
+    // ── Now investigator cockpit (#375) ───────────────────────────────────────
+    // The server composes this from the case's existing findings, hypotheses, contradictions,
+    // collection directives, jobs and change metadata. Rendering stays deliberately dumb: no
+    // client-side scoring that could disagree between investigators.
+    const COCKPIT_GROUPS = [
+      ["leads", "Active leads", "No active leads yet — import or assess evidence to establish one.", true],
+      ["changes", "Since your last review", "Nothing new since your last review.", true],
+      ["hypotheses", "Open hypotheses", "No open hypotheses need attention.", false],
+      ["contradictions", "Contradictions & uncertainty", "No material contradictions are currently recorded.", false],
+      ["gaps", "Evidence gaps & next collections", "No outstanding collection gap is recorded.", true],
+      ["activity", "Running / failed work", "No imports or analyses are running or failed.", false],
+      ["blockers", "Report-readiness blockers", "The case is ready for report preparation.", true],
+    ];
+
+    function cockpitAge(value) {
+      if (!value) return "";
+      const t = Date.parse(value);
+      if (!Number.isFinite(t)) return "";
+      const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 48) return `${hours}h ago`;
+      return new Date(t).toLocaleString();
+    }
+
+    function cockpitCardControls(card, parked) {
+      const id = escAttr(card.id);
+      const view = `<button data-act="cockpitOpenTarget" data-id="${id}">Open</button>`;
+      if (card.kind !== "lead" && card.kind !== "hypothesis") return view;
+      if (parked) {
+        return `${view}<button data-act="cockpitAction" data-cockpit-action="restore" data-id="${id}">Restore</button>`;
+      }
+      const pin = card.pinned
+        ? `<button data-act="cockpitAction" data-cockpit-action="unpin" data-id="${id}">Unpin</button>`
+        : `<button data-act="cockpitAction" data-cockpit-action="pin" data-id="${id}">Pin</button>`;
+      return `${view}${pin}` +
+        `<button data-act="cockpitAction" data-cockpit-action="dismiss" data-id="${id}">Dismiss</button>` +
+        `<button data-act="cockpitAction" data-cockpit-action="defer" data-id="${id}">Defer</button>` +
+        `<button data-act="cockpitAction" data-cockpit-action="assign" data-id="${id}">${card.assignee ? "Reassign" : "Assign"}</button>`;
+    }
+
+    function cockpitCardHtml(card, parked) {
+      const severity = card.severity || "Info";
+      const evidence = (card.evidenceIds || []).slice(0, 3).map(id =>
+        `<button class="now-evidence" data-act="cockpitJumpEvent" data-id="${escAttr(id)}" title="Open exact supporting event">${esc(id)}</button>`
+      ).join("");
+      const meta = [
+        card.confidence !== undefined ? `${esc(String(card.confidence))}% confidence` : "",
+        card.assignee ? `owner: ${esc(card.assignee)}` : "",
+        card.deferredUntil ? `deferred until ${esc(new Date(card.deferredUntil).toLocaleString())}` : "",
+        card.occurredAt ? cockpitAge(card.occurredAt) : "",
+      ].filter(Boolean).map(item => `<span>${item}</span>`).join("");
+      return `<article class="now-card sev-${escAttr(severity)}" data-cockpit-id="${escAttr(card.id)}">` +
+        `<div class="now-card-title">${card.pinned ? `<span class="now-pin" title="Pinned">◆</span>` : ""}<strong>${esc(card.title)}</strong></div>` +
+        (card.summary ? `<div class="now-card-summary">${esc(card.summary)}</div>` : "") +
+        (card.action ? `<div class="now-card-action">Next → ${esc(card.action)}</div>` : "") +
+        `<div class="now-card-meta">${meta}${evidence}${cockpitCardControls(card, parked)}</div>` +
+        `</article>`;
+    }
+
+    function cockpitGroupHtml(key, label, empty, wide) {
+      const cards = (lastCockpit && lastCockpit.sections && lastCockpit.sections[key]) || [];
+      const ready = key === "blockers" && lastCockpit && lastCockpit.readiness && lastCockpit.readiness.ready;
+      const body = cards.length
+        ? cards.map(card => cockpitCardHtml(card, false)).join("")
+        : ready
+          ? `<div class="now-ready">✓ ${esc(empty)}</div>`
+          : `<div class="now-empty">${esc(empty)}</div>`;
+      return `<div class="now-group${wide ? " now-wide" : ""}"><div class="now-group-head">${esc(label)}<span class="now-group-count">${cards.length}</span></div>${body}</div>`;
+    }
+
+    function renderCockpit(snapshot) {
+      lastCockpit = snapshot;
+      const body = document.getElementById("cockpitBody");
+      const phase = document.getElementById("cockpitPhase");
+      const reviewMeta = document.getElementById("cockpitReviewMeta");
+      if (!body || !snapshot) return;
+      const friendlyPhase = {
+        "triage": "Triage",
+        "active-investigation": "Active investigation",
+        "report-preparation": "Report preparation",
+      }[snapshot.phase] || snapshot.phase;
+      if (phase) phase.textContent = friendlyPhase;
+      if (reviewMeta) {
+        const reviewed = snapshot.lastReviewedAt ? `last reviewed ${cockpitAge(snapshot.lastReviewedAt)}` : "not reviewed yet";
+        reviewMeta.textContent = `${snapshot.newSinceReview || 0} new · ${reviewed} · ${snapshot.investigator || "analyst"}`;
+      }
+      const groups = COCKPIT_GROUPS.map(args => cockpitGroupHtml(...args)).join("");
+      const parked = (snapshot.parked || []).length
+        ? `<div class="now-group now-wide now-parked"><div class="now-group-head">Dismissed / deferred<span class="now-group-count">${snapshot.parked.length}</span></div>${snapshot.parked.map(card => cockpitCardHtml(card, true)).join("")}</div>`
+        : "";
+      const workspaces = `<div class="now-workspaces"><span>Focused workspaces:</span>` +
+        `<button data-act="cockpitWorkspace" data-view="triage" data-panel="sec-timeline">Timeline</button>` +
+        `<button data-act="cockpitWorkspace" data-view="hunt-prep" data-panel="sec-playbook">Hunt</button>` +
+        `<button data-act="cockpitWorkspace" data-view="deep-dive" data-panel="sec-evidence">Evidence</button>` +
+        `<button data-act="cockpitWorkspace" data-view="hunt-prep" data-panel="sec-iocs">Intelligence</button>` +
+        `<button data-act="cockpitWorkspace" data-view="report" data-panel="sec-exec">Report</button></div>`;
+      body.innerHTML = `${workspaces}<div class="now-grid">${groups}${parked}</div>`;
+    }
+
+    async function loadCockpit(caseId) {
+      caseId = caseId || document.getElementById("caseId").value.trim();
+      const body = document.getElementById("cockpitBody");
+      if (!caseId || !body) return;
+      body.innerHTML = `<div class="now-state">Loading the current decisions…</div>`;
+      const investigator = investigatorName();
+      try {
+        const query = investigator ? `?investigator=${encodeURIComponent(investigator)}` : "";
+        const response = await fetch(`/cases/${encodeURIComponent(caseId)}/cockpit${query}`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        if (caseId !== document.getElementById("caseId").value.trim()) return;
+        renderCockpit(payload);
+      } catch (err) {
+        if (caseId !== document.getElementById("caseId").value.trim()) return;
+        body.innerHTML = `<div class="now-state"><strong>Cockpit could not load.</strong> ${esc(err.message || "Unknown error")} <button data-act="cockpitRetry">Retry</button><br><span>Use Import evidence, Findings, Jobs and Report workspaces directly while this is unavailable.</span></div>`;
+      }
+    }
+
+    async function cockpitAction(el) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const cardId = el.dataset.id;
+      const action = el.dataset.cockpitAction;
+      if (!caseId || !cardId || !action) return;
+      let value = "";
+      if (action === "dismiss" && !confirm("Dismiss this cockpit card? The action remains in the audit history and can be restored from the parked section.")) return;
+      if (action === "defer") {
+        const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        value = prompt("Defer until (date/time or ISO timestamp):", tomorrow) || "";
+        if (!value) return;
+      }
+      if (action === "assign") {
+        const assignee = prompt("Assign this lead to:", "");
+        if (assignee === null) return;
+        value = assignee;
+      }
+      el.disabled = true;
+      try {
+        const response = await fetch(`/cases/${encodeURIComponent(caseId)}/cockpit/cards/${encodeURIComponent(cardId)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action, actor: investigatorName(), value }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        await loadCockpit(caseId);
+        if (action === "pin" || action === "unpin") loadPins(caseId);
+        if (action === "assign") { loadFindingWorkflow(caseId); loadHypotheses(caseId); }
+      } catch (err) {
+        alert(`Cockpit action failed: ${err.message}`);
+        el.disabled = false;
+      }
+    }
+
+    function cockpitOpenTarget(el) {
+      if (!lastCockpit) return;
+      const cards = [
+        ...Object.values(lastCockpit.sections || {}).flat(),
+        ...(lastCockpit.parked || []),
+      ];
+      const card = cards.find(item => item.id === el.dataset.id);
+      if (!card || !card.target) return;
+      const target = card.target;
+      if (target.panel === "import") { document.getElementById("importBtn").click(); return; }
+      if (target.panel === "jobs") { document.getElementById("jobsBadge").click(); return; }
+      const panelIds = {
+        findings: "sec-findings", hypotheses: "sec-hypotheses", questions: "sec-questions",
+        uncertainties: "sec-uncertainties", timeline: "sec-timeline", playbook: "sec-playbook",
+        summary: "sec-exec", "attack-path": "sec-attack-path", report: "sec-case-details",
+      };
+      const sectionId = panelIds[target.panel];
+      const panelViews = {
+        findings: "lead", hypotheses: "deep-dive", questions: "lead",
+        uncertainties: "deep-dive", timeline: "triage", playbook: "hunt-prep",
+        summary: "lead", "attack-path": "lead", report: "report",
+      };
+      const view = DASHBOARD_VIEWS.find(item => item.id === panelViews[target.panel]);
+      if (view) applyDashboardView(view, { persist: true, rerender: true });
+      if (sectionId) setTimeout(() => revealSection(sectionId), 0);
+      if (target.findingId) setTimeout(() => jumpToFinding(target.findingId), 0);
+      else if (target.hypothesisId) setTimeout(() => jumpToHypothesis(target.hypothesisId), 0);
+      else if (target.questionId) setTimeout(() => jumpToQuestion(target.questionId), 0);
+      else if (target.eventId) setTimeout(() => jumpToEvent(target.eventId), 0);
+    }
+
+    function cockpitWorkspace(el) {
+      const view = DASHBOARD_VIEWS.find(item => item.id === el.dataset.view);
+      if (view) applyDashboardView(view, { persist: true, rerender: true });
+      if (el.dataset.panel) setTimeout(() => revealSection(el.dataset.panel), 0);
+    }
+
+    function cockpitJumpEvent(eventId) {
+      const view = DASHBOARD_VIEWS.find(item => item.id === "triage");
+      if (view) applyDashboardView(view, { persist: true, rerender: true });
+      setTimeout(() => jumpToEvent(eventId), 0);
+    }
+
+    async function markCockpitReviewed() {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) return;
+      const btn = document.getElementById("cockpitReviewBtn");
+      btn.disabled = true;
+      try {
+        const response = await fetch(`/cases/${encodeURIComponent(caseId)}/cockpit/review`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ investigator: investigatorName() }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        await loadCockpit(caseId);
+      } catch (err) {
+        alert(`Could not mark the cockpit reviewed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById("cockpitRefreshBtn").addEventListener("click", () => loadCockpit());
+    document.getElementById("cockpitReviewBtn").addEventListener("click", markCockpitReviewed);
+
     function render(rawState) {
       // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
       // a slow response for an abandoned case load can silently overwrite the case now on screen.
@@ -18147,7 +18433,7 @@
       document.getElementById("keyQuestions").innerHTML = kq.length
         ? kq.map(q => {
             const st = QSTATUS[q.status] ? q.status : "unknown";
-            return `<div class="qrow">` +
+            return `<div class="qrow" data-question-id="${escAttr(q.id)}">` +
               `<div class="q-head">${commentChip("question", q.id)} ${tagChip("question", q.id)}` +
               (q.pinned ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>` : "") +
               ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong>` +
@@ -18506,6 +18792,7 @@
       loadReportMeta(caseId);
       loadCaseTemplatePicker(caseId);
       applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
+      loadCockpit(caseId);
       loadAssetGraph(caseId);
       loadLoginGraph(caseId);
       loadAssetOverrides(caseId);
@@ -18618,10 +18905,10 @@
       ws.onclose = () => document.getElementById("status").textContent = "disconnected";
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "state") { render(msg.state); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
+        if (msg.type === "state") { render(msg.state); loadCockpit(caseId); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
-        else if (msg.type === "job_changed") loadJobs(caseId);
+        else if (msg.type === "job_changed") { loadJobs(caseId); loadCockpit(caseId); }
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
           // otherwise the extension is feeding a different case than we're viewing — warn.
@@ -18635,17 +18922,17 @@
           else hideCaseMismatch();
         }
         else if (msg.type === "comments_changed") loadComments(caseId);
-        else if (msg.type === "activity_changed") loadActivityLog(caseId);
+        else if (msg.type === "activity_changed") { loadActivityLog(caseId); loadCockpit(caseId); }
         else if (msg.type === "tags_changed") loadTags(caseId);
-        else if (msg.type === "pins_changed") loadPins(caseId);
-        else if (msg.type === "finding_workflow_changed") loadFindingWorkflow(caseId);
+        else if (msg.type === "pins_changed") { loadPins(caseId); loadCockpit(caseId); }
+        else if (msg.type === "finding_workflow_changed") { loadFindingWorkflow(caseId); loadCockpit(caseId); }
         else if (msg.type === "notebook_changed") { loadNotebook(caseId); loadNbAiToggle(caseId); }
-        else if (msg.type === "hypotheses_changed") loadHypotheses(caseId);
+        else if (msg.type === "hypotheses_changed") { loadHypotheses(caseId); loadCockpit(caseId); }
         else if (msg.type === "dwell_window_changed") loadSavedTimeframes(caseId);
         else if (msg.type === "super_timeline_changed") { loadSuperTimeline(caseId); scheduleLoginGraphReload(caseId); }
         else if (msg.type === "playbook_changed") loadPlaybook(caseId);
         else if (msg.type === "asset_overrides_changed") { loadAssetGraph(caseId); loadAssetOverrides(caseId); }
-        else if (msg.type === "import_meta_changed") loadImportMeta(caseId);
+        else if (msg.type === "import_meta_changed") { loadImportMeta(caseId); loadCockpit(caseId); }
         else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
         else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
         else if (msg.type === "velo_hunt_changed") { loadVeloHuntJobs(caseId); loadHuntProfile(caseId); }
@@ -21005,6 +21292,12 @@
     // `el` is the element carrying data-act; interpolated ids/values ride in data-* beside it,
     // escAttr-escaped exactly as they were inside the old handler string.
     const ACTIONS = {
+      // Now cockpit
+      cockpitAction:              (el) => cockpitAction(el),
+      cockpitOpenTarget:          (el) => cockpitOpenTarget(el),
+      cockpitJumpEvent:           (el) => cockpitJumpEvent(el.dataset.id),
+      cockpitWorkspace:           (el) => cockpitWorkspace(el),
+      cockpitRetry:               (el) => loadCockpit(),
       // Geo map
       renderGeoView:              (el) => renderGeoView(),
       renderGeoMarkers:           (el) => renderGeoMarkers(),
@@ -21119,6 +21412,7 @@
     const SECTIONS_VIS_KEY = "dfir.sectionsVis";
     const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
     const SECTION_DEFS = [
+      { id: "sec-now",          label: "Now — Decision Cockpit" },
       // Data-gated (see data-gate-open in its markup): stays hidden until the timeline actually
       // has Volatility/Rekall events, but the analyst can still switch it off here like any other.
       { id: "sec-mem-nextsteps", label: "Memory Next Steps" },
@@ -21573,7 +21867,7 @@
       const k = viewStorageKey();
       if (!k || !DASHBOARD_VIEWS.length) return;
       const id = localStorage.getItem(k);
-      // No key at all = a new case / new install with no preference yet -> default to Analyst.
+      // No key at all = a new case / new install with no preference yet -> default to Now.
       // The CUSTOM_VIEW_MARKER = an explicit "Custom" pick, which stays Custom.
       const view = id === null
         ? (DASHBOARD_VIEWS.find(v => v.id === DEFAULT_DASHBOARD_VIEW_ID) || null)
