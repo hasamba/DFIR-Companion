@@ -1,13 +1,14 @@
-# Prompt regression / evaluation harness (issue #64)
+# AI quality and calibration gates (issues #64, #135, #378)
 
 Automated way to tell whether a prompt change improves or regresses extraction/synthesis quality.
 
-## Status: Phase 1 + Phase 2
+## Three evaluation layers
 
 The original issue asked for a single harness with "CI-friendly exit codes" that runs real extraction/synthesis and computes precision/recall. That can't be one thing: meaningful precision/recall needs **real** model calls, which cost tokens and are flaky/slow — they can't gate every PR. So the harness runs in two modes off the *same* runners, scorer, and fixtures:
 
 - **Phase 1 — mock (CI-gating):** every fixture is driven by a `MockProvider` built from its canned response. Deterministic, zero-cost, runs in normal CI. Gates the *plumbing and the scoring math*.
 - **Phase 2 — `--real` (non-blocking):** the env-configured provider (`realProviderOrNull()` → `buildProvider()`) scores the **current prompt's actual output** against the golden expectations — the real regression signal. Gated on `DFIR_AI_*`: if no provider is configured it **skips (exit 0)**, so it never breaks CI. Uses `REAL_THRESHOLDS` (recall-gated — see *Why `--real` gates on recall* below) because a real model won't reproduce a golden set exactly. Run it manually or on a nightly/labeled workflow; it is **not** in `npm test`.
+- **Production corpus — quality + calibration:** `corpus/v1/` adds ten synthetic cases spanning ransomware, BEC, insider threat, lateral movement, Linux, cloud identity, email, memory, network and a clean maintenance window. Claims must match the golden claim's exact evidence-id set as well as its required meaning. The scorer also gates IOC recall, false conclusions, invented evidence references, confidence ranges, uncertainty handling, useful next steps and clean-case abstention.
 
 Screenshots (`analyzeWindow`, the vision path) are covered two ways:
 - **Mock (CI-gating):** `SCREENSHOT_FIXTURES` in `fixtures.ts` — a synthetic capture + canned delta drives the plumbing through a stub image, gating the analyzeWindow→scorer path without committing any evidence.
@@ -25,6 +26,10 @@ The committed golden set (CSV, log, screenshot, synthesis) is entirely synthetic
 | `fixtures.ts` | Golden dataset: input + canned model response + expected `GoldenEvent[]` / synthesis seed. |
 | `harness.test.ts` | Integration: fixtures through the pipeline → scorer, asserting thresholds + a deliberate regression. |
 | `run.ts` | CLI runner with a summary report + CI exit codes. |
+| `corpus.ts` / `corpus/v1/` | Strict loader and versioned, provenance-reviewed synthetic production corpus. |
+| `qualityScorer.ts` | Exact claim-to-evidence, IOC, calibration, contradiction, abstention and next-step gates. |
+| `baseline.ts` / `report.ts` | Pinned model/prompt baselines and privacy-safe machine-readable reports. |
+| `changeGate.ts` / `checkChange.ts` | CI guard requiring a matching no-regression report when built-in prompts/default models change. |
 
 ## Run
 
@@ -40,9 +45,30 @@ npm run eval:real
 npm run eval:real:extraction
 npm run eval:real:screenshots  # needs DFIR_EVAL_SCREENSHOT_DIR too — see below; skips cleanly without it
 npm run eval:real:synthesis
+
+# Optional privacy-safe report/baseline artifacts
+npm run eval:real -- --require-provider --output eval-artifacts/eval-report.json
+npm run eval:real -- --baseline tests/eval/baselines/<baseline>.json \
+  --require-baseline --output tests/eval/reports/no-regression-report.json \
+  --attestation tests/eval/reports/no-regression.json
 ```
 
-Exit code `0` = all pass (or `--real` skipped for no provider), `1` = a gate failed, `2` = a runner error.
+Exit codes distinguish the cause: `0` = passed or optional run skipped, `1` = genuine quality
+failure/regression, `2` = runner/configuration error, `3` = provider failure. `--require-provider`
+turns an absent provider into exit `3` for the protected workflow instead of a clean skip.
+
+## Protected real-model workflow
+
+`.github/workflows/ai-evaluation.yml` runs weekly and on demand in the protected
+`ai-evaluation` GitHub Environment. Set environment variables `DFIR_EVAL_PROVIDER` and
+`DFIR_EVAL_MODEL`, secret `DFIR_EVAL_KEY`, and optionally `DFIR_EVAL_BASELINE_PATH`. The job uploads
+only metrics, status, hashes, timing, token counts and cost—never prompts, evidence, model output or
+credentials. A provider outage, missing optional run and quality regression remain separate outcomes.
+
+The normal CI suite runs the deterministic corpus integration tests. Its `eval:change-gate` step
+fingerprints the four evaluated built-in prompts and active default provider/model lines. If that
+fingerprint changes, CI requires both `reports/no-regression.json` and its hash-pinned privacy-safe
+report. An unrelated edit to `pipeline.ts` does not trigger the gate.
 
 ### Real screenshot grading (issue #135)
 
@@ -106,6 +132,19 @@ Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the mod
 - **Hallucination** — a finding citing an event id absent from the timeline *invented* that reference; a finding citing no real event and no IOC is *ungrounded*.
 - **Rubric** — a numeric `confidence` must carry a `confidenceReason` (advisory; doesn't fail the gate).
 
+**Production cases — exact claim-level scoring.** Each golden claim names an exact, order-independent
+set of forensic event IDs plus required meaning. A finding with similar wording but the wrong evidence
+fails. Additional findings count as false conclusions because these compact case goldens are exhaustive.
+The scorer separately rejects references to IDs absent from the input timeline, known forbidden
+conclusions/entities, out-of-range confidence, missing confidence reasons, unresolved evidence gaps
+without an honest uncertainty, unhelpful next steps, and any finding at all in an abstention case.
+
+See [CORPUS.md](CORPUS.md) for licensing, privacy, provenance and versioning rules; see
+`baselines/README.md` and `reports/README.md` for the human-reviewed baseline/no-regression flow.
+
 ## Adding a golden case
 
 Append to `EXTRACTION_FIXTURES` (input + canned delta + `golden`), `SCREENSHOT_FIXTURES` (synthetic captures + canned delta + `golden`, mock-only), or `SYNTHESIS_FIXTURES` (seed timeline + canned synthesis delta) in `fixtures.ts`. Keep golden data **synthetic or sanitized** — never snapshot real case evidence. To add a *real* screenshot case, drop an image + sidecar `.json` into your local `DFIR_EVAL_SCREENSHOT_DIR` — see *Real screenshot grading* above; nothing is added to the repo.
+
+Production corpus cases are JSON files listed by the versioned manifest. They must be fully synthetic,
+pass the strict provenance/privacy boundary and cite only event IDs that exist in their own input.

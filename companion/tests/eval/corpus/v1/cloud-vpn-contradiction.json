@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "cloud-vpn-contradiction",
+  "title": "Synthetic cloud sign-in with VPN contradiction",
+  "scenario": "cloud-identity",
+  "traits": ["contradictory-sources", "incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional cloud identity and VPN events written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "cld-e1",
+      "timestamp": "2026-05-06T12:00:00.000Z",
+      "description": "Cloud risk engine flagged an impossible-travel sign-in for user-b from 192.0.2.80",
+      "severity": "High",
+      "mitreTechniques": ["T1078.004"],
+      "asset": "CLOUD-TENANT",
+      "srcIp": "192.0.2.80",
+      "sources": ["Cloud Identity"]
+    },
+    {
+      "id": "cld-e2",
+      "timestamp": "2026-05-06T11:59:50.000Z",
+      "description": "Corporate VPN assigned exit address 192.0.2.80 to user-b",
+      "severity": "Medium",
+      "mitreTechniques": [],
+      "asset": "VPN-01",
+      "dstIp": "192.0.2.80",
+      "sources": ["VPN"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "cld-f1",
+        "severity": "Medium",
+        "confidence": 55,
+        "confidenceReason": "The risky sign-in is real, but the VPN record offers a benign explanation.",
+        "title": "Suspicious cloud sign-in requires validation",
+        "description": "The suspicious cloud sign-in conflicts with a corporate VPN assignment and does not confirm takeover.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1078.004"],
+        "status": "open",
+        "relatedEventIds": ["cld-e1", "cld-e2"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "",
+    "narrativeTimeline": "",
+    "summary": "The sign-in alert is contradicted by a matching VPN assignment.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "cld-n1",
+        "priority": "high",
+        "action": "Review cloud audit logs and device identity for user-b",
+        "rationale": "Device and post-login activity can distinguish normal VPN use from account misuse.",
+        "pointer": "user-b cloud audit logs",
+        "relatedFindingIds": ["cld-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Cloud identity compromise",
+        "status": "inferred",
+        "basis": "The risk alert is countered by a corporate VPN record.",
+        "gap": "Device identity and post-login cloud actions are missing."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "cloud-signin",
+        "requiredTerms": ["suspicious cloud sign-in", "VPN"],
+        "evidenceEventIds": ["cld-e1", "cld-e2"],
+        "confidence": { "min": 30, "max": 70 }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [{ "id": "overstated-takeover", "terms": ["account takeover confirmed"] }],
+    "uncertainties": [
+      {
+        "id": "cloud-identity-gap",
+        "topicTerms": ["cloud identity compromise"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "review-cloud-audit", "requiredTerms": ["cloud audit logs", "user-b"] }],
+    "expectAbstention": false
+  }
+}

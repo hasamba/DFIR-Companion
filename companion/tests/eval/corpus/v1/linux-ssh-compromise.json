@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "id": "linux-ssh-compromise",
+  "title": "Synthetic Linux SSH compromise",
+  "scenario": "linux",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional Linux authentication and audit events written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "lin-e1",
+      "timestamp": "2026-05-05T03:00:00.000Z",
+      "description": "Repeated failed SSH passwords for root from 203.0.113.45",
+      "severity": "Medium",
+      "mitreTechniques": ["T1110.001"],
+      "asset": "LINUX-01",
+      "srcIp": "203.0.113.45",
+      "sources": ["auth.log"]
+    },
+    {
+      "id": "lin-e2",
+      "timestamp": "2026-05-05T03:04:00.000Z",
+      "description": "SSH password accepted for root from 203.0.113.45",
+      "severity": "High",
+      "mitreTechniques": ["T1078"],
+      "asset": "LINUX-01",
+      "srcIp": "203.0.113.45",
+      "sources": ["auth.log"]
+    },
+    {
+      "id": "lin-e3",
+      "timestamp": "2026-05-05T03:06:00.000Z",
+      "description": "Root appended an unrestricted entry to /etc/sudoers.d/ops",
+      "severity": "High",
+      "mitreTechniques": ["T1548.003"],
+      "asset": "LINUX-01",
+      "path": "/etc/sudoers.d/ops",
+      "sources": ["auditd"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "lin-f1",
+        "severity": "High",
+        "confidence": 90,
+        "confidenceReason": "A successful root login and immediate sudoers modification are directly observed.",
+        "title": "Linux root compromise followed by sudoers persistence",
+        "description": "The root compromise from 203.0.113.45 was followed by a sudoers change.",
+        "relatedIocs": ["lin-i1"],
+        "mitreTechniques": ["T1078", "T1548.003"],
+        "status": "open",
+        "relatedEventIds": ["lin-e2", "lin-e3"]
+      }
+    ],
+    "iocs": [{ "id": "lin-i1", "type": "ip", "value": "203.0.113.45" }],
+    "mitreTechniques": [],
+    "attackerPath": "A root SSH login was followed by a sudoers modification.",
+    "narrativeTimeline": "",
+    "summary": "Root access and persistence are supported; credential origin is unknown.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "lin-n1",
+        "priority": "critical",
+        "action": "Collect shell history and journald records from LINUX-01",
+        "rationale": "This can reveal commands executed after the root login.",
+        "pointer": "LINUX-01 bash history and journald",
+        "relatedFindingIds": ["lin-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Root credential origin",
+        "status": "unknown",
+        "basis": "The login is observed but credential acquisition is absent.",
+        "gap": "No credential-theft or prior-access artifact was provided."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "linux-root-compromise",
+        "requiredTerms": ["root compromise", "sudoers"],
+        "evidenceEventIds": ["lin-e2", "lin-e3"],
+        "confidence": { "min": 60, "max": 100 }
+      }
+    ],
+    "iocs": [{ "type": "ip", "value": "203.0.113.45" }],
+    "forbiddenConclusions": [],
+    "uncertainties": [
+      {
+        "id": "root-credential-gap",
+        "topicTerms": ["credential origin"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-linux-history", "requiredTerms": ["journald", "LINUX-01"] }],
+    "expectAbstention": false
+  }
+}

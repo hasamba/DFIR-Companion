@@ -28,6 +28,7 @@
     "eval:real:extraction": "tsx tests/eval/run.ts extraction --real",
     "eval:real:synthesis": "tsx tests/eval/run.ts synthesis --real",
     "eval:real:screenshots": "tsx tests/eval/run.ts screenshots --real",
+    "eval:change-gate": "tsx tests/eval/checkChange.ts",
     "bench:storage": "tsx scripts/bench-case-storage.ts",
     "dev": "node --max-old-space-size=8192 --import tsx/esm src/server.ts",
     "verify:ai": "tsx scripts/verify-ai.ts",
