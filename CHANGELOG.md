@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reproducible analysis-run ledger** — imports, deterministic tagging, enrichment, synthesis, Deep Pass, and reports now leave immutable, hash-chained manifests that pin their evidence and dependencies; analysts can inspect, replay, and compare runs while reports and exports retain the exact run history (closes #377).
 - **Internal Hunt Workbench and typed query language** — structured, indexed and cursor-paged searches across an explicitly selected forensic or super-timeline dataset, with Boolean/range/time/regex filters, aggregation, rare values, saved parameterized hunts, result pivots/actions, cancellation and resource limits (closes #376).
 
+### Fixed
+- **Imports into a non-existent case are rejected** — all 24 `/cases/:id/import*` routes now 404 an unknown case id instead of accepting it; a typo'd id used to return 202 and orphan the evidence, an `imports.jsonl` line and a custody record under a directory that never appeared in the case list.
+
 ### Security
 - **Strict browser rendering policy** — dashboard views and HTML exports now sanitize untrusted content under nonce-based CSP and Trusted Types, blocking script, URL, and CSS injection (closes #387).
 

@@ -41,6 +41,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
+import { registerImportCaseGuard } from "./importCaseGuard.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 
 /**
@@ -62,6 +63,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
   } = ctx;
   registerImportResumeHandler(ctx);
+  registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
 
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
@@ -176,13 +178,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
       return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
-    // Evidence-first parity with POST /captures + GET /state: never silently accept evidence for a
-    // case that doesn't exist. "Connect" attaches without creating, so a typo'd / never-created case
-    // id would otherwise 202-"accept" the import and orphan it on disk (no case meta, invisible in the
-    // case list) — silent loss of forensic evidence. Fail loud so the analyst creates the case first.
-    if (!(await store.caseExists(caseId))) {
-      return res.status(404).json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
-    }
+    // (the case-existence 404 is mounted by registerImportCaseGuard, ahead of this handler)
     const text = typeof req.body?.text === "string" ? req.body.text
       : typeof req.body?.json === "string" ? req.body.json
       : typeof req.body?.csv === "string" ? req.body.csv : "";
@@ -344,11 +340,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
       return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing evidence` });
     }
-    // Same evidence-first guard as POST /import + /captures + /state: never ingest into a case that
-    // doesn't exist (it would write an orphaned, case-meta-less import on disk).
-    if (!(await store.caseExists(caseId))) {
-      return res.status(404).json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
-    }
+    // (the case-existence 404 is mounted by registerImportCaseGuard, ahead of this handler)
     const filePath = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!filePath) return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
