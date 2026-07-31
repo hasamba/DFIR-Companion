@@ -132,6 +132,22 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report/report.md?download=1");
   });
 
+  it("controls review, approval, immutable release, supersession and frozen report packs", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("Self-review &amp; approve");
+    expect(html).toContain("Submit");
+    expect(html).toContain("Request changes");
+    expect(html).toContain("Release frozen snapshot");
+    expect(html).toContain("Released-report chain intact");
+    expect(html).toContain("explicitly supersedes");
+    for (const pack of ["technical", "executive", "legal", "ioc"]) {
+      expect(html).toContain(`/packs/${pack}`);
+    }
+    expect(html).toContain('id="rtRequireIndependentReview"');
+    expect(html).toContain('id="rtRequireEvidenceLinks"');
+    expect(html).toContain("requiredSections: [...rtRequiredSections]");
+  });
+
   it("offers a PDF export (print-to-PDF) via the Export menu", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('value="report-pdf"');

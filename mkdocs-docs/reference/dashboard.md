@@ -618,6 +618,42 @@ silently rewrite which analytical history that version represents.
 
 ---
 
+## Report Review and Release
+
+Open **Export → Report versions (diff & restore)…** after generating a report. Every generated
+version starts as a **Draft** and follows one of these paths:
+
+- Team mode: **Draft → Peer review → Approved → Released**. Select a case reviewer and submit the
+  version. The assigned reviewer can attach comments or high-impact uncertainty blockers directly
+  to a finding, claim, or evidence event; request changes without editing the investigator's
+  evidence; or approve after all high-impact blockers are resolved.
+- Solo mode: **Draft → Self-reviewed approval → Released**. The sign-off is explicitly labelled
+  self-reviewed. It is never presented as independent peer review.
+
+Release preflight refuses a version when a Critical/High finding lacks a valid evidence-event link,
+an analysis run is missing or its ledger is damaged, the custody chain is broken, an artifact is
+missing or has changed, or a required template rule is unmet. A successful release freezes the
+report text, metadata, findings, IOCs, forensic events, analytical uncertainty, report template,
+analysis-run hashes, custody-chain head, sign-offs, and four recipient packs behind one SHA-256
+manifest.
+
+The released-report integrity banner verifies the append-only release chain every time the dialog
+opens. Later case edits and report regeneration cannot modify an earlier release. To release a
+correction, approve a new report version and explicitly supersede the latest release; the original
+remains available and the new release links back to it.
+
+Each release provides four downloads built from the same frozen approved evidence set:
+
+- **Executive** — concise material findings and executive summary.
+- **Technical** — the exact approved full report.
+- **Legal/insurance** — restrictions, limitations, uncertainty, and sign-off record.
+- **IOCs** — spreadsheet-safe CSV of the approved indicators.
+
+Use the existing **From / To / Diff** controls for the visual version comparison. The release diff
+and release records are also machine-readable through the case API.
+
+---
+
 ## Chain of Custody
 
 Every artifact this case has stored, with its SHA-256 and each event that touched it — the same
