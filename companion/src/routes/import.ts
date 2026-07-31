@@ -39,28 +39,18 @@ import type { Severity, InvestigationState } from "../analysis/stateTypes.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { recordImportRun } from "./importRunRecorder.js";
 
 /**
- * Evidence import domain: the unified POST /cases/:id/import + POST /cases/:id/import-file entry
- * points, every per-format POST /cases/:id/import-<kind> route (THOR / SIEM / Chainsaw / Hayabusa /
- * Velociraptor JSON / network / KAPE / Cyber Triage / M365 / AWS / cloud-activity / Plaso / sandbox /
- * memory / email / TheHive / auditd / journald / sysdig / Wazuh / CSV / log), the GET
- * /cases/:id/import-meta banner, the #76 import undo/redo routes, and the evidence drop-folder
- * routes (POST /cases/:id/drop/run-pending batch tool run + GET /cases/:id/drop-status).
+ * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence
+ * drop-folder routes.
  *
- * Pure structural move out of createApp (see routes/system.ts for the conventions). The heavy import
- * machinery itself stays in createApp — the drop-folder auto-import poller (scanCaseDrops) also drives
- * it, and the Velociraptor bundle collector reuses the same dispatch/synthesis chain — so this module
- * reaches it through the RouteContext members those helpers were graduated onto:
+ * The drop-folder poller and Velociraptor collector reuse createApp's dispatch/synthesis machinery,
+ * exposed here through RouteContext:
  *   dispatchImport, demoteForensicForCase, resynthesizeInBackground, pushImportCheckpoint,
  *   applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase, moveDropFile (stable methods),
- *   and the drop-watcher state maps dropSeen / dropScanning / dropPendingLogged (live accessors —
- *   the poller mutates the SAME maps, so they must be read live, never captured at registration).
- * Pre-existing ctx members reused: store, options, serverLogger, recordImportFailure, recordAiError,
- * getControl, runToolAndIngest, resolveImportKind + liveToolConfigs + customTools +
- * dropWatchEnabled (live accessors). (The AI CSV/log gates ask the pipeline directly via
- * options.pipeline.hasSynthesisProvider() — text work runs on the synthesis provider, so the
- * vision-only ctx.hasAiProvider would wrongly 501 an OCR-less install.)
+ * plus live watcher maps and importer/tool configuration. CSV/log gate on the synthesis provider,
+ * preserving text analysis on OCR-less installations.
  */
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
@@ -70,11 +60,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
   } = ctx;
 
-  // Automatic content-based tagger fired right after each import's super-timeline append (see
-  // analysis/taggerAuto.ts): tag just the newly-imported events. Best-effort + gated on TAGGER_AUTO.
+  // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
       caseId, added,
     );
 
@@ -315,6 +304,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               }
             } catch { /* non-fatal */ }
           }
+          await recordImportRun(ctx, {
+            caseId, kind, storedName, startedAt: importedAt, stateBefore, minSeverity,
+            path: aiDependent ? "ai" : "deterministic",
+          });
           // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
           // re-synthesis, so known-good indicators drop out of the analysis. Best-effort.
           try {
@@ -498,6 +491,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               }
             } catch { /* non-fatal */ }
           }
+          await recordImportRun(ctx, {
+            caseId, kind, storedName, startedAt: importedAt, stateBefore, minSeverity,
+            path: aiDependent ? "ai" : "deterministic",
+          });
           try {
             const wl = await applyWhitelistToCase(caseId);
             if (wl.added > 0) ctx.serverLogger.info(`[whitelist] ${caseId} auto-marked ${wl.added} imported IOC(s) legitimate`);

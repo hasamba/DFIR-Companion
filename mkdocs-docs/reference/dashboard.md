@@ -595,6 +595,29 @@ timestamp and the analyst who did it (where applicable).
 
 ---
 
+## Analysis Run Ledger
+
+Open **Export → Analysis run ledger (replay & compare)…** to audit the processing history behind the
+current case. Each immutable manifest identifies the source artifact or evidence events, importer or
+rules version, prompt or report-template hash, provider/model, filters, anonymization policy,
+warnings, and output hashes. **View manifest** exposes the exact evidence IDs and links them back to
+the forensic timeline.
+
+The integrity banner verifies both every manifest hash and the case's append-only hash chain.
+Changing or deleting a historical manifest makes that check fail. The ledger is included in the
+generated report folder and whole-case archives, whose own integrity manifest covers it as well.
+
+**Replay** first checks that the original artifact, evidence, importer/rules, prompt/template, and
+provider/model are still available and unchanged. If anything is missing, it names the blockers and
+does not start or spend provider credits. A successful replay creates a child run; it never replaces
+the historical run. Select two runs and choose **Compare claims** to see added, removed, and changed
+claims with links to their supporting evidence.
+
+Each report version pins the analysis runs used to produce it, so regenerating a report later cannot
+silently rewrite which analytical history that version represents.
+
+---
+
 ## Chain of Custody
 
 Every artifact this case has stored, with its SHA-256 and each event that touched it — the same

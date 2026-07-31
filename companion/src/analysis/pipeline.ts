@@ -2,7 +2,7 @@ import { readFileSync, createReadStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join as joinPath } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProviderError, type AIProvider, type AnalyzeImage, type AnalyzeRequest, type AnalyzeResult, type ProviderErrorKind } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
@@ -182,6 +182,8 @@ import { HUNT_PLATFORMS, type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
 import type { PlaybookStore } from "./playbookStore.js";
 import type { IncidentTypeStore } from "./incidentTypeStore.js";
+import type { AnalysisRunStore } from "./analysisRunStore.js";
+import { recordDeepPassRun, recordSynthesisRun, uniqueProviderModels } from "./analysisRunRecorders.js";
 import { renderIncidentTypeBlock } from "./incidentTypes.js";
 import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock, demoteCompletedNextSteps } from "./priorWork.js";
 import { flagContradictedAnswers } from "./answerContradiction.js";
@@ -1590,6 +1592,7 @@ export interface PipelineOptions {
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
+  analysisRunStore?: AnalysisRunStore; // append-only reproducibility ledger (#377)
   // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).
   aiCostStore?: AiCostStore;
@@ -1787,14 +1790,23 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
-  // True when TEXT work (synthesis, ask/explain, summaries, hunts, CSV/log triage, starred report,
-  // view summary, …) can run. Mirrors how those methods resolve their provider
-  // (`synthesisProvider ?? provider`): DFIR_AI_SYNTH_PROVIDER falls back to the vision provider
-  // (DFIR_VISION_PROVIDER), so this is true whenever EITHER is configured. Route gates for text-only
-  // AI features must use this — NOT hasAiProvider(), which reflects only the screenshot/vision
-  // provider and is false in an OCR-less install (synthesis provider set, vision provider unset).
+  // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs.
+  // Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
   hasSynthesisProvider(): boolean {
     return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
+  }
+
+  analysisProviderModels(): Array<{ provider: string; model: string }> {
+    return uniqueProviderModels([this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider]);
+  }
+
+  analysisTextProviderModel(): { provider: string; model: string } | null {
+    const provider = this.opts.synthesisProvider ?? this.opts.provider;
+    return provider ? { provider: provider.name, model: provider.model } : null;
+  }
+  analysisProvider(providerName: string, model: string): AIProvider | undefined {
+    return [this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider]
+      .find((provider) => provider?.name === providerName && provider.model === model);
   }
 
   private requireProvider(purpose: string): AIProvider {
@@ -1802,11 +1814,8 @@ export class AnalysisPipeline {
     return this.opts.provider;
   }
 
-  // Run one AI call with optional per-case anonymization. Tokenizes the userPrompt and —
-  // when an ocrRunner is configured (external provider only) — OCR-redacts image buffers
-  // before sending. The original image files on disk are never touched; only the in-memory
-  // copies forwarded to the model are redacted. Restores the parsed JSON response BEFORE
-  // schema validation so real values with JSON metacharacters never corrupt parsing.
+  // Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema
+  // validation so real values containing JSON metacharacters cannot corrupt parsing.
   private async analyzeRestored(
     caseId: string,
     state: InvestigationState,
@@ -5121,10 +5130,8 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
-  // Optional AI-assisted extension of the deterministic false-positive similarity suggestions
-  // (#227): one text-only call, given the anchor item + a candidate list already narrowed by the
-  // caller (e.g. the deterministic scorer's near-misses, or a capped slice of the case). Returned
-  // ids are validated against the candidate list so a hallucinated id can never be applied.
+  // Optional AI-assisted extension of deterministic FP suggestions (#227). The caller narrows the
+  // candidates and returned ids are validated against them, so hallucinated ids cannot be applied.
   async suggestFalsePositiveSimilarAi(
     caseId: string,
     anchorId: string,
@@ -5147,15 +5154,9 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
-  // `dryRun` produces the synthesized conclusions WITHOUT persisting them or firing any side effect
-  // (no save, no synth-meta, no notifications, no accepted-delta re-apply) — used by the second
-  // opinion (issue #116) to compute model B's analysis non-destructively. `provider` overrides the
-  // synthesis model for that run (model B). Both default off → normal, primary, persisted synthesis.
-  /**
-   * What a deep pass would cost at each severity floor, for THIS case. Shown before any spend so the
-   * analyst picks against real numbers — no floor is a sane default across cases (a detection-heavy
-   * import wants High+; a telemetry-heavy one may hold only a handful of High events in total).
-   */
+  // `dryRun` returns conclusions without persistence or side effects; second opinion uses it for
+  // model B (#116). `provider` overrides the synthesis model. Both default off for a normal run.
+  /** Estimate each Deep Pass severity floor against this case before the analyst spends credits. */
   async deepPassPreview(caseId: string): Promise<{ cap: number; floors: FloorOption[] }> {
     const state = await this.opts.stateStore.load(caseId);
     const markers = this.opts.falsePositiveStore ? await this.opts.falsePositiveStore.load(caseId) : [];
@@ -5165,23 +5166,18 @@ export class AnalysisPipeline {
     return { cap, floors: previewFloors(scopedEvents, { cap }) };
   }
 
-  /**
-   * Analyst-triggered batched deep pass. Reads EVERY graded event at or above `minSeverity` — in as
-   * many batches as needed — then folds the resulting observations into ONE final synthesis.
-   *
-   * Ordering mirrors deepPass.previewFloors exactly (drop Info → apply the floor → group → batch), so
-   * the pre-flight estimate cannot promise what this does not deliver.
-   *
-   * Nothing is persisted until the final synthesize() succeeds, so an aborted or failed run leaves the
-   * case exactly as it was.
-   */
+  /** Read every graded event at the chosen floor in batches, then fold observations into one
+   * synthesis. Preview uses the same ordering; cancellation records a failed run but changes no case data. */
   async deepPass(caseId: string, opts: {
     minSeverity: Severity;
     provider?: AIProvider;
     signal?: AbortSignal;
     maxBatches?: number;
     onProgress?: (done: number, total: number, detail: string) => void;
+    analysisParentRunId?: string;
   }): Promise<DeepPassResult> {
+    const runStartedAt = new Date().toISOString();
+    const runId = `${runStartedAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     const state = await this.opts.stateStore.load(caseId);
     const provider = opts.provider ?? this.opts.synthesisProvider ?? this.opts.provider;
     if (!provider) throw new Error("no synthesis provider configured");
@@ -5212,11 +5208,8 @@ export class AnalysisPipeline {
     let aborted = false;
     let batchesFailed = 0;
 
-    // One batch's response is not worth the whole run. A live run died on batch 1 of 5 with "Bad
-    // control character in string literal in JSON" — 20 minutes and four unspent batches lost to one
-    // malformed reply. Observations are ADDITIVE, so a batch that will not parse costs exactly its own
-    // coverage: retry it on the standard schedule, then record it and carry on. The count is reported
-    // so partial coverage is visible rather than silently passed off as a complete read.
+    // Observations are additive: retry a malformed batch, then record its failure and continue so
+    // partial coverage is visible without discarding the rest of an expensive run.
     for (let i = 0; i < batches.length; i++) {
       if (opts.signal?.aborted) { aborted = true; break; }
       opts.onProgress?.(i, batches.length, `reading batch ${i + 1} of ${batches.length}`);
@@ -5228,8 +5221,7 @@ export class AnalysisPipeline {
         ), retries, backoffMs);
         observations.push(...sanitizeObservations(raw, validEventIds));
       } catch (err) {
-        // The approval gate is not a batch failure to swallow and carry on past — it must reach the
-        // route layer as a 409 so the analyst gets the approval panel, not a silently degraded run.
+        // Approval must reach the route as a 409, not become a silently degraded batch.
         if (err instanceof PresidioApprovalRequired) throw err;
         if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
         batchesFailed++;
@@ -5241,8 +5233,7 @@ export class AnalysisPipeline {
       if (opts.signal?.aborted) { aborted = true; break; }
     }
 
-    // Condense until the digest fits the room the final call has for it. Same observations-only
-    // contract, so a round can never introduce a verdict either.
+    // Condense to the final call's budget; the observations-only contract cannot introduce verdicts.
     const digestBudget = Math.max(0, Math.floor(inputTokenBudget() * 0.25));
     for (let round = 0; !aborted && round < MAX_CONDENSE_ROUNDS; round++) {
       const plan = planCondenseRounds(observations, digestBudget, OBSERVATION_CAP_PER_BATCH * 2);
@@ -5259,12 +5250,10 @@ export class AnalysisPipeline {
           ), retries, backoffMs);
           condensed.push(...sanitizeObservations(raw, validEventIds));
         } catch (err) {
-          // Same gate as the observe loop above — propagate rather than paper over it as an
-          // uncondensed group.
+          // Propagate the same approval gate as the observe loop.
           if (err instanceof PresidioApprovalRequired) throw err;
           if (opts.signal?.aborted) { aborted = true; break; }
-          // A group that will not condense keeps its ORIGINAL observations rather than vanishing —
-          // dropping evidence to a formatting failure would be the worst possible trade here.
+          // Keep original observations when condensation fails; never drop evidence for formatting.
           condensed.push(...group);
           batchesFailed++;
           this.log.warn(`deep pass: a condense group failed, keeping it uncondensed — ${(err as Error).message}`, { caseId });
@@ -5282,7 +5271,17 @@ export class AnalysisPipeline {
       batchesFailed,
       observations: observations.length,
     };
-    if (aborted) return summary;   // cancelled — nothing persisted, the case is untouched
+    const runRecord = {
+      id: runId, parentRunId: opts.analysisParentRunId, startedAt: runStartedAt,
+      provider: provider.name, model: provider.model, eventIds: floored.map((event) => event.id),
+      minSeverity: opts.minSeverity, maxBatches: ceiling, rowsPerBatch: cap, scope, batchesFailed,
+      falsePositiveMarkers: markers.length,
+      observePrompt: getObservePrompt(), synthesisPrompt: getSynthesisPrompt(),
+    };
+    if (aborted) {
+      await recordDeepPassRun(this.opts.analysisRunStore, caseId, { ...runRecord, status: "failed", error: "cancelled before final synthesis", output: state });
+      return summary;
+    }
 
     opts.onProgress?.(batches.length, batches.length, "synthesizing");
     await this.synthesize(caseId, {
@@ -5290,46 +5289,38 @@ export class AnalysisPipeline {
       ...(opts.signal ? { signal: opts.signal } : {}),
       ...(opts.provider ? { provider: opts.provider } : {}),
       observationsBlock: renderObservationDigest(observations),
+      analysisParentRunId: runId,
     });
+    const finalState = await this.opts.stateStore.load(caseId);
+    await recordDeepPassRun(this.opts.analysisRunStore, caseId, { ...runRecord, output: finalState });
     return summary;
   }
 
-  // The rows of one batch, rendered for the observation prompt. Same shape the synthesis timeline
-  // uses so the model sees a familiar format, minus the selection-class "~" prefix (a batch has no
-  // anchors — every row is equal evidence).
+  // Observation rows match synthesis timeline rows, minus the selection-class prefix.
   private renderBatchRows(rows: readonly ForensicEvent[]): string {
     return rows
       .map((e) => `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`)
       .join("\n");
   }
 
-  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean; observationsBlock?: string } & SynthThinkingInput = {}): Promise<InvestigationState> {
-    // Deep-pass observations: evidence gathered by the batched pass over events this prompt will NOT
-    // show row-by-row. Empty for a normal run, so nothing changes when the deep pass is not in play.
+  async synthesize(caseId: string, opts: { force?: boolean; dryRun?: boolean; provider?: AIProvider; signal?: AbortSignal; skipSecondLook?: boolean; observationsBlock?: string; analysisParentRunId?: string } & SynthThinkingInput = {}): Promise<InvestigationState> {
+    // Deep Pass supplies observations for events this prompt will not show row by row.
     const observationsBlock = opts.observationsBlock ?? "";
     const synthProvider = opts.provider ?? this.opts.synthesisProvider ?? this.requireProvider("synthesis");
     this.warnOnPromptDrift();   // once per process: a stale synthesis-prompt override silently drops shipped capabilities
     const loaded = await this.opts.stateStore.load(caseId);
     if (loaded.forensicTimeline.length === 0) return loaded;
 
-    // Cross-source correlation FIRST: collapse events that describe the same artifact
-    // (same hash, or same path within a time window) reported by different tools — e.g.
-    // a Velociraptor alert and a THOR alert about one downloaded file — into a single
-    // corroborated event. This dedups the timeline AND means one finding (with both tools
-    // as evidence) instead of two. Idempotent, so repeated synthesis is stable. The
-    // correlated timeline is persisted below.
+    // Correlate the same artifact across tools first: deduplicate into one corroborated event and
+    // one finding with both sources. This is idempotent and the correlated timeline is persisted.
     const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
     const corrProfile = await this.opts.correlationProfileStore?.load(caseId);
     const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
-    // Per-source trust (#66): the effective map (default ⊕ per-case overrides) steers which tool's wording
-    // wins a cross-source merge below, and caps confidence for low-trust-only findings in grounding later.
+    // Source trust (#66) selects merge wording and caps low-trust-only findings.
     const trustOverrides = this.opts.sourceTrustStore ? await this.opts.sourceTrustStore.load(caseId) : undefined;
     const sourceTrust = effectiveTrustMap(trustOverrides);
-    // Clock skew (#228) is measured HERE, on the pre-merge timeline: the correlation below collapses
-    // each anchor group to a single event, and with it the evidence that two clocks disagreed. When
-    // the analyst has alignment on, the corrected times feed the correlation WINDOWS (via epochOf)
-    // so a host running minutes fast still correlates with the fleet — the events themselves, and so
-    // everything persisted below, keep their recorded timestamps.
+    // Measure clock skew pre-merge (#228), before correlation erases the disagreeing anchors.
+    // Aligned times guide windows; persisted events retain recorded timestamps.
     const skew = await this.detectSkew(caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
     const state: InvestigationState = {
       ...loaded,
@@ -5953,6 +5944,15 @@ export class AnalysisPipeline {
       findingsCount: next.findings.length,          // #74
       highSeverityBackfillCount,                    // #74
       parseRetries: synthParseRetries,              // #74
+    });
+    const anonPolicy = toAnonPolicy(this.opts.anonStore ? await this.opts.anonStore.load(caseId) : null);
+    await recordSynthesisRun(this.opts.analysisRunStore, caseId, {
+      parentRunId: opts.analysisParentRunId, startedAt: new Date(synthStart).toISOString(),
+      provider: synthProvider.name, model: synthProvider.model, eventIds: [...shownIds],
+      inputState: state, outputState: next, prompt: getSynthesisPrompt(), maxEvents: SYNTH_MAX_EVENTS,
+      thinkingTokens: synthThinkingTokens, correlationWindowSeconds: windowSeconds, anonymizationPolicy: anonPolicy,
+      scope, falsePositiveMarkers: markers.length, infoEventsExcluded: omittedInfo > 0,
+      observationsIncluded: observationsBlock.length > 0, parseRetries: synthParseRetries, coverage: synthCoverage,
     });
     // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
     // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

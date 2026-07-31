@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Reproducible analysis-run ledger** — imports, deterministic tagging, enrichment, synthesis, Deep Pass, and reports now leave immutable, hash-chained manifests that pin their evidence and dependencies; analysts can inspect, replay, and compare runs while reports and exports retain the exact run history (closes #377).
 - **Internal Hunt Workbench and typed query language** — structured, indexed and cursor-paged searches across an explicitly selected forensic or super-timeline dataset, with Boolean/range/time/regex filters, aggregation, rare values, saved parameterized hunts, result pivots/actions, cancellation and resource limits (closes #376).
 
 ## [0.34.0] - 2026-07-31

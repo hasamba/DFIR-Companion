@@ -36,6 +36,7 @@ import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
 import { registerReportsExportRoutes } from "./routes/reportsExport.js";
 import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
 import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
+import { registerAnalysisRunRoutes } from "./routes/analysisRuns.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
 import { registerIncidentTypeRoutes } from "./routes/incidentTypes.js";
@@ -142,6 +143,8 @@ import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
+import { AnalysisRunStore } from "./analysis/analysisRunStore.js";
+import { recordEnrichmentRun } from "./analysis/analysisRunRecorders.js";
 import { DropStatusStore, type DropFailure, type PendingRawInput } from "./analysis/dropStatus.js";
 import {
   selectReadyFiles, classifyDropFile, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
@@ -427,6 +430,8 @@ export interface AppOptions {
   // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
   // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
   synthMetaStore?: SynthMetaStore;
+  // Append-only operation manifests (#377), including replay ancestry and integrity hashes.
+  analysisRunStore?: AnalysisRunStore;
   // Per-case AI cost/token accounting (vision/synthesis/other buckets), read-only here —
   // the pipeline (via AiCostStore.record) writes it after every AI call.
   aiCostStore?: AiCostStore;
@@ -707,7 +712,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, onTags: options.onTags, onState: options.onState, logLine },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine },
       caseId, added,
     );
 
@@ -1073,6 +1078,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerInteractiveReportRoutes(app, ctx);
   registerReportsExportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
+  registerAnalysisRunRoutes(app, ctx);
   // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
   // then the case-core catch-all (lifecycle, archives, integration pushes, importers, jobs, settings, static
   // app shell). Both register before the terminal error handler at the end of createApp.
@@ -2712,32 +2718,24 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     return rebuilt;
   }
 
-  // Shared reachability gate (one per server, so the cache survives across enrich runs: if a
-  // self-hosted instance is down and three imports land within a minute, it's probed once,
-  // not three times). Logs each real probe's verdict so the operator sees DOWN/UP transitions.
+  // Shared reachability cache probes a down self-hosted provider once per TTL and logs transitions.
   const enrichHealth = new ProviderHealthCache({
     ttlMs: options.enrichHealthTtlMs,
     onProbe: (name, h) => logLine(`[enrich] health ${name} ${h.ok ? "UP" : `DOWN (${h.detail ?? "unreachable"})`}`),
   });
-  // Cases whose last enrich run had to skip a provider that was down. The background poller
-  // drains this and re-enriches once the server is reachable again (the per-provider cache
-  // means only the still-unchecked IOCs are actually queried).
+  // Cases waiting for a down provider; the poller resumes only their unchecked IOCs on recovery.
   const enrichPending = new Set<string>();
 
-  function enrichInBackground(caseId: string, force = false): void {
+  function enrichInBackground(caseId: string, force = false, parentRunId?: string): void {
     if (allProviders.length === 0 || !options.stateStore) return;
     let job: { jobId: string; signal?: AbortSignal } | undefined; // #225: registered once providers are known
     void (async () => {
+      const startedAt = new Date().toISOString();
       const providers = await enabledProvidersFor(caseId);
       if (providers.length === 0) { enrichPending.delete(caseId); return; }     // nothing enabled — drop any stale pending mark so the poller can idle
       const state = await options.stateStore!.load(caseId);
-      // Pure no-op guard: every enrichable IOC already has a result from every enabled provider,
-      // and (when a RockyRaccoon-style provider is present) every process chain is already
-      // checked. Callers like resynthesizeInBackground fire this after EVERY re-synthesis —
-      // including one triggered only by marking an event/finding false-positive, which touches
-      // neither IOCs nor process chains — so without this guard the analyst sees a spurious
-      // "enriching…" status and a no-op state save/broadcast on every FP mark. Skip entirely
-      // (no job, no status flip, no save) unless there's real work or the caller forced a re-check.
+      // Skip the job/status/save when every enabled provider already checked every IOC and process
+      // chain. This avoids spurious enrichment after unrelated re-synthesis; force bypasses it.
       if (!force) {
         const chainCapable = providers.some((p) => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
         const work = hasEnrichableWork(state.iocs, providers) || (chainCapable && hasChainWork(state.forensicTimeline));
@@ -2768,38 +2766,40 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
       const downNote = summary.unavailable.length ? ` unavailable=[${summary.unavailable.join(", ")}]` : "";
       logLine(`[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}${downNote}`);
-      // Remember (or clear) this case for the background poller: if a provider was down we
-      // couldn't finish, so retry it on recovery; if all reachable, drop any stale pending mark.
+      // Queue incomplete cases for recovery; clear stale pending state when all providers answered.
       if (summary.unavailable.length) enrichPending.add(caseId);
       else enrichPending.delete(caseId);
-      const { chainSummary } = await runStateExclusive(caseId, async () => {
-      // Re-load + write only the iocs so we don't clobber a concurrent state change.
+      const { chainSummary, merged: finalState } = await runStateExclusive(caseId, async () => {
+        // Re-load + write only the IOCs so a concurrent state change survives.
         const latest = await options.stateStore!.load(caseId);
-      const byValue = new Map(iocs.map((i) => [i.value, i]));
-      let merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
+        const byValue = new Map(iocs.map((i) => [i.value, i]));
+        let merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
 
-      // Process-chain validation: if a RockyRaccoon provider is present, validate
-      // parent→child relationships on the forensic timeline (anomalous chains are a
-      // strong signal). Uses the same throttle/cap as IOC enrichment.
-      const rocky = providers.find((p): p is EnrichmentProvider & { checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null> } =>
-        typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
-      let chainSummary: ChainSummary | undefined;
-      if (rocky) {
-        const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
-          check: (p, c) => rocky.checkParentChild(p, c),
-          delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
-          jitterMs: options.enrichJitterMs,
-          retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
-          maxChecks: options.enrichMaxIocs,
-          force,
-        });
-        merged = { ...merged, forensicTimeline: events };
-        chainSummary = cs;
-      }
+        // A RockyRaccoon provider validates parent→child chains with the IOC throttle and cap.
+        const rocky = providers.find((p): p is EnrichmentProvider & { checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null> } =>
+          typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
+        let chainSummary: ChainSummary | undefined;
+        if (rocky) {
+          const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
+            check: (p, c) => rocky.checkParentChild(p, c),
+            delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
+            jitterMs: options.enrichJitterMs,
+            retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
+            maxChecks: options.enrichMaxIocs,
+            force,
+          });
+          merged = { ...merged, forensicTimeline: events };
+          chainSummary = cs;
+        }
 
         await options.stateStore!.save(merged);
         options.onState?.(merged);
-        return { chainSummary };
+        return { chainSummary, merged };
+      });
+      await recordEnrichmentRun(options.analysisRunStore, caseId, {
+        parentRunId, startedAt, providerNames: providers.map((provider) => provider.name), force,
+        maxIocs: options.enrichMaxIocs ?? 100, delayMs: options.enrichDelayMs ?? 0,
+        inputState: state, outputState: finalState, summary,
       });
       const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
       const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
@@ -2811,22 +2811,15 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     });
   }
 
-  // After IOCs change (synthesis/import), enrich the new ones if the toggle is on. The
-  // cache means already-enriched IOCs are skipped, so this only queries fresh indicators.
+  // Enrich fresh IOCs after synthesis/import when the toggle is on; the cache skips checked ones.
   function autoEnrichIfEnabled(caseId: string): void {
     if (allProviders.length === 0) return;
     enabledProvidersFor(caseId).then((ps) => { if (ps.length > 0) enrichInBackground(caseId); }).catch(() => {});
   }
 
-  // Background reachability poller (opt-in via enrichHealthPollMs, set by startServer). It only
-  // runs while a case is actually waiting on a down provider to recover (enrichPending non-empty):
-  // its sole purpose is to resume those cases, so when enrichment is off everywhere it probes
-  // nothing and emits no "[enrich] health … DOWN" noise. When it does run it re-probes only the
-  // providers currently known-down — cheap — and, when one recovers, resumes the cases that had to
-  // skip it. `.unref()` so it never holds the process open; tests don't set the option, so no timer starts.
-  // The "any provider can be probed?" test is made INSIDE the tick, not at boot (#178): a provider set
-  // rebuilt from newly-saved settings must be pollable too, and a boot-time gate would have frozen a
-  // server that started with nothing configured.
+  // The opt-in reachability poller only probes known-down providers while cases are waiting, then
+  // resumes those cases on recovery. Capability is checked inside each tick so rebuilt settings work
+  // (#178); unref prevents the timer holding the process open.
   if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0) {
     let polling = false;   // guard against overlap if a probe round runs long
     const timer = setInterval(() => {
@@ -2853,9 +2846,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function resynthesizeInBackground(caseId: string): void {
     const pipeline = options.pipeline;
     if (!pipeline) return;
-    // synthesize() is TEXT work — gate on the synthesis provider (which falls back to the vision
-    // provider), not hasAiProvider(): an OCR-less install (only DFIR_AI_SYNTH_PROVIDER set) must
-    // still re-synthesize after imports/mutations.
+    // Gate text synthesis on its provider (with vision fallback), preserving OCR-less installs.
     if (!pipeline.hasSynthesisProvider()) { autoEnrichIfEnabled(caseId); return; }
     void (async () => {
       // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
@@ -3520,6 +3511,7 @@ export interface RuntimePipelineParams {
   synthesisModelLabel?: string;
   secondOpinionModelLabel?: string;
   stateLock?: StateLock;
+  analysisRunStore?: AnalysisRunStore;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3542,6 +3534,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    analysisRunStore: params.analysisRunStore,
     aiCostStore: new AiCostStore(params.store),
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
@@ -3704,6 +3697,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
   const reportMetaStore = new ReportMetaStore(store);
   const reportVersionStore = new ReportVersionStore(store);   // #77 report versioning (diff & rollback)
+  const analysisRunStore = new AnalysisRunStore(store, { appVersion });
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const activityLogStore = new ActivityLogStore(store);
   const commentsStore = new CommentsStore(store);
@@ -3758,6 +3752,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     synthMeta: synthMetaStore,
     lateralPathDismissals: lateralPathDismissStore,
     reportVersions: reportVersionStore,
+    analysisRuns: analysisRunStore,
     complianceControl: complianceControlStore,
     clockSkew: clockSkewStore,
   });
@@ -3871,6 +3866,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore, incidentTypeStore,
+    analysisRunStore,
     presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
@@ -3963,6 +3959,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
     onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
     synthMetaStore,
+    analysisRunStore,
     aiCostStore,
     correlationProfileStore,
     secondOpinionStore,

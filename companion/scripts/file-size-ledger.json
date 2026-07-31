@@ -9,8 +9,8 @@
   "reports/markdown.ts": 1461,
   "routes/aiSynthesis.ts": 865,
   "routes/caseLifecycle.ts": 1323,
-  "routes/import.ts": 1784,
+  "routes/import.ts": 1781,
   "routes/mcp.ts": 854,
   "routes/velociraptor.ts": 888,
-  "server.ts": 4280
+  "server.ts": 4277
 }

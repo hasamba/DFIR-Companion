@@ -14,11 +14,14 @@ import type { TagsStore } from "./tags.js";
 import type { TaggerStore } from "./taggerStore.js";
 import type { StateStore } from "./stateStore.js";
 import { runAndApplyTagger, readTaggerSettings } from "./taggerRun.js";
+import type { AnalysisRunStore } from "./analysisRunStore.js";
+import { hashManifestValue } from "./analysisRunHash.js";
 
 export interface AutoTagDeps {
   taggerStore?: TaggerStore;
   tagsStore?: TagsStore;
   stateStore?: StateStore;
+  analysisRunStore?: AnalysisRunStore;
   onTags?: (caseId: string) => void;
   onState?: (state: InvestigationState) => void;
   logLine?: (msg: string) => void;
@@ -34,6 +37,8 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
   const settings = readTaggerSettings();
   if (!settings.auto) return;
   try {
+    const startedAt = new Date().toISOString();
+    const active = await taggerStore.readActive();
     const ruleset = await taggerStore.load(); // throws on an invalid hand-edited file → skip (below)
     if (!ruleset.rules.length) return;
 
@@ -58,6 +63,33 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
     if (applied.result.totalMatched > 0) {
       deps.logLine?.(`[tagger] ${caseId} auto-tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${applied.mutatedCount} severity/MITRE update(s)`);
     }
+    await deps.analysisRunStore?.record(caseId, {
+      kind: "deterministic",
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      versions: {
+        schema: "tagger/v1",
+        rules: hashManifestValue(active.text),
+      },
+      input: {
+        artifacts: [],
+        eventIds: added.map((event) => event.id),
+        entityIds: [],
+        selectionHash: hashManifestValue(added.map((event) => event.id)),
+      },
+      configuration: {
+        parameters: { analyzer: "tagger", mode: "automatic" },
+        filteringPolicy: { scope: settings.scope },
+      },
+      output: {
+        entityIds: applied.result.perEvent.map((event) => event.eventId),
+        hashes: [{
+          id: "tagger-result",
+          sha256: hashManifestValue(applied.result),
+        }],
+        claims: [],
+      },
+    });
   } catch (err) {
     deps.logLine?.(`[tagger] ${caseId} auto-tag skipped: ${(err as Error).message}`);
   }
