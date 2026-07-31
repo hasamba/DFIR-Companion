@@ -41,9 +41,11 @@ export type ImportBase = {
   label: string;
   idPrefix: string;
   importedAt: string;
-  onProgress?: (done: number, total: number) => void;
+  onProgress?: (done: number, total: number) => void | Promise<void>;
+  onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>;
   minSeverity?: Severity;
   signal?: AbortSignal;
+  startBatch?: number;
 };
 
 export interface RouteContext {

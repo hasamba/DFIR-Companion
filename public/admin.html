@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en" data-safe-dom>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Account &amp; team — DFIR Companion</title>
+  <link rel="icon" href="/favicon-32.png" />
+  <script src="/js/safe-dom.js"></script>
+  <style nonce="__CSP_NONCE__" id="dfir-runtime-styles">
+    html[data-safe-dom] body { visibility:hidden; }
+    html[data-safe-dom].dfir-styles-ready body { visibility:visible; }
+  </style>
+  <style nonce="__CSP_NONCE__">
+    :root { color-scheme:dark; font-family:Inter,system-ui,sans-serif; background:#0f1115; color:#dce4ef; }
+    * { box-sizing:border-box; }
+    body { margin:0; }
+    header { position:sticky; top:0; display:flex; align-items:center; gap:14px; padding:14px 22px; background:#161b22; border-bottom:1px solid #303846; }
+    header img { width:34px; height:34px; border-radius:7px; }
+    header h1 { font-size:18px; margin:0; flex:1; }
+    a,button { color:#8adcd5; }
+    main { max-width:1180px; margin:24px auto; padding:0 20px 50px; display:grid; gap:20px; }
+    section { background:#161b22; border:1px solid #303846; border-radius:10px; padding:18px; overflow:auto; }
+    h2 { margin:0 0 12px; font-size:17px; }
+    p { color:#9aa4b2; }
+    form,.row { display:flex; flex-wrap:wrap; gap:9px; align-items:end; }
+    label { display:grid; gap:5px; font-size:12px; color:#aeb9c8; }
+    input,select,button { padding:8px 10px; border:1px solid #3a4657; border-radius:6px; background:#10151c; color:#e8edf4; font:inherit; }
+    button { cursor:pointer; background:#145e5a; border-color:#238a83; }
+    button.danger { background:#5e2428; border-color:#914047; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
+    th,td { text-align:left; border-bottom:1px solid #2a3340; padding:8px; vertical-align:top; }
+    th { color:#9aa4b2; }
+    code,pre { background:#0b1016; border-radius:5px; padding:3px 6px; }
+    pre { white-space:pre-wrap; word-break:break-all; padding:12px; }
+    #message { min-height:20px; color:#ffaaa7; }
+    .good { color:#83e0aa !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="/dfir-companion-logo.jpg" alt="" />
+    <h1>Account &amp; team</h1>
+    <a href="/dashboard">Dashboard</a>
+    <button id="logout" class="danger">Sign out</button>
+  </header>
+  <main>
+    <div id="message" role="status"></div>
+    <section data-global-only>
+      <h2>People</h2>
+      <p>OIDC users appear after their first sign-in. Local accounts are the secure fallback.</p>
+      <form id="newUser">
+        <label>Display name<input name="displayName" required /></label>
+        <label>Username<input name="username" required /></label>
+        <label>Temporary password<input name="password" type="password" minlength="6" required /></label>
+        <label>Global role<select name="globalRole"><option value="member">Member</option><option value="administrator">Administrator</option></select></label>
+        <button>Create local user</button>
+      </form>
+      <table><thead><tr><th>Name</th><th>Identity</th><th>Global role</th><th>Status</th><th>Action</th></tr></thead><tbody id="users"></tbody></table>
+    </section>
+    <section>
+      <h2>Case roles</h2>
+      <p>Roles are deliberately separate: investigators can edit, reviewers can approve, readers can view/export, and case administrators manage access.</p>
+      <form id="caseRole">
+        <label>Case<select name="caseId" id="caseId" required></select></label>
+        <label>Person<select name="identityId" id="identityId" required></select></label>
+        <label>Role<select name="role"><option>reader</option><option>investigator</option><option>reviewer</option><option>administrator</option></select></label>
+        <button>Grant or change</button>
+      </form>
+      <table><thead><tr><th>Case</th><th>Person</th><th>Role</th><th>Action</th></tr></thead><tbody id="roles"></tbody></table>
+    </section>
+    <section>
+      <h2>Service identities</h2>
+      <p>Create a case-scoped token for the browser extension, collection tooling, or automation. The secret is shown once.</p>
+      <form id="newToken">
+        <label>Name<input name="name" required placeholder="Capture extension" /></label>
+        <label>Case<select name="caseId" id="tokenCaseId" required></select></label>
+        <label>Permissions<select name="permissions" multiple size="5"><option selected>capture</option><option>read</option><option selected>write</option><option>review</option><option>export</option></select></label>
+        <label>Expires at<input name="expiresAt" type="datetime-local" /></label>
+        <button>Create token</button>
+      </form>
+      <pre id="tokenSecret" hidden></pre>
+      <table><thead><tr><th>Name</th><th>Case</th><th>Permissions</th><th>Expires</th><th>Action</th></tr></thead><tbody id="tokens"></tbody></table>
+    </section>
+    <section>
+      <h2>My sessions</h2>
+      <button id="revokeOthers" class="danger">Sign out other sessions</button>
+      <table><thead><tr><th>Created</th><th>Last seen</th><th>IP</th><th>Client</th></tr></thead><tbody id="sessions"></tbody></table>
+    </section>
+    <section data-global-only>
+      <h2>Authentication audit</h2>
+      <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Case / target</th><th>Detail</th></tr></thead><tbody id="audit"></tbody></table>
+    </section>
+  </main>
+  <script nonce="__CSP_NONCE__">
+    (function () {
+      var csrf = '';
+      var users = [];
+      var cases = [];
+      var message = document.getElementById('message');
+      function esc(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char];
+        });
+      }
+      async function api(path, options) {
+        var init = Object.assign({}, options || {});
+        init.credentials = 'same-origin';
+        init.headers = Object.assign({'content-type':'application/json'}, init.headers || {});
+        if (init.method && !['GET','HEAD'].includes(init.method)) init.headers['X-DFIR-CSRF'] = csrf;
+        var response = await fetch(path, init);
+        var result = response.status === 204 ? null : await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(result.error || 'Request failed');
+        return result;
+      }
+      function formObject(form) { return Object.fromEntries(new FormData(form).entries()); }
+      function say(text, good) { message.textContent = text; message.className = good ? 'good' : ''; }
+      function options(items, value, label) {
+        return items.map(function (item) { return '<option value="' + esc(value(item)) + '">' + esc(label(item)) + '</option>'; }).join('');
+      }
+      async function load() {
+        var me = await api('/auth/me');
+        if (!me.authenticated) throw new Error('Authentication required');
+        csrf = me.csrfToken;
+        var globalAdmin = me.identity.globalRole === 'administrator';
+        document.querySelectorAll('[data-global-only]').forEach(function (element) {
+          element.hidden = !globalAdmin;
+        });
+        [users, cases] = await Promise.all([api(globalAdmin ? '/auth/users' : '/auth/directory'), api('/cases')]);
+        document.getElementById('identityId').innerHTML = options(users, function (u) { return u.id; }, function (u) { return u.displayName; });
+        var caseOptions = options(cases, function (c) { return c.caseId; }, function (c) { return c.name + ' (' + c.caseId + ')'; });
+        document.getElementById('caseId').innerHTML = caseOptions;
+        document.getElementById('tokenCaseId').innerHTML = caseOptions;
+        document.getElementById('users').innerHTML = users.map(function (u) {
+          return '<tr><td>' + esc(u.displayName) + '</td><td><code>' + esc(u.id) + '</code><br>' + esc(u.kind) + '</td><td>' + esc(u.globalRole) +
+            '</td><td>' + (u.disabled ? 'Disabled' : 'Active') + '</td><td><button data-user="' + esc(u.id) + '" data-disabled="' + (!u.disabled) + '">' +
+            (u.disabled ? 'Enable' : 'Disable') + '</button></td></tr>';
+        }).join('');
+        var roleLists = (await Promise.all(cases.map(function (c) {
+          return api('/auth/cases/' + encodeURIComponent(c.caseId) + '/roles')
+            .then(function (roles) { return [c, roles]; })
+            .catch(function () { return null; });
+        }))).filter(Boolean);
+        var managedCases = roleLists.map(function (pair) { return pair[0]; });
+        var managedOptions = options(managedCases, function (c) { return c.caseId; }, function (c) { return c.name + ' (' + c.caseId + ')'; });
+        document.getElementById('caseId').innerHTML = managedOptions;
+        document.getElementById('tokenCaseId').innerHTML = managedOptions;
+        document.getElementById('roles').innerHTML = roleLists.flatMap(function (pair) {
+          return pair[1].map(function (role) {
+            var user = users.find(function (u) { return u.id === role.identityId; });
+            return '<tr><td>' + esc(pair[0].name) + '</td><td>' + esc(user ? user.displayName : role.identityId) + '</td><td>' + esc(role.role) +
+              '</td><td><button class="danger" data-role-case="' + esc(pair[0].caseId) + '" data-role-user="' + esc(role.identityId) + '">Remove</button></td></tr>';
+          });
+        }).join('');
+        var tokens = await api('/auth/service-tokens');
+        document.getElementById('tokens').innerHTML = tokens.map(function (t) {
+          return '<tr><td>' + esc(t.name) + '</td><td>' + esc(t.caseId) + '</td><td>' + esc(t.permissions.join(', ')) + '</td><td>' +
+            esc(t.expiresAt || 'Never') + '</td><td><button class="danger" data-token="' + esc(t.id) + '">Revoke</button></td></tr>';
+        }).join('');
+        var sessions = await api('/auth/sessions');
+        document.getElementById('sessions').innerHTML = sessions.map(function (s) {
+          return '<tr><td>' + esc(s.createdAt) + (s.current ? ' (current)' : '') + '</td><td>' + esc(s.lastSeenAt) + '</td><td>' +
+            esc(s.ip || '') + '</td><td>' + esc(s.userAgent || '') + '</td></tr>';
+        }).join('');
+        if (globalAdmin) {
+          var audit = await api('/auth/audit?limit=200');
+          document.getElementById('audit').innerHTML = audit.map(function (e) {
+            return '<tr><td>' + esc(e.timestamp) + '</td><td>' + esc(e.actorDisplayName || e.actorId || 'system') + '</td><td>' +
+              esc(e.action) + '</td><td>' + esc(e.caseId || e.targetId || '') + '</td><td>' + esc(e.detail) + '</td></tr>';
+          }).join('');
+        }
+      }
+      async function submitJson(form, path, body) {
+        await api(path, {method:'POST', body:JSON.stringify(body || formObject(form))});
+        form.reset(); await load(); say('Saved', true);
+      }
+      document.getElementById('newUser').addEventListener('submit', function (event) {
+        event.preventDefault(); submitJson(event.currentTarget, '/auth/users').catch(function (e) { say(e.message); });
+      });
+      document.getElementById('caseRole').addEventListener('submit', function (event) {
+        event.preventDefault(); var body = formObject(event.currentTarget);
+        api('/auth/cases/' + encodeURIComponent(body.caseId) + '/roles/' + encodeURIComponent(body.identityId),
+          {method:'PUT', body:JSON.stringify({role:body.role})}).then(load).then(function () { say('Role saved', true); }).catch(function (e) { say(e.message); });
+      });
+      document.getElementById('newToken').addEventListener('submit', function (event) {
+        event.preventDefault(); var form = event.currentTarget; var body = formObject(form);
+        body.permissions = Array.from(form.elements.permissions.selectedOptions).map(function (o) { return o.value; });
+        if (body.expiresAt) body.expiresAt = new Date(body.expiresAt).toISOString(); else delete body.expiresAt;
+        api('/auth/service-tokens', {method:'POST', body:JSON.stringify(body)}).then(function (created) {
+          var secret = document.getElementById('tokenSecret'); secret.hidden = false;
+          secret.textContent = 'Copy this token now; it will not be shown again:\n\n' + created.token;
+          form.reset(); return load();
+        }).then(function () { say('Service token created', true); }).catch(function (e) { say(e.message); });
+      });
+      document.addEventListener('click', function (event) {
+        var button = event.target.closest('button'); if (!button) return;
+        var action;
+        if (button.dataset.user) action = api('/auth/users/' + encodeURIComponent(button.dataset.user),
+          {method:'PATCH', body:JSON.stringify({disabled:button.dataset.disabled === 'true'})});
+        if (button.dataset.token) action = api('/auth/service-tokens/' + encodeURIComponent(button.dataset.token), {method:'DELETE'});
+        if (button.dataset.roleCase) action = api('/auth/cases/' + encodeURIComponent(button.dataset.roleCase) +
+          '/roles/' + encodeURIComponent(button.dataset.roleUser), {method:'DELETE'});
+        if (action) action.then(load).then(function () { say('Saved', true); }).catch(function (e) { say(e.message); });
+      });
+      document.getElementById('revokeOthers').addEventListener('click', function () {
+        api('/auth/sessions/others', {method:'DELETE'}).then(load).then(function () { say('Other sessions signed out', true); }).catch(function (e) { say(e.message); });
+      });
+      document.getElementById('logout').addEventListener('click', function () {
+        api('/auth/logout', {method:'POST'}).then(function () { location.assign('/login'); }).catch(function (e) { say(e.message); });
+      });
+      load().catch(function (error) { say(error.message); });
+    })();
+  </script>
+</body>
+</html>

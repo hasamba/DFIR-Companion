@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
+import { authenticatedActorFields } from "../auth/identityContext.js";
 
 // Per-case investigation activity log (#238, rescoped from #224 which is closed): a
 // chronological record of security-relevant actions taken on a case — imports, mark/unmark
@@ -22,6 +23,9 @@ export const activityLogEntrySchema = z.object({
   id: z.string(),
   timestamp: z.string(),
   actor: z.string().catch("analyst"),
+  actorId: z.string().optional(),
+  actorDisplayName: z.string().optional(),
+  actorKind: z.enum(["local", "oidc", "service"]).optional(),
   category: z.enum(ACTIVITY_CATEGORIES).catch("settings"),
   action: z.string().catch(""),
   detail: z.string().catch(""),
@@ -55,10 +59,12 @@ export class ActivityLogStore {
 
   // Append one entry (server-assigned id + timestamp; actor trimmed, blank -> "analyst").
   async add(caseId: string, input: NewActivityEntry): Promise<ActivityLogEntry> {
+    const authenticated = authenticatedActorFields();
     const entry: ActivityLogEntry = {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
-      actor: (input.actor ?? "").trim() || "analyst",
+      actor: authenticated?.actorDisplayName ?? ((input.actor ?? "").trim() || "analyst"),
+      ...(authenticated ?? {}),
       category: input.category,
       action: input.action,
       detail: input.detail,

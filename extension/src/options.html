@@ -20,6 +20,11 @@
     <input id="companionUrl" type="url" placeholder="http://127.0.0.1:4773" />
     <span class="hint">The base URL of the DFIR Companion server. Change this when running the companion on a non-default host or port.</span>
   </label>
+  <label>
+    Team service token
+    <input id="serviceToken" type="password" autocomplete="off" />
+    <span class="hint">Optional case-scoped identity from Companion → Access. Stored only in this browser profile.</span>
+  </label>
   <button id="save">Save</button>
   <div id="msg"></div>
   <script type="module" src="options.js"></script>

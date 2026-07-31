@@ -24,7 +24,6 @@
 import type { Severity } from "./stateTypes.js";
 import {
   createCanonicalEvent,
-  mergeCanonicalEvents,
   stampSourceArtifactHash,
   type CanonicalEventEnvelope,
 } from "./canonicalEvent.js";
@@ -462,7 +461,7 @@ const HOST_KEYS = [
   "src_host", "source.host", "winlog.computer_name",
 ];
 
-function pickHost(rec: Row): string {
+export function pickHost(rec: Row): string {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(rec, k) : getCI(rec, k);
     if (typeof v === "string" && v.trim()) return v.trim();
@@ -1231,7 +1230,7 @@ export function createEventAggregator(
         if (m.sources) for (const s of m.sources) { (existing.sources ??= []); if (!existing.sources.includes(s)) existing.sources.push(s); }
         if (!existing.artifactName && m.artifactName) existing.artifactName = m.artifactName; // first-wins provenance
         if (!existing.message && m.message) existing.message = m.message; // first-wins full detail
-        existing.canonical = mergeCanonicalEvents(existing.canonical, m.canonical);
+        // `count` records repeats; retaining the first pointer avoids unbounded provenance arrays.
       } else {
         byKey.set(key, {
           id: "",

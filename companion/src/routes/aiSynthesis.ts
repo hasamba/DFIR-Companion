@@ -125,95 +125,6 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // Deep-pass pre-flight: what a batched run would cost at each severity floor, for THIS case.
-  // Read-only and AI-free, so it is safe to call before the analyst has decided anything.
-  app.get("/cases/:id/deep-pass/preview", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
-    const caseId = req.params.id;
-    if (!(await store.getCaseMeta(caseId).catch(() => null))) return res.status(404).json({ error: "case not found" });
-    try {
-      return res.status(200).json(await options.pipeline.deepPassPreview(caseId));
-    } catch (err) {
-      return res.status(500).json({ error: String((err as Error).message) });
-    }
-  });
-
-  // Run the deep pass. Long-running but AWAITED — same convention as /synthesize above: the job gives
-  // the analyst a cancel button and broadcasts progress over the websocket while the request is in
-  // flight. Gate on the SYNTHESIS (text) provider, never the vision one.
-  app.post("/cases/:id/deep-pass", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) return res.status(501).json({ error: "AI provider not configured for synthesis" });
-    const caseId = req.params.id;
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (!caseMeta) return res.status(404).json({ error: "case not found" });
-    // A deep pass ENDS in a forced synthesize() that rewrites the conclusions, so it inherits
-    // /synthesize's lifecycle guard: a closed or archived case is not rewritten, least of all by a
-    // run that costs many minutes and hundreds of thousands of tokens before it gets there.
-    if (caseMeta.status === "closed" || caseMeta.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a deep pass` });
-    }
-    const minSeverity = parseMinSeverity((req.body as { minSeverity?: unknown })?.minSeverity);
-    // No silent fallback: an unrecognised floor must not quietly become "read everything", which on a
-    // large case is exactly the very expensive run the ceiling exists to prevent.
-    if (!minSeverity || minSeverity === "Info") {
-      return res.status(400).json({ error: "minSeverity must be one of Critical, High, Medium, Low" });
-    }
-    const job = options.jobManager?.register({
-      caseId, kind: "deep-pass", label: `deep pass (${minSeverity}+)`, cancellable: true, exclusive: true,
-    });
-    // The "AI:" pill is the only always-visible sign the model is working, and this is the longest AI
-    // run in the product — leaving it on "ready (waiting for activity)" for twenty minutes states the
-    // opposite of the truth. `phase: "deep-pass"` marks it as genuine AI work: the client relabels an
-    // un-phased "analyzing" event as a deterministic import whenever live analysis is paused, which a
-    // deep pass (manual, on-demand) can run right through.
-    const aiStatus = (status: "analyzing" | "idle" | "error", detail?: string): void => {
-      options.onAiStatus?.(caseId, {
-        status,
-        ...(status === "analyzing" ? { phase: "deep-pass" as const } : {}),
-        at: new Date().toISOString(),
-        ...(detail ? { detail } : {}),
-      });
-    };
-    aiStatus("analyzing", `deep pass (${minSeverity}+) — starting`);
-    try {
-      const result = await options.pipeline.deepPass(caseId, {
-        minSeverity,
-        ...(job?.signal ? { signal: job.signal } : {}),
-        onProgress: (done, total, detail) => {
-          if (job) options.jobManager?.progress(job.jobId, done, total, detail);
-          // The pipeline's own wording ("reading batch 2 of 5", "condensing …", "synthesizing") is
-          // already the right thing to show; it just needs the run's identity in front of it.
-          aiStatus("analyzing", `deep pass (${minSeverity}+) — ${detail}`);
-        },
-      });
-      if (job) options.jobManager?.finish(job.jobId);
-      aiStatus("idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai", action: "deep-pass",
-        // batchesFailed rides along: a run that lost batches read LESS of the case than the event
-        // count suggests, and the activity log is the durable record — omitting it here files a
-        // partial read as a complete one the moment the response body is gone.
-        detail: `deep pass (${minSeverity}+) read ${result.events} event(s) in ${result.batches} batch(es), ${result.observations} observation(s)`
-          + (result.batchesFailed ? ` — ${result.batchesFailed} batch(es) FAILED (partial coverage)` : "")
-          + (result.aborted ? " — CANCELLED, nothing was written" : ""),
-      });
-      return res.status(200).json(result);
-    } catch (err) {
-      const message = String((err as Error).message ?? "");
-      if (job) options.jobManager?.fail(job.jobId, message);
-      // The batch-ceiling refusal is user-correctable (raise the floor) — its message already names a
-      // floor that would fit — so it is a 400, not a server fault. Nothing ran and nothing broke, so
-      // the pill goes back to idle rather than reporting an AI error the analyst would go hunting for.
-      if (/batches/i.test(message)) {
-        aiStatus("idle", "deep pass not started — raise the severity floor");
-        return res.status(400).json({ error: message });
-      }
-      aiStatus("error", message);
-      return sendPipelineError(res, err);
-    }
-  });
-
   // On-demand holistic synthesis: derive findings / MITRE / attacker path from the
   // forensic timeline. (Per-window capture builds the timeline; this writes the
   // conclusions.) Broadcasts the updated state to dashboard clients via onState.
@@ -235,6 +146,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     // exclusive: a second re-synthesize for the same case (double-click, or racing the "Generate
     // hypotheses" button / a live auto-synthesis) supersedes rather than running alongside it.
     const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "synthesis", cancellable: true, exclusive: true });
+    await job?.ready;
     // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
     if (options.backupManager) {
       await options.backupManager.createBackup(caseId, "pre-synthesis").catch(() => {});
@@ -242,7 +154,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, { force: true, deepReasoning, ...(thinkingTokens !== undefined ? { thinkingTokens } : {}), ...(job?.signal ? { signal: job.signal } : {}) });
-      if (job) options.jobManager?.finish(job.jobId);
+      if (job) await options.jobManager?.finish(job.jobId);
       // Keep the playbook checklist aligned with the fresh next steps/findings (idempotent —
       // preserves analyst status/edits). Best-effort: never fail synthesis on a playbook hiccup.
       if (options.playbookStore) {
@@ -266,7 +178,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       });
     } catch (err) {
       const aborted = job?.signal?.aborted === true;
-      if (job) options.jobManager?.fail(job.jobId, err); // no-op if a cancel already marked it cancelled
+      if (job) await options.jobManager?.fail(job.jobId, err); // no-op if a cancel already marked it cancelled
       if (aborted) {
         // A newer exclusive registration may have superseded this run (see above) — if a synthesis
         // job for this case is still active, that newer run owns the status; don't stomp it to idle.

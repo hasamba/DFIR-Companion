@@ -6,6 +6,8 @@ import { randomBytes } from "node:crypto";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { hashCasePassword, signUnlockToken, unlockCookieName } from "../../src/analysis/casePassword.js";
 import { authorizeWsUpgrade } from "../../src/live/wsGate.js";
+import { AuthStore } from "../../src/auth/authStore.js";
+import { TeamAuth } from "../../src/auth/teamAuth.js";
 
 let store: CaseStore;
 let secret: Buffer;
@@ -119,5 +121,35 @@ describe("authorizeWsUpgrade (#212)", () => {
       { ...deps(), allowedHostSuffixes: [".lab.example.com"] },
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("requires a team session with read access before revealing or subscribing to a case", async () => {
+    const authStore = new AuthStore(join(await mkdtemp(join(tmpdir(), "dfir-wsauth-")), "auth.sqlite"));
+    const identity = await authStore.bootstrapLocalAdministrator({
+      username: "admin",
+      password: "correct horse battery staple",
+      displayName: "Admin",
+    });
+    const created = authStore.createSession(identity, 60_000);
+    const teamAuth = new TeamAuth({
+      store: authStore,
+      cookieSecure: false,
+      sessionTtlMs: 60_000,
+    });
+    const teamDeps = { ...deps(), teamAuth };
+    const anonymous = await authorizeWsUpgrade(
+      { url: "/ws?caseId=open", headers: { host: "127.0.0.1:4773" } },
+      teamDeps,
+    );
+    expect(anonymous).toEqual({ ok: false, reason: "authentication or case access denied" });
+    const cookie = `dfir_session=${created.token}`;
+    expect((await authorizeWsUpgrade(
+      { url: "/ws?caseId=open", headers: { host: "127.0.0.1:4773", cookie } },
+      teamDeps,
+    )).ok).toBe(true);
+    expect(await authorizeWsUpgrade(
+      { url: "/ws?caseId=unknown", headers: { host: "127.0.0.1:4773", cookie } },
+      teamDeps,
+    )).toEqual({ ok: false, reason: "case \"unknown\" not found" });
   });
 });

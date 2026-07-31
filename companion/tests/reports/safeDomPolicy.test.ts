@@ -59,6 +59,8 @@ describe("browser documents — governed rendering only", () => {
     "../../../public/dashboard.html",
     "../../../public/mobile.html",
     "../../../public/present.html",
+    "../../../public/login.html",
+    "../../../public/admin.html",
   ];
 
   it("loads the sink guard before application rendering code", async () => {

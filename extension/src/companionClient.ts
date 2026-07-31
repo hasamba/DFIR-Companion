@@ -18,13 +18,21 @@ export class CompanionClient {
   constructor(
     private readonly baseUrl: string,
     private readonly fetchFn: FetchFn = (input, init) => fetch(input, init),
+    private readonly serviceToken = "",
   ) {}
+
+  private headers(contentType = false): Record<string, string> {
+    return {
+      ...(contentType ? { "content-type": "application/json" } : {}),
+      ...(this.serviceToken ? { Authorization: `Bearer ${this.serviceToken}` } : {}),
+    };
+  }
 
   async postCapture(payload: CapturePayload): Promise<PostCaptureResult> {
     try {
       const res = await this.fetchFn(`${this.baseUrl}/captures`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: this.headers(true),
         body: JSON.stringify(payload),
       });
       if (res.status === 201) return { ok: true, status: 201 };
@@ -41,7 +49,7 @@ export class CompanionClient {
     try {
       const res = await this.fetchFn(`${this.baseUrl}/cases/${encodeURIComponent(caseId)}/import`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: this.headers(true),
         body: JSON.stringify(payload),
       });
       return { ok: res.status === 202, status: res.status };

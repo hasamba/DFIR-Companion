@@ -76,6 +76,25 @@ remembered Essential/All preference, and closing Settings clears the box.
 
 ---
 
+## Authentication
+
+Authentication settings are deployment security controls, so they are intentionally not editable
+from the dashboard. Set them in `.env` or the deployment's secret store and restart.
+
+- `DFIR_AUTH_MODE` — `single-user` (default) or `team`; stop the server, change this value, and
+  restart to switch modes. Team identities and roles remain stored while single-user mode is active.
+- `DFIR_AUTH_COOKIE_SECURE` — secure cookies; defaults on in team mode
+- `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
+- `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup from a remote client
+- `DFIR_AUTH_DATA_DIR` — optional identity/session database location
+- `DFIR_AUTH_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, `_SCOPES` — optional
+  organization sign-in
+
+See [Team Accounts and Case Roles](team-authentication.md) for setup, roles, service
+identities, emergency access, and the one-writer deployment model.
+
+---
+
 ## AI
 
 - Provider, model, API key, base URL (extraction)
@@ -332,6 +351,8 @@ Operator health view:
 - **Pre-flight check** — re-run startup diagnostics on demand
 - **Per-case backup list** — state backups with one-click restore
 - **State backup configuration** (retention counts, interval)
+- **Background-job limits** — durable history retention, total concurrency, and a per-case running
+  cap. The per-case cap keeps one large investigation from occupying every worker.
 - **Evidence integrity** — the result of the last chain-of-custody verification: which triggers are
   active, how long ago a case was last checked, how many artifacts verified clean, and any case whose
   evidence or custody log failed. See [Chain of Custody](chain-of-custody.md)
@@ -350,6 +371,15 @@ Operator health view:
 |---|---|---|
 | `DFIR_CUSTODY_VERIFY_ON_OPEN_MS` | `14400000` (4h) | How long a case's verification stays fresh. Opening a case re-verifies it in the background unless it was checked within this window. `0` turns on-open verification off |
 | `DFIR_CUSTODY_VERIFY_INTERVAL_MS` | `0` (off) | Interval for a sweep of **every** case, archived included. Off by default so an idle install does no background hashing — set it if you want unattended assurance across the whole store |
+
+### Background-job environment variables
+
+| Variable | Default | Effect |
+|---|---:|---|
+| `DFIR_JOBS_MAX` | `100` | Durable job rows retained per case; pruning removes only the oldest terminal rows, never active jobs or their separate analysis-run manifests |
+| `DFIR_JOBS_CONCURRENCY` | `4` | Maximum jobs running across all cases |
+| `DFIR_JOBS_PER_CASE` | `1` | Maximum jobs running for one case, preventing a busy case from starving the others |
+
 - **Case Statistics** — per-case totals, per-source event breakdown, and import velocity
 - **Large-import reliability** — atomic state-save retry count for big imports is tunable via `DFIR_ATOMIC_WRITE_RETRIES` (default 20, ~8.4s of retries) for setups where antivirus/search indexing can outlast the default retry budget on a large USN/MFT import
 
