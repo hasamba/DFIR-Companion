@@ -506,6 +506,22 @@ Type a plain-English description of what you want to hunt for. Select the output
 
 ---
 
+## Hunt Workbench
+
+The Hunt Workbench searches structured event fields inside either the forensic timeline or the
+super-timeline. It supports Boolean conditions, ranges, field existence, safe regex, relative time
+windows, grouping, statistics, rare-value detection, saved parameterized hunts, and cursor-paged
+results. Event, IOC, finding, and asset rows expose a one-click pivot into it.
+
+Results can be viewed as a table, timeline, or chart, exported as formula-safe CSV, added to the
+notebook, or attached to a finding. Super-timeline results remain analyst-only: notebook and
+finding-evidence actions stay disabled until the analyst promotes the individual rows.
+
+See [Hunt Workbench and Query Language](hunt-workbench.md) for the full grammar, typed field
+catalogue, error codes, safety limits, and examples.
+
+---
+
 ## Investigation Threads
 
 Open and closed investigation threads — chains of related events grouped by the AI. Useful for multi-stage attack sequences.
