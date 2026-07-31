@@ -90,11 +90,30 @@ The server automatically backs up all per-case state (findings, timeline, IOCs, 
 
 View and restore backups in **Settings → Diagnostics → Per-case backup list**. One click restores to any saved state.
 
-A restore overwrites the live state wholesale, so it is refused while an import, synthesis, enrichment, or deep pass is running for that case — the job would save over the restored state moments later. Cancel the job in **Settings → Jobs** (or let it finish), then restore.
+A restore overwrites the live state wholesale, so it is refused while an import, synthesis, enrichment, or deep pass is running for that case — the job would save over the restored state moments later. Cancel the job from the **jobs badge in the top toolbar** (or let it finish), then restore.
 
 Configure in the same tab: `DFIR_STATE_BACKUP_RETAIN` (max backups kept per case, oldest pruned; default 24 — 0 asks for no limit but is capped at 100, since each backup is a full copy of the case state and an uncapped dir will fill the disk), `DFIR_STATE_BACKUP_PRE_SYNTH_RETAIN` (how many pre-synthesis backups are preserved on top of that cap, so interval backups can't crowd them out; default 10), `DFIR_STATE_BACKUP_INTERVAL_MS` (time-based backup interval; default 1h, 0 = off), `DFIR_STATE_BACKUP_MAX_BYTES` (disk budget for one case's backups; default 10 GiB, 0 = no byte cap).
 
 The two retention numbers bound how *many* backups a case keeps, not how much disk they take — a single bundle can run to hundreds of megabytes, so 34 of them is tens of gigabytes. `DFIR_STATE_BACKUP_MAX_BYTES` bounds the total: once a case's backups exceed it, the oldest are evicted until they fit. Two are never evicted — the newest backup, so a case always keeps a recovery point, and the newest pre-synthesis backup, so the rollback path survives. That means a case whose newest snapshot alone exceeds the budget stays over it; **Settings → Diagnostics → State backups** reports the budget and flags any case in that position. The budget is per case, not per host: a global one would delete one investigation's snapshots because a different case grew. For host-level disk pressure see `DFIR_DISK_WARN_PCT`.
+
+---
+
+## Restart-safe Background Jobs
+
+The jobs badge in the top toolbar is rebuilt from a durable ledger whenever the dashboard connects.
+It shows queued and running work plus recent outcomes, progress, speed, ETA, warnings, and the last
+committed checkpoint.
+
+If the server stops during an import or Deep Pass, the old running row becomes **interrupted** on
+startup instead of disappearing. A **Resume** button appears only when that job saved restart-safe
+parameters and still has retry attempts left. CSV/log imports continue after the last evidence batch
+that reached durable case storage; Deep Pass continues after its last saved observation batch.
+Resuming reuses the same job ID and does not append a second custody receipt for the evidence.
+
+Cancellation is final for that attempt. Work already committed before a cancellation remains in the
+case; queued work is cancelled before it can start. Other failures explain whether they are retryable.
+Use `DFIR_JOBS_CONCURRENCY` and `DFIR_JOBS_PER_CASE` under **Settings → Diagnostics** to tune capacity;
+the default per-case limit reserves room for other investigations.
 
 ---
 

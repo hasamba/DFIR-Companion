@@ -577,7 +577,7 @@ describe("POST /cases/:id/restore-backup", () => {
     const { caseId, filename } = await seedRestorable(store);
 
     const { jobId } = jobManager.register({ caseId, kind: "synthesis", cancellable: true });
-    jobManager.finish(jobId);
+    await jobManager.finish(jobId);
 
     const res = await request(app).post(`/cases/${caseId}/restore-backup`).send({ filename });
     expect(res.status).toBe(200);

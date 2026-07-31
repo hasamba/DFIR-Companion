@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { JobManager } from "../../src/analysis/jobManager.js";
+import { createImportJobTracking } from "../../src/routes/importJobTracking.js";
 
 function mkClock(): () => string {
   let n = 0;
@@ -24,52 +25,125 @@ describe("JobManager", () => {
     expect(signal!.aborted).toBe(false);
   });
 
-  it("progress then finish transitions and broadcasts", () => {
+  it("live progress reports metrics without replacing the durable checkpoint", async () => {
     const onJob = vi.fn();
     const m = new JobManager({ onJob, now: mkClock() });
     const { jobId } = m.register({ caseId: "c1", kind: "import" });
+    await m.checkpoint(jobId, {
+      done: 1,
+      total: 5,
+      detail: "batch 1 committed",
+      cursor: { nextBatch: 1 },
+    });
     m.progress(jobId, 2, 5, "extracting");
-    expect(m.get(jobId)!.progress).toEqual({ done: 2, total: 5 });
-    expect(m.get(jobId)!.updatedAt).toBe("2026-07-05T00:00:01.000Z");
-    m.finish(jobId);
-    expect(m.get(jobId)!.status).toBe("done");
-    expect(onJob).toHaveBeenCalledTimes(3); // register + progress + finish
+    expect(m.get(jobId)).toMatchObject({
+      progress: { done: 2, total: 5 },
+      detail: "extracting",
+      throughputPerSecond: 1,
+      lastCheckpoint: {
+        progress: { done: 1, total: 5 },
+        cursor: { nextBatch: 1 },
+      },
+    });
+    await m.finish(jobId);
+    expect(m.get(jobId)!.status).toBe("succeeded");
+    expect(onJob).toHaveBeenCalledTimes(4); // register + checkpoint + progress + finish
   });
 
-  it("fail records the error message", () => {
+  it("tracks EVTX parsing separately from evidence and timeline commits", async () => {
+    const m = new JobManager({ now: mkClock() });
+    const job = m.register({ caseId: "c1", kind: "import", resumable: true });
+    const reportStatus = vi.fn();
+    const tracking = createImportJobTracking(m, job, "evtxxml", reportStatus);
+
+    await tracking.start();
+    expect(m.get(job.jobId)?.lastCheckpoint?.detail).toContain("evidence committed");
+
+    tracking.onParseProgress(250, 1000);
+    expect(m.get(job.jobId)).toMatchObject({
+      progress: { done: 250, total: 1000 },
+      lastCheckpoint: { progress: { done: 0, total: 1 } },
+    });
+
+    tracking.onParseProgress(1250, 2000, "processing Windows events");
+    expect(m.get(job.jobId)).toMatchObject({
+      progress: { done: 1250, total: 2000 },
+      detail: "processing Windows events",
+      lastCheckpoint: { progress: { done: 0, total: 1 } },
+    });
+
+    await tracking.onProgress(1, 1);
+    expect(reportStatus).toHaveBeenCalledWith(1, 1);
+    expect(m.get(job.jobId)?.lastCheckpoint).toMatchObject({
+      progress: { done: 1, total: 1 },
+      detail: "evtxxml import — committed batch 1/1",
+    });
+  });
+
+  it("fail records the error message", async () => {
     const m = new JobManager({ now: mkClock() });
     const { jobId } = m.register({ caseId: "c1", kind: "synthesis", cancellable: true });
-    m.fail(jobId, new Error("provider 402"));
-    expect(m.get(jobId)!).toMatchObject({ status: "error", error: "provider 402" });
+    await m.fail(jobId, new Error("provider 402"));
+    expect(m.get(jobId)!).toMatchObject({ status: "failed", error: "provider 402" });
   });
 
-  it("cancel aborts the signal and marks cancelled", () => {
+  it("records warnings once and enforces a runtime budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = new JobManager({ now: mkClock() });
+      const job = m.register({
+        caseId: "c1",
+        kind: "deep-pass",
+        resourceBudget: { maxRuntimeMs: 10 },
+      });
+      await m.warn(job.jobId, "one batch had partial coverage");
+      await m.warn(job.jobId, "one batch had partial coverage");
+      expect(m.get(job.jobId)?.warnings).toEqual([
+        "one batch had partial coverage",
+      ]);
+
+      await vi.advanceTimersByTimeAsync(11);
+
+      expect(job.signal?.aborted).toBe(true);
+      expect(m.get(job.jobId)).toMatchObject({
+        status: "failed",
+        failure: {
+          code: "runtime_budget_exceeded",
+          retryable: false,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancel aborts the signal and marks cancelled", async () => {
     const m = new JobManager({ now: mkClock() });
     const { jobId, signal } = m.register({ caseId: "c1", kind: "enrichment", cancellable: true });
-    const res = m.cancel(jobId);
+    const res = await m.cancel(jobId);
     expect(res.ok).toBe(true);
     expect(signal!.aborted).toBe(true);
     expect(m.get(jobId)!.status).toBe("cancelled");
   });
 
-  it("a late fail after cancel does not clobber the cancelled status", () => {
+  it("a late fail after cancel does not clobber the cancelled status", async () => {
     const m = new JobManager({ now: mkClock() });
     const { jobId } = m.register({ caseId: "c1", kind: "synthesis", cancellable: true });
-    m.cancel(jobId);
-    m.fail(jobId, new Error("AbortError")); // the aborted fetch rejects afterwards
+    await m.cancel(jobId);
+    await m.fail(jobId, new Error("AbortError")); // the aborted fetch rejects afterwards
     expect(m.get(jobId)!.status).toBe("cancelled");
   });
 
-  it("cancel is rejected with a reason for unknown / terminal / non-cancellable jobs", () => {
+  it("cancel is rejected with a reason for unknown / terminal / non-cancellable jobs", async () => {
     const m = new JobManager({ now: mkClock() });
-    expect(m.cancel("nope")).toEqual({ ok: false, reason: "unknown" });
+    expect(await m.cancel("nope")).toEqual({ ok: false, reason: "unknown" });
 
     const deterministic = m.register({ caseId: "c1", kind: "import" }); // cancellable:false
-    expect(m.cancel(deterministic.jobId)).toEqual({ ok: false, reason: "not-cancellable" });
+    expect(await m.cancel(deterministic.jobId)).toEqual({ ok: false, reason: "not-cancellable" });
 
     const done = m.register({ caseId: "c1", kind: "synthesis", cancellable: true });
-    m.finish(done.jobId);
-    expect(m.cancel(done.jobId)).toEqual({ ok: false, reason: "terminal" });
+    await m.finish(done.jobId);
+    expect(await m.cancel(done.jobId)).toEqual({ ok: false, reason: "terminal" });
   });
 
   it("list filters by case, newest first", () => {
@@ -81,12 +155,12 @@ describe("JobManager", () => {
     expect(m.list().map((j) => j.id)).toEqual(["job_3", "job_2", "job_1"]);
   });
 
-  it("respects the max cap by evicting oldest terminal jobs", () => {
+  it("respects the max cap by evicting oldest terminal jobs", async () => {
     const m = new JobManager({ max: 2, now: mkClock() });
     const a = m.register({ caseId: "c1", kind: "import" });
-    m.finish(a.jobId);
+    await m.finish(a.jobId);
     const b = m.register({ caseId: "c1", kind: "import" });
-    m.finish(b.jobId);
+    await m.finish(b.jobId);
     m.register({ caseId: "c1", kind: "import" }); // over cap → evict oldest terminal (a)
     expect(m.get(a.jobId)).toBeUndefined();
     expect(m.list()).toHaveLength(2);
@@ -116,12 +190,12 @@ describe("JobManager", () => {
       expect(m.get(otherKind.jobId)!.status).toBe("running");
     });
 
-    it("does not touch an already-terminal same-kind job", () => {
+    it("does not touch an already-terminal same-kind job", async () => {
       const m = new JobManager({ now: mkClock() });
       const first = m.register({ caseId: "c1", kind: "synthesis", cancellable: true });
-      m.finish(first.jobId);
+      await m.finish(first.jobId);
       const second = m.register({ caseId: "c1", kind: "synthesis", cancellable: true, exclusive: true });
-      expect(m.get(first.jobId)!.status).toBe("done"); // untouched, not re-marked cancelled
+      expect(m.get(first.jobId)!.status).toBe("succeeded"); // untouched, not re-marked cancelled
       expect(m.get(second.jobId)!.status).toBe("running");
     });
 
@@ -135,11 +209,11 @@ describe("JobManager", () => {
   });
 
   describe("hasActive", () => {
-    it("is true while a non-terminal job of that kind exists for the case", () => {
+    it("is true while a non-terminal job of that kind exists for the case", async () => {
       const m = new JobManager({ now: mkClock() });
       const { jobId } = m.register({ caseId: "c1", kind: "synthesis", cancellable: true });
       expect(m.hasActive("c1", "synthesis")).toBe(true);
-      m.finish(jobId);
+      await m.finish(jobId);
       expect(m.hasActive("c1", "synthesis")).toBe(false);
     });
 

@@ -86,7 +86,7 @@ import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
 import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
 import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
-import { parseEvtxXml } from "./evtxXmlImport.js";
+import { parseEvtxXmlProgress } from "./evtxXmlImport.js";
 import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
 import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
@@ -121,10 +121,11 @@ import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
 import {
-  previewFloors, planBatches, floorsWithinBudget, sanitizeObservations, renderObservationDigest,
-  planCondenseRounds, DEFAULT_MAX_BATCHES, MAX_CONDENSE_ROUNDS, OBSERVATION_CAP_PER_BATCH,
-  type Observation, type FloorOption,
+  previewFloors, planBatches, floorsWithinBudget, renderObservationDigest,
+  DEFAULT_MAX_BATCHES, type DeepPassCheckpoint, type FloorOption,
 } from "./deepPass.js";
+import { executeDeepPassBatches } from "./deepPassExecution.js";
+import { lastImportEventSequence } from "./importResume.js";
 import { unionEventTechniques } from "./reconTechniques.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "./graphContext.js";
 import type { KevStore } from "./kevStore.js";
@@ -1456,6 +1457,7 @@ export interface DeepPassResult {
   batchesFailed: number;  // batches whose response never parsed — that slice went unread
   observations: number;   // observations that survived sanitising
 }
+
 export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
@@ -2220,8 +2222,9 @@ export class AnalysisPipeline {
       importedAt: string;        // ISO time used for timeline/firstSeen context
       rowsPerBatch?: number;
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
+      onProgress?: (done: number, total: number) => void | Promise<void>;
       signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
+      startBatch?: number;
     },
   ): Promise<InvestigationState> {
     // Text model (same idiom as ask/explain/synthesis): CSV extraction is text reasoning, not OCR.
@@ -2234,7 +2237,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+      let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
 
       // Scan the WHOLE import once, up front, instead of letting the per-chunk batches below hit
       // presidioGate repeatedly (which would stall-approve-restart on a large CSV with names
@@ -2259,7 +2262,7 @@ export class AnalysisPipeline {
       const rowBudget = Math.max(0, inputTokenBudget() - csvOverhead);
       const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
 
-      for (let b = 0; b < batches.length; b++) {
+      for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
         if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
         const csvChunk = chunkToCsvText(headers, batches[b]);
         const userPrompt =
@@ -2287,7 +2290,7 @@ export class AnalysisPipeline {
         });
         await this.opts.stateStore.save(state);
         this.opts.onState?.(state);
-        opts.onProgress?.(b + 1, batches.length);
+        await opts.onProgress?.(b + 1, batches.length);
       }
       return state;
     });
@@ -2309,8 +2312,9 @@ export class AnalysisPipeline {
       importedAt: string;        // ISO time used for timeline/firstSeen context
       patternsPerBatch?: number; // how many distinct patterns to triage per AI call
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
+      onProgress?: (done: number, total: number) => void | Promise<void>;
       signal?: AbortSignal;      // #225: analyst cancel — aborts the in-flight AI call + stops between batches
+      startBatch?: number;
     },
   ): Promise<InvestigationState> {
     // Text model (same idiom as ask/explain/synthesis): log triage is text reasoning, not OCR.
@@ -2331,7 +2335,7 @@ export class AnalysisPipeline {
 
     return this.withStateLock(caseId, async () => {
       let state = await this.opts.stateStore.load(caseId);
-      let evSeq = 0; // running counter → globally unique forensic-event ids for this import
+      let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
 
       // Scan the WHOLE import once, up front — see analyzeCsv for why this must precede the
       // per-pattern batch loop below rather than living inside it, and why the state summary is
@@ -2349,7 +2353,7 @@ export class AnalysisPipeline {
       const patternBudget = Math.max(0, inputTokenBudget() - logOverhead);
       const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
 
-      for (let b = 0; b < batches.length; b++) {
+      for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
         if (opts.signal?.aborted) break;   // #225: cancelled — stop before the next batch, keep prior batches
         // Present each pattern with its occurrence count, time span, and an example.
         const patternText = batches[b]
@@ -2384,7 +2388,7 @@ export class AnalysisPipeline {
         });
         await this.opts.stateStore.save(state);
         this.opts.onState?.(state);
-        opts.onProgress?.(b + 1, batches.length);
+        await opts.onProgress?.(b + 1, batches.length);
       }
       return state;
     });
@@ -2538,10 +2542,7 @@ export class AnalysisPipeline {
     });
   }
 
-  // Import a Windows Event Log exported as XML (Event Viewer "Save As XML" / `wevtutil … /f:xml` /
-  // PowerShell `Get-WinEvent … ToXml()`). The XML envelope is parsed to the same record shape the
-  // SIEM importer consumes and run through the SAME deterministic per-EID Windows/Sysmon mapping —
-  // so it behaves identically to a SIEM/EVTX JSON import, just from the XML rendering.
+  // Import Windows Event XML through the shared deterministic SIEM/EVTX mapping.
   async importEvtxXml(
     caseId: string,
     xmlText: string,
@@ -2551,10 +2552,12 @@ export class AnalysisPipeline {
       importedAt: string;
       siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
       minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
+      onProgress?: (done: number, total: number) => void | Promise<void>; onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>; signal?: AbortSignal; startBatch?: number;
     },
   ): Promise<InvestigationState> {
-    const parsedRaw = parseEvtxXml(xmlText, opts.siem);
+    if ((opts.startBatch ?? 0) >= 1) { await opts.onProgress?.(1, 1); return this.opts.stateStore.load(caseId); }
+    let parseTotal = 0;
+    const parsedRaw = await parseEvtxXmlProgress(xmlText, opts.siem, (done, total) => { parseTotal = total; return opts.onParseProgress?.(done, total * 2, "reading Windows events"); }, (done, total) => opts.onParseProgress?.(parseTotal + done, parseTotal + total, "processing Windows events"), opts.signal);
     const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
     if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Windows Event Log (XML)", parsed.total);
 
@@ -2576,6 +2579,7 @@ export class AnalysisPipeline {
     const delta = deltaSchema.parse(raw);
 
     return this.withStateLock(caseId, async () => {
+      if (opts.signal?.aborted) throw Object.assign(new Error("import processing cancelled; stored evidence retained"), { name: "AbortError" });
       let state = await this.opts.stateStore.load(caseId);
       state = await this.mergeWithAliases(state, delta, {
         windowSequence: -1,
@@ -2584,7 +2588,7 @@ export class AnalysisPipeline {
       });
       await this.opts.stateStore.save(state);
       this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
+      await opts.onProgress?.(1, 1);
       return state;
     });
   }
@@ -5174,6 +5178,8 @@ export class AnalysisPipeline {
     signal?: AbortSignal;
     maxBatches?: number;
     onProgress?: (done: number, total: number, detail: string) => void;
+    onCheckpoint?: (checkpoint: DeepPassCheckpoint) => Promise<void>;
+    resumeFrom?: DeepPassCheckpoint;
     analysisParentRunId?: string;
   }): Promise<DeepPassResult> {
     const runStartedAt = new Date().toISOString();
@@ -5190,6 +5196,9 @@ export class AnalysisPipeline {
     const floored = applySeverityFloor([...promptCandidates(scopedEvents)], opts.minSeverity);
     const { events: rows } = collapseForPrompt(floored, groupEnvOptions());
     const batches = planBatches(rows, cap);
+    const selectionHash = createHash("sha256")
+      .update(JSON.stringify(rows.map((event) => event.id)))
+      .digest("hex");
 
     // Refuse rather than quietly starting a very expensive job — and name a floor that would fit.
     const ceiling = opts.maxBatches ?? (Number(process.env.DFIR_DEEP_PASS_MAX_BATCHES) || DEFAULT_MAX_BATCHES);
@@ -5201,66 +5210,27 @@ export class AnalysisPipeline {
       );
     }
 
-    const validEventIds = new Set(state.forensicTimeline.map((e) => e.id));
     const retries = this.opts.retries ?? 3;
     const backoffMs = this.opts.backoffMs ?? 500;
-    let observations: Observation[] = [];
-    let aborted = false;
-    let batchesFailed = 0;
-
-    // Observations are additive: retry a malformed batch, then record its failure and continue so
-    // partial coverage is visible without discarding the rest of an expensive run.
-    for (let i = 0; i < batches.length; i++) {
-      if (opts.signal?.aborted) { aborted = true; break; }
-      opts.onProgress?.(i, batches.length, `reading batch ${i + 1} of ${batches.length}`);
-      try {
-        const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
+    const execution = await executeDeepPassBatches({
+      batches, floor: opts.minSeverity, selectionHash,
+      validEventIds: new Set(state.forensicTimeline.map((event) => event.id)),
+      digestBudget: Math.max(0, Math.floor(inputTokenBudget() * 0.25)),
+      ...(opts.resumeFrom ? { resumeFrom: opts.resumeFrom } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+      ...(opts.onCheckpoint ? { onCheckpoint: opts.onCheckpoint } : {}),
+      renderBatch: (batch) => this.renderBatchRows(batch),
+      observe: (userPrompt) => this.withRetry(
+        caseId, "deep-pass-observe", () => this.analyzeRestored(
           caseId, state, provider,
-          { systemPrompt: getObservePrompt(), userPrompt: this.renderBatchRows(batches[i]), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
+          { systemPrompt: getObservePrompt(), userPrompt, images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
           "deep-pass-observe",
-        ), retries, backoffMs);
-        observations.push(...sanitizeObservations(raw, validEventIds));
-      } catch (err) {
-        // Approval must reach the route as a 409, not become a silently degraded batch.
-        if (err instanceof PresidioApprovalRequired) throw err;
-        if (opts.signal?.aborted) { aborted = true; break; }   // cancellation, not a bad response
-        batchesFailed++;
-        this.log.warn(
-          `deep pass: batch ${i + 1}/${batches.length} produced no usable observations — ${(err as Error).message}`,
-          { caseId },
-        );
-      }
-      if (opts.signal?.aborted) { aborted = true; break; }
-    }
-
-    // Condense to the final call's budget; the observations-only contract cannot introduce verdicts.
-    const digestBudget = Math.max(0, Math.floor(inputTokenBudget() * 0.25));
-    for (let round = 0; !aborted && round < MAX_CONDENSE_ROUNDS; round++) {
-      const plan = planCondenseRounds(observations, digestBudget, OBSERVATION_CAP_PER_BATCH * 2);
-      if (!plan.length) break;
-      opts.onProgress?.(batches.length, batches.length, `condensing ${observations.length} observations (round ${round + 1})`);
-      const condensed: Observation[] = [];
-      for (const group of plan) {
-        if (opts.signal?.aborted) { aborted = true; break; }
-        try {
-          const raw = await this.withRetry(caseId, "deep-pass-observe", () => this.analyzeRestored(
-            caseId, state, provider,
-            { systemPrompt: getObservePrompt(), userPrompt: renderObservationDigest(group), images: [], ...(opts.signal ? { signal: opts.signal } : {}) },
-            "deep-pass-observe",
-          ), retries, backoffMs);
-          condensed.push(...sanitizeObservations(raw, validEventIds));
-        } catch (err) {
-          // Propagate the same approval gate as the observe loop.
-          if (err instanceof PresidioApprovalRequired) throw err;
-          if (opts.signal?.aborted) { aborted = true; break; }
-          // Keep original observations when condensation fails; never drop evidence for formatting.
-          condensed.push(...group);
-          batchesFailed++;
-          this.log.warn(`deep pass: a condense group failed, keeping it uncondensed — ${(err as Error).message}`, { caseId });
-        }
-      }
-      if (!aborted) observations = condensed;
-    }
+        ), retries, backoffMs,
+      ),
+      onFailure: (message) => this.log.warn(`deep pass: ${message}`, { caseId }),
+    });
+    const { observations, batchesFailed, aborted } = execution;
 
     const summary: DeepPassResult = {
       aborted,

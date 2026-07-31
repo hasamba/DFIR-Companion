@@ -3,7 +3,9 @@ import {
   decodeXmlEntities,
   looksLikeWinEventXml,
   parseWinEventXml,
+  parseWinEventXmlProgress,
   parseEvtxXml,
+  parseEvtxXmlProgress,
 } from "../../src/analysis/evtxXmlImport.js";
 
 // A Security-channel logon (4624) + a Sysmon process-create (EID 1) in the standard wevtutil/
@@ -47,6 +49,11 @@ const SAMPLE = `<?xml version="1.0" encoding="utf-8"?>
   </EventData>
 </Event>
 </Events>`;
+
+const FIRST_EVENT = /<Event\b[\s\S]*?<\/Event>/i.exec(SAMPLE)?.[0] ?? "";
+function repeatedEvents(count: number): string {
+  return `<Events>${FIRST_EVENT.repeat(count)}</Events>`;
+}
 
 describe("decodeXmlEntities", () => {
   it("decodes predefined + numeric entities", () => {
@@ -99,6 +106,37 @@ describe("parseWinEventXml", () => {
     const xml = `<Events><Event><System><Channel>Security</Channel></System></Event></Events>`;
     expect(parseWinEventXml(xml)).toHaveLength(0);
   });
+  it("reports monotonic event progress without changing parsed records", async () => {
+    const progress: Array<[number, number]> = [];
+    const records = await parseWinEventXmlProgress(
+      SAMPLE,
+      (done, total) => { progress.push([done, total]); },
+    );
+    expect(records).toEqual(parseWinEventXml(SAMPLE));
+    expect(progress.at(-1)).toEqual([2, 2]);
+    expect(progress.every(([done, total]) => done <= total)).toBe(true);
+  });
+
+  it("stops parsing promptly when the analyst cancels", async () => {
+    const controller = new AbortController();
+    setImmediate(() => controller.abort());
+    const work = parseWinEventXmlProgress(
+      repeatedEvents(600),
+      undefined,
+      controller.signal,
+    );
+
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("coalesces live progress while still yielding frequently", async () => {
+    const progress: number[] = [];
+    await parseWinEventXmlProgress(repeatedEvents(12_000), (done) => {
+      progress.push(done);
+    });
+
+    expect(progress).toEqual([5000, 10_000, 12_000]);
+  });
 });
 
 describe("parseEvtxXml — reuses the SIEM Windows mapping", () => {
@@ -128,5 +166,31 @@ describe("parseEvtxXml — reuses the SIEM Windows mapping", () => {
     // shared mapWindows bumps it to Medium.
     expect(r.events.every((e) => !/Successful logon/i.test(e.description))).toBe(true);
     expect(r.events.some((e) => /Process create/i.test(e.description))).toBe(true);
+  });
+
+  it("yields and honors cancellation during the expensive record-mapping phase", async () => {
+    const controller = new AbortController();
+    const processProgress: number[] = [];
+    const work = parseEvtxXmlProgress(
+      repeatedEvents(6000),
+      {},
+      undefined,
+      (done) => {
+        processProgress.push(done);
+        if (done >= 5000) controller.abort();
+      },
+      controller.signal,
+    );
+
+    await expect(work).rejects.toMatchObject({ name: "AbortError" });
+    expect(processProgress).toEqual([5000]);
+  });
+
+  it("keeps aggregated canonical provenance bounded for very repetitive logs", async () => {
+    const result = await parseEvtxXmlProgress(repeatedEvents(600));
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].count).toBe(600);
+    expect(result.events[0].canonical?.evidence.rawRecords).toHaveLength(1);
   });
 });

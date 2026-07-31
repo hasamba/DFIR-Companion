@@ -94,7 +94,7 @@ export interface AnalysisRunManifest {
   manifestHash: string;
 }
 
-const manifestValueSchema: z.ZodType<ManifestValue> = z.lazy(() =>
+export const manifestValueSchema: z.ZodType<ManifestValue> = z.lazy(() =>
   z.union([
     z.null(),
     z.boolean(),

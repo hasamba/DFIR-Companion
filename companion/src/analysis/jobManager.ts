@@ -1,158 +1,676 @@
-// Background-job manager (#225) — impure wrapper around the pure jobRegistry.
+// Durable background-job manager (#380).
 //
-// Owns the live in-memory JobTable, one AbortController per cancellable running job, a monotonic id
-// counter and clock (injectable for tests), and the onJob WS-broadcast hook. Routes and the server
-// closure call register/progress/finish/fail/cancel; the pure transitions do the bookkeeping.
-//
-// A cancellable job hands its caller an AbortSignal to thread into the AI provider / enrichment
-// fetch (which already combine it with their own timeout via AbortSignal.any). Cancelling aborts
-// that signal and marks the job cancelled — synthesis/enrichment only persist state on SUCCESS, so
-// an aborted job leaves the investigation untouched by construction.
+// The pure registry owns state transitions. This wrapper persists each transition before
+// broadcasting it, admits queued work under global/per-case limits, and turns orphaned queued or
+// running rows into recoverable interrupted jobs during startup.
 
+import { randomUUID } from "node:crypto";
+import { sanitizeManifestValue } from "./analysisRunHash.js";
+import {
+  manifestValueSchema,
+  type ManifestValue,
+} from "./analysisRunTypes.js";
+import type { JobLedgerStore } from "./jobLedgerStore.js";
 import {
   emptyJobTable,
   createJob,
+  startJob,
+  checkpointJob,
   progressJob,
+  warnJob,
   finishJob,
   failJob,
   cancelJob,
+  interruptJob,
+  requeueJob,
+  allowJobCancellation,
   getJob,
+  findJobByIdempotencyKey,
   listJobs,
   capJobs,
+  capJobsByScope,
   isTerminal,
   type Job,
+  type JobFailure,
   type JobKind,
+  type JobPriority,
+  type JobResourceBudget,
   type JobTable,
 } from "./jobRegistry.js";
 
 export interface JobManagerOptions {
-  // Fired on every job transition so the server can WS-broadcast job_changed to the case's clients.
-  onJob?: (caseId: string) => void;
-  // Ring-buffer cap on retained jobs (oldest terminal evicted first). Default 100.
+  onJob?: (caseId: string | null) => void;
+  onError?: (error: Error) => void;
+  ledger?: JobLedgerStore;
   max?: number;
-  // Injectable clock (tests pass a deterministic one). Defaults to wall-clock ISO.
+  globalConcurrency?: number;
+  perCaseConcurrency?: number;
   now?: () => string;
+  id?: () => string;
 }
 
 export interface RegisterInput {
-  caseId: string;
+  caseId?: string;
   kind: JobKind;
   label?: string;
   detail?: string;
   cancellable?: boolean;
-  // Cancel any other non-terminal job of the same kind for this case before starting this one —
-  // e.g. two synthesis runs for the same case racing serves no purpose; the newer supersedes.
   exclusive?: boolean;
+  priority?: JobPriority;
+  parentJobId?: string;
+  idempotencyKey?: string;
+  parameters?: Record<string, ManifestValue>;
+  runManifestId?: string;
+  maxRetries?: number;
+  resourceBudget?: JobResourceBudget;
+  resumable?: boolean;
 }
 
 export interface RegisteredJob {
   jobId: string;
-  // Present only for cancellable jobs — thread into the abortable network call.
   signal?: AbortSignal;
+  /** Resolves once the queued row itself is committed, before it necessarily starts. */
+  durable: Promise<void>;
+  /** Resolves only after the queued/running row is durable and capacity admits the work. */
+  ready: Promise<void>;
+  /** True when an idempotency key returned an existing job instead of creating work. */
+  reused: boolean;
 }
 
 export type CancelResult =
   | { ok: true; job: Job }
   | { ok: false; reason: "unknown" | "terminal" | "not-cancellable" };
 
+export type ResumeResult =
+  | { ok: true; job: Job }
+  | {
+      ok: false;
+      reason: "unknown" | "not-interrupted" | "not-resumable" | "retry-exhausted";
+    };
+
+export interface FailureOptions {
+  code?: string;
+  retryable?: boolean;
+}
+
+export interface CheckpointInput {
+  done: number;
+  total: number;
+  detail?: string;
+  cursor?: unknown;
+}
+
+type Deferred = {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
+type ResumeHandler = (job: Job, signal?: AbortSignal) => Promise<void>;
+type ResumeHandlerOptions = {
+  cancellable?: (job: Job) => boolean;
+};
+type ResumeHandlerRegistration = {
+  handler: ResumeHandler;
+  options: ResumeHandlerOptions;
+};
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((ok, fail) => {
+    resolve = ok;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+function abortError(): Error {
+  const error = new Error("job cancelled before it started");
+  error.name = "AbortError";
+  return error;
+}
+
+function priorityRank(priority: JobPriority): number {
+  if (priority === "high") return 2;
+  if (priority === "normal") return 1;
+  return 0;
+}
+
 export class JobManager {
   private table: JobTable = emptyJobTable();
-  private controllers = new Map<string, AbortController>();
-  private counter = 0;
-  private readonly onJob?: (caseId: string) => void;
+  private readonly controllers = new Map<string, AbortController>();
+  private readonly admissions = new Map<string, Deferred>();
+  private readonly durabilities = new Map<string, Deferred>();
+  private readonly budgetTimers = new Map<string, NodeJS.Timeout>();
+  private readonly resumeHandlers = new Map<JobKind, ResumeHandlerRegistration>();
+  private readonly onJob?: (caseId: string | null) => void;
+  private readonly onError?: (error: Error) => void;
+  private readonly ledger?: JobLedgerStore;
   private readonly max: number;
+  private readonly globalConcurrency: number;
+  private readonly perCaseConcurrency: number;
   private readonly now: () => string;
+  private readonly id: () => string;
+  private readonly initialization: Promise<void>;
+  private initializationError: Error | null = null;
+  private scheduling: Promise<void> = Promise.resolve();
 
   constructor(opts: JobManagerOptions = {}) {
     this.onJob = opts.onJob;
-    this.max = opts.max ?? 100;
+    this.onError = opts.onError;
+    this.ledger = opts.ledger;
+    this.max = Math.max(1, Math.floor(opts.max ?? 100));
+    this.globalConcurrency = Math.max(
+      1,
+      Math.floor(
+        opts.globalConcurrency ?? (opts.ledger ? 4 : Number.MAX_SAFE_INTEGER),
+      ),
+    );
+    this.perCaseConcurrency = Math.max(
+      1,
+      Math.floor(
+        opts.perCaseConcurrency ?? (opts.ledger ? 1 : Number.MAX_SAFE_INTEGER),
+      ),
+    );
     this.now = opts.now ?? (() => new Date().toISOString());
+    let sequence = 0;
+    this.id = opts.id ?? (
+      opts.ledger
+        ? () => `job_${randomUUID()}`
+        : () => `job_${++sequence}`
+    );
+    this.initialization = this.restore().catch((error: unknown) => {
+      this.initializationError =
+        error instanceof Error ? error : new Error(String(error));
+      this.reportError(this.initializationError);
+    });
+  }
+
+  async ready(): Promise<void> {
+    await this.initialization;
+    if (this.initializationError) throw this.initializationError;
   }
 
   register(input: RegisterInput): RegisteredJob {
-    if (input.exclusive) {
-      for (const j of listJobs(this.table, { caseId: input.caseId })) {
-        if (j.kind === input.kind && !isTerminal(j.status)) this.cancel(j.id);
+    const caseId = input.caseId ?? null;
+    const existing = this.reusedRegistration(input, caseId);
+    if (existing) return existing;
+    this.cancelExclusiveJobs(input, caseId);
+    const jobId = this.appendQueuedJob(input, caseId);
+    return this.prepareRegistration(jobId, input);
+  }
+
+  private reusedRegistration(
+    input: RegisterInput,
+    caseId: string | null,
+  ): RegisteredJob | undefined {
+    if (!input.idempotencyKey) return undefined;
+    const existing = findJobByIdempotencyKey(
+      this.table,
+      caseId,
+      input.idempotencyKey,
+    );
+    if (!existing) return undefined;
+    const controller = this.controllers.get(existing.id);
+    return {
+      jobId: existing.id,
+      ...(controller ? { signal: controller.signal } : {}),
+      ready: this.admissions.get(existing.id)?.promise ?? Promise.resolve(),
+      durable:
+        this.durabilities.get(existing.id)?.promise ?? Promise.resolve(),
+      reused: true,
+    };
+  }
+
+  private cancelExclusiveJobs(input: RegisterInput, caseId: string | null): void {
+    if (!input.exclusive) return;
+    for (const job of listJobs(this.table, { caseId })) {
+      if (job.kind === input.kind && !isTerminal(job.status)) {
+        this.cancelForExclusiveRegistration(job);
       }
     }
-    const jobId = `job_${++this.counter}`;
-    this.table = capJobs(
-      createJob(this.table, {
-        id: jobId,
-        caseId: input.caseId,
-        kind: input.kind,
-        label: input.label,
-        detail: input.detail,
-        cancellable: input.cancellable ?? false,
-        now: this.now(),
-      }),
-      this.max,
-    );
-    let signal: AbortSignal | undefined;
-    if (input.cancellable) {
-      const controller = new AbortController();
-      this.controllers.set(jobId, controller);
-      signal = controller.signal;
+  }
+
+  private appendQueuedJob(input: RegisterInput, caseId: string | null): string {
+    const jobId = this.id();
+    const parameters = input.parameters
+      ? (sanitizeManifestValue(input.parameters) as Record<string, ManifestValue>)
+      : undefined;
+    this.table = this.limitTable(createJob(this.table, {
+      id: jobId,
+      caseId,
+      kind: input.kind,
+      ...(input.label !== undefined ? { label: input.label } : {}),
+      ...(input.detail !== undefined ? { detail: input.detail } : {}),
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
+      ...(input.idempotencyKey
+        ? { idempotencyKey: input.idempotencyKey }
+        : {}),
+      ...(parameters ? { parameters } : {}),
+      ...(input.runManifestId ? { runManifestId: input.runManifestId } : {}),
+      ...(input.maxRetries !== undefined
+        ? { maxRetries: input.maxRetries }
+        : {}),
+      ...(input.resourceBudget ? { resourceBudget: input.resourceBudget } : {}),
+      resumable: input.resumable ?? false,
+      cancellable: input.cancellable ?? false,
+      status: "queued",
+      now: this.now(),
+    }));
+    return jobId;
+  }
+
+  private prepareRegistration(
+    jobId: string,
+    input: RegisterInput,
+  ): RegisteredJob {
+    if (input.cancellable || input.resourceBudget?.maxRuntimeMs) {
+      this.controllers.set(jobId, new AbortController());
     }
-    this.emit(input.caseId);
-    return { jobId, signal };
+    const admission = deferred();
+    const durability = deferred();
+    void admission.promise.catch(() => {});
+    void durability.promise.catch(() => {});
+    this.admissions.set(jobId, admission);
+    this.durabilities.set(jobId, durability);
+
+    if (!this.ledger) {
+      durability.resolve();
+      this.startInMemoryWhenPossible();
+    } else {
+      void this.persistNewAndSchedule(jobId).catch((error: unknown) => {
+        const normalized =
+          error instanceof Error ? error : new Error(String(error));
+        durability.reject(normalized);
+        admission.reject(normalized);
+        this.reportError(normalized);
+      });
+    }
+    return {
+      jobId,
+      ...(this.controllers.get(jobId)
+        ? { signal: this.controllers.get(jobId)!.signal }
+        : {}),
+      ready: admission.promise,
+      durable: durability.promise,
+      reused: false,
+    };
   }
 
   progress(jobId: string, done: number, total: number, detail?: string): void {
     const before = getJob(this.table, jobId);
-    this.table = progressJob(this.table, jobId, { done, total }, detail, this.now());
-    if (before) this.emit(before.caseId);
+    this.table = progressJob(
+      this.table,
+      jobId,
+      { done, total },
+      detail,
+      this.now(),
+    );
+    const updated = getJob(this.table, jobId);
+    if (!before || !updated || updated === before) return;
+    if (!this.ledger) {
+      this.emit(updated.caseId);
+      return;
+    }
+    void this.persistUpdate(updated)
+      .then(() => this.emit(updated.caseId))
+      .catch((error: unknown) =>
+        this.reportError(error instanceof Error ? error : new Error(String(error))),
+      );
   }
 
-  finish(jobId: string): void {
-    this.terminalTransition(jobId, (t) => finishJob(t, jobId, this.now()));
+  async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {
+    await this.ready();
+    const before = getJob(this.table, jobId);
+    if (!before || before.status !== "running") return;
+    this.table = checkpointJob(
+      this.table,
+      jobId,
+      {
+        progress: { done: input.done, total: input.total },
+        ...(input.detail !== undefined ? { detail: input.detail } : {}),
+        ...(input.cursor !== undefined
+          ? {
+              cursor: sanitizeManifestValue(
+                manifestValueSchema.parse(input.cursor),
+              ),
+            }
+          : {}),
+      },
+      this.now(),
+    );
+    const updated = getJob(this.table, jobId);
+    if (!updated || updated === before) return;
+    await this.persistUpdate(updated);
+    this.emit(updated.caseId);
   }
 
-  fail(jobId: string, error: unknown): void {
-    const msg = error instanceof Error ? error.message : String(error);
-    this.terminalTransition(jobId, (t) => failJob(t, jobId, msg, this.now()));
+  async warn(jobId: string, warning: string): Promise<void> {
+    await this.ready();
+    const before = getJob(this.table, jobId);
+    if (!before || isTerminal(before.status)) return;
+    this.table = warnJob(this.table, jobId, warning, this.now());
+    const updated = getJob(this.table, jobId);
+    if (!updated || updated === before) return;
+    await this.persistUpdate(updated);
+    this.emit(updated.caseId);
   }
 
-  // Cancel a running cancellable job: abort its signal + mark cancelled. Idempotent-safe — the pure
-  // guard rejects a re-terminate, and we surface why for the route (409 terminal / 422 not cancellable).
-  cancel(jobId: string): CancelResult {
+  async finish(jobId: string): Promise<void> {
+    await this.terminalTransition(jobId, (table, now) =>
+      finishJob(table, jobId, now),
+    );
+  }
+
+  async fail(
+    jobId: string,
+    error: unknown,
+    options: FailureOptions = {},
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.terminalTransition(jobId, (table, now) => {
+      const failure: JobFailure = {
+        code: options.code ?? "job_failed",
+        message,
+        retryable: options.retryable ?? false,
+        at: now,
+      };
+      return failJob(table, jobId, failure, now);
+    });
+  }
+
+  async cancel(jobId: string): Promise<CancelResult> {
+    await this.ready();
     const job = getJob(this.table, jobId);
     if (!job) return { ok: false, reason: "unknown" };
     if (isTerminal(job.status)) return { ok: false, reason: "terminal" };
     if (!job.cancellable) return { ok: false, reason: "not-cancellable" };
+
     this.controllers.get(jobId)?.abort();
-    this.terminalTransition(jobId, (t) => cancelJob(t, jobId, this.now()));
-    return { ok: true, job: getJob(this.table, jobId)! };
+    this.clearBudgetTimer(jobId);
+    this.table = cancelJob(this.table, jobId, this.now());
+    const cancelled = getJob(this.table, jobId)!;
+    await this.persistUpdate(cancelled);
+    this.admissions.get(jobId)?.reject(abortError());
+    this.admissions.delete(jobId);
+    this.durabilities.delete(jobId);
+    this.controllers.delete(jobId);
+    this.emit(cancelled.caseId);
+    await this.scheduleQueued();
+    return { ok: true, job: cancelled };
+  }
+
+  registerResumeHandler(
+    kind: JobKind,
+    handler: ResumeHandler,
+    options: ResumeHandlerOptions = {},
+  ): void {
+    this.resumeHandlers.set(kind, { handler, options });
+  }
+
+  async resume(jobId: string): Promise<ResumeResult> {
+    await this.ready();
+    const job = getJob(this.table, jobId);
+    if (!job) return { ok: false, reason: "unknown" };
+    if (job.status !== "interrupted" && job.status !== "failed") {
+      return { ok: false, reason: "not-interrupted" };
+    }
+    if (job.status === "failed" && !job.failure?.retryable) {
+      return { ok: false, reason: "not-resumable" };
+    }
+    if (!job.resumable) return { ok: false, reason: "not-resumable" };
+    const registration = this.resumeHandlers.get(job.kind);
+    if (!registration) return { ok: false, reason: "not-resumable" };
+    if (job.attempt >= job.maxRetries + 1) {
+      return { ok: false, reason: "retry-exhausted" };
+    }
+
+    this.table = requeueJob(this.table, jobId, this.now());
+    if (registration.options.cancellable?.(job)) {
+      this.table = allowJobCancellation(this.table, jobId);
+    }
+    const queued = getJob(this.table, jobId)!;
+    if (queued.cancellable || queued.resourceBudget?.maxRuntimeMs) {
+      this.controllers.set(jobId, new AbortController());
+    }
+    const admission = deferred();
+    const durability = deferred();
+    void durability.promise.catch(() => {});
+    this.admissions.set(jobId, admission);
+    this.durabilities.set(jobId, durability);
+    await this.persistUpdate(queued);
+    durability.resolve();
+    this.emit(queued.caseId);
+    void this.scheduleQueued();
+    void this.runResumedJob(jobId, registration.handler, admission.promise);
+    return { ok: true, job: queued };
   }
 
   list(caseId?: string): Job[] {
-    return listJobs(this.table, caseId ? { caseId } : {});
+    return listJobs(
+      this.table,
+      caseId !== undefined ? { caseId } : {},
+    );
   }
 
-  // Is any non-terminal job of this kind still running for the case? Callers use this to avoid
-  // announcing a stale "idle" status after their own (superseded) job was cancelled out from under
-  // them by a newer exclusive registration — see aiSynthesis.ts / scheduleSynthesis.
   hasActive(caseId: string, kind: JobKind): boolean {
-    return listJobs(this.table, { caseId }).some((j) => j.kind === kind && !isTerminal(j.status));
+    return listJobs(this.table, { caseId }).some(
+      (job) => job.kind === kind && !isTerminal(job.status),
+    );
   }
 
   get(jobId: string): Job | undefined {
     return getJob(this.table, jobId);
   }
 
-  private terminalTransition(jobId: string, apply: (t: JobTable) => JobTable): void {
-    const job = getJob(this.table, jobId);
-    if (!job || isTerminal(job.status)) return;
-    this.table = apply(this.table);
-    this.controllers.delete(jobId); // release the controller once terminal
-    this.emit(job.caseId);
+  async drain(): Promise<void> {
+    await this.ready();
+    await this.scheduling;
   }
 
-  private emit(caseId: string): void {
+  private async restore(): Promise<void> {
+    const jobs = this.ledger ? await this.ledger.listAll() : [];
+    const registeredDuringRestore = [...this.table.jobs];
+    this.table = {
+      jobs: [...jobs, ...registeredDuringRestore].sort((a, b) =>
+        a.queuedAt.localeCompare(b.queuedAt),
+      ),
+    };
+    for (const job of jobs) {
+      if (job.status !== "queued" && job.status !== "running") continue;
+      this.table = interruptJob(this.table, job.id, this.now());
+      const interrupted = getJob(this.table, job.id)!;
+      await this.ledger?.update(interrupted);
+    }
+    if (this.ledger) {
+      for (const caseId of new Set(jobs.map((job) => job.caseId))) {
+        await this.ledger.prune(caseId, this.max);
+      }
+      this.table = capJobsByScope(this.table, this.max);
+    }
+  }
+
+  private async persistNewAndSchedule(jobId: string): Promise<void> {
+    await this.ready();
+    const job = getJob(this.table, jobId);
+    if (!job || !this.ledger) return;
+    const result = await this.ledger.insert(job);
+    if (!result.inserted) {
+      throw new Error(
+        `job idempotency conflict for ${job.id}; the supported job writer model is single-process`,
+      );
+    }
+    this.durabilities.get(jobId)?.resolve();
+    this.emit(job.caseId);
+    await this.scheduleQueued();
+  }
+
+  private cancelForExclusiveRegistration(job: Job): void {
+    if (!job.cancellable) return;
+    this.controllers.get(job.id)?.abort();
+    this.clearBudgetTimer(job.id);
+    this.table = cancelJob(this.table, job.id, this.now());
+    const cancelled = getJob(this.table, job.id)!;
+    this.admissions.get(job.id)?.reject(abortError());
+    this.admissions.delete(job.id);
+    this.durabilities.delete(job.id);
+    this.controllers.delete(job.id);
+    this.emit(cancelled.caseId);
+    void this.persistUpdate(cancelled)
+      .then(() => this.scheduleQueued())
+      .catch((error: unknown) =>
+        this.reportError(error instanceof Error ? error : new Error(String(error))),
+      );
+  }
+
+  private startInMemoryWhenPossible(): void {
+    while (true) {
+      const next = this.nextAdmissible();
+      if (!next) break;
+      this.table = startJob(this.table, next.id, this.now());
+      this.armRuntimeBudget(getJob(this.table, next.id)!);
+      this.admissions.get(next.id)?.resolve();
+      this.emit(next.caseId);
+    }
+  }
+
+  private scheduleQueued(): Promise<void> {
+    this.scheduling = this.scheduling
+      .catch((error: unknown) =>
+        this.reportError(
+          error instanceof Error ? error : new Error(String(error)),
+        ),
+      )
+      .then(async () => {
+        while (true) {
+          const next = this.nextAdmissible();
+          if (!next) break;
+          this.table = startJob(this.table, next.id, this.now());
+          const started = getJob(this.table, next.id)!;
+          await this.persistUpdate(started);
+          this.armRuntimeBudget(started);
+          this.admissions.get(next.id)?.resolve();
+          this.emit(started.caseId);
+        }
+      });
+    return this.scheduling;
+  }
+
+  private nextAdmissible(): Job | undefined {
+    const running = this.table.jobs.filter((job) => job.status === "running");
+    if (running.length >= this.globalConcurrency) return undefined;
+    const runningByScope = new Map<string, number>();
+    for (const job of running) {
+      const scope = job.caseId ?? "global";
+      runningByScope.set(scope, (runningByScope.get(scope) ?? 0) + 1);
+    }
+    return this.table.jobs
+      .filter((job) => {
+        if (job.status !== "queued") return false;
+        return (runningByScope.get(job.caseId ?? "global") ?? 0) <
+          this.perCaseConcurrency;
+      })
+      .sort(
+        (a, b) =>
+          priorityRank(b.priority) - priorityRank(a.priority) ||
+          a.queuedAt.localeCompare(b.queuedAt) ||
+          a.id.localeCompare(b.id),
+      )[0];
+  }
+
+  private async terminalTransition(
+    jobId: string,
+    apply: (table: JobTable, now: string) => JobTable,
+  ): Promise<void> {
+    await this.ready();
+    const job = getJob(this.table, jobId);
+    if (!job || isTerminal(job.status)) return;
+    this.table = apply(this.table, this.now());
+    const terminal = getJob(this.table, jobId)!;
+    await this.persistUpdate(terminal);
+    this.clearBudgetTimer(jobId);
+    this.controllers.delete(jobId);
+    this.admissions.delete(jobId);
+    this.durabilities.delete(jobId);
+    this.emit(terminal.caseId);
+    await this.scheduleQueued();
+  }
+
+  private async persistUpdate(job: Job): Promise<void> {
+    if (!this.ledger) return;
+    await this.ledger.update(job);
+    await this.ledger.prune(job.caseId, this.max);
+    this.table = this.limitTable(this.table);
+  }
+
+  private limitTable(table: JobTable): JobTable {
+    return this.ledger
+      ? capJobsByScope(table, this.max)
+      : capJobs(table, this.max);
+  }
+
+  private async runResumedJob(
+    jobId: string,
+    handler: ResumeHandler,
+    admission: Promise<void>,
+  ): Promise<void> {
+    try {
+      await admission;
+      const job = getJob(this.table, jobId);
+      if (!job || job.status !== "running") return;
+      await handler(job, this.controllers.get(jobId)?.signal);
+      await this.finish(jobId);
+    } catch (error) {
+      const job = getJob(this.table, jobId);
+      if (!job || isTerminal(job.status)) return;
+      await this.fail(jobId, error, {
+        code: "resume_failed",
+        retryable: true,
+      });
+    }
+  }
+
+  private armRuntimeBudget(job: Job): void {
+    const maxRuntimeMs = job.resourceBudget?.maxRuntimeMs;
+    if (!maxRuntimeMs) return;
+    this.clearBudgetTimer(job.id);
+    const timer = setTimeout(() => {
+      this.controllers.get(job.id)?.abort();
+      void this.fail(
+        job.id,
+        new Error(`job exceeded its ${maxRuntimeMs} ms runtime budget`),
+        { code: "runtime_budget_exceeded", retryable: false },
+      ).catch((error: unknown) =>
+        this.reportError(
+          error instanceof Error ? error : new Error(String(error)),
+        ),
+      );
+    }, maxRuntimeMs);
+    timer.unref();
+    this.budgetTimers.set(job.id, timer);
+  }
+
+  private clearBudgetTimer(jobId: string): void {
+    const timer = this.budgetTimers.get(jobId);
+    if (timer) clearTimeout(timer);
+    this.budgetTimers.delete(jobId);
+  }
+
+  private emit(caseId: string | null): void {
     try {
       this.onJob?.(caseId);
     } catch {
-      /* a broadcast failure must never break the triggering operation */
+      // A WebSocket failure must never break the evidence operation that triggered the transition.
+    }
+  }
+
+  private reportError(error: Error): void {
+    try {
+      this.onError?.(error);
+    } catch {
+      // Error reporting is a side channel. The original operation still receives its own failure.
     }
   }
 }

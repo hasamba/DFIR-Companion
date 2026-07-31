@@ -40,6 +40,8 @@ import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
+import { registerImportResumeHandler } from "./importRecovery.js";
+import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 
 /**
  * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence
@@ -59,6 +61,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     dispatchImport, demoteForensicForCase, resynthesizeInBackground,
     applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase,
   } = ctx;
+  registerImportResumeHandler(ctx);
 
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
@@ -228,21 +231,14 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
       }
 
+      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, detail: IMPORT_JOB_PENDING_DETAIL, cancellable: aiDependent || kind === "evtxxml", resumable: true, maxRetries: 2, parameters: { kind, storedName, sequence: seq, importedAt, minSeverity: minSeverity ?? null, streaming: false } });
+      await job?.durable;
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
-
-      // #225: track the import as a job. Only AI imports (CSV/log — an LLM call) are cancellable;
-      // deterministic imports parse synchronously and finish before a cancel could arrive.
-      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, cancellable: aiDependent });
-      const onProgress = (done: number, total: number): void => {
-        options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
-        });
-        if (job) options.jobManager?.progress(job.jobId, done, total, `${kind} import`);
-      };
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
+      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) => options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}` }));
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress: tracking.onProgress, ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}), minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
-      const run = (): Promise<unknown> => dispatchImport(kind, caseId, text, base);
+      const run = async (): Promise<unknown> => { await tracking.start(); return dispatchImport(kind, caseId, text, base); };
 
       // Snapshot the FULL investigation state BEFORE the import so the .then() below can (a) diff what
       // this import added (the "last import" banner) and (b) push a pre-import undo checkpoint (#76 —
@@ -254,7 +250,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
       run()
         .then(async () => {
-          if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
@@ -325,9 +320,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             const deob = await applyDeobfuscationToCase(caseId);
             if (deob.deobfuscated > 0) ctx.serverLogger.info(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
           } catch { /* non-fatal */ }
+          if (job) await options.jobManager?.finish(job.jobId);
           resynthesizeInBackground(caseId);
         })
-        .catch((err) => { if (job) options.jobManager?.fail(job.jobId, err); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch(async (err) => { if ((err as Error).name === "AbortError") { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "import processing cancelled; stored evidence retained" }); return; } if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true }); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
@@ -424,19 +420,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         return res.status(202).json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
       }
 
-      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
-
       const pipeline = options.pipeline;
-      // #225: track the local-path import as a job (this is the large-file path, so a cancel matters
-      // most here). Only AI imports (CSV/log) are cancellable; deterministic parses finish quickly.
-      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, cancellable: aiDependent });
-      const onProgress = (done: number, total: number): void => {
-        options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
-        });
-        if (job) options.jobManager?.progress(job.jobId, done, total, `${kind} import`);
-      };
-      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
+      const job = options.jobManager?.register({ caseId, kind: "import", label: `${kind}: ${storedName}`, detail: IMPORT_JOB_PENDING_DETAIL, cancellable: aiDependent || kind === "evtxxml", resumable: true, maxRetries: 2, parameters: { kind, storedName, sequence: seq, importedAt, minSeverity: minSeverity ?? null, streaming } });
+      await job?.durable;
+      res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
+      const tracking = createImportJobTracking(options.jobManager, job, kind, (done, total) => options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}` }));
+      const base = { label: storedName, idPrefix: `${seq}`, importedAt, onProgress: tracking.onProgress, ...(kind === "evtxxml" ? { onParseProgress: tracking.onParseProgress } : {}), minSeverity, ...(job?.signal ? { signal: job.signal } : {}) };
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind}) from path${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
 
       let stateBefore: InvestigationState | null = null;
@@ -445,12 +434,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       }
 
       // Plaso streams from disk; everything else dispatches the in-memory string.
-      const run = (): Promise<unknown> =>
-        streaming ? pipeline.importPlasoFile(caseId, filePath, base) : dispatchImport(kind, caseId, text, base);
+      const run = async (): Promise<unknown> => {
+        await tracking.start();
+        return streaming ? pipeline.importPlasoFile(caseId, join(store.importsDir(caseId), storedName), base) : dispatchImport(kind, caseId, text, base);
+      };
 
       run()
         .then(async () => {
-          if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           if (options.stateStore && stateBefore) {
             try {
@@ -507,9 +497,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             const deob = await applyDeobfuscationToCase(caseId);
             if (deob.deobfuscated > 0) ctx.serverLogger.info(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} event(s), +${deob.newIocs} new IOC(s)`);
           } catch { /* non-fatal */ }
+          if (job) await options.jobManager?.finish(job.jobId);
           resynthesizeInBackground(caseId);
         })
-        .catch((err) => { if (job) options.jobManager?.fail(job.jobId, err); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
+        .catch(async (err) => { if ((err as Error).name === "AbortError") { options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: "import processing cancelled; stored evidence retained" }); return; } if (job) await options.jobManager?.fail(job.jobId, err, { code: "import_failed", retryable: true }); recordImportFailure(caseId, kind, storedName, err); recordAiError(caseId, "import", err); options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message }); });
       return;
     } catch (err) {
       recordImportFailure(caseId, kind, originalName, err);
