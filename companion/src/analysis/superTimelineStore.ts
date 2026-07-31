@@ -1,9 +1,6 @@
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
-import type {
-  EntityPage,
-  EntityQuery,
-} from "./stateStore.js";
+import type { EntityPage, EntityQuery } from "./stateStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -148,16 +145,9 @@ export class SuperTimelineStore {
    * Typed-workbench read path. It shares the normalized entity indexes with the forensic timeline,
    * but keeps the dataset kind explicit so a caller can never accidentally cross the synthesis seam.
    */
-  async queryIndexed(
-    caseId: string,
-    query: EntityQuery = {},
-  ): Promise<EntityPage<ForensicEvent>> {
+  async queryIndexed(caseId: string, query: EntityQuery = {}): Promise<EntityPage<ForensicEvent>> {
     await this.ensureMigrated(caseId);
-    const indexName = query.ioc
-      ? "ioc"
-      : query.technique
-        ? "technique"
-        : undefined;
+    const indexName = query.ioc ? "ioc" : query.technique ? "technique" : undefined;
     const page = await caseSqliteWorker.request<{
       entities: ForensicEvent[];
       nextCursor: number | null;
