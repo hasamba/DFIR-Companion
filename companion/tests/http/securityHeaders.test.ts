@@ -83,10 +83,13 @@ describe("withNonce — stamping the served HTML", () => {
 });
 
 describe("cspWithNonce", () => {
-  it("keeps every base directive and adds script-src", () => {
+  it("keeps every base directive and adds nonce-governed script and style sources", () => {
     const policy = cspWithNonce("n0nce");
     for (const directive of CSP_POLICY.split("; ")) expect(policy).toContain(directive);
     expect(policy).toContain("script-src 'self' 'nonce-n0nce'");
+    expect(policy).toContain("style-src 'self' 'nonce-n0nce'");
+    expect(policy).toContain("script-src-attr 'none'");
+    expect(policy).toContain("style-src-attr 'none'");
   });
 
   // 'unsafe-inline' would silently undo the whole change: browsers ignore it when a nonce is
@@ -94,9 +97,15 @@ describe("cspWithNonce", () => {
   it("never emits 'unsafe-inline' for scripts", () => {
     expect(cspWithNonce("n0nce")).not.toContain("unsafe-inline");
   });
+
+  it("requires audited Trusted Types policies in Chromium", () => {
+    const d = directives(cspWithNonce("n0nce"));
+    expect(d["require-trusted-types-for"]).toBe("'script'");
+    expect(d["trusted-types"]).toBe("default dfir-parser dfir-safe-html");
+  });
 });
 
-describe("CSP_POLICY — the directives, and deliberately nothing more", () => {
+describe("CSP_POLICY — origin confinement independent of each response nonce", () => {
   const d = directives(CSP_POLICY);
 
   // Step 1 — free hardening. None of these interact with inline code, so nothing can break.
@@ -118,12 +127,8 @@ describe("CSP_POLICY — the directives, and deliberately nothing more", () => {
     expect(d["img-src"]).toBe("'self' data:");
   });
 
-  // The guard rail on this PR's scope. The dashboard carries ~80 inline on*= handlers, 10 inline
-  // <script> blocks and ~1157 style="" attributes. Constraining script/style — directly or via a
-  // default-src fallback — would break all of them, so this policy must not mention them at all.
-  // Removing inline script is a separate change that has to convert those handlers first.
-  it("does not constrain scripts or styles, directly or by default-src fallback", () => {
-    expect(d["default-src"]).toBeUndefined();
+  it("defaults unexpected resource types to this origin", () => {
+    expect(d["default-src"]).toBe("'self'");
     expect(d["script-src"]).toBeUndefined();
     expect(d["style-src"]).toBeUndefined();
   });

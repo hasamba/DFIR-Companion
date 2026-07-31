@@ -46,9 +46,11 @@ describe("renderInteractiveHtmlReport", () => {
     const html = renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta());
     expect(html.startsWith("<!doctype html>")).toBe(true);
     expect(html).toContain("<title>Interactive Report — c1</title>");
-    expect(html).toContain("<style>");
-    // Inline script blocks carry the CSP nonce placeholder; the route swaps in the real value.
+    expect(html).toContain(`<style nonce="${CSP_NONCE_PLACEHOLDER}">`);
+    // Inline script and style blocks carry the CSP nonce placeholder; the route swaps it.
     expect(html).toContain(`<script nonce="${CSP_NONCE_PLACEHOLDER}">`);
+    expect(html).not.toMatch(/\sstyle\s*=/i);
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
     expect(html).not.toContain('src="http');
     expect(html).not.toContain('href="http');
     expect(html.trim().endsWith("</html>")).toBe(true);

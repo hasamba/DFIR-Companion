@@ -21,9 +21,9 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
       const html = renderInteractiveHtmlReport(state, caseMeta, reportMeta);
       res.type("text/html; charset=utf-8");
       res.setHeader("Cache-Control", "private, no-cache");
-      // Stamp this response's CSP nonce into the two inline <script> blocks. Without it the
-      // policy from createSecurityHeaders() (script-src 'self' 'nonce-...', no 'unsafe-inline')
-      // blocks both, and the page renders as a header above two permanently empty sections.
+      // Stamp this response's CSP nonce into the inline stylesheet and scripts. Without it the
+      // policy from createSecurityHeaders() blocks them, leaving an unstyled report with empty
+      // interactive sections.
       return res.send(withNonce(html, String(res.locals.cspNonce ?? "")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

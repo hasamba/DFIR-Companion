@@ -768,11 +768,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     allowedHostSuffixes: options.allowedHostSuffixes,
   }));
 
-  // Content-Security-Policy on every response. Deliberately does NOT constrain script/style — the
-  // dashboard's ~80 inline handlers and ~1157 style attributes have to be converted first, and a
-  // policy carrying 'unsafe-inline' would block nothing anyway. What this DOES buy while inline
-  // script is still allowed is egress: connect-src/img-src pin network access to this origin, so an
-  // injected script (see #281) cannot beacon case data or API keys out. See http/securityHeaders.ts.
+  // Content-Security-Policy on every response. Scripts and styles are confined to this origin or a
+  // per-response nonce, inline attributes are forbidden, and Chromium requires the audited Trusted
+  // Types policies installed by safe-dom.js. Egress is pinned to this origin as a second boundary,
+  // so a missed rendering escape still cannot beacon case data or API keys out. See
+  // http/securityHeaders.ts.
   app.use(createSecurityHeaders());
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
