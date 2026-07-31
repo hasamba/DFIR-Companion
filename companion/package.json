@@ -17,9 +17,12 @@
     "format:all": "prettier --write .",
     "check:size": "node scripts/check-file-size.mjs",
     "check:imports": "node scripts/check-imports.mjs",
+    "check:a11y": "node scripts/check-a11y.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "eval": "tsx tests/eval/run.ts all",
     "eval:extraction": "tsx tests/eval/run.ts extraction",
     "eval:synthesis": "tsx tests/eval/run.ts synthesis",
@@ -78,7 +81,9 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.62.1",
     "@types/cross-spawn": "^6.0.6",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
