@@ -44,6 +44,14 @@ describe("team-auth configuration and policy", () => {
       permission: "review",
       caseId: "c1",
     });
+    expect(resolveRequestPolicy("POST", "/cases/c1/report-versions/v1/review/approve")).toMatchObject({
+      permission: "review",
+      caseId: "c1",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/c1/report-versions/v1/workflow/release")).toMatchObject({
+      permission: "write",
+      caseId: "c1",
+    });
     expect(resolveRequestPolicy("GET", "/cases/c1/report.docx")).toMatchObject({
       permission: "export",
       caseId: "c1",

@@ -640,7 +640,8 @@ export class ReportWriter {
         await this.reportVersions.snapshot(caseId, {
           markdown: c.markdown,
           meta,
-          state: { findings: state.findings, iocs: state.iocs, forensicTimeline: state.forensicTimeline },
+          state: { findings: state.findings, iocs: state.iocs, forensicTimeline: state.forensicTimeline, uncertainties: state.uncertainties },
+          template,
           analysisRunIds: [
             ...sourceRuns.map((run) => run.id),
             ...(reportRunId ? [reportRunId] : []),

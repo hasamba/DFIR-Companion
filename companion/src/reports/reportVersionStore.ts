@@ -4,7 +4,23 @@ import { randomUUID, createHash } from "node:crypto";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { Finding, IOC, ForensicEvent } from "../analysis/stateTypes.js";
+import type { Uncertainty } from "../analysis/stateTypes.js";
+import { authenticatedActorFields } from "../auth/identityContext.js";
 import type { ReportMeta } from "./reportMeta.js";
+import type { ReportTemplate } from "./reportTemplate.js";
+import {
+  ReportReleaseStore,
+  type ReportReleaseInput,
+  type ReportReleaseIntegrity,
+  type ReportReleaseRecord,
+  type ReportReleaseSummary,
+} from "./reportReleaseStore.js";
+import { ReportWorkflowStore } from "./reportWorkflowStore.js";
+import type {
+  ReportActor,
+  ReportAnnotationInput,
+  ReportWorkflow,
+} from "./reportWorkflowTypes.js";
 
 // Report versioning (#77): every `writeAll()` (report generation) snapshots the rendered markdown +
 // the human-authored report-meta + the diff-relevant slice of state (findings/IOCs/forensic timeline)
@@ -23,6 +39,7 @@ export interface ReportVersionDiffState {
   findings: Finding[];
   iocs: IOC[];
   forensicTimeline: ForensicEvent[];
+  uncertainties?: Uncertainty[];
 }
 
 export interface ReportVersionSummary {
@@ -36,12 +53,14 @@ export interface ReportVersionSummary {
   eventsCount: number;
   /** Exact analysis/import/enrichment/report runs this released snapshot was derived from (#377). */
   analysisRunIds?: string[];
+  createdBy?: ReportActor;
 }
 
 export interface ReportVersionRecord extends ReportVersionSummary {
   markdown: string;
   meta: ReportMeta;
   state: ReportVersionDiffState;
+  template?: ReportTemplate;
 }
 
 // Cap the number of retained versions per case (oldest pruned first) so state/report-versions/ can't
@@ -75,7 +94,13 @@ function nextVersionLabel(existing: readonly ReportVersionSummary[]): string {
 }
 
 export class ReportVersionStore {
-  constructor(private readonly cases: CaseStore) {}
+  private readonly workflows: ReportWorkflowStore;
+  private readonly releases: ReportReleaseStore;
+
+  constructor(private readonly cases: CaseStore) {
+    this.workflows = new ReportWorkflowStore(cases);
+    this.releases = new ReportReleaseStore(cases);
+  }
 
   private dir(caseId: string): string {
     return join(this.cases.stateDir(caseId), "report-versions");
@@ -124,6 +149,105 @@ export class ReportVersionStore {
     }
   }
 
+  async workflow(caseId: string, versionId: string): Promise<ReportWorkflow | null> {
+    const version = await this.get(caseId, versionId);
+    if (!version) return null;
+    return this.workflows.load(caseId, versionId, version.createdBy);
+  }
+
+  async submitForReview(
+    caseId: string,
+    versionId: string,
+    actor: ReportActor,
+    reviewer: ReportActor,
+  ): Promise<ReportWorkflow> {
+    if (!(await this.get(caseId, versionId))) throw new Error("report version not found");
+    return this.workflows.submit(caseId, versionId, actor, reviewer);
+  }
+
+  async addReviewAnnotation(
+    caseId: string,
+    versionId: string,
+    actor: ReportActor,
+    input: ReportAnnotationInput,
+  ): Promise<ReportWorkflow> {
+    const version = await this.get(caseId, versionId);
+    if (!version) throw new Error("report version not found");
+    const validTarget = input.targetType === "evidence"
+      ? version.state.forensicTimeline.some((event) => event.id === input.targetId)
+      : version.state.findings.some((finding) => finding.id === input.targetId);
+    if (!validTarget) throw new Error(`${input.targetType} target not found in this report version`);
+    return this.workflows.addAnnotation(caseId, versionId, actor, input);
+  }
+
+  resolveReviewAnnotation(
+    caseId: string,
+    versionId: string,
+    annotationId: string,
+    actor: ReportActor,
+    resolution: string,
+  ): Promise<ReportWorkflow> {
+    return this.workflows.resolveAnnotation(
+      caseId,
+      versionId,
+      annotationId,
+      actor,
+      resolution,
+    );
+  }
+
+  requestReportChanges(
+    caseId: string,
+    versionId: string,
+    actor: ReportActor,
+    reason: string,
+  ): Promise<ReportWorkflow> {
+    return this.workflows.requestChanges(caseId, versionId, actor, reason);
+  }
+
+  approve(
+    caseId: string,
+    versionId: string,
+    actor: ReportActor,
+    note: string,
+  ): Promise<ReportWorkflow> {
+    return this.workflows.approve(caseId, versionId, actor, note);
+  }
+
+  selfApprove(
+    caseId: string,
+    versionId: string,
+    actor: ReportActor,
+    note: string,
+  ): Promise<ReportWorkflow> {
+    return this.workflows.selfApprove(caseId, versionId, actor, note);
+  }
+
+  async release(
+    caseId: string,
+    versionId: string,
+    input: Omit<ReportReleaseInput, "version" | "workflow">,
+  ): Promise<ReportReleaseRecord> {
+    const version = await this.get(caseId, versionId);
+    if (!version) throw new Error("report version not found");
+    const workflow = await this.workflows.load(caseId, versionId, version.createdBy);
+    const release = await this.releases.create(caseId, { ...input, version, workflow });
+    await this.workflows.markReleased(caseId, versionId, input.actor, release.id);
+    return release;
+  }
+
+  listReleases(caseId: string): Promise<ReportReleaseSummary[]> {
+    return this.releases.list(caseId);
+  }
+
+  getRelease(caseId: string, releaseId: string): Promise<ReportReleaseRecord | null> {
+    return this.releases.get(caseId, releaseId);
+  }
+
+  verifyReleases(caseId: string): Promise<ReportReleaseIntegrity> {
+    return this.releases.verify(caseId);
+  }
+
   // Persist a version snapshot after a report regeneration. Skips writing a new version (returns the
   // existing latest summary instead) when the rendered markdown is byte-identical to the most recent
   // version — a re-generation with nothing changed shouldn't grow the history. Best-effort: callers
@@ -136,6 +260,7 @@ export class ReportVersionStore {
       meta: ReportMeta;
       state: ReportVersionDiffState;
       analysisRunIds?: string[];
+      template?: ReportTemplate;
     },
   ): Promise<ReportVersionSummary> {
     const contentHash = createHash("sha256").update(input.markdown).digest("hex");
@@ -163,15 +288,37 @@ export class ReportVersionStore {
       iocsCount: input.state.iocs.length,
       eventsCount: input.state.forensicTimeline.length,
       analysisRunIds,
+      createdBy: (() => {
+        const authenticated = authenticatedActorFields();
+        return authenticated
+          ? {
+              id: authenticated.actorId,
+              displayName: authenticated.actorDisplayName,
+              kind: authenticated.actorKind,
+            }
+          : { id: "solo", displayName: "Solo investigator", kind: "solo" };
+      })(),
     };
-    const record: ReportVersionRecord = { ...summary, markdown: input.markdown, meta: input.meta, state: input.state };
+    const record: ReportVersionRecord = {
+      ...summary,
+      markdown: input.markdown,
+      meta: input.meta,
+      state: input.state,
+      ...(input.template ? { template: input.template } : {}),
+    };
 
     await mkdir(this.dir(caseId), { recursive: true });
     await atomicWrite(this.recordPath(caseId, id), JSON.stringify(record));
     const updated = [summary, ...existing];
     const cap = maxVersions();
-    const kept = updated.slice(0, cap);
-    const pruned = updated.slice(cap);
+    const protectedIds = new Set(
+      (await this.releases.list(caseId)).map((release) => release.reportVersionId),
+    );
+    const retainedWorking = new Set(
+      updated.filter((item) => !protectedIds.has(item.id)).slice(0, cap).map((item) => item.id),
+    );
+    const kept = updated.filter((item) => protectedIds.has(item.id) || retainedWorking.has(item.id));
+    const pruned = updated.filter((item) => !kept.includes(item));
     await this.saveIndex(caseId, kept);
     await Promise.all(pruned.map((p) => unlink(this.recordPath(caseId, p.id)).catch(() => {})));
     return summary;
