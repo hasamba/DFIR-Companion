@@ -142,20 +142,20 @@ describe("dashboard.html search wiring", () => {
     expect(h).toContain('<script type="module" src="/js/settings-search.js"></script>');
   });
 
-  // The server serves public/js by an EXACT-PATH whitelist (`vendorFiles` in src/server.ts), not a
-  // static directory. A module that is not named there 404s, and the only symptom in the browser is
-  // the feature silently not existing — no console error the dashboard surfaces, nothing failing in
-  // any other suite. Written as "every module the dashboard loads" rather than naming this one file,
-  // so the next /js/ module is covered the day it is added.
+  // The server serves public/js by an EXACT-PATH whitelist (`STATIC_ASSETS` in
+  // src/http/staticAssets.ts), not a static directory. A module that is not named there 404s, and
+  // the only symptom in the browser is the feature silently not existing — no console error the
+  // dashboard surfaces, nothing failing in any other suite. Written as "every module the dashboard
+  // loads" rather than naming this one file, so the next /js/ module is covered the day it is added.
   it("whitelists every /js/ module the dashboard loads", async () => {
     const [h, server] = await Promise.all([
       dashboard(),
-      readFile(new URL("../../src/server.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../src/http/staticAssets.ts", import.meta.url), "utf8"),
     ]);
     const loaded = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
     expect(loaded).toContain("/js/settings-search.js");
     for (const path of loaded) {
-      expect(server, `${path} is loaded by dashboard.html but not whitelisted in server.ts vendorFiles`)
+      expect(server, `${path} is loaded by dashboard.html but not in STATIC_ASSETS (src/http/staticAssets.ts)`)
         .toContain(`"${path}": "application/javascript; charset=utf-8"`);
     }
   });

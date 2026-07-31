@@ -27,7 +27,8 @@ describe("Chain of Custody dashboard section (#231)", () => {
   });
 
   it("loads its records when a case is opened", () => {
-    expect(html).toContain("loadCustody(caseId);");
+    // Loaded from the case-load panel table (it was a bare call before the progress bar landed).
+    expect(html).toContain('["custody", () => loadCustody(caseId)]');
     expect(html).toContain("/custody`");
   });
 
