@@ -38,11 +38,25 @@ async function main(): Promise<void> {
   stub = await startAiStub();
   // The provider is configured in-process rather than from a .env file, so nothing on the
   // developer's machine can leak a real key or endpoint into a test run.
+  //
+  // EVERY provider family must point at the stub, not just the synthesis one. Providers default
+  // their base URL to their vendor's endpoint — openrouter.ts falls back to
+  // https://openrouter.ai/api/v1 — so a route using a family this file forgot will make a REAL
+  // outbound call. That is exactly what happened: /velociraptor/suggest-hunts used the VISION
+  // family, which was unset, and the suite dialled OpenRouter and got a 401 back from it.
+  //
+  // For a forensics tool this is not a tidiness issue. Case evidence is in those prompts, so an
+  // unset family means a test run can ship real case content to a third party.
   process.env.DFIR_AI_PROVIDER = "openai";
   process.env.DFIR_AI_SYNTH_BASE_URL = `${stub.url}/v1`;
   process.env.DFIR_AI_SYNTH_KEY = "stub-key";
   process.env.DFIR_AI_MODEL = "stub-model";
   process.env.DFIR_AI_SYNTH_MODEL = "stub-model";
+  process.env.DFIR_VISION_PROVIDER = "openai";
+  process.env.DFIR_VISION_BASE_URL = `${stub.url}/v1`;
+  process.env.DFIR_VISION_KEY = "stub-key";
+  process.env.DFIR_VISION_MODEL = "stub-model";
+  process.env.DFIR_AI_SECOND_OPINION_MODEL = "stub-model";
   process.env.DFIR_CASES_ROOT = casesRoot;
 
   startServer(casesRoot, PORT, "127.0.0.1", join(TEMP_ROOT, "logs"));

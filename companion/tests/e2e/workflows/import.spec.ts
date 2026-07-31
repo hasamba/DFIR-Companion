@@ -45,7 +45,13 @@ test("refuses a CSV with a header but no data rows", async ({ page, demoCase }) 
   });
   // Accepting this would append an import record claiming zero events — an audit trail entry for
   // something that never happened.
-  expect(res.status()).toBe(400);
+  //
+  // The body is in the assertion message because this failed roughly twice in seven full-suite
+  // runs and never in isolation, and a bare status code said nothing about why. The likely
+  // mechanism is the provider gate ahead of the row check: import-csv answers 501 when
+  // hasSynthesisProvider() is momentarily false, which would surface here as "expected 400".
+  // Asserting [400, 501] would hide that, so the assertion stays strict and reports what it got.
+  expect(res.status(), await res.text()).toBe(400);
 });
 
 // Importing into a case id that does not exist used to be ACCEPTED (202): the server created the
