@@ -25,7 +25,9 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "npx tsx tests/e2e/server-entry.ts",
-    url: "http://127.0.0.1:4788/healthz",
+    // GET /cases is the readiness probe: it is a real route that only answers once the case store
+    // is wired, so a 200 means the app is genuinely usable rather than merely bound to the port.
+    url: "http://127.0.0.1:4788/cases",
     reuseExistingServer: false,
     timeout: 60_000,
     stdout: "pipe",
