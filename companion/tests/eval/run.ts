@@ -1,150 +1,336 @@
-// CLI runner for the eval harness (issue #64) — CI-friendly summary + exit codes.
-//
-//   npm run eval[:extraction|:synthesis]        deterministic MockProvider run (Phase 1) — safe to gate PRs
-//   npm run eval:real[:extraction|:synthesis]   REAL provider run (Phase 2) — non-blocking; needs DFIR_AI_*
-//
-// Phase 1 (default) drives every fixture with a MockProvider, so it's deterministic and verifies the harness
-// + scorer, not model quality. Phase 2 (`--real`) swaps in the env-configured provider to score the CURRENT
-// prompt's actual output against the golden expectations — the real regression signal. It's non-blocking:
-// it is NOT wired into `npm test`, and if no provider is configured it SKIPS (exit 0) so CI never breaks.
-//
-// Exit codes: 0 = all pass (or real-mode skipped), 1 = a gate failed, 2 = a runner error.
-
+import { performance } from "node:perf_hooks";
 import { config as loadDotenv } from "dotenv";
 import { visionEnv } from "../../src/config/aiEnv.js";
+import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
 import { buildProvider } from "../../src/server.js";
+import { writeEvaluationReport, writeNoRegressionAttestation } from "./artifacts.js";
+import { compareWithBaseline, createBaseline, readBaseline, writeBaseline } from "./baseline.js";
+import { parseEvalCli, type EvalCliOptions } from "./cli.js";
+import { loadGoldenCorpus, type GoldenCorpus } from "./corpus.js";
+import { runCorpusSuite } from "./corpusRunner.js";
+import { EXTRACTION_FIXTURES, SCREENSHOT_FIXTURES } from "./fixtures.js";
 import {
-  runExtractionFixture, runScreenshotFixture, runSynthesisFixture, mockProvider, realProviderOrNull,
-  loadRealScreenshotFixtures, runRealScreenshotFixture,
+  loadRealScreenshotFixtures,
+  mockProvider,
+  realProviderOrNull,
+  runExtractionFixture,
+  runRealScreenshotFixture,
+  runScreenshotFixture,
 } from "./harness.js";
+import { evaluationIdentity } from "./identity.js";
+import { MeteredProvider } from "./meter.js";
 import {
-  scoreExtraction, checkSynthesis, passesExtraction, passesSynthesis,
-  formatExtractionReport, formatSynthesisReport, REAL_THRESHOLDS,
+  buildEvaluationReport,
+  reportExitCode,
+  type EvaluationExtractionResult,
+  type EvaluationReport,
+  type EvaluationReportInput,
+  type EvaluationResources,
+} from "./report.js";
+import {
+  formatExtractionReport,
+  passesExtraction,
+  REAL_THRESHOLDS,
+  scoreExtraction,
   type Thresholds,
 } from "./scorer.js";
-import { EXTRACTION_FIXTURES, SCREENSHOT_FIXTURES, SYNTHESIS_FIXTURES } from "./fixtures.js";
-import type { AIProvider } from "../../src/providers/provider.js";
 
-// In mock mode each fixture is driven by its OWN canned response, so the provider is chosen per fixture; in
-// real mode a single env-configured provider is shared. `override` sets the gate for real runs (relaxed).
-type ProviderFor<T> = (fx: T) => AIProvider;
+type ExtractionFixture = (typeof EXTRACTION_FIXTURES)[number];
+type ScreenshotFixture = (typeof SCREENSHOT_FIXTURES)[number];
+type ProviderFor<T> = (fixture: T) => AIProvider;
 
-async function runExtraction(providerFor: ProviderFor<(typeof EXTRACTION_FIXTURES)[number]>, override?: Thresholds): Promise<boolean> {
-  let allPass = true;
-  for (const fx of EXTRACTION_FIXTURES) {
-    const produced = await runExtractionFixture(fx, providerFor(fx));
-    const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
-    const thresholds = fx.thresholds ?? override;
-    console.log(formatExtractionReport(fx.name, score, thresholds));
-    allPass = passesExtraction(score, thresholds) && allPass;
-  }
-  return allPass;
+function measuredResources(metered: MeteredProvider, started: number): EvaluationResources {
+  return { ...metered.snapshot(), durationMs: performance.now() - started };
 }
 
-// Screenshot fixtures drive the vision path (analyzeWindow). MOCK-ONLY: each is driven by its own canned
-// delta against a stub image, so it gates the plumbing + scorer without shipping evidence.
-async function runScreenshots(): Promise<boolean> {
-  let allPass = true;
-  for (const fx of SCREENSHOT_FIXTURES) {
-    const produced = await runScreenshotFixture(fx, mockProvider(fx.canned));
-    const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
-    console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, fx.thresholds));
-    allPass = passesExtraction(score, fx.thresholds) && allPass;
+function failureStatus(error: unknown, real: boolean) {
+  if (error instanceof ProviderError) {
+    return { status: "provider_failed" as const, errorKind: error.kind };
   }
-  return allPass;
+  return real
+    ? { status: "quality_failed" as const, errorKind: "invalid-model-output" }
+    : { status: "runner_failed" as const, errorKind: "deterministic-runner-error" };
 }
 
-// Real vision-model grading for analyzeWindow (issue #135). Sourced entirely from a local, uncommitted
-// directory (DFIR_EVAL_SCREENSHOT_DIR — real case screenshots are sensitive and can never be committed)
-// and graded against the VISION provider (buildProvider(), DFIR_VISION_*) — NOT the text provider the
-// other --real fixtures use (realProviderOrNull() resolves DFIR_AI_SYNTH_*/text, the wrong model for this
-// modality). Skips cleanly (returns true / exit 0) whenever the dir, the provider, or any images are
-// absent, so CI never depends on a local screenshot set existing.
-async function runRealScreenshots(): Promise<boolean> {
-  const dir = process.env.DFIR_EVAL_SCREENSHOT_DIR;
-  if (!dir) {
-    console.log("\nscreenshot fixtures: DFIR_EVAL_SCREENSHOT_DIR not set — real vision grading skipped (see README)");
-    return true;
+async function runExtractionCase(
+  fixture: ExtractionFixture,
+  provider: AIProvider,
+  thresholds: Thresholds | undefined,
+  real: boolean,
+): Promise<EvaluationExtractionResult> {
+  const metered = new MeteredProvider(provider);
+  const started = performance.now();
+  try {
+    const produced = await runExtractionFixture(fixture, metered);
+    const score = scoreExtraction(fixture.golden, produced, { toleranceMinutes: 5 });
+    const gate = fixture.thresholds ?? thresholds;
+    console.log(formatExtractionReport(fixture.name, score, gate));
+    return {
+      id: fixture.name,
+      modality: fixture.modality,
+      status: passesExtraction(score, gate) ? "passed" : "quality_failed",
+      precision: score.precision,
+      recall: score.recall,
+      resources: measuredResources(metered, started),
+    };
+  } catch (error) {
+    const failure = failureStatus(error, real);
+    console.log(`[FAIL] extraction: ${fixture.name} — ${failure.errorKind}`);
+    console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      id: fixture.name,
+      modality: fixture.modality,
+      status: failure.status,
+      precision: 0,
+      recall: 0,
+      resources: measuredResources(metered, started),
+      errorKind: failure.errorKind,
+    };
   }
-  const provider = buildProvider();
-  if (!provider) {
-    console.log("\nscreenshot fixtures: no vision provider configured (DFIR_VISION_*) — real vision grading skipped (see README)");
-    return true;
+}
+
+async function runExtraction(
+  providerFor: ProviderFor<ExtractionFixture>,
+  thresholds: Thresholds | undefined,
+  real: boolean,
+): Promise<EvaluationExtractionResult[]> {
+  const results: EvaluationExtractionResult[] = [];
+  for (const fixture of EXTRACTION_FIXTURES) {
+    results.push(await runExtractionCase(fixture, providerFor(fixture), thresholds, real));
   }
-  const fixtures = await loadRealScreenshotFixtures(dir);
-  if (fixtures.length === 0) {
-    console.log(`\nscreenshot fixtures: no images (with a valid sidecar) found in ${dir} — real vision grading skipped`);
-    return true;
+  return results;
+}
+
+async function runMockScreenshotCase(fixture: ScreenshotFixture): Promise<EvaluationExtractionResult> {
+  const metered = new MeteredProvider(mockProvider(fixture.canned));
+  const started = performance.now();
+  try {
+    const produced = await runScreenshotFixture(fixture, metered);
+    const score = scoreExtraction(fixture.golden, produced, { toleranceMinutes: 5 });
+    console.log(formatExtractionReport(`${fixture.name} (screenshot)`, score, fixture.thresholds));
+    return {
+      id: fixture.name,
+      modality: "screenshot",
+      status: passesExtraction(score, fixture.thresholds) ? "passed" : "quality_failed",
+      precision: score.precision,
+      recall: score.recall,
+      resources: measuredResources(metered, started),
+    };
+  } catch (error) {
+    const failure = failureStatus(error, false);
+    return {
+      id: fixture.name,
+      modality: "screenshot",
+      status: failure.status,
+      precision: 0,
+      recall: 0,
+      resources: measuredResources(metered, started),
+      errorKind: failure.errorKind,
+    };
   }
-  console.log(`\neval --real screenshots: provider ${provider.name}, model ${provider.model}, ${fixtures.length} image(s) from ${dir}`);
-  let allPass = true;
-  for (const fx of fixtures) {
-    // Grade each fixture in isolation. A real vision model can legitimately return non-JSON prose, a
-    // refusal, or an empty completion — and analyzeWindow throws on all three. Letting that escape
-    // would abort the whole run, leave every remaining fixture ungraded, and surface as a bare stack
-    // trace with no indication of WHICH image caused it. Instead: attribute the error to its fixture,
-    // count it as a failure, and keep going.
-    let produced;
+}
+
+async function runMockScreenshots(): Promise<EvaluationExtractionResult[]> {
+  const results: EvaluationExtractionResult[] = [];
+  for (const fixture of SCREENSHOT_FIXTURES) {
+    results.push(await runMockScreenshotCase(fixture));
+  }
+  return results;
+}
+
+async function runRealScreenshots(provider: AIProvider | undefined): Promise<EvaluationExtractionResult[]> {
+  const directory = process.env.DFIR_EVAL_SCREENSHOT_DIR;
+  if (!directory || !provider) {
+    console.log("screenshot fixtures: local directory or vision provider absent — skipped");
+    return [];
+  }
+  const fixtures = await loadRealScreenshotFixtures(directory);
+  if (!fixtures.length) {
+    console.log(`screenshot fixtures: no valid image/sidecar pairs in ${directory} — skipped`);
+    return [];
+  }
+  const results: EvaluationExtractionResult[] = [];
+  for (const fixture of fixtures) {
+    const metered = new MeteredProvider(provider);
+    const started = performance.now();
     try {
-      produced = await runRealScreenshotFixture(fx, provider);
-    } catch (err) {
-      console.log(`\n[FAIL] extraction: ${fx.name} (screenshot) — errored, not graded`);
-      console.log(`  ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
-      allPass = false;
-      continue;
+      const produced = await runRealScreenshotFixture(fixture, metered);
+      const thresholds = fixture.thresholds ?? REAL_THRESHOLDS;
+      const score = scoreExtraction(fixture.golden, produced, { toleranceMinutes: 5 });
+      console.log(formatExtractionReport(`${fixture.name} (screenshot)`, score, thresholds));
+      results.push({
+        id: fixture.name,
+        modality: "screenshot",
+        status: passesExtraction(score, thresholds) ? "passed" : "quality_failed",
+        precision: score.precision,
+        recall: score.recall,
+        resources: measuredResources(metered, started),
+      });
+    } catch (error) {
+      const failure = failureStatus(error, true);
+      console.log(`[FAIL] extraction: ${fixture.name} (screenshot) — ${failure.errorKind}`);
+      results.push({
+        id: fixture.name,
+        modality: "screenshot",
+        status: failure.status,
+        precision: 0,
+        recall: 0,
+        resources: measuredResources(metered, started),
+        errorKind: failure.errorKind,
+      });
     }
-    const thresholds = fx.thresholds ?? REAL_THRESHOLDS;
-    const score = scoreExtraction(fx.golden, produced, { toleranceMinutes: 5 });
-    console.log(formatExtractionReport(`${fx.name} (screenshot)`, score, thresholds));
-    allPass = passesExtraction(score, thresholds) && allPass;
   }
-  return allPass;
+  return results;
 }
 
-async function runSynthesis(providerFor: ProviderFor<(typeof SYNTHESIS_FIXTURES)[number]>): Promise<boolean> {
-  let allPass = true;
-  for (const fx of SYNTHESIS_FIXTURES) {
-    const { events, findings } = await runSynthesisFixture(fx, providerFor(fx));
-    const report = checkSynthesis(events, findings);
-    console.log(formatSynthesisReport(fx.name, report));
-    allPass = passesSynthesis(report) && allPass;
+async function applyBaseline(
+  input: EvaluationReportInput,
+  options: EvalCliOptions,
+): Promise<EvaluationReport> {
+  if (!options.baselinePath) {
+    return buildEvaluationReport({
+      ...input,
+      ...(options.requireBaseline ? { runnerError: "a baseline is required but none was supplied" } : {}),
+    });
   }
-  return allPass;
+  const preliminary = buildEvaluationReport(input);
+  const baseline = await readBaseline(options.baselinePath);
+  return buildEvaluationReport({
+    ...input,
+    baselineComparison: compareWithBaseline(baseline, preliminary.summary, preliminary.identity),
+  });
+}
+
+async function writeRequestedArtifacts(report: EvaluationReport, options: EvalCliOptions): Promise<void> {
+  let reportHash: string | undefined;
+  if (options.outputPath) {
+    reportHash = await writeEvaluationReport(options.outputPath, report);
+    console.log(`evaluation report: ${options.outputPath}`);
+  }
+  if (options.baselineDirectory && report.outcome === "passed") {
+    const path = await writeBaseline(
+      options.baselineDirectory,
+      createBaseline(report.identity, report.summary, report.createdAt),
+    );
+    console.log(`candidate baseline: ${path}`);
+  }
+  if (options.attestationPath) {
+    if (!options.outputPath || !reportHash) {
+      throw new Error("--attestation requires --output so the report can be hash-pinned");
+    }
+    await writeNoRegressionAttestation(options.attestationPath, options.outputPath, reportHash, report);
+    console.log(`no-regression attestation: ${options.attestationPath}`);
+  }
+}
+
+async function skippedReport(options: EvalCliOptions, reason: string): Promise<EvaluationReport> {
+  const corpus = await loadGoldenCorpus();
+  const identity = await evaluationIdentity({ name: "unconfigured", model: "unconfigured" }, corpus.hash);
+  return buildEvaluationReport({
+    identity,
+    corpusVersion: corpus.version,
+    cases: [],
+    extraction: [],
+    screenshot: [],
+    createdAt: new Date().toISOString(),
+    ...(options.requireProvider ? { providerFailureReason: reason } : { skippedReason: reason }),
+  });
+}
+
+function requiredProvider(provider: AIProvider | undefined, role: "text" | "vision"): AIProvider {
+  if (!provider) throw new Error(`${role} provider was required after configuration validation`);
+  return provider;
+}
+
+function modeIncludes(options: EvalCliOptions, section: Exclude<EvalCliOptions["mode"], "all">) {
+  return options.mode === "all" || options.mode === section;
+}
+
+async function runSelectedSections(
+  options: EvalCliOptions,
+  corpus: GoldenCorpus,
+  textProvider: AIProvider | undefined,
+  visionProvider: AIProvider | undefined,
+) {
+  const extraction = modeIncludes(options, "extraction")
+    ? await runExtraction(
+        options.real
+          ? () => requiredProvider(textProvider, "text")
+          : (fixture) => mockProvider(fixture.canned),
+        options.real ? REAL_THRESHOLDS : undefined,
+        options.real,
+      )
+    : [];
+  const screenshot = modeIncludes(options, "screenshots")
+    ? options.real
+      ? await runRealScreenshots(visionProvider)
+      : await runMockScreenshots()
+    : [];
+  const cases = modeIncludes(options, "synthesis")
+    ? await runCorpusSuite(
+        corpus,
+        options.real
+          ? () => requiredProvider(textProvider, "text")
+          : (fixture) => mockProvider(fixture.canned),
+        options.real,
+      )
+    : [];
+  return { extraction, screenshot, cases };
+}
+
+async function execute(options: EvalCliOptions): Promise<EvaluationReport> {
+  if (options.real) loadDotenv({ quiet: true });
+  const corpus = await loadGoldenCorpus();
+  const textProvider = options.real ? realProviderOrNull() : undefined;
+  const visionProvider = options.real ? buildProvider() : undefined;
+  const needsText = options.mode !== "screenshots";
+  if (options.real && needsText && !textProvider) {
+    return skippedReport(options, "no text AI provider is configured");
+  }
+  if (options.real && options.mode === "screenshots" && !visionProvider) {
+    return skippedReport(options, "no vision AI provider is configured");
+  }
+  const identityProvider = options.real
+    ? requiredProvider(
+        options.mode === "screenshots" ? visionProvider : textProvider,
+        options.mode === "screenshots" ? "vision" : "text",
+      )
+    : { name: "mock", model: "mock-model" };
+  const { extraction, screenshot, cases } = await runSelectedSections(
+    options,
+    corpus,
+    textProvider,
+    visionProvider,
+  );
+  const identity = await evaluationIdentity(identityProvider, corpus.hash);
+  return applyBaseline(
+    {
+      identity,
+      corpusVersion: corpus.version,
+      cases,
+      extraction,
+      screenshot,
+      createdAt: new Date().toISOString(),
+      ...(options.mode === "screenshots" && options.real && screenshot.length === 0
+        ? { skippedReason: "real screenshot set is not configured" }
+        : {}),
+    },
+    options,
+  );
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const real = argv.includes("--real");
-  const positional = argv.find((a) => !a.startsWith("--"));
-  const mode = positional === "extraction" || positional === "synthesis" || positional === "screenshots" ? positional : "all";
-
-  // Resolve the provider selector + gate. Real mode uses the env-configured model (dotenv-loaded like
-  // verify-ai); if none is configured it's a graceful skip, not a failure.
-  let extractionProvider: ProviderFor<{ canned: string }>;
-  let synthesisProvider: ProviderFor<{ canned: string }>;
-  let override: Thresholds | undefined;
-  if (real) {
-    loadDotenv({ quiet: true });
-    const provider = realProviderOrNull();
-    if (!provider) {
-      console.log("eval --real: no AI provider configured (set DFIR_AI_SYNTH_* or DFIR_VISION_*) — skipped.");
-      process.exit(0);
-    }
-    // Report the TEXT model — that's what realProviderOrNull() resolves and what these fixtures grade.
-    const model = process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? "(default)";
-    console.log(`eval --real: provider ${provider.name}, model ${model}\n`);
-    extractionProvider = synthesisProvider = () => provider;
-    override = REAL_THRESHOLDS;
-  } else {
-    extractionProvider = synthesisProvider = (fx) => mockProvider(fx.canned);
-  }
-
-  let ok = true;
-  if (mode === "extraction" || mode === "all") ok = (await runExtraction(extractionProvider, override)) && ok;
-  if (mode === "screenshots" || mode === "all") ok = (await (real ? runRealScreenshots() : runScreenshots())) && ok;
-  if (mode === "synthesis" || mode === "all") ok = (await runSynthesis(synthesisProvider)) && ok;
-  console.log(ok ? "\nEVAL PASSED" : "\nEVAL FAILED");
-  process.exit(ok ? 0 : 1);
+  const options = parseEvalCli(process.argv.slice(2));
+  const report = await execute(options);
+  await writeRequestedArtifacts(report, options);
+  const model = options.real
+    ? (process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? "(default)")
+    : "mock-model";
+  console.log(`\nevaluation outcome: ${report.outcome} (model ${model})`);
+  process.exitCode = reportExitCode(report.outcome);
 }
 
-main().catch((err) => { console.error(err); process.exit(2); });
+void main().catch((error: unknown) => {
+  console.error(`evaluation runner error: ${(error as Error).message}`);
+  process.exitCode = 2;
+});

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "key": "mock/mock-model/0d611b0b6c733b30a91b63db7d9f92fd616918e9295042b4763c5449e60e8c6e",
+  "identity": {
+    "provider": "mock",
+    "model": "mock-model",
+    "promptHash": "0d611b0b6c733b30a91b63db7d9f92fd616918e9295042b4763c5449e60e8c6e",
+    "sourceHash": "79b50c45c836f05822272f1d9b1af702d064182a419716b2971f8421a422a875",
+    "corpusHash": "85667533ce641a797ae826b05d7c33588642c261f12acc705032681232923467"
+  },
+  "recordedAt": "2026-07-31T08:26:10.687Z",
+  "summary": {
+    "claimPrecision": 1,
+    "claimRecall": 1,
+    "eventPrecision": 1,
+    "eventRecall": 1,
+    "iocPrecision": 1,
+    "iocRecall": 1,
+    "abstentionRate": 1,
+    "forbiddenConclusions": 0,
+    "danglingEvidenceRefs": 0,
+    "confidenceIssues": 0,
+    "uncertaintyRecall": 1,
+    "nextStepRecall": 1,
+    "durationMs": 380.85385199999996,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "costUsd": 0
+  }
+}

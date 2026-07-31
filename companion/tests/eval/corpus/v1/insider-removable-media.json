@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "id": "insider-removable-media",
+  "title": "Synthetic removable-media collection",
+  "scenario": "insider-threat",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional endpoint and file-audit events written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "ins-e1",
+      "timestamp": "2026-05-03T16:20:00.000Z",
+      "description": "USB volume REMOVABLE-01 mounted on WS-07 by user-a",
+      "severity": "Medium",
+      "mitreTechniques": ["T1091"],
+      "asset": "WS-07",
+      "sources": ["Endpoint Audit"]
+    },
+    {
+      "id": "ins-e2",
+      "timestamp": "2026-05-03T16:24:00.000Z",
+      "description": "Archive project-export.7z copied from WS-07 to REMOVABLE-01",
+      "severity": "High",
+      "mitreTechniques": ["T1052.001"],
+      "asset": "WS-07",
+      "path": "E:\\project-export.7z",
+      "sources": ["File Audit"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "ins-f1",
+        "severity": "High",
+        "confidence": 82,
+        "confidenceReason": "The mount and archive-copy events directly show the transfer.",
+        "title": "Archive copied to removable media",
+        "description": "A project archive was copied to removable media on WS-07; intent is not established.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1052.001"],
+        "status": "open",
+        "relatedEventIds": ["ins-e1", "ins-e2"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "",
+    "narrativeTimeline": "",
+    "summary": "A removable-media transfer occurred; available evidence does not establish intent.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "ins-n1",
+        "priority": "high",
+        "action": "Collect DLP logs for WS-07 and project-export.7z",
+        "rationale": "DLP policy and file classification can distinguish an approved transfer from misuse.",
+        "pointer": "WS-07 DLP logs",
+        "relatedFindingIds": ["ins-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "User intent",
+        "status": "unknown",
+        "basis": "The transfer is observed but authorization context is absent.",
+        "gap": "DLP policy, approval records, and user context have not been collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "removable-copy",
+        "requiredTerms": ["copied to removable media"],
+        "evidenceEventIds": ["ins-e1", "ins-e2"],
+        "confidence": { "min": 55, "max": 100 }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [{ "id": "invented-malicious-intent", "terms": ["malicious insider"] }],
+    "uncertainties": [
+      {
+        "id": "intent-gap",
+        "topicTerms": ["user intent"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-dlp", "requiredTerms": ["DLP logs", "WS-07"] }],
+    "expectAbstention": false
+  }
+}
