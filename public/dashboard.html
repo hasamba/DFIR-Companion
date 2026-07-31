@@ -16,6 +16,13 @@
   <script type="module" src="/js/settings-search.js"></script>
   <script type="module" src="/js/hunt-workbench.js"></script>
   <script type="module" src="/js/case-load-progress.js"></script>
+  <!-- Dialog semantics, focus trap, Escape and focus restoration for every modal (#386). Watches
+       the `open` class the modals already toggle, so there is one place to get right rather than
+       72 call sites. See js/a11y/modal-autowire.js. -->
+  <script type="module" src="/js/a11y/modal-autowire.js"></script>
+  <!-- Mirrors the #status line into an aria-live region so job, AI and error state reach a screen
+       reader instead of being visual-only (#386). See js/a11y/announcer.js. -->
+  <script type="module" src="/js/a11y/announcer.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference.

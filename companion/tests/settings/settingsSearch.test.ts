@@ -4,12 +4,7 @@ import { readFile } from "node:fs/promises";
 // exports touch no DOM, so importing them in node works — same arrangement as commandPalette.test.ts,
 // but with a .d.ts alongside so this file stays inside `npm run typecheck` instead of joining the
 // exclude list in tsconfig.test.json.
-import {
-  normalize,
-  matchTokens,
-  landingTab,
-  searchMessage,
-} from "../../../public/js/settings-search.js";
+import { normalize, matchTokens, landingTab, searchMessage } from "../../../public/js/settings-search.js";
 
 /** Real haystacks, assembled the way buildIndex() assembles them (see fieldText): the label text,
  *  the hint text, then the input id, joined with spaces. */
@@ -108,20 +103,26 @@ describe("dashboard.html search markup", () => {
 describe("dashboard.html search CSS", () => {
   it("hides tabs, pane children and row siblings that are not hits", async () => {
     const h = await dashboard();
-    expect(h).toContain('.settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }');
-    expect(h).toContain('.settings-modal[data-searching] .stab-pane:not([data-hit="pane"]) > *:not([data-hit]) { display: none !important; }');
-    expect(h).toContain('.settings-modal[data-searching] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-hit]) { display: none !important; }');
+    expect(h).toContain(
+      ".settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }",
+    );
+    expect(h).toContain(
+      '.settings-modal[data-searching] .stab-pane:not([data-hit="pane"]) > *:not([data-hit]) { display: none !important; }',
+    );
+    expect(h).toContain(
+      ".settings-modal[data-searching] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-hit]) { display: none !important; }",
+    );
   });
 
   it("renders the tab match count from the attribute", async () => {
     const h = await dashboard();
-    expect(h).toContain('.settings-modal[data-searching] .stab[data-hit-count]::after');
+    expect(h).toContain(".settings-modal[data-searching] .stab[data-hit-count]::after");
     expect(h).toContain("content: attr(data-hit-count)");
   });
 
   it("steps the Essential/All toggle aside while searching", async () => {
     const h = await dashboard();
-    expect(h).toContain('.settings-modal[data-searching] .settings-mode { display: none; }');
+    expect(h).toContain(".settings-modal[data-searching] .settings-mode { display: none; }");
   });
 
   // THE REGRESSION GUARD. Search spans All by suspending Essential wholesale, which only works
@@ -155,16 +156,63 @@ describe("dashboard.html search wiring", () => {
     const loaded = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
     expect(loaded).toContain("/js/settings-search.js");
     for (const path of loaded) {
-      expect(server, `${path} is loaded by dashboard.html but not in STATIC_ASSETS (src/http/staticAssets.ts)`)
-        .toContain(`"${path}": "application/javascript; charset=utf-8"`);
+      expect(
+        server,
+        `${path} is loaded by dashboard.html but not in STATIC_ASSETS (src/http/staticAssets.ts)`,
+      ).toContain(`"${path}": "application/javascript; charset=utf-8"`);
     }
+  });
+
+  // The check above covers modules the dashboard loads DIRECTLY via a <script> tag. It does not
+  // cover what those modules import: the browser fetches every static import by URL too, so a
+  // transitive import missing from STATIC_ASSETS 404s exactly as silently. That is not theoretical
+  // — js/a11y/modal-autowire.js was whitelisted while its own imports (modal.js, focus-trap.js)
+  // were not, and the only symptom was every dialog silently lacking its focus trap (#386).
+  it("whitelists every module those modules statically import", async () => {
+    const [h, server] = await Promise.all([
+      dashboard(),
+      readFile(new URL("../../src/http/staticAssets.ts", import.meta.url), "utf8"),
+    ]);
+    const entry = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+
+    // Walk the import graph breadth-first; a module may import a module that imports another.
+    const seen = new Set<string>();
+    const queue = [...entry];
+    while (queue.length > 0) {
+      const path = queue.shift() as string;
+      if (seen.has(path)) continue;
+      seen.add(path);
+
+      const source = await readFile(new URL(`../../../public${path}`, import.meta.url), "utf8");
+      const specifiers = [...source.matchAll(/^\s*import\s[^"']*["'](\.[^"']+)["']/gm)].map((m) => m[1]);
+      for (const spec of specifiers) {
+        // Resolve the relative specifier against the importing module's directory.
+        const resolved = new URL(spec, `file:///${path.replace(/^\//, "")}`).pathname;
+        queue.push(resolved);
+      }
+    }
+
+    // Every reachable module, entry points included, must be individually whitelisted.
+    for (const path of seen) {
+      expect(
+        server,
+        `${path} is reachable from dashboard.html's module graph but is not in STATIC_ASSETS ` +
+          `(src/http/staticAssets.ts). The browser fetches it by URL, so it will 404 silently.`,
+      ).toContain(`"${path}": "application/javascript; charset=utf-8"`);
+    }
+
+    // Guards the walker itself: if the regex ever stops matching, `seen` collapses to the entry
+    // points and the assertion above passes vacuously.
+    expect(seen.size).toBeGreaterThan(entry.length);
   });
 
   it("publishes the config the module reads, and resets the box on open", async () => {
     const h = await dashboard();
     // Live references, not snapshots: the module calls applyMode() on clear so a tab Essential
     // hides falls back through the inline script's own path rather than a copy of it.
-    expect(h).toContain("window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };");
+    expect(h).toContain(
+      "window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };",
+    );
     // Optional chaining: openSettingsModal is defined in a classic inline script, which runs
     // BEFORE the module that publishes window.DfirSettingsSearch.
     expect(h).toContain("window.DfirSettingsSearch?.reset();");

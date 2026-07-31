@@ -59,3 +59,49 @@ export function announce(message, opts) {
     el.textContent = text;
   }, 50);
 }
+
+/**
+ * Whether a status message should interrupt the user rather than wait for a pause.
+ * Pure, so the classification is unit-testable.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function isAssertive(text) {
+  return /\b(error|failed|failure|refused|denied|cannot|could not|unable)\b/i.test(text);
+}
+
+function wire() {
+  // BRIDGE THE EXISTING STATUS LINE, rather than hunting down every caller.
+  //
+  // #status in the toolbar is already the app's announcement surface: job progress, AI/synthesis
+  // state, second-opinion results and every refusal are written straight to its textContent from
+  // dozens of call sites, and showToast() mirrors its text there too. All of it was visual-only.
+  //
+  // Observing the one element means every one of those messages reaches a screen reader, including
+  // messages added later — the alternative is editing dozens of `.textContent =` sites and missing
+  // the next one. Same reasoning as js/a11y/modal-autowire.js.
+  // Create BOTH regions up front rather than on first use. A live region that is inserted into the
+  // DOM in the same tick as its text is unreliable: several screen readers only watch regions that
+  // existed before the change, so the first message of each politeness — often the most important
+  // one — can be dropped entirely.
+  region(POLITE_ID, "polite");
+  region(ASSERTIVE_ID, "assertive");
+
+  const status = document.getElementById("status");
+  if (!status) return;
+
+  let last = status.textContent || "";
+  const observer = new MutationObserver(() => {
+    const text = (status.textContent || "").trim();
+    // The status line is rewritten on every render, often with the text it already had. Announcing
+    // an unchanged message would make the app chatter constantly.
+    if (!text || text === last) return;
+    last = text;
+    announce(text, { assertive: isAssertive(text) });
+  });
+  observer.observe(status, { childList: true, characterData: true, subtree: true });
+}
+
+// Guarded so the pure exports above can be imported in node (Vitest) with no DOM present, matching
+// the convention in command-palette.js.
+if (typeof document !== "undefined" && typeof window !== "undefined") wire();
