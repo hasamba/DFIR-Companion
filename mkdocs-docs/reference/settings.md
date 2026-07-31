@@ -255,7 +255,13 @@ Manage report templates:
 - Edit the default template or create new ones
 - Set: cover title, subtitle, accent colour, running header/footer, logo visibility
 - Enable/disable and reorder report sections
+- Mark sections as mandatory at release
+- Require independent peer review and/or evidence links for every non-dismissed finding
 - Assign a template per case
+
+Critical and High findings always require valid evidence-event links, regardless of template. A
+template's evidence requirement extends that gate to every non-dismissed finding. Independent review
+requires team authentication; solo self-review cannot satisfy that rule.
 
 Built-in templates: **Standard** (full technical report), **Executive** (condensed), and any you create.
 

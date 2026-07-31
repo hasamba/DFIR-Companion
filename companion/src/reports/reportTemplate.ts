@@ -52,6 +52,12 @@ export interface ReportTemplateSection {
   enabled: boolean;
 }
 
+export interface ReportReleaseRequirements {
+  requiredSections: ReportSectionKey[];
+  requireIndependentReview: boolean;
+  requireEvidenceLinks: boolean;
+}
+
 export const DEFAULT_ACCENT = "#2d6cdf"; // mirrors the HTML report's historical accent
 export const DEFAULT_COVER_TITLE = "Incident Investigation Report";
 export const DEFAULT_TEMPLATE_ID = "standard";
@@ -89,9 +95,26 @@ export const reportTemplateSchema = z.object({
   showCompanyName: z.boolean().catch(true),
   // Section layout
   sections: z.array(sectionSchema).catch([]),
+  // Release governance (#383). Required sections must also be enabled; release preflight blocks
+  // otherwise. Evidence-link coverage extends the always-on High/Critical claim gate to every
+  // non-dismissed finding. Independent review is meaningful only with team authentication.
+  releaseRequirements: z
+    .object({
+      requiredSections: z.array(z.string()).catch([]),
+      requireIndependentReview: z.boolean().catch(false),
+      requireEvidenceLinks: z.boolean().catch(false),
+    })
+    .catch({
+      requiredSections: [],
+      requireIndependentReview: false,
+      requireEvidenceLinks: false,
+    }),
 });
 
-export type ReportTemplate = z.infer<typeof reportTemplateSchema>;
+type ParsedReportTemplate = z.infer<typeof reportTemplateSchema>;
+export type ReportTemplate = Omit<ParsedReportTemplate, "releaseRequirements"> & {
+  releaseRequirements: ReportReleaseRequirements;
+};
 
 // Normalize an arbitrary section list to FULL canonical coverage: keep provided (valid, deduped)
 // keys in their given order so analyst reordering survives, then append any canonical section not
@@ -142,6 +165,11 @@ export function normalizeReportTemplate(input: unknown): ReportTemplate {
     description: t.description.trim(),
     accentColor: normalizeHexColor(t.accentColor),
     sections: normalizeSections(t.sections),
+    releaseRequirements: {
+      ...t.releaseRequirements,
+      requiredSections: [...new Set(t.releaseRequirements.requiredSections)]
+        .filter((key): key is ReportSectionKey => SECTION_KEY_SET.has(key)),
+    },
   };
 }
 

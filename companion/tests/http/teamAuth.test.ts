@@ -4,12 +4,17 @@ import { join } from "node:path";
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
+import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
+import { CustodyStore } from "../../src/analysis/custody.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { TeamAuth } from "../../src/auth/teamAuth.js";
+import { ReportMetaStore } from "../../src/reports/reportMeta.js";
+import { ReportVersionStore } from "../../src/reports/reportVersionStore.js";
+import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 
@@ -221,6 +226,89 @@ describe("optional team authentication", () => {
     expect(entry.actorId).toBe(admin.identityId);
     expect(entry.actorDisplayName).toBe("Primary Admin");
     expect(entry.actor).toBe("Primary Admin");
+  });
+
+  it("enforces investigator/reviewer separation through report approval and release", async () => {
+    const stateStore = new StateStore(cases);
+    const reportMetaStore = new ReportMetaStore(cases);
+    const reportVersionStore = new ReportVersionStore(cases);
+    const analysisRunStore = new AnalysisRunStore(cases, { appVersion: "test" });
+    const custodyStore = new CustodyStore(cases);
+    const reportWriter = new ReportWriter(cases, stateStore, {
+      reportMeta: reportMetaStore,
+      reportVersions: reportVersionStore,
+      analysisRuns: analysisRunStore,
+    });
+    app = createApp(cases, {
+      teamAuth: auth,
+      stateStore,
+      reportMetaStore,
+      reportVersionStore,
+      analysisRunStore,
+      custodyStore,
+      reportWriter,
+    });
+    const admin = await bootstrap();
+    await admin.agent.post("/cases").set("X-DFIR-CSRF", admin.csrf).send({ caseId: "c1", name: "Case" });
+    const investigatorId = await createLocalUser(admin, "investigator");
+    const reviewerId = await createLocalUser(admin, "reviewer");
+    for (const [identityId, role] of [
+      [investigatorId, "investigator"],
+      [reviewerId, "reviewer"],
+    ]) {
+      expect(
+        (
+          await admin.agent
+            .put(`/auth/cases/c1/roles/${encodeURIComponent(identityId)}`)
+            .set("X-DFIR-CSRF", admin.csrf)
+            .send({ role })
+        ).status,
+      ).toBe(200);
+    }
+    const investigator = await login("investigator");
+    const reviewer = await login("reviewer");
+
+    expect(
+      (await investigator.agent.post("/cases/c1/report").set("X-DFIR-CSRF", investigator.csrf)).status,
+    ).toBe(200);
+    const version = (await investigator.agent.get("/cases/c1/report-versions")).body[0];
+    const submitted = await investigator.agent
+      .post(`/cases/c1/report-versions/${version.id}/workflow/submit`)
+      .set("X-DFIR-CSRF", investigator.csrf)
+      .send({ reviewerId });
+    expect(submitted.status).toBe(200);
+    expect(submitted.body.assignedReviewer.id).toBe(reviewerId);
+    expect(
+      (
+        await investigator.agent
+          .post(`/cases/c1/report-versions/${version.id}/review/approve`)
+          .set("X-DFIR-CSRF", investigator.csrf)
+          .send({ note: "self approval" })
+      ).status,
+    ).toBe(403);
+
+    const approved = await reviewer.agent
+      .post(`/cases/c1/report-versions/${version.id}/review/approve`)
+      .set("X-DFIR-CSRF", reviewer.csrf)
+      .send({ note: "Evidence and limitations checked" });
+    expect(approved.status).toBe(200);
+    expect(approved.body.approvals[0]).toMatchObject({ actorId: reviewerId, independent: true });
+    expect(
+      (
+        await reviewer.agent
+          .post(`/cases/c1/report-versions/${version.id}/workflow/release`)
+          .set("X-DFIR-CSRF", reviewer.csrf)
+          .send({})
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await investigator.agent
+          .post(`/cases/c1/report-versions/${version.id}/workflow/release`)
+          .set("X-DFIR-CSRF", investigator.csrf)
+          .send({})
+      ).status,
+    ).toBe(201);
   });
 
   it("issues case-scoped service tokens that cannot cross case boundaries", async () => {
