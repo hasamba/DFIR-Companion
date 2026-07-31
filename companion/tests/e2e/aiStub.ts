@@ -69,5 +69,32 @@ export async function startAiStub(): Promise<AiStub> {
   };
 }
 
-/** Fixed assistant reply. Plain prose, so it is a valid answer to any prompt the app sends. */
-const STUB_REPLY = "Stubbed analysis response for the E2E suite. No findings were inferred.";
+/**
+ * Fixed assistant reply — a JSON DOCUMENT, not prose.
+ *
+ * pipeline.ts runs every completion through parseJsonLoose(), so a plain-prose reply makes
+ * /cases/:id/synthesize answer 500 with "Unexpected token 'S' ... is not valid JSON". Prose was
+ * enough for import-csv and silently wrong for synthesis, which is exactly the sort of gap a stub
+ * hides until something exercises the other path.
+ *
+ * Semantically it says "nothing new was inferred": empty collections, so the seeded case is not
+ * mutated and assertions elsewhere stay deterministic.
+ */
+// Every non-optional field of the synthesis schema in src/analysis/responseSchema.ts. Zod rejects
+// the whole response if one is missing, and the route then answers 500 — so this list is the
+// contract, not a convenience. If responseSchema gains a required field, this is where it shows up.
+const STUB_REPLY = JSON.stringify({
+  findings: [],
+  iocs: [],
+  mitreTechniques: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "Stubbed synthesis for the E2E suite.",
+  summary: "Stubbed synthesis for the E2E suite. No findings were inferred.",
+  forensicEvents: [],
+  keyQuestions: [],
+  nextSteps: [],
+  hypotheses: [],
+  uncertainties: [],
+  evidenceRequests: [],
+});

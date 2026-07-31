@@ -24,6 +24,17 @@ describe("startAiStub", () => {
     expect(body.choices[0].message.content.length).toBeGreaterThan(0);
   });
 
+  it("replies with parseable JSON, because the pipeline parses every completion", async () => {
+    const res = await fetch(`${stub.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "stub", messages: [{ role: "user", content: "synthesize" }] }),
+    });
+    const body = (await res.json()) as { choices: { message: { content: string } }[] };
+    // pipeline.ts runs the reply through parseJsonLoose(); prose makes /synthesize answer 500.
+    expect(() => JSON.parse(body.choices[0].message.content)).not.toThrow();
+  });
+
   it("lists at least one model", async () => {
     const res = await fetch(`${stub.url}/v1/models`);
     expect(res.status).toBe(200);
