@@ -243,12 +243,16 @@ list of known compromised hosts and users.
 - **Import undo/redo** — roll back/forward to exact pre-import state (no re-synthesis); multi-level per-case stack
 - **Custom (declarative) importers** — teach a new file format with a JSON definition (no code); LLM-authorable via a built-in prompt, auto-detected + imported like a built-in, with built-in/custom precedence
 - **Evidence-first** — written to disk + audit log before analysis; SHA-256 dedup (disable via `DFIR_DEDUP=off`)
+- **Chain of custody** — every screenshot and import automatically gets a custody record (who/when/where/SHA-256); records hash-chain so tampering is detectable, and a signed `custody-manifest.json` ships in the report and encrypted archive
+- **Incident-type auto-playbooks** — picking an incident type (ransomware, BEC, exfiltration, intrusion, insider threat, cloud compromise, web-app intrusion, malware outbreak) seeds type-specific key questions, priority-ordered next steps, and expected findings; synthesis prioritizes the matching ATT&CK techniques
 - **Screenshot OCR full-text search** — every captured screenshot is OCR'd locally in the background; search the text seen in consoles (hostname, "mimikatz", a hash, an error) from the filter bar and jump to the screenshot. No AI, local-only (`DFIR_OCR_SEARCH=off` to disable; `npm run ocr-index` to backfill)
-- **Localhost only** — `127.0.0.1` with CORS + Private-Network-Access for extension
+- **Localhost only** — `127.0.0.1` with CORS + Private-Network-Access for extension; refuses requests to any hostname it doesn't recognize (`DFIR_ALLOWED_HOSTS`), closing DNS-rebinding attacks
 
 ### Evidence importers
 
 All importers are **deterministic (no AI call)**, read the artifact's own timestamps, and tag events with the real tool name for cross-source correlation. The same file can be re-imported without duplicating the timeline.
+
+- **Canonical forensic event schema** — versioned structured identities, timestamps, source pointers, artifact hashes, and field-level provenance underpin imports across sources, so graph joins no longer depend on description wording; legacy cases upgrade incrementally
 
 | Format | Key sources | Severity derived from |
 |---|---|---|
@@ -324,6 +328,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
 - **Structured, deployable collection directives** — "collect X" recommendations carry a machine-actionable target; one-click deploy on a known host, with auto-detected import satisfaction
 - **Evidence Gaps panel** — uncovered kill-chain phases render as structured items with a deployable collection directive, in a dashboard panel and report §4.6.3
+- **Collection plan** — the incident type's evidence checklist as a dashboard panel; each item ticks itself off once matching evidence lands, whichever tool produced it, with manual *Have it* / *N/A* overrides
+- **Attacker session / story reconstruction** — the forensic timeline re-threaded as per-host session "chapters" (split on a long gap or an account-changing logon), each with host/account/dominant tactic/time span/severity range, a Story view panel, per-session AI summaries, and a toggleable report section; pure and deterministic, no AI required to build the sessions
+- **Clock-skew detection & timeline alignment** — measures each host's clock offset from artifacts two tools recorded for the same event, flags drift beyond 60s in Diagnostics, and an "Align timelines" toggle projects every host onto a common time axis for the timeline, correlation, the evidence graph, and the report
 - **Playbook Match panel** — whether the case's techniques occurred in the ORDER a published ransomware playbook describes (Conti, LockBit, BlackCat, Akira, Scattered Spider, Black Basta, BlackSuit, Play — chains distilled from CISA advisories), with a matched / out-of-order / not-observed breakdown per step, click-through from a matched step to the event that evidences it, and unobserved steps feeding the Evidence Gaps panel; dashboard panel and report §4.6.2. Matches the playbook, **not** the actor
 - **Zero-yield import warnings** — flags a large AI-triaged file that produced zero events, on the import banner and Evidence Gaps panel
 - **Second-look loop** — after synthesis, resolves open questions against the complete super-timeline and triggers one bounded re-synthesis
@@ -385,7 +392,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **OPSEC boundary** — only analyst-entered domains queried; adversary/IOC domains never sent; raw passwords never stored
 
 ### Dashboard & reports
+- **Investigator cockpit** — a focused default dashboard view ranking the next leads and surfacing hypotheses, contradictions, evidence gaps, live/failed work, report blockers, and per-investigator changes since review; pin/dismiss/defer/assign actions keep an audit history and link back to their evidence
 - **Live dashboard** over WebSocket — collapsible, drag-to-reorder sections, scope bar, clickable evidence links, badges
+- **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action from one overlay; `>` filters by category, recent actions float to the top, unavailable actions for the current case are hidden
 - **Help icon** — a `?` button beside the settings gear opens the online [user manual](https://hasamba.github.io/DFIR-Companion/manual/) in a new tab
 - **Background jobs** — a toolbar badge/popover tracks running imports, synthesis, and enrichment (`/api/jobs`); Cancel hard-aborts a long/stuck run; large imports stream live progress instead of appearing frozen
 - **Dark/light theme** — toggle or OS preference
@@ -405,6 +414,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Narrative Timeline** — prose story for non-technical stakeholders
 - **DFIR-IRIS push** — idempotent; maps assets/IOCs/timeline/tasks; the push dialog shows (and lets you override) the target IRIS case name, remembered so later pushes keep hitting the same case. **Settings → DFIR-IRIS** has Test/reconnect (no restart)
 - **DFIR-IRIS import** — pull existing case assets/IOCs/timeline (deterministic, no AI)
+- **Jira / ServiceNow push** — every finding row carries a one-click **Jira** / **SNow** chip, plus bulk push for a whole selection; re-pushing updates the ticket the Companion opened instead of duplicating it; hidden until the integration is configured
+- **Compliance Impact** — maps confirmed findings' ATT&CK techniques to control failures across NIST 800-53, PCI-DSS v4.0, HIPAA, GDPR, SEC, and ISO 27001, with breach-notification countdowns (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K 4 business days) once an incident-discovery date is set; dashboard panel + report section, not legal advice
 - **Timesketch push** — find-or-create sketch; push or download either the Forensic Timeline or the full Super Timeline (raw host-triage artifacts included), each into its own timeline within the same sketch so neither clobbers the other; export JSONL
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
@@ -416,6 +427,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive Leaflet world map (severity colors, victim→attacker flows, country stats, filtering, CSV export); coordinates from the opt-in GeoIP enrichment, offline-friendly (tiles overridable)
 
 ### Ops
+- **Indexed SQLite case storage** — investigation entities and the super-timeline run on a worker-backed, cursor-paged database instead of flat JSON case state, with atomic legacy-JSON migration, integrity-checked backups/restores, and bounded timeline/graph reads (requires Node 22.5+)
+- **Essential / All view in Settings** — Settings opens on **Essential**, the ~43 controls a feature is dead without, instead of all ~257 fields across every tab; **All** restores the full view, remembered per browser
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
 - **Case Statistics panel** — per-case totals, source breakdown, and import velocity in Diagnostics
 - **Per-case AI cost tracking** — **Settings → Diagnostics** shows an "AI cost — this case" card: calls, dollar cost, and token counts by Vision/Synthesis/Other and by model, read from the provider's real per-call cost/token counts (never a fabricated `$0.00` when a provider doesn't report it)
