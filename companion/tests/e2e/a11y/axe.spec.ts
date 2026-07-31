@@ -25,6 +25,23 @@ import { test, expect } from "../fixtures/test.js";
 
 const OUT = join(import.meta.dirname, "..", "..", "..", "a11y-results.json");
 
+/** Poll until the number of rendered cockpit cards is the same twice running. */
+async function waitForStableCockpit(page: import("@playwright/test").Page): Promise<void> {
+  const count = () => page.locator("article[data-cockpit-id]").count();
+  let previous = -1;
+  await expect
+    .poll(
+      async () => {
+        const now = await count();
+        const stable = now === previous;
+        previous = now;
+        return stable;
+      },
+      { timeout: 30_000, intervals: [500] },
+    )
+    .toBe(true);
+}
+
 test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   // Generous: this is one test doing every scan, and axe on a 25k-line DOM is not fast.
   test.setTimeout(180_000);
@@ -32,10 +49,17 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   /** scope -> rule id -> number of offending nodes */
   const results: Record<string, Record<string, number>> = {};
 
-  const scan = async (scope: string): Promise<void> => {
-    const run = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      .analyze();
+  /**
+   * @param scope  ledger key
+   * @param within CSS selector to scan INSIDE, or undefined for the whole page
+   */
+  const scan = async (scope: string, within?: string): Promise<void> => {
+    let builder = new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
+    // Modal scopes scan the MODAL, not the page behind it. Scanning the whole page with a dialog
+    // open counted the page's violations again under every modal key — so a modal's own numbers
+    // were lost in ~35 inherited ones, and any change to the page moved all five scopes at once.
+    if (within) builder = builder.include(within);
+    const run = await builder.analyze();
     const perRule: Record<string, number> = {};
     for (const v of run.violations) perRule[v.id] = (perRule[v.id] ?? 0) + v.nodes.length;
     results[scope] = perRule;
@@ -48,6 +72,10 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   // 2. With a fully populated case, which is what an investigator actually looks at.
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await expect(page.locator("#swimlaneTableAlt tbody tr").first()).toBeAttached({ timeout: 30_000 });
+  // Wait for the cockpit to stop rendering lead cards before scanning. Each card contributes its
+  // own contrast violations, so scanning mid-render makes the count depend on machine speed — the
+  // ledger drifted by four nodes purely between an isolated run and a loaded one.
+  await waitForStableCockpit(page);
   await scan("dashboard-case");
 
   // 3. Representative dialogs. Modals are the surface this issue changed most, so they are scanned
@@ -55,7 +83,7 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
   //    dialog work land with no scan coverage at all.
   for (const overlayId of ["enrichOverlay", "anonOverlay", "settingsOverlay"]) {
     await page.evaluate((id) => document.getElementById(id)?.classList.add("open"), overlayId);
-    await scan(`modal-${overlayId}`);
+    await scan(`modal-${overlayId}`, `#${overlayId}`);
     await page.evaluate((id) => document.getElementById(id)?.classList.remove("open"), overlayId);
   }
 
