@@ -65,6 +65,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-deep-pass",
       "sec-sessions",
       "sec-timeline",
+      "sec-hunt-workbench",
       "sec-super-timeline",
       "sec-iocs",
       "sec-playbook",

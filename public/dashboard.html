@@ -14,6 +14,7 @@
   <script type="module" src="/js/graph-view.js"></script>
   <script type="module" src="/js/command-palette.js"></script>
   <script type="module" src="/js/settings-search.js"></script>
+  <script type="module" src="/js/hunt-workbench.js"></script>
   <script type="module" src="/js/case-load-progress.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
@@ -6030,6 +6031,58 @@
           <span id="hypMsg" class="manual-msg"></span>
         </div>
       </div>
+    </section>
+    <section id="sec-hunt-workbench" style="grid-column: 1 / -1">
+      <h2>Hunt Workbench <span class="ev-sub">typed field queries over an explicitly selected timeline — indexed, cursor-paged and resource-bounded</span></h2>
+      <div class="hq-grid">
+        <div>
+          <label for="hqQuery" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px">Query</label>
+          <textarea id="hqQuery" spellcheck="false" autocomplete="off">severity&gt;=High AND timestamp during "last 24h"</textarea>
+          <div id="hqSuggestions" class="hq-suggestions" aria-label="Query autocomplete suggestions"></div>
+          <div class="hq-row">
+            <label>Dataset
+              <select id="hqDataset">
+                <option value="forensic">Forensic timeline</option>
+                <option value="super">Super-timeline (never synthesized)</option>
+              </select>
+            </label>
+            <label>Parameters
+              <input id="hqParameters" placeholder="account=jdoe, threshold=5" autocomplete="off" />
+            </label>
+            <label>Author
+              <input id="hqAuthor" placeholder="analyst" autocomplete="off" />
+            </label>
+          </div>
+          <div class="hq-row">
+            <button id="hqRun" type="button">▶ Run</button>
+            <button id="hqCancel" type="button" disabled>■ Cancel</button>
+            <button id="hqExplain" type="button">Explain</button>
+            <button id="hqNext" type="button" disabled>Next page ›</button>
+          </div>
+        </div>
+        <div>
+          <div class="hq-help">Boolean expressions, existence, ranges, safe regex, time windows, grouping, statistics and rare values are supported. Example: <code>event.category=authentication AND event.outcome=failed | group by source.ip | count | sort count desc</code></div>
+          <div class="hq-row">
+            <select id="hqSaved" aria-label="Saved hunts"><option value="">Unsaved query</option></select>
+            <button id="hqSave" type="button">Save hunt</button>
+            <button id="hqDelete" type="button">Delete</button>
+          </div>
+          <details>
+            <summary style="font-size:12px;cursor:pointer;margin-top:8px">Grammar reference</summary>
+            <pre id="hqGrammar" class="hq-help" style="white-space:pre-wrap">Open a case to load the typed grammar and field catalogue.</pre>
+          </details>
+        </div>
+      </div>
+      <div id="hqStatus" class="hq-status"></div>
+      <div class="hq-row">
+        <button type="button" data-hq-mode="table">Table</button>
+        <button type="button" data-hq-mode="timeline">Timeline view</button>
+        <button type="button" data-hq-mode="chart">Chart</button>
+        <button id="hqNotebook" type="button" disabled>Add to notebook</button>
+        <button id="hqFindingEvidence" type="button" disabled>Attach to finding</button>
+        <button id="hqExport" type="button">Export CSV</button>
+      </div>
+      <div id="hqResults" class="hq-results"><div class="hq-help">Run a query to see results.</div></div>
     </section>
     <section id="sec-super-timeline" style="grid-column: 1 / -1" class="collapsed">
       <h2>Super-Timeline<span class="ev-sub" id="superTimelineBadge"></span></h2>
@@ -21595,6 +21648,7 @@
       { id: "sec-collection-plan", label: "Collection Plan" },
       { id: "sec-deep-pass",    label: "Deep Pass" },
       { id: "sec-timeline",     label: "Forensic Timeline" },
+      { id: "sec-hunt-workbench", label: "Hunt Workbench" },
       { id: "sec-sessions",     label: "Attacker Sessions" },
       { id: "sec-kill-chain",   label: "Kill Chain" },
       { id: "sec-phases",       label: "Attack Phases" },

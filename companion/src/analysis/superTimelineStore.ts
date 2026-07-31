@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
+import type { EntityPage, EntityQuery } from "./stateStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -138,6 +139,41 @@ export class SuperTimelineStore {
       id,
     });
     return event ? upgradeForensicEvent(event) : null;
+  }
+
+  /**
+   * Typed-workbench read path. It shares the normalized entity indexes with the forensic timeline,
+   * but keeps the dataset kind explicit so a caller can never accidentally cross the synthesis seam.
+   */
+  async queryIndexed(caseId: string, query: EntityQuery = {}): Promise<EntityPage<ForensicEvent>> {
+    await this.ensureMigrated(caseId);
+    const indexName = query.ioc ? "ioc" : query.technique ? "technique" : undefined;
+    const page = await caseSqliteWorker.request<{
+      entities: ForensicEvent[];
+      nextCursor: number | null;
+      total: number;
+    }>({
+      op: "queryEntities",
+      dbPath: this.databasePath(caseId),
+      kind: "superTimeline",
+      query: {
+        afterOrdinal: query.cursor,
+        limit: query.limit ?? DEFAULT_SUPER_QUERY_LIMIT,
+        from: query.from,
+        to: query.to,
+        host: query.host,
+        source: query.source,
+        severity: query.severity,
+        entityId: query.entityId,
+        indexName,
+        indexValue: query.ioc ?? query.technique,
+        includeTotal: query.includeTotal,
+      },
+    });
+    return {
+      ...page,
+      entities: page.entities.map(upgradeForensicEvent),
+    };
   }
 
   // Compatibility method for the tagger and targeted AI lookup. New large-case consumers should
