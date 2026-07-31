@@ -181,6 +181,16 @@ npm run check:size -- --init     # re-baseline; prints every raise, justify them
 branch whose landed work legitimately grew a ledgered file. Reaching for it during ordinary work
 means the new code belongs in its own module instead.
 
+**Record the ledger last.** `--update` refuses to raise a number, so if you record a shrink and then
+add three more lines — or run `npm run format` — the gate correctly rejects the number you just
+wrote, and `--update` cannot fix it. Finish the change, format, *then* run `--update` once.
+
+One trap while you are there: `npm run format` is **not** the gate. The gate skips files that were
+never Prettier-clean ("your change is not the reason it is unformatted"), but `--write` reformats
+whatever you point it at. Running it on a legacy file like `src/server.ts` produces a thousand-line
+reflow that CI never asked for and that buries your actual diff. Convert a legacy file only when you
+mean to, in its own commit.
+
 ## `npm run check:imports` — the circular-import ratchet
 
 A runtime import cycle means one module in the loop sees a half-initialised copy of the other. There
