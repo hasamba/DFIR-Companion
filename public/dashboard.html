@@ -2793,7 +2793,10 @@
     #preflightBanner { display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
       background: #3a0000; color: #ff5c5c; border-bottom: 1px solid #7a0000; font-size: 12.5px; }
     #preflightBanner[hidden] { display: none; }
-    #preflightBanner span { flex: 1; }
+    /* min-width:0 is load-bearing. A flex item defaults to min-width:auto, so this span refuses to
+       shrink below its own text; with the nowrap dismiss button beside it the banner then forces
+       the whole page wider than the viewport — 18px of horizontal scroll at 380px (#386). */
+    #preflightBanner span { flex: 1; min-width: 0; }
     #preflightBanner a { color: #ffaaaa; }
     #preflightBanner button { background: rgba(0,0,0,0.3); color: inherit;
       border: 1px solid rgba(255,255,255,0.2); border-radius: 5px;
