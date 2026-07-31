@@ -18,6 +18,7 @@
     "check:size": "node scripts/check-file-size.mjs",
     "check:imports": "node scripts/check-imports.mjs",
     "check:a11y": "node scripts/check-a11y.mjs",
+    "check:us-map": "node scripts/check-us-map.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

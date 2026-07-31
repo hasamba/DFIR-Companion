@@ -1,6 +1,12 @@
 import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
+// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
+// instead. Mapping these to feature ids would misrepresent both.
+//
+
 // The swimlane is a <canvas>: its content is not in the accessibility tree at all, so axe reports
 // the section as clean while the entire visual timeline is missing for a screen-reader user. Only
 // a real browser can confirm the table equivalent is actually built and populated.

@@ -1,5 +1,11 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
+// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
+// instead. Mapping these to feature ids would misrepresent both.
+//
+
 // Task 10 added the media queries; this proves they take effect. A media query nobody exercises is
 // one that can silently stop matching — a renamed variable or a later rule with higher specificity
 // costs nothing at build time and everything to the user who needs it.

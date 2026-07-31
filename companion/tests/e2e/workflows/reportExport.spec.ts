@@ -1,5 +1,9 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: US-081, US-083, US-201
+// (feature-user-stories.csv) — report generation, report-meta retrieval and the report version list.
+//
+
 // Report export. The report is the court-facing deliverable, and the signed custody manifest is
 // written beside it, so "the button ran" is not enough — these assert the artifacts exist.
 

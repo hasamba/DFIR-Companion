@@ -1,5 +1,9 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: US-040, US-131
+// (feature-user-stories.csv) — POST /cases/:id/synthesize being reachable, and the async job list backing the status panel.
+//
+
 // Synthesis status. Runs against the stub provider from tests/e2e/server-entry.ts, so the replies
 // are fixed and these assertions are deterministic — a live model would make every one a coin flip.
 

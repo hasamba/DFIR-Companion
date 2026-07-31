@@ -3,6 +3,12 @@ import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
+// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
+// instead. Mapping these to feature ids would misrepresent both.
+//
+
 // Runs axe over the dashboard's real surfaces and records a violation count per scope and per rule.
 // The counts are compared against scripts/a11y-ledger.json by scripts/check-a11y.mjs, in the same
 // shape as the file-size and import-cycle ledgers: a number may fall freely, and raising one takes

@@ -73,6 +73,14 @@ jobs:
         working-directory: companion
         run: npm run check:imports
 
+      # Keeps the browser suite's coverage claims honest: every "// Covers: US-xxx" banner must name
+      # a story that exists, and feature-user-stories.csv's browser_test column must agree with the
+      # specs in both directions. A coverage table that is quietly wrong reads as "this is tested".
+      # Lives here rather than in the E2E job because it is a static check — it runs no browser.
+      - name: User-story mapping
+        working-directory: companion
+        run: npm run check:us-map
+
   companion:
     name: Companion build + test
     runs-on: ubuntu-latest

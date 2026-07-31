@@ -1,5 +1,11 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
+// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
+// instead. Mapping these to feature ids would misrepresent both.
+//
+
 // Proves the autowire in public/js/a11y/modal-autowire.js. These are the behaviors axe cannot see:
 // it inspects a static DOM snapshot, whereas focus order, focus restoration and Escape handling
 // are behavior over time.

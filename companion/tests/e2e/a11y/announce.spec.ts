@@ -1,5 +1,11 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
+// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
+// instead. Mapping these to feature ids would misrepresent both.
+//
+
 // Proves the #status -> aria-live bridge in public/js/a11y/announcer.js. axe cannot check this:
 // it sees whether live regions EXIST, not whether anything is ever announced into them.
 

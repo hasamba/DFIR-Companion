@@ -2,6 +2,10 @@ import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
 import { revealSections } from "../fixtures/sections.js";
 
+// Covers: US-075
+// (feature-user-stories.csv) — the Findings panel listing real findings and responding to the filter.
+//
+
 // seedDemoCase writes findings f001-f007 (12 in total including the extras), so these assert on
 // known ids. "more than zero findings" would still pass if every row rendered empty.
 

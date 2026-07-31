@@ -2,6 +2,10 @@ import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
 import { revealSections } from "../fixtures/sections.js";
 
+// Covers: US-051
+// (feature-user-stories.csv) — the Forensic Timeline panel rendering events and responding to the filter.
+//
+
 // Timeline filtering. The seeded case has 58 events with fixed timestamps, so these assert against
 // known content rather than "more than zero rows", which would still pass if the timeline rendered
 // 58 empty placeholders.

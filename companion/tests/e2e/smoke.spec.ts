@@ -1,5 +1,9 @@
 import { test, expect } from "./fixtures/test.js";
 
+// Covers: US-001, US-003, US-006
+// (feature-user-stories.csv) — GET /cases answering, seed-demo producing a listed case, and the dashboard connecting from ?caseId=.
+//
+
 // These exist to prove the harness, not the product. If they pass, the server boots against a temp
 // root, the dashboard is served, the fixture seeds a case, and Playwright can drive it — which is
 // everything the accessibility and workflow specs build on.

@@ -2,6 +2,10 @@ import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
 import { revealSections } from "../fixtures/sections.js";
 
+// Covers: US-058, US-060
+// (feature-user-stories.csv) — the Evidence Chain graph's data, and the selection shared between the timeline and the swimlane.
+//
+
 // Evidence pivots.
 //
 // The Evidence Chain panel is a Cytoscape graph rendered to a canvas, so its nodes are not

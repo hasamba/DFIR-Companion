@@ -1,5 +1,12 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: NO USER STORY EXISTS.
+// feature-user-stories.csv has no chain-of-custody entry at all, though custody is a shipped
+// feature (GET/POST /cases/:id/custody, #sec-custody, and the signed manifest written beside
+// every report). That is a gap in the story inventory, not in the product — these specs are
+// deliberately left unmapped rather than attached to an unrelated id.
+//
+
 // Chain of custody. This is the court-facing part of the product: a report whose evidence
 // provenance cannot be checked is worthless, so these assert the records actually exist and carry
 // integrity data rather than that the endpoint merely answers.

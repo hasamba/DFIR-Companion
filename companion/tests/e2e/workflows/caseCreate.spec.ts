@@ -1,10 +1,30 @@
 import { test, expect } from "../fixtures/test.js";
+import type { Page } from "@playwright/test";
+
+// Covers: US-002
+// (feature-user-stories.csv) — POST /cases through the real dialog, including the id-validation and duplicate refusals.
+//
 
 // The ONE spec that creates its case by clicking. Every other spec seeds through the API, so
 // without this a broken create-case dialog would ship green.
 //
 // Deliberately does not use the demoCase fixture: the point is to exercise the path the fixture
 // bypasses.
+
+/**
+ * Open the dashboard and wait until it can actually respond to a click.
+ *
+ * #newCaseBtn's handler is bound by an inline script that runs after the page's startup fetches
+ * (/cases, /disk-stats). Under a loaded server the button paints before its handler exists, so a
+ * click lands on nothing and the dialog never opens — this failed only when the full suite ran four
+ * workers against one server, and passed every time in isolation. Waiting for the network to settle
+ * fixes the cause; a longer assertion timeout would only have hidden it.
+ */
+async function openDashboard(page: Page): Promise<void> {
+  await page.goto("/dashboard");
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("#newCaseBtn")).toBeEnabled();
+}
 
 /** Unique per test run; POST /cases rejects ids outside [A-Za-z0-9._-]. */
 function freshCaseId(prefix: string, testId: string): string {
@@ -13,7 +33,7 @@ function freshCaseId(prefix: string, testId: string): string {
 
 test("creates a case through the dialog and connects to it", async ({ page }, testInfo) => {
   const caseId = freshCaseId("e2e-ui", testInfo.testId);
-  await page.goto("/dashboard");
+  await openDashboard(page);
 
   await page.locator("#newCaseBtn").click();
   const dialog = page.locator("#newCaseOverlay");
@@ -39,7 +59,7 @@ test("creates a case through the dialog and connects to it", async ({ page }, te
 });
 
 test("refuses a case id containing path traversal", async ({ page }) => {
-  await page.goto("/dashboard");
+  await openDashboard(page);
   await page.locator("#newCaseBtn").click();
   const dialog = page.locator("#newCaseOverlay");
 
@@ -55,7 +75,7 @@ test("refuses a case id containing path traversal", async ({ page }) => {
 });
 
 test("refuses a duplicate case id", async ({ page, demoCase }) => {
-  await page.goto("/dashboard");
+  await openDashboard(page);
   await page.locator("#newCaseBtn").click();
   const dialog = page.locator("#newCaseOverlay");
 
@@ -70,7 +90,7 @@ test("refuses a duplicate case id", async ({ page, demoCase }) => {
 });
 
 test("Cancel closes the dialog and restores focus to the button that opened it", async ({ page }) => {
-  await page.goto("/dashboard");
+  await openDashboard(page);
   const opener = page.locator("#newCaseBtn");
   await opener.focus();
   await opener.press("Enter");

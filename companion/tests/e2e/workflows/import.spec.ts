@@ -1,5 +1,9 @@
 import { test, expect } from "../fixtures/test.js";
 
+// Covers: US-014
+// (feature-user-stories.csv) — POST /cases/:id/import-csv accepting a CSV and refusing malformed input.
+//
+
 // Evidence import. The CSV route refuses to run without a synthesis provider (501), so a passing
 // 200 here is also the proof that the stub provider in tests/e2e/server-entry.ts is wired.
 
@@ -52,9 +56,8 @@ test("refuses a CSV with a header but no data rows", async ({ page, demoCase }) 
 // into it — but the case never appears in GET /cases, so the investigator cannot see it. A typo in
 // a case id therefore swallows an evidence import into an orphaned directory, silently.
 //
-// None of the ten import routes (import, import-file, import-csv, import-log, import-thor,
-// import-siem, import-chainsaw, import-hayabusa, import-velociraptor, import-network) check
-// store.caseExists(), while GET /cases/:id/custody does and correctly answers 404.
+// 20 of the 23 /cases/:id/import* routes skip store.caseExists(). Only /import, /import-file and
+// /import-wazuh check it; GET /cases/:id/custody checks it too and correctly answers 404.
 //
 // This asserts what the server ACTUALLY does today so the suite tells the truth. When the routes
 // are fixed to reject an unknown case, this test will fail — that failure is the signal to flip it
