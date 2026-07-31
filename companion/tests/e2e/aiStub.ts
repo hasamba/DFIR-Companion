@@ -17,6 +17,13 @@ export interface AiStub {
  *
  * Deliberately NOT a full mock: it answers the two routes the OpenAI provider actually calls, and
  * 404s everything else so an unhandled route fails loudly instead of hanging the caller.
+ *
+ * WHAT THIS CANNOT TEST. The reply is fixed prose, so any endpoint that requires the model to
+ * return STRUCTURED JSON cannot be exercised through it — /cases/:id/view-summary is the clearest
+ * example: it retries four times against the schema and then answers 500. Making the stub
+ * prompt-aware would fix that by teaching it each caller's expected schema, which is mocking the
+ * product rather than standing in for a provider, so those endpoints are left uncovered and said
+ * to be uncovered. See tests/e2e/workflows/analysis.spec.ts.
  */
 export async function startAiStub(): Promise<AiStub> {
   const server: Server = createServer((req, res) => {
