@@ -71,3 +71,5 @@ docs/backups/
 .claude/
 /CLAUDE.md
 /AGENTS.md
+
+/tools/mcp-servers.json
