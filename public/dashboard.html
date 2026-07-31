@@ -1402,6 +1402,23 @@
     /* The generic toolbar-select chevron (used before the per-select overrides win) also darkens. */
     :root[data-theme="light"] .toolbar-select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
     body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg-primary); color: var(--text-bright); }
+
+    /* ── Accessibility primitives (#386) ─────────────────────────────────────────────────────
+       Visible to assistive technology, not to sighted users. Deliberately NOT display:none —
+       screen readers skip display:none entirely, which would silence the live regions that
+       js/a11y/announcer.js appends here for job, error and AI state. */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
     header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
     /* The action controls live in their own wrapping flex container so the settings gear
        (a sibling of it) is always pinned to the top-right of the first line, no matter how
