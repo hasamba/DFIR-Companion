@@ -127,6 +127,7 @@ describe("optional team authentication", () => {
     expect(denied.status).toBe(404);
     expect(denied.body.error).not.toContain("secret");
     const hiddenJob = jobs.register({ caseId: "secret", kind: "synthesis", cancellable: true });
+    jobs.register({ kind: "synthesis", cancellable: true });
     expect((await reader.agent.get("/api/jobs")).body.jobs).toEqual([]);
     expect((await reader.agent.get(`/api/jobs/${hiddenJob.jobId}`)).status).toBe(404);
   });
@@ -151,6 +152,9 @@ describe("optional team authentication", () => {
     ]);
     expect(
       (await reader.agent.post(`/api/jobs/${caseJob.jobId}/cancel`).set("X-DFIR-CSRF", reader.csrf)).status,
+    ).toBe(403);
+    expect(
+      (await reader.agent.post(`/api/jobs/${caseJob.jobId}/resume`).set("X-DFIR-CSRF", reader.csrf)).status,
     ).toBe(403);
     expect(
       (

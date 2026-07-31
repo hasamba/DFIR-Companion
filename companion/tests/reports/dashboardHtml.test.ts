@@ -67,6 +67,28 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report");          // report generation via the Export menu
   });
 
+  it("keeps restart-interrupted resumable jobs reachable from the toolbar", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain('j.status === "interrupted"');
+    expect(html).toContain("attention.length");
+    expect(html).toContain("need attention");
+    expect(html).toContain("throughputPerSecond");
+    expect(html).toContain("lastCheckpoint");
+    expect(html).toContain("↻ Resume");
+    expect(html).toContain("Resume from the last durable checkpoint");
+    expect(html).toContain(".toolbar-main.icons-only .jobs-menu button");
+    // Progress arrives about once a second. Preserve the open popover's DOM (and therefore its
+    // scroll/focus) while only the numbers change; rebuild it only when its row/action shape does.
+    expect(html).toContain("let _jobsMenuShape");
+    expect(html).toContain("updateJobRow");
+    expect(html).toContain("shape !== _jobsMenuShape");
+    expect(html).toContain('closest("#jobsMenu")');
+    expect(html).toContain("scheduleJobUiRefresh");
+    expect(html).toContain("JOB_UI_REFRESH_MS");
+    expect(html).toContain("lastCockpitRenderSignature");
+    expect(html).not.toContain('else if (msg.type === "job_changed") { loadJobs(caseId); loadCockpit(caseId); }');
+  });
+
   it("lets the analyst browse for an MCP evidence file and uses the upload run path", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('id="mcpRunBrowseBtn"');

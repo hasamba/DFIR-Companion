@@ -404,17 +404,29 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
 
 function activityCards(jobs: readonly Job[]): CockpitCard[] {
   return jobs
-    .filter((job) => job.status === "running" || job.status === "queued" || job.status === "error")
-    .map((job) => ({
-      id: `activity:job:${job.id}`,
-      kind: "activity" as const,
-      title: job.status === "error" ? `${job.kind} failed` : `${job.kind} is ${job.status}`,
-      summary: job.error || job.detail || job.label || "Background work is in progress.",
-      severity: job.status === "error" ? "High" as const : "Medium" as const,
-      occurredAt: job.endedAt || job.startedAt,
-      evidenceIds: [],
-      target: { panel: "jobs", jobId: job.id },
-    }))
+    .filter((job) =>
+      job.status === "running" ||
+      job.status === "queued" ||
+      job.status === "failed" ||
+      job.status === "interrupted",
+    )
+    .map((job) => {
+      const needsAttention = job.status === "failed" || job.status === "interrupted";
+      return {
+        id: `activity:job:${job.id}`,
+        kind: "activity" as const,
+        title: needsAttention ? `${job.kind} ${job.status}` : `${job.kind} is ${job.status}`,
+        // Running-job detail is high-frequency progress. Keep the decision cockpit stable and
+        // leave those live numbers to Background Jobs; failures still surface their explanation.
+        summary: needsAttention
+          ? job.error || job.detail || job.label || "Background work needs attention."
+          : job.label || "Background work is in progress.",
+        severity: needsAttention ? "High" as const : "Medium" as const,
+        occurredAt: job.endedAt || job.startedAt,
+        evidenceIds: [],
+        target: { panel: "jobs", jobId: job.id },
+      };
+    })
     .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)))
     .slice(0, 6);
 }

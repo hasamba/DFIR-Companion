@@ -12,6 +12,10 @@
 // avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
 import { buildSiemResult, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
+import {
+  buildSiemResultProgress,
+  throwIfImportAborted,
+} from "./siemBuildProgress.js";
 
 type Row = Record<string, unknown>;
 
@@ -100,6 +104,27 @@ function parseEventData(eventBlock: string): Row {
   return out;
 }
 
+function parseEventBlock(block: string): Row | undefined {
+  const sys = SYSTEM_RE.exec(block)?.[1] ?? "";
+  const eid = elText(sys, "EventID");
+  if (!eid) return undefined;
+
+  const provider = attr(sys, "Provider", "Name");
+  const rec: Row = {
+    EventID: eid,
+    Channel: elText(sys, "Channel") || provider,
+    Provider: provider,
+    Computer: elText(sys, "Computer"),
+    Level: elText(sys, "Level"),
+    EventRecordID: elText(sys, "EventRecordID"),
+    "@timestamp": attr(sys, "TimeCreated", "SystemTime"),
+    EventData: parseEventData(block),
+  };
+  const userId = attr(sys, "Security", "UserID");
+  if (userId) rec.SecurityUserID = userId;
+  return rec;
+}
+
 // Parse a Windows Event Log XML document into records shaped for the SIEM importer's mapWindows
 // (EventID / Channel / Computer / @timestamp / EventData). Tolerant of missing fields and the
 // optional `<?xml?>` declaration; skips a block that has no EventID.
@@ -108,32 +133,44 @@ export function parseWinEventXml(text: string): Row[] {
   const eventRe = /<Event\b[^>]*>([\s\S]*?)<\/Event>/gi;
   let m: RegExpExecArray | null;
   while ((m = eventRe.exec(text)) !== null) {
-    const block = m[1];
-    const sys = SYSTEM_RE.exec(block)?.[1] ?? "";
-
-    const eid = elText(sys, "EventID");
-    if (!eid) continue; // not a real event record
-
-    const provider = attr(sys, "Provider", "Name");
-    // Channel is usually present; if not, fall back to the provider name so mapWindows still
-    // resolves a tool label and Sysmon/Security detection (channelLabel matches on substrings).
-    const channel = elText(sys, "Channel") || provider;
-    const systemTime = attr(sys, "TimeCreated", "SystemTime");
-
-    const rec: Row = {
-      EventID: eid,
-      Channel: channel,
-      Provider: provider,
-      Computer: elText(sys, "Computer"),
-      Level: elText(sys, "Level"),
-      EventRecordID: elText(sys, "EventRecordID"),
-      "@timestamp": systemTime, // mapWindows.pickTimestamp prefers Sysmon EventData.UtcTime, else this
-      EventData: parseEventData(block),
-    };
-    const userId = attr(sys, "Security", "UserID");
-    if (userId) rec.SecurityUserID = userId;
-    records.push(rec);
+    const record = parseEventBlock(m[1]);
+    if (record) records.push(record);
   }
+  return records;
+}
+
+export async function parseWinEventXmlProgress(
+  text: string,
+  onProgress?: (done: number, total: number) => void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<Row[]> {
+  throwIfImportAborted(signal);
+  const total = (text.match(/<Event\b/gi) ?? []).length;
+  if (total === 0) {
+    await onProgress?.(0, 0);
+    return [];
+  }
+  const records: Row[] = [];
+  const eventRe = /<Event\b[^>]*>([\s\S]*?)<\/Event>/gi;
+  const yieldChunkSize = 250;
+  const progressChunkSize = 5000;
+  let scanned = 0;
+  let m: RegExpExecArray | null;
+  while ((m = eventRe.exec(text)) !== null) {
+    throwIfImportAborted(signal);
+    scanned++;
+    const record = parseEventBlock(m[1]);
+    if (record) records.push(record);
+    if (scanned % progressChunkSize === 0) {
+      await onProgress?.(scanned, total);
+    }
+    if (scanned % yieldChunkSize === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      throwIfImportAborted(signal);
+    }
+  }
+  if (scanned % progressChunkSize !== 0) await onProgress?.(scanned, total);
+  throwIfImportAborted(signal);
   return records;
 }
 
@@ -141,4 +178,22 @@ export function parseWinEventXml(text: string): Row[] {
 export function parseEvtxXml(text: string, opts: SiemImportOptions = {}): SiemParseResult {
   const records = parseWinEventXml(text);
   return buildSiemResult(records, "winevent-xml", opts, text);
+}
+
+export async function parseEvtxXmlProgress(
+  text: string,
+  opts: SiemImportOptions = {},
+  onParseProgress?: (done: number, total: number) => void | Promise<void>,
+  onProcessProgress?: (done: number, total: number) => void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<SiemParseResult> {
+  const records = await parseWinEventXmlProgress(text, onParseProgress, signal);
+  return buildSiemResultProgress(
+    records,
+    "winevent-xml",
+    opts,
+    text,
+    onProcessProgress,
+    signal,
+  );
 }

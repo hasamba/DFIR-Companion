@@ -43,7 +43,6 @@ import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type {  IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
 import type { RouteContext } from "./context.js";
-import { registerJobRoutes } from "./jobs.js";
 
 /**
  * Case-core "everything else" domain — the FINAL router-split extraction. Everything that remained in
@@ -58,7 +57,6 @@ import { registerJobRoutes } from "./jobs.js";
  *     notion,clickup} and the /{timesketch,misp,notion,clickup}/status + /timesketch/reconnect endpoints.
  *   - manual timeline event — POST /cases/:id/events.
  *   - declarative importers CRUD — GET/POST/DELETE /importers, /importers/{prompt,reload,precedence}.
- *   - background jobs — GET /api/jobs, GET /api/jobs/:id, POST /api/jobs/:id/cancel.
  *   - activity log — GET /cases/:id/activity-log.
  *   - settings/env + setup — GET/POST /settings/env, POST /settings/{ai-reload,reload}, GET /setup/status.
  *   - static app shell — GET /, /dashboard, /mobile, /manifest.webmanifest, /sw.js (these five were
@@ -94,13 +92,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // moved call sites stay verbatim.
   const logLine = (msg: string): void => serverLogger.info(msg);
   const errLine = (msg: string): void => serverLogger.error(msg);
-
   app.get("/cases", async (req: Request, res: Response) => {
     try {
       const listed = await store.listCases();
       const visible = options.teamAuth?.visibleCaseIds(req);
-      const allowed = visible ? listed.filter((item) => visible.has(item.caseId)) : listed;
-      return res.status(200).json(allowed.map(sanitizeCaseMeta));
+      return res.status(200).json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -119,9 +115,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
       if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
-        caseId, name,
-        investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown",
-        aiProvider: aiProvider ?? null,
+        caseId, name, investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown", aiProvider: aiProvider ?? null,
       });
       options.teamAuth?.grantCreator(req, caseId);
       if (templateId && options.templateStore && options.stateStore) {
@@ -289,8 +283,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Best-effort: permanently deletes a case's folder AFTER the caller has already fully built any
-  // requested archive; revoke its roles and service identities only after deletion succeeds.
+  // Delete only after building an archive; revoke roles and service identities only after success.
   async function deleteCaseFolderBestEffort(id: string, actor?: AuthIdentity): Promise<{ deleted: boolean; error?: string }> {
     try {
       await store.deleteCaseFolder(id);
@@ -1135,8 +1128,6 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try { await options.importerStore.setPrecedence(p); ctx.setImporterPrecedence(p); options.onImporters?.(); return res.status(200).json({ precedence: p }); }
     catch (err) { return res.status(500).json({ error: (err as Error).message }); }
   });
-  registerJobRoutes(app, { jobManager: options.jobManager, teamAuth: options.teamAuth });
-
   // Per-case investigation activity log (#238): every security-relevant action taken on this
   // case, newest first. Filter by category; cap by limit (default 200, so a long-lived case
   // doesn't dump its entire history in one response).

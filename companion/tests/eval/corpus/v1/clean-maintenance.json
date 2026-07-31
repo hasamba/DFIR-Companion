@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "clean-maintenance",
+  "title": "Synthetic clean maintenance window",
+  "scenario": "clean",
+  "traits": ["complete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional routine maintenance events written for the abstention gate.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "clean-e1",
+      "timestamp": "2026-05-10T02:00:00.000Z",
+      "description": "Approved backup job wrote the scheduled archive on FILE-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FILE-01",
+      "sources": ["Backup Audit"]
+    },
+    {
+      "id": "clean-e2",
+      "timestamp": "2026-05-10T02:10:00.000Z",
+      "description": "Endpoint protection updated signatures successfully on FILE-01",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "FILE-01",
+      "sources": ["Endpoint Protection"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "",
+    "narrativeTimeline": "",
+    "summary": "The supplied events show routine approved maintenance and support no investigative finding.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [],
+    "hypotheses": [],
+    "uncertainties": [],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [],
+    "iocs": [],
+    "forbiddenConclusions": [
+      { "id": "invented-ransomware", "terms": ["ransomware"] },
+      { "id": "invented-exfiltration", "terms": ["exfiltration"] }
+    ],
+    "uncertainties": [],
+    "nextSteps": [],
+    "expectAbstention": true
+  }
+}

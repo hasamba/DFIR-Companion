@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "id": "memory-process-injection",
+  "title": "Synthetic memory process injection",
+  "scenario": "memory",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional memory-analysis observations written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "mem-e1",
+      "timestamp": "2026-05-08T14:00:00.000Z",
+      "description": "Memory scanner found executable private memory in explorer.exe on WS-09",
+      "severity": "High",
+      "mitreTechniques": ["T1055"],
+      "asset": "WS-09",
+      "sources": ["Memory Scanner"]
+    },
+    {
+      "id": "mem-e2",
+      "timestamp": "2026-05-08T14:00:02.000Z",
+      "description": "Injected explorer.exe held an established socket to 192.0.2.44",
+      "severity": "High",
+      "mitreTechniques": ["T1055", "T1071.001"],
+      "asset": "WS-09",
+      "dstIp": "192.0.2.44",
+      "sources": ["Memory Scanner"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "mem-f1",
+        "severity": "High",
+        "confidence": 86,
+        "confidenceReason": "Executable private memory and its live socket are observed in the same process.",
+        "title": "Injected process retained a network connection",
+        "description": "Process injection in explorer.exe is linked to a network connection on WS-09.",
+        "relatedIocs": ["mem-i1"],
+        "mitreTechniques": ["T1055", "T1071.001"],
+        "status": "open",
+        "relatedEventIds": ["mem-e1", "mem-e2"]
+      }
+    ],
+    "iocs": [{ "id": "mem-i1", "type": "ip", "value": "192.0.2.44" }],
+    "mitreTechniques": [],
+    "attackerPath": "Injected code in explorer.exe maintained an external socket.",
+    "narrativeTimeline": "",
+    "summary": "Memory evidence supports process injection; persistence remains unknown.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "mem-n1",
+        "priority": "high",
+        "action": "Collect autoruns and scheduled tasks from WS-09",
+        "rationale": "This can identify the persistence mechanism that launched the injected code.",
+        "pointer": "WS-09 autoruns and scheduled tasks",
+        "relatedFindingIds": ["mem-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Persistence mechanism",
+        "status": "unknown",
+        "basis": "The memory image shows injection but not how it survives reboot.",
+        "gap": "Autoruns, services, and scheduled-task artifacts are missing."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "memory-injection",
+        "requiredTerms": ["process injection", "network connection"],
+        "evidenceEventIds": ["mem-e1", "mem-e2"],
+        "confidence": { "min": 55, "max": 100 }
+      }
+    ],
+    "iocs": [{ "type": "ip", "value": "192.0.2.44" }],
+    "forbiddenConclusions": [],
+    "uncertainties": [
+      {
+        "id": "persistence-gap",
+        "topicTerms": ["persistence mechanism"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-autoruns", "requiredTerms": ["autoruns", "WS-09"] }],
+    "expectAbstention": false
+  }
+}

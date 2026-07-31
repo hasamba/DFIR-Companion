@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "id": "ransomware-impact",
+  "title": "Synthetic ransomware execution and impact",
+  "scenario": "ransomware",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional Windows endpoint sequence written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "rw-e1",
+      "timestamp": "2026-05-01T09:00:00.000Z",
+      "description": "WINWORD spawned encoded PowerShell on WS-01",
+      "severity": "High",
+      "mitreTechniques": ["T1059.001"],
+      "asset": "WS-01",
+      "sources": ["EDR"]
+    },
+    {
+      "id": "rw-e2",
+      "timestamp": "2026-05-01T09:12:00.000Z",
+      "description": "vssadmin deleted shadow copies on FS-01",
+      "severity": "High",
+      "mitreTechniques": ["T1490"],
+      "asset": "FS-01",
+      "sources": ["Windows Event Log"]
+    },
+    {
+      "id": "rw-e3",
+      "timestamp": "2026-05-01T09:15:00.000Z",
+      "description": "Hundreds of documents were renamed with the .locked extension on FS-01",
+      "severity": "Critical",
+      "mitreTechniques": ["T1486"],
+      "asset": "FS-01",
+      "sources": ["EDR"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "rw-f1",
+        "severity": "Critical",
+        "confidence": 90,
+        "confidenceReason": "Execution, recovery inhibition, and file encryption are directly observed.",
+        "title": "Files encrypted after ransomware execution",
+        "description": "Encoded PowerShell preceded shadow-copy deletion and files encrypted on FS-01.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1059.001", "T1490", "T1486"],
+        "status": "open",
+        "relatedEventIds": ["rw-e1", "rw-e2", "rw-e3"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "Execution on WS-01 was followed by recovery inhibition and encryption on FS-01.",
+    "narrativeTimeline": "",
+    "summary": "Synthetic ransomware impact is confirmed; initial delivery remains unknown.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "rw-n1",
+        "priority": "critical",
+        "action": "Collect the delivered email and gateway logs for WS-01",
+        "rationale": "This can establish the still-unknown initial access vector.",
+        "pointer": "WS-01 email gateway logs",
+        "relatedFindingIds": ["rw-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Initial access vector",
+        "status": "unknown",
+        "basis": "The first observed action is PowerShell execution.",
+        "gap": "The delivered message or browser/download evidence has not been collected."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "ransomware-impact",
+        "requiredTerms": ["files encrypted"],
+        "evidenceEventIds": ["rw-e1", "rw-e2", "rw-e3"],
+        "confidence": { "min": 65, "max": 100 }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [{ "id": "invented-initial-access", "terms": ["initial access was phishing"] }],
+    "uncertainties": [
+      {
+        "id": "initial-access-gap",
+        "topicTerms": ["initial access"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-delivery", "requiredTerms": ["email", "WS-01"] }],
+    "expectAbstention": false
+  }
+}
