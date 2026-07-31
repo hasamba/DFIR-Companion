@@ -14,7 +14,7 @@ in the PR — not a new top-level directory.
 
 **Status:** every file in `companion/src` is assigned to a domain **today**, in
 `scripts/module-map.json`. The rules are enforced from day one; they do not wait for files to move.
-The domain *directories* are the target — `src/analysis/` is 285 files in one flat directory right
+The domain *directories* are the target — `src/analysis/` is 290 files in one flat directory right
 now, and files move into their directory as extraction PRs touch them (see [Migration](#migration)).
 Moving a file is then a no-op for the gate, because the map already knew where it belonged.
 
@@ -210,13 +210,22 @@ belongs in a boundary ledger pretending to be a small fix:
    `velociraptorApi.ts` is a raw HTTP client with no domain knowledge (Platform). Until it is split
    into `integrations/push/` and `integrations/clients/`, one direction of every
    `analysis ↔ integrations` edge has to be ledgered whichever layer the directory is assigned.
-2. **`public/dashboard.html` is not in this map at all.** It is 25,396 lines — 19,091 of inline JS
-   across 5 `<script>` blocks — and it is outside `companion/src/`, so neither `check:size` nor
-   `check:imports` has ever seen it. The extraction pattern is already proven
-   (`public/js/hunt-workbench.js` and five siblings are ES modules with direct vitest coverage); what
-   is missing is a ceiling. **Both** ratchets extend to `public/js/**` — the cycle gate matters as
-   much as the size gate, because extracted feature modules will start importing one another — plus
-   shrink-only inline-JS and inline-CSS budgets for `dashboard.html` itself.
+2. **`public/dashboard.html` is gated but not yet decomposed.** It is 25,571 lines, of which 19,256
+   are JavaScript inside `<script>` tags and 3,231 are CSS inside `<style>` tags — larger than
+   `pipeline.ts` and `server.ts` combined. It sits outside `companion/src/`, so until #384 wired it
+   in, neither ratchet had ever seen it, and it grew by 165 lines of script during the branch that
+   added the gates.
+
+   Both ratchets now cover it: `check:size` holds `public/js/**.js` to the same 800-line limit and
+   freezes `dashboard.html`'s inline JS and CSS as separate shrink-only budgets, and `check:imports`
+   includes `public/js/**` so the first cycle between extracted feature modules fails a PR. The
+   markup itself is deliberately not measured — ~3,000 lines of HTML is fine; a 19,000-line program
+   inside a markup file is not.
+
+   It is **not** in the domain map above, and that is the remaining gap: the layer/tier rules cover
+   `companion/src` only. The extraction pattern is proven (`public/js/hunt-workbench.js` and five
+   siblings are ES modules with direct vitest coverage), so the next step is moving features out,
+   not designing a second map.
 
 ## Migration
 
@@ -233,8 +242,9 @@ The order, by ascending risk:
    rule, not the rest of the map — the other ten domains carry no forensic semantics and should not
    wait on a product decision.
 2. Land the map, `module-map.json`, the exact violation ledger, `check:boundaries`, and CI wiring.
-3. Extend the size **and cycle** ratchets to `public/js/**`; add inline JS/CSS budgets for
-   `dashboard.html`.
+3. ~~Extend the size **and cycle** ratchets to `public/js/**`; add inline JS/CSS budgets for
+   `dashboard.html`.~~ **Done** — `check:size` covers `public/js/**.js` plus `#inline-js` and
+   `#inline-css` budgets for every `public/*.html`; `check:imports` covers `public/js/**`.
 4. Characterization tests before anything moves: route/middleware inventory, environment-factory
    behaviour, persisted-state and report-format compatibility, per-dashboard-feature regression.
 5. `server.ts` integration factories → `src/composition/` (~500 lines, pure env reads, no domain logic).
@@ -260,8 +270,9 @@ issue, and the umbrella closes when all of these hold:
 |---|---|---|
 | `analysis/pipeline.ts` | 6,136 lines | ≤ 800 |
 | `server.ts` | 4,275 lines | ≤ 800 |
-| `public/dashboard.html` inline JS | 19,091 lines | ≤ 2,000 |
+| `public/dashboard.html` inline JS | 19,256 lines | ≤ 2,000 |
+| `public/dashboard.html` inline CSS | 3,231 lines | ≤ 800 |
 | Files in `src/` over 800 lines | 13 | 0 |
-| Flat files in `src/analysis/` | 285 | 0 |
+| Flat files in `src/analysis/` | 290 | 0 |
 | Boundary ledger | 48 violations | ≤ 10 |
 | Forensic / super-timeline rule | unresolved | decided, enforced, tested |

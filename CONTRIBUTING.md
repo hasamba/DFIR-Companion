@@ -156,8 +156,21 @@ thousand lines away.
   source files are already under it — it is where this codebase already sits, not an aspiration.)
 - A file **in** the ledger is frozen at its recorded length. Shrink it freely; you cannot grow it.
 
-When it fails, put the new code in its own module. If you shrank a ledgered file, lock the smaller
-number in:
+**It covers `public/` too**, not just `companion/src`:
+
+- `public/js/**.js` — the extracted dashboard modules, under the same 800-line limit.
+- `public/*.html` — the **inline** `<script>` and `<style>` blocks are budgeted separately, as
+  `public/dashboard.html#inline-js` and `#inline-css`. A `<script src=…>` reference is not counted;
+  only code written into the page is. The markup itself is not measured — ~3,000 lines of HTML is
+  not the problem, a 19,000-line program living inside a markup file is.
+
+`dashboard.html` is the reason: 19,256 lines of inline script and 3,231 of inline style, larger than
+`pipeline.ts` and `server.ts` combined, and outside every gate until #384 wired this up.
+
+When it fails, put the new code in its own module — for the dashboard that means a new
+`public/js/<feature>.js` ES module, which is also directly unit-testable (see
+`tests/analysis/huntWorkbenchUi.test.ts`) in a way inline script never is. If you shrank a ledgered
+file, lock the smaller number in:
 
 ```bash
 npm run check:size -- --update   # shrink-only; refuses to raise a recorded number
@@ -173,6 +186,11 @@ means the new code belongs in its own module instead.
 A runtime import cycle means one module in the loop sees a half-initialised copy of the other. There
 is exactly **one** today (`analysis/adversaryEmulation.ts ↔ analysis/adversaryHints.ts`), recorded in
 `scripts/import-cycles.json`.
+
+It covers `public/js/**.js` as well as `companion/src`. Those modules import nothing from each other
+today, so that root contributes zero cycles — which is why it is wired in now rather than later. As
+#384 pulls features out of `dashboard.html`, they will start importing one another, and the first
+cycle should fail a PR instead of being found later from a blank page.
 
 Type-only imports are ignored — `import type` is erased before the module runs and cannot form a
 runtime cycle. That is why the 30-odd `routes/*.ts ↔ server.ts` back-references a naive tool reports
