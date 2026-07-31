@@ -58,7 +58,14 @@ Choose the method that fits your setup:
 !!! warning "Port already in use?"
     If the dashboard says "companion offline", the server is not running. If you see `EADDRINUSE`, another instance is already running — just use that one, or free the port:
     ```powershell
+    # Windows
     Get-NetTCPConnection -LocalPort 4773 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+    ```
+    ```bash
+    # Linux / macOS
+    kill $(lsof -ti tcp:4773)
+    # Linux only, if lsof isn't installed
+    fuser -k 4773/tcp
     ```
 
 ---

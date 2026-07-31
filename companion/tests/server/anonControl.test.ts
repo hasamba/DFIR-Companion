@@ -39,6 +39,37 @@ describe("/cases/:id/anon-control", () => {
     expect(reloaded.IP).toBe(false);
     expect(reloaded.USER).toBe(true);
   });
+
+  // The anonymization panel shows a "Real names (people)" row it cannot deliver on its own (PERSON
+  // tokens are minted only from Presidio findings), so it needs to know whether the layer is wired.
+  // Both verbs answer with the same shape — the panel re-reads the control from the POST response.
+  it("reports presidioConfigured=false when DFIR_PRESIDIO_URL is unset", async () => {
+    expect((await request(app).get("/cases/c1/anon-control")).body.presidioConfigured).toBe(false);
+    const post = await request(app).post("/cases/c1/anon-control").send({ enabled: true });
+    expect(post.body.presidioConfigured).toBe(false);
+  });
+  it("reports presidioConfigured=true when DFIR_PRESIDIO_URL is set", async () => {
+    // Captured when the routes are registered — the same moment startServer decides whether to give
+    // the pipeline a Presidio client — so the app must be built AFTER the variable is set.
+    process.env.DFIR_PRESIDIO_URL = "http://127.0.0.1:5002";
+    try {
+      const withPresidio = createApp(cases, { stateStore: new StateStore(cases) });
+      expect((await request(withPresidio).get("/cases/c1/anon-control")).body.presidioConfigured).toBe(true);
+      const post = await request(withPresidio).post("/cases/c1/anon-control").send({ enabled: false });
+      expect(post.body.presidioConfigured).toBe(true);
+    } finally {
+      delete process.env.DFIR_PRESIDIO_URL;
+    }
+  });
+  it("treats a blank DFIR_PRESIDIO_URL as unset (an unset compose variable interpolates to '')", async () => {
+    process.env.DFIR_PRESIDIO_URL = "   ";
+    try {
+      const blank = createApp(cases, { stateStore: new StateStore(cases) });
+      expect((await request(blank).get("/cases/c1/anon-control")).body.presidioConfigured).toBe(false);
+    } finally {
+      delete process.env.DFIR_PRESIDIO_URL;
+    }
+  });
 });
 
 describe("/cases/:id/anon-entities", () => {
