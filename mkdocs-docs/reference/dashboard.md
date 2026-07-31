@@ -43,6 +43,25 @@ The top of the dashboard shows:
 
 ---
 
+## Command Palette
+
+Press **Ctrl+K** (or **⌘K** on macOS) anywhere on the dashboard to open a fuzzy-search overlay over every available action — navigation, exports, settings, and case operations. It stays reachable while an input has focus; the only thing that blocks it is a locked/sealed case.
+
+- Type to fuzzy-match by label or keyword; results rank whole-word and prefix matches above scattered-letter matches.
+- Prefix a query with `>` to filter to one category (`>exp csv` filters to Exports, then searches "csv" within it). A bare `>` lists every category.
+- Actions you've run recently float to the top of the unfiltered list.
+- An action that doesn't apply to the current case (no case loaded, integration not configured, etc.) is hidden rather than shown disabled.
+
+---
+
+## Theme Picker
+
+Click the sun/moon icon beside the **⚙ Settings** button to open the theme menu — over twenty built-in palettes grouped into **Dark**, **Light**, and **Fun**, beyond the plain dark/light toggle. Each entry shows a two-tone swatch before you apply it. The choice is remembered in the browser (`localStorage`) and takes effect instantly, including on canvas-based views (e.g. the timeline swimlane) that bake colours rather than reading CSS variables live.
+
+Every theme — built-in or the vendor-imported palettes (Nord, Gruvbox, Catppuccin, Tokyo Night, Rose Pine, and others) — is generated from one underlying role-based colour system: each UI element maps to a semantic role (e.g. "critical severity text", "hover background") rather than a hardcoded hex value, so a new theme only has to supply values for the roles, not re-derive every colour used across the dashboard.
+
+---
+
 ## Findings
 
 Your primary conclusions. Each finding has:
@@ -151,6 +170,20 @@ Distinct from [Evidence Gaps](#evidence-gaps) above: that panel is AI-derived fr
 A section (and toolbar button) between **Findings** and the **Forensic Timeline** for an analyst-triggered, batched AI pass that reads **every** graded event at or above a chosen severity floor — full coverage of a large, multi-host case a single synthesis prompt can't show.
 
 A free pre-flight preview reports the events/rows/batches/tokens each severity floor would cost **on this case** before anything is spent. **Run** shows live batch progress with **Cancel**; **Re-synthesize**/**2nd opinion** are locked meanwhile, since a deep pass ends in its own synthesis call. The result card names the floor, events, batches and observations, flags **partial coverage** in red if any batch failed, and survives a page reload; refusals (over the batch ceiling, or a closed/archived case) render as guidance naming a floor that would fit. Gated on the **synthesis** provider, not vision — see [Advanced → Synthesis Grouping & Budget](advanced.md#synthesis-grouping--budget) and [Settings → AI](settings.md#ai) for the tunables (`DFIR_DEEP_PASS_MAX_BATCHES`, `DFIR_AI_OBSERVE_PROMPT_FILE`).
+
+---
+
+## Attacker Sessions
+
+Re-threads the flat forensic timeline into per-host "chapters" — a contiguous run of activity on one host, ending on a long quiet gap (default 5 minutes) or a successful logon under a different account. Deterministic, no AI.
+
+Each session card shows the host, the account established by a logon inside it (when there is one), the dominant ATT&CK tactic across its events, its time span, its row/event count, and its severity range. Click a card to filter the Forensic Timeline below to exactly that session's events. Events whose source tool never reported a host are grouped by time alone under **"(host not recorded)"** — that bucket may span more than one real machine, so it is never rendered as a hostname.
+
+Events sharing a concrete indicator (a hash, path, IP, or decoded-payload IOC) with the running session survive a longer gap before the session splits, so a burst of activity on the same lead doesn't get chopped into unrelated-looking pieces. Tune both thresholds via `DFIR_SESSION_GAP_S` (seconds, default 300) and `DFIR_SESSION_IOC_GRACE` (multiple of the gap, default 3; `1` disables the grace period).
+
+**✨ Summarize session** runs one focused AI call over just that session's events — cheaper and more targeted than a full synthesis or deep-pass run when you only need the story for one chapter.
+
+Has its own report section ("Attacker Sessions") — see [Reports & Exports](reports.md).
 
 ---
 
@@ -397,6 +430,39 @@ Compares the case's ATT&CK techniques against the MITRE ATT&CK Groups database t
     Use it to guide hunting — if a matched group tends to pivot via RDP, that's worth looking for. Never use this as attribution evidence.
 
 Offline, no AI, no network calls at runtime.
+
+---
+
+## Playbook Match
+
+Adversary Hints (above) answers "which techniques does this case share with a known group". This answers the harder question: did they happen **in the order** a published playbook describes.
+
+Compares the case's chronological ATT&CK technique sequence against a bundled catalog of ransomware/intrusion chains distilled from MITRE ATT&CK and CISA #StopRansomware advisories — Conti, LockBit, BlackCat (ALPHV), Akira, Scattered Spider, Black Basta, BlackSuit (Royal), and Play. Matching is a **fuzzy subsequence** match: a playbook step counts as satisfied if its technique appears anywhere later in the case's timeline, allowing unrelated activity in between — a real attacker's timeline is noisy and incomplete. Deterministic, offline, no AI.
+
+Each playbook is matched both **case-wide** and against **each known host's own slice** of the timeline, keeping whichever scope scores higher — ransomware chains are typically cross-host (lateral movement, then fleet-wide encryption), so per-host-only matching would miss the chains the feature exists to find. Events with no recorded host are excluded from per-host scoring (they could span several machines) but still count case-wide.
+
+Each step in a matched playbook shows one of:
+
+- ✅ **matched** — observed in order; jumps to the evidencing timeline event. A step matched only at the *base* technique (a different sub-technique of the same base) is marked accordingly and scores partial credit.
+- 🟡 **out of order** — the technique appears in the case, just not at a point that keeps the chain together; check host clock skew and collection lag before reading anything into it.
+- ❌ **not observed** — never evidenced, either because it didn't happen or because the evidence wasn't collected. Missing steps become [Evidence Gaps](#evidence-gaps) items with a collection directive.
+
+Tune the result list with `DFIR_PLAYBOOK_TOP_N` (how many ranked matches to return, default 5) and `DFIR_PLAYBOOK_MIN_SCORE` (minimum score to be shown at all, default 40); both can also be overridden per request.
+
+!!! warning "Matches the playbook, not the actor"
+    A high score says the case's technique sequence resembles a published chain — never that the named group did it. The caveat renders with every match, not as a tooltip.
+
+---
+
+## Compliance Impact
+
+Maps the case's **confirmed findings** — by ATT&CK technique — to control failures and regulatory obligations across NIST 800-53 Rev. 5, PCI-DSS v4.0, HIPAA, GDPR, SEC, and ISO 27001:2022. Read-only, derived on demand, no AI and no network calls.
+
+Genuine breach-notification clocks get a live countdown once you set a discovery date (the clock starts on that legal determination, not on a forensic timestamp — nothing computes until you set it): GDPR Art. 33 (72 hours), HIPAA §164.404 (60 days), Reg S-P (30 days), and Form 8-K Item 1.05 (4 **business** days — weekends are skipped; public holidays are not modelled, since they are jurisdiction/SEC-calendar-specific). Control-cadence rows (back up, train, review) never render a countdown — only rows with a real notification obligation do.
+
+Filter the mapping to one or more frameworks per case. Each response — dashboard panel and report section alike — carries the framework editions in use and a disclaimer that this is not legal advice.
+
+Has its own report section ("Compliance Impact") — see [Reports & Exports](reports.md).
 
 ---
 

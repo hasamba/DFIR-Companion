@@ -335,6 +335,14 @@ Operator health view:
 - **Evidence integrity** — the result of the last chain-of-custody verification: which triggers are
   active, how long ago a case was last checked, how many artifacts verified clean, and any case whose
   evidence or custody log failed. See [Chain of Custody](chain-of-custody.md)
+- **Host Clock Skew** — each host's measured clock offset from cross-tool timestamp anchors (events
+  multiple sources independently timestamped), flagged once it exceeds 60 seconds. A host needs
+  several consistent anchors before its offset is trusted; **↻ Re-measure** re-runs detection against
+  the current timeline, and the **Align timelines** toggle projects every host onto a common time
+  axis — affecting the Forensic Timeline, correlation windows, the evidence graph, and reports while
+  it's on. Alignment never rewrites recorded evidence: each row keeps its original timestamp for
+  display, alongside the corrected one. An analyst can manually override any host's offset; an
+  explicit `0` pins that host's clock as already correct.
 
 ### Evidence integrity environment variables
 

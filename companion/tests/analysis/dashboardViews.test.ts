@@ -63,11 +63,13 @@ describe("dashboardViews — seed integrity", () => {
       "sec-narrative",
       "sec-findings",
       "sec-deep-pass",
+      "sec-sessions",
       "sec-timeline",
       "sec-hunt-workbench",
       "sec-super-timeline",
       "sec-iocs",
       "sec-playbook",
+      "sec-playbook-match",
       "sec-attack-path",
       "sec-kill-chain",
       "sec-phases",
@@ -162,5 +164,31 @@ describe("sec-now registration (#375)", () => {
     expect(DASHBOARD_SECTION_IDS).toContain("sec-now");
     expect(getDashboardView("now")!.sections).toEqual(["sec-now"]);
     expect(getDashboardView("analyst")!.sections).toContain("sec-now");
+  });
+});
+
+describe("sec-sessions registration (#229)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-sessions");
+  });
+
+  it("appears in the Analyst and Deep-Dive profiles", () => {
+    for (const id of ["analyst", "deep-dive"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-sessions`).toContain("sec-sessions");
+    }
+  });
+});
+
+describe("sec-playbook-match registration (#230)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-playbook-match");
+  });
+
+  it("appears in the Analyst and Hunt Prep profiles", () => {
+    for (const id of ["analyst", "hunt-prep"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-playbook-match`).toContain("sec-playbook-match");
+    }
   });
 });
