@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -7,6 +7,8 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { MockProvider } from "../../src/providers/provider.js";
+import { EVIDENCE_IMPORT_ROUTES } from "../../src/routes/importCaseGuard.js";
 
 // Regression: POST /cases/:id/import — evidence imported into a case that does not exist.
 // Found by /qa on 2026-06-25.
@@ -55,13 +57,20 @@ const CHAINSAW_HUNT = [
   },
 ];
 
-async function makeApp() {
+// `withSynthesis` wires a canned provider ONLY so import-csv / import-log clear their
+// `hasSynthesisProvider()` 501 gate and actually reach the case-existence check. No model call
+// ever happens in these tests — the guard answers before any analysis is dispatched.
+async function makeApp(opts: { withSynthesis?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-import-missing-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
+  const canned = opts.withSynthesis ? new MockProvider("mock", "{}") : undefined;
   // No-AI pipeline: deterministic importers populate the timeline without any model call.
   const pipeline = buildRuntimePipeline({
-    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    provider: canned,
+    synthesisProvider: canned,
+    stateStore,
+    store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { pipeline, stateStore, importMetaStore: new ImportMetaStore(store) });
@@ -112,5 +121,101 @@ describe("POST /cases/:id/import — case existence guard", () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/does not exist/i);
     expect(await store.caseExists("does-not-exist")).toBe(false);
+  });
+});
+
+// Every per-format import route. The unified POST /import and POST /import-file above were guarded
+// when the defect was first found; the 22 per-format routes were not, so the SAME typo'd case id
+// still 202-accepted evidence through any of them. They are documented as "programmatic use" and no
+// dashboard/extension caller posts to them, so nothing depended on the implicit-creation behaviour.
+const PER_FORMAT_IMPORT_ROUTES = [
+  "import-csv",
+  "import-log",
+  "import-thor",
+  "import-siem",
+  "import-chainsaw",
+  "import-hayabusa",
+  "import-velociraptor",
+  "import-network",
+  "import-kape",
+  "import-cybertriage",
+  "import-m365",
+  "import-aws",
+  "import-cloud-activity",
+  "import-plaso",
+  "import-sandbox",
+  "import-memory",
+  "import-email",
+  "import-thehive",
+  "import-auditd",
+  "import-journald",
+  "import-sysdig",
+  "import-wazuh",
+] as const;
+
+describe("per-format import routes — case existence guard", () => {
+  // The body is deliberately non-empty and format-agnostic: it clears each route's "text/csv/json is
+  // required" 400 so an UNGUARDED route gets as far as parsing (or as far as saveImport). The guard
+  // must answer 404 before any of that — a case id that does not exist is not a payload problem.
+  const anyBody = { filename: "eviction.dat", text: "x", csv: "x", json: "x", log: "x", eml: "x" };
+
+  it.each(PER_FORMAT_IMPORT_ROUTES)("404s /cases/:id/%s into a case that does not exist", async (route) => {
+    const { app, store } = await makeApp({ withSynthesis: true });
+
+    const res = await request(app).post(`/cases/ghost-case-xyz/${route}`).send(anyBody);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/does not exist/i);
+    expect(await store.caseExists("ghost-case-xyz")).toBe(false);
+  });
+
+  // The reported reproduction, end to end: a valid CSV into a typo'd case id used to return
+  // 202 {accepted:true} and leave imports/0001_ghost.csv, metadata/imports.jsonl, a custody
+  // record and a session log on disk — under a case GET /cases never lists. Nothing may be written.
+  it("writes nothing to disk for a valid CSV into a case that does not exist", async () => {
+    const { app, store } = await makeApp({ withSynthesis: true });
+    const csv = "timestamp,message\n2023-01-02T10:00:00Z,encoded powershell from winword\n";
+
+    const res = await request(app)
+      .post("/cases/ghost-case-xyz/import-csv")
+      .send({ filename: "ghost.csv", csv });
+
+    expect(res.status).toBe(404);
+    await expect(stat(store.caseDir("ghost-case-xyz"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await request(app).get("/cases")).body).toEqual([]);
+  });
+
+  it("still accepts the same CSV into an existing case (the guard does not break the happy path)", async () => {
+    const { app } = await makeApp({ withSynthesis: true });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const csv = "timestamp,message\n2023-01-02T10:00:00Z,encoded powershell from winword\n";
+
+    const res = await request(app).post("/cases/c1/import-csv").send({ filename: "real.csv", csv });
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ accepted: true, rows: 1 });
+  });
+
+  // The lists above are hand-maintained, so they can only pin the routes that existed when they
+  // were written. This walks the LIVE Express router instead: any POST /cases/:id/import* route
+  // added later is discovered here, and fails until it is added to EVIDENCE_IMPORT_ROUTES — which
+  // is what actually mounts the guard. Without this, the next importer silently ships unguarded.
+  it("guards every POST /cases/:id/import* route registered on the app", async () => {
+    const { app } = await makeApp({ withSynthesis: true });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const layers = (app as any)._router.stack as Array<{
+      route?: { path: string; methods: Record<string, boolean> };
+    }>;
+    const registered = new Set(
+      layers
+        .map((l) => l.route)
+        .filter((r): r is { path: string; methods: Record<string, boolean> } => Boolean(r?.methods?.post))
+        // /import/undo and /import/redo replay existing state — they ingest no evidence.
+        .filter((r) => /^\/cases\/:id\/import(-[a-z0-9-]+)?$/.test(r.path))
+        .map((r) => r.path.replace("/cases/:id/", "")),
+    );
+
+    expect(registered.size).toBeGreaterThan(0);
+    expect([...registered].sort()).toEqual([...EVIDENCE_IMPORT_ROUTES].sort());
   });
 });
