@@ -156,6 +156,13 @@ jobs:
         working-directory: companion
         run: npm run test:e2e
 
+      # Compares the axe counts the run just produced against scripts/a11y-ledger.json. Its own
+      # step, so a red check says "accessibility regressed" rather than "a browser test failed" —
+      # they are different problems with different owners.
+      - name: Accessibility ratchet
+        working-directory: companion
+        run: npm run check:a11y
+
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v4
