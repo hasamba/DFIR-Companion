@@ -171,6 +171,7 @@ import {
 } from "./http/originGuard.js";
 import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
+import { registerStaticAssets } from "./http/staticAssets.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { IncidentTypeStore } from "./analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "./analysis/collectionPlanStore.js";
@@ -3020,34 +3021,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // (startServer), so createApp-only unit tests never start a filesystem poller.
   if (dropWatchEnabled && options.dropStatusStore) startDropWatcher();
 
-  // Whitelisted static client assets: vendored libraries (Leaflet for the Geographic map, #133;
-  // cytoscape+dagre for the graphs) plus first-party browser modules (the shared graph-view module
-  // used by the Login/Assets/Evidence graphs, the command palette #238, and the Settings search
-  // filter). Whitelisted paths only — a new module under public/js/ is NOT served until it is
-  // named here, and the browser's only symptom is a silent 404 with the feature simply absent.
-  // tests/settings/settingsSearch.test.ts pins every /js/ module dashboard.html loads to an entry
-  // in this map, so the next one cannot ship half-wired.
-  // Registered inside createApp so the routes are available in tests (startServer calls createApp).
-  const vendorFiles: Record<string, string> = {
-    "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
-    "/vendor/leaflet/leaflet.css": "text/css; charset=utf-8",
-    "/vendor/cytoscape/cytoscape.min.js": "application/javascript; charset=utf-8",
-    "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
-    "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
-    "/js/graph-view.js": "application/javascript; charset=utf-8",
-    "/js/command-palette.js": "application/javascript; charset=utf-8",
-    "/js/settings-search.js": "application/javascript; charset=utf-8",
-  };
-  for (const [route, type] of Object.entries(vendorFiles)) {
-    app.get(route, async (_req, res) => {
-      try {
-        const buf = await readPublicAsset(route.slice(1)); // strip leading "/"
-        res.type(type).set("Cache-Control", "public, max-age=86400").send(buf);
-      } catch {
-        res.status(404).end();
-      }
-    });
-  }
+  // Whitelisted static client assets (vendored libraries + first-party browser modules). The map
+  // itself lives in src/http/staticAssets.ts — it grows every time a browser module is added, and
+  // this file may not grow (#385). Registered here so the routes exist in tests too.
+  registerStaticAssets(app);
 
   // Terminal error handler (4-arg, last-registered so it runs after every route). express-async-errors
   // forwards any error thrown or rejected inside an async route here; explicit next(err) calls land here

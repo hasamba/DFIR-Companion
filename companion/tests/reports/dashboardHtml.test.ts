@@ -766,7 +766,8 @@ describe("dashboard.html — Compliance Impact panel (#336)", () => {
   it("is registered as a section and reloads when case state changes", async () => {
     const html = await load();
     expect(html).toContain('{ id: "sec-compliance",   label: "Compliance Impact" }');
-    expect(html).toContain("loadCompliance(caseId);");
+    // Loaded from the case-load panel table (it was a bare call before the progress bar landed).
+    expect(html).toContain('["compliance", () => loadCompliance(caseId)]');
     // Confirming a finding is what makes an obligation appear, so a state push must refresh it.
     expect(html).toContain("scheduleComplianceReload()");
   });
@@ -882,5 +883,53 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toContain('id="env-DFIR_MCP_AGENT_TIMEOUT_MS"');
     expect(html).toContain("default 3600000 (1 hour)");
     expect(html).toContain('fetch("/mcp/reconnect"');
+  });
+  it("drives the case-load overlay from real milestones, not a spinner (progress bar)", async () => {
+    const html = await load();
+    // The arithmetic lives in a testable module, not in this 24k-line file.
+    expect(html).toContain('<script type="module" src="/js/case-load-progress.js"></script>');
+    expect(html).toContain('id="caseLoadingBar"');
+    expect(html).toContain('id="caseLoadingPct"');
+    // Every stage the overlay claims is reported from the point that thing actually happened.
+    expect(html).toMatch(/clpStage\("query"\)/);
+    expect(html).toMatch(/clpStage\("download"\)/);
+    expect(html).toMatch(/clpStage\("parse"\)/);
+    expect(html).toMatch(/clpStage\("render"\)/);
+    expect(html).toMatch(/clpStage\("lifecycle"\)/);
+    // The body is read by hand rather than via r.json(): that is what yields a true download %.
+    expect(html).toContain("readBodyWithProgress");
+    expect(html).not.toMatch(/\/state`, \{ signal: loadSignal \}\)\.then\(r => r\.json\(\)\)/);
+  });
+
+  it("paints the stage label before the phases that block the main thread", async () => {
+    const html = await load();
+    // JSON.parse and render() freeze repaint for as long as they run. Without a forced paint
+    // first, their labels never appear until after the work finishes and the bar reads as hung.
+    expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*const state = JSON\.parse\(body\)/);
+    expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*render\(state\)/);
+  });
+
+  it("fires the loading failsafe on a stall rather than on a fixed deadline", async () => {
+    const html = await load();
+    // Re-armed on every stage transition, so a large case moving steadily through five stages is
+    // no longer told it is stuck — and the message names the stage that actually stalled.
+    expect(html).toContain("function armCaseLoadingStall()");
+    expect(html).toMatch(/function clpStage\(stageId\)[\s\S]{0,300}armCaseLoadingStall\(\)/);
+    expect(html).toMatch(/\$\{stuck\} — click to dismiss/);
+    expect(html).not.toContain("Still loading — click to dismiss");
+    // Dismissing still ABANDONS the in-flight load (#174), not merely hides the overlay.
+    expect(html).toMatch(/function dismissCaseLoading\(\)[\s\S]{0,200}connectAbortController\.abort\(\)/);
+  });
+
+  it("tracks the secondary panels to completion after the overlay hides", async () => {
+    const html = await load();
+    expect(html).toContain('id="panelProgressBar"');
+    expect(html).toContain("const CASE_PANEL_LOADERS = [");
+    expect(html).toContain("runPanelLoaders(CASE_PANEL_LOADERS");
+    // Generation-guarded like the state load (#174): an abandoned case must not paint the strip
+    // for the case now on screen.
+    expect(html).toMatch(/panelGen === _panelLoadGen/);
+    // Still works with the module absent — the load must never depend on the bar.
+    expect(html).toMatch(/for \(const \[, run\] of CASE_PANEL_LOADERS\)/);
   });
 });
