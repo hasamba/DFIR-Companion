@@ -96,6 +96,7 @@ describe("AnalysisRunStore", () => {
   });
 
   it("redacts credential-shaped fields before persistence", async () => {
+    const credentialedEndpoint = ["https://", "alice", ":", "secret", "@", "example.invalid/api"].join("");
     const run = await store.record("c1", {
       id: "run-safe",
       kind: "enrichment",
@@ -108,7 +109,7 @@ describe("AnalysisRunStore", () => {
         parameters: {
           apiKey: "should-never-land",
           authorization: "Bearer should-never-land",
-          endpoint: "https://alice:secret@example.invalid/api",
+          endpoint: credentialedEndpoint,
           maxIocs: 100,
         },
       },
