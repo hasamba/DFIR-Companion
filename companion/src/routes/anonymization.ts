@@ -54,14 +54,23 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
   const visionIsLocal = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
+  // Whether the optional Presidio layer is wired. Reported to the dashboard because the anonymization
+  // panel otherwise overstates its coverage: PERSON is minted ONLY from Presidio findings, so with
+  // Presidio off nothing detects people's names. Derived from the SAME variable startServer reads to
+  // build the pipeline's presidio option, and — like `visionIsLocal` — captured once at registration
+  // rather than per request, so it reports what the RUNNING pipeline actually got. A later .env edit
+  // changes the file, not this process (DFIR_PRESIDIO_ is deliberately absent from /settings/reload's
+  // allowlist); claiming otherwise would tell an analyst names are masked when no gate exists.
+  const presidioConfigured = (process.env.DFIR_PRESIDIO_URL ?? "").trim() !== "";
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
-  // external vision). POST updates it and, when `enabled` flips, forces a re-synth so conclusions
-  // reflect the new wire policy (the skip-if-unchanged hash is keyed on real inputs and won't notice).
+  // external vision) + whether Presidio is available. POST updates it and, when `enabled` flips,
+  // forces a re-synth so conclusions reflect the new wire policy (the skip-if-unchanged hash is keyed
+  // on real inputs and won't notice).
   app.get("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
       const c = await anonControl.load(req.params.id);
-      return res.status(200).json({ ...c, screenshotWarning: c.enabled && !visionIsLocal });
+      return res.status(200).json({ ...c, screenshotWarning: c.enabled && !visionIsLocal, presidioConfigured });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -91,7 +100,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           category: "anonymization", action: "anon-control", detail: `anonymization ${next.enabled ? "enabled" : "disabled"}`,
         });
       }
-      return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal });
+      return res.status(200).json({ ...next, screenshotWarning: next.enabled && !visionIsLocal, presidioConfigured });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

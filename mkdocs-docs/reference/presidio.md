@@ -2,7 +2,7 @@
 
 ## What it is
 
-The built-in anonymizer (see [AI Analysis → What the AI Sees](ai-analysis.md#what-the-ai-sees-anonymization)) tokenizes IPs, hostnames, usernames, domains, emails, paths, credit cards, phone numbers and national ID numbers with regular expressions. Regular expressions cannot find a **person's name** — there is no pattern for "this word is a name" — and that is the one gap this optional layer closes.
+The built-in anonymizer (see [AI Analysis → What the AI Sees](ai-analysis.md#what-the-ai-sees-anonymization)) tokenizes IPs, hostnames, usernames, domains, emails, paths, credit cards, phone numbers and national ID numbers with regular expressions. Regular expressions cannot find a **person's name** — there is no pattern for "this word is a name" — and that is the largest of the three gaps this optional layer closes; the other two are national IDs outside the Israeli format the local detector validates, and IBANs (see [What the Anonymization panel shows](#what-the-anonymization-panel-shows)).
 
 [Microsoft Presidio](https://microsoft.github.io/presidio/) is an open-source PII-detection engine. Point the Companion at a Presidio Analyzer container you run yourself, and it scans the text the Companion is about to send to an AI provider, flagging anything its NER model recognizes as PII. This is an **extra** detector layered on top of the built-in one, not a replacement for it — leave `DFIR_PRESIDIO_URL` unset and nothing changes.
 
@@ -30,6 +30,22 @@ This exposes the analyzer's `/analyze` endpoint on `http://localhost:5002`.
 | `DFIR_PRESIDIO_MIN_SCORE` | `0.6` | Confidence floor, 0–1. A blank or non-numeric value falls back to the default; anything outside `[0, 1]` is clamped rather than rejected. |
 
 Both are also editable in **Settings → AI → Presidio**, alongside a **Test connection** button. It sends a fixed, synthetic sample string (never anything from your case) to the currently-typed URL and reports **Connected** or **Failed** with the reason — nothing more. It answers only "can the Companion reach this analyzer", which is the question you have when you're setting the URL.
+
+## What the Anonymization panel shows
+
+The panel's category list ends with a read-only **Real names (people)** row, because that category is the one the analyst cannot switch on: `PERSON` tokens are minted only from Presidio findings. With `DFIR_PRESIDIO_URL` unset the row is greyed as *needs Presidio*; with the layer configured it reads *via Presidio*. A note under the list explains which masking depends on the layer, in the terms below.
+
+Three kinds of PII are **only** ever found by Presidio, and go undetected without it:
+
+| Undetected without Presidio | Why the built-in layer misses it |
+|---|---|
+| Real names | There is no pattern for "this word is a name" — `PERSON` has no local detector at all. |
+| National IDs other than Israeli (US SSN, UK NINO, ES NIF, IT fiscal code, AU TFN, SG NRIC/FIN) | `NATID` is local, but its detector validates the Israeli Teudat Zehut check digit, so it only fires on Israeli IDs. |
+| IBANs | No local detector; Presidio's `IBAN_CODE` findings are masked as `ANON_OTHER_n`. |
+
+The eleven checkboxes above the names row are all built-in detectors and stay available either way. For **Credit cards**, **Phone numbers** and **Emails**, Presidio only adds recall on formats the local patterns miss (Luhn + issuer prefix; E.164, Israeli and separated NANP; the email regex) — it does not provide them, so switching Presidio off does not stop those values being masked.
+
+Until Presidio is configured, a value you already know can be masked by adding it under **Custom entities** — a name with category `PERSON`, an IBAN or anything else with `OTHER`.
 
 ## The approval flow
 

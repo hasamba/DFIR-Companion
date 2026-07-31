@@ -2890,6 +2890,7 @@
         </label>
         <div class="asset-subhead" style="margin:8px 0 2px">Categories to anonymize</div>
         <div id="anonCategories" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px"></div>
+        <div id="anonPresidioNote" style="font-size:11px;color:var(--text-muted);margin:6px 0 0"></div>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:8px 0 0">
           <input type="checkbox" id="anonRedactSecrets"> Redact secrets (passwords / API keys / tokens — one-way)
         </label>
@@ -12777,6 +12778,28 @@
       valEl.value = "";
       renderCustomEntities();
     }
+    // Real names are the one thing on this screen that NO built-in pattern can find: PERSON tokens
+    // are minted solely from Presidio findings (see anonymize.ts — "PERSON is token-only"). So the
+    // row is appended as a STATUS row, not a toggle — it deliberately carries no `anon-cb` class,
+    // is always disabled, and saveAnon() never reads it back.
+    //
+    // Only this row greys out when Presidio is absent. The categories above it — including Credit
+    // cards, Phone numbers and ID numbers — are local detectors (Luhn + issuer prefix; E.164 /
+    // Israeli / separated NANP; checksummed national ID) that run with or without Presidio, so
+    // greying THEM would tell the analyst their card numbers reach the model when they do not.
+    // Presidio widens those four; it does not provide them.
+    function renderPresidioCategory() {
+      const on = !!(anonControl && anonControl.presidioConfigured);
+      const tip = on
+        ? "Found by Presidio on the already-masked text. Each new name pauses the AI call until you decide below."
+        : "No pattern can find a name — this needs Presidio. Until then, add known names below as PERSON.";
+      document.getElementById("anonCategories").insertAdjacentHTML("beforeend",
+        `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0;opacity:${on ? "1" : ".55"}" title="${escAttr(tip)}">` +
+        `<input type="checkbox" disabled ${on ? "checked" : ""}> Real names (people) — ${on ? "via Presidio" : "needs Presidio"}</label>`);
+      document.getElementById("anonPresidioNote").innerHTML = on
+        ? "<strong>Presidio is on.</strong> It catches what no pattern can — names, non-Israeli national IDs, IBANs — plus card / phone / email formats the built-ins miss. New values pause the AI call for your decision below."
+        : "<strong>Presidio is not configured.</strong> Names, non-Israeli national IDs and IBANs go undetected. Nothing else changes: cards, phones, IDs and emails are matched by the built-in patterns either way. Set <code>DFIR_PRESIDIO_URL</code> in Settings → AI (needs a restart); until then add known names below as <code>PERSON</code>.";
+    }
     function openAnonModal() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
@@ -12786,6 +12809,7 @@
       document.getElementById("anonCategories").innerHTML = ANON_CATEGORIES.map(([k, label]) =>
         `<label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0"><input type="checkbox" class="anon-cb" value="${escAttr(k)}" ${anonControl.categories && anonControl.categories[k] ? "checked" : ""}> ${esc(label)}</label>`
       ).join("");
+      renderPresidioCategory();
       document.getElementById("anonCustCat").innerHTML = ANON_ENTITY_CATEGORIES.map(c => `<option value="${escAttr(c)}">${esc(c)}</option>`).join("");
       const warn = document.getElementById("anonWarning");
       if (anonControl.screenshotWarning) { warn.style.display = "block"; warn.textContent = "⚠ Screenshots are OCR-redacted (best-effort) before being sent to the external vision model — text matching the entities below is blacked out on an in-memory copy; the original on disk is untouched. OCR can miss text, so don't rely on it for highly sensitive screens. Point DFIR_VISION_MODEL at a local Ollama vision model to keep screenshots fully on-box. Imported CSV/log text and synthesis are anonymized."; }
