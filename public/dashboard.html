@@ -23,6 +23,9 @@
   <!-- Mirrors the #status line into an aria-live region so job, AI and error state reach a screen
        reader instead of being visual-only (#386). See js/a11y/announcer.js. -->
   <script type="module" src="/js/a11y/announcer.js"></script>
+  <!-- Names each <section> so it is exposed as a navigable region. An unnamed <section> is not a
+       landmark at all, so the region rotor listed nothing on a 53-section page (#386). -->
+  <script type="module" src="/js/a11y/landmarks.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference.
@@ -1426,6 +1429,43 @@
       white-space: nowrap;
       border: 0;
     }
+
+    /* Off-screen until focused, then pinned top-left over the toolbar. */
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      z-index: 100;
+      padding: 8px 14px;
+      background: var(--bg-elevated);
+      color: var(--text-bright);
+      border: 1px solid var(--accent);
+      border-radius: 0 0 6px 0;
+      text-decoration: none;
+    }
+    .skip-link:focus { left: 0; }
+
+    /* Focus must be VISIBLE. :focus-visible rather than :focus, so a mouse click does not leave a
+       ring behind — that side effect is why these outlines get deleted in the first place. */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* Respect the OS "reduce motion" setting. Investigators work long shifts in this UI, and
+       vestibular triggers are not a stylistic preference. Near-zero rather than 0 so transitionend
+       and animationend listeners still fire — setting 0 silently strips those events and hangs any
+       code waiting on them. */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
     header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
     /* The action controls live in their own wrapping flex container so the settings gear
        (a sibling of it) is always pinned to the top-right of the first line, no matter how
@@ -2822,6 +2862,9 @@
   </style>
 </head>
 <body>
+<!-- First thing in the tab order (#386). Without it a keyboard user walks the entire toolbar —
+     dozens of controls — on every page load before reaching any case content. -->
+<a class="skip-link" href="#main">Skip to main content</a>
 <div id="importProgressBar"></div>
   <header>
     <div id="toolbarMain" class="toolbar-main">
@@ -5213,7 +5256,10 @@
     <button id="caseMismatchDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
-  <main>
+  <!-- tabindex="-1" is required for the skip link to actually MOVE focus here. Without it the
+       browser scrolls to <main> but leaves focus in the header, so the next Tab drops the user
+       straight back into the toolbar they just skipped. -->
+  <main id="main" tabindex="-1">
     <!-- Raw-file (EVTX/PCAP) prompts — shown at the top of the content so they're not buried in a section. #211 -->
     <div id="rawToolBanner" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
     <div id="dropStatus" class="raw-banner" style="display:none;grid-column:1 / -1"></div>
