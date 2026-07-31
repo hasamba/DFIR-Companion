@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sign in — DFIR Companion</title>
+  <link rel="icon" href="/favicon-32.png" />
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background:#0f1115; color:#dce4ef; }
+    * { box-sizing:border-box; }
+    body { min-height:100vh; margin:0; display:grid; place-items:center; padding:24px; }
+    main { width:min(440px,100%); background:#161b22; border:1px solid #303846; border-radius:14px; padding:28px; box-shadow:0 20px 60px #0008; }
+    .brand { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+    .brand img { width:44px; height:44px; border-radius:9px; }
+    h1 { margin:0; font-size:22px; }
+    p { color:#9aa4b2; line-height:1.5; }
+    form { display:grid; gap:13px; margin-top:18px; }
+    label { display:grid; gap:6px; font-size:13px; color:#b9c3d1; }
+    input { width:100%; padding:11px 12px; border:1px solid #3a4657; border-radius:7px; background:#0f141b; color:#f3f7fb; font:inherit; }
+    button,a.button { border:0; border-radius:7px; padding:11px 14px; background:#168f87; color:white; font:600 14px inherit; cursor:pointer; text-align:center; text-decoration:none; }
+    a.button { display:block; margin:14px 0; }
+    .secondary { background:#273242; }
+    .divider { display:flex; align-items:center; gap:10px; color:#778395; font-size:12px; margin:17px 0; }
+    .divider::before,.divider::after { content:""; height:1px; flex:1; background:#303846; }
+    #message { min-height:20px; color:#ff9a9a; font-size:13px; }
+    #bootstrap { border-top:1px solid #303846; margin-top:18px; padding-top:4px; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">
+      <img src="/dfir-companion-logo.jpg" alt="" />
+      <div><h1>DFIR Companion</h1><p style="margin:3px 0 0">Team sign-in</p></div>
+    </div>
+    <div id="message" role="alert"></div>
+    <a id="oidc" class="button" href="/auth/oidc/start">Sign in with your organization</a>
+    <div id="oidcDivider" class="divider">Emergency local access</div>
+    <form id="login">
+      <label>Username<input name="username" autocomplete="username" required /></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <section id="bootstrap" hidden>
+      <h2>Set up the first administrator</h2>
+      <p>This local account is the audited emergency path if the identity provider is unavailable.</p>
+      <form id="bootstrapForm">
+        <label>Display name<input name="displayName" autocomplete="name" required /></label>
+        <label>Username<input name="username" autocomplete="username" required /></label>
+        <label>Password<input name="password" type="password" minlength="6" autocomplete="new-password" required /></label>
+        <label>Bootstrap token (only if configured)<input name="bootstrapToken" type="password" autocomplete="off" /></label>
+        <button type="submit">Create administrator</button>
+      </form>
+    </section>
+  </main>
+  <script nonce="__CSP_NONCE__">
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var requested = params.get('returnTo') || '/dashboard';
+      var returnTo = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/dashboard';
+      var message = document.getElementById('message');
+      var queryError = params.get('error');
+      if (queryError) message.textContent = queryError;
+
+      async function submit(path, form) {
+        message.textContent = '';
+        var body = Object.fromEntries(new FormData(form).entries());
+        var response = await fetch(path, {
+          method:'POST',
+          credentials:'same-origin',
+          headers:{'content-type':'application/json'},
+          body:JSON.stringify(body)
+        });
+        var result = await response.json().catch(function () { return {}; });
+        if (!response.ok) throw new Error(result.error || 'Sign-in failed');
+        location.assign(returnTo);
+      }
+
+      fetch('/auth/me', { credentials:'same-origin' }).then(function (response) {
+        return response.json();
+      }).then(function (state) {
+        if (state.authenticated) { location.replace(returnTo); return; }
+        document.getElementById('oidc').hidden = !state.oidcEnabled;
+        document.getElementById('oidcDivider').hidden = !state.oidcEnabled;
+        if (state.oidcEnabled) {
+          document.getElementById('oidc').href = '/auth/oidc/start?returnTo=' + encodeURIComponent(returnTo);
+        }
+        document.getElementById('bootstrap').hidden = !state.bootstrapRequired;
+        document.getElementById('login').hidden = state.bootstrapRequired;
+      }).catch(function (error) { message.textContent = error.message; });
+
+      document.getElementById('login').addEventListener('submit', function (event) {
+        event.preventDefault();
+        submit('/auth/local/login', event.currentTarget).catch(function (error) {
+          message.textContent = error.message;
+        });
+      });
+      document.getElementById('bootstrapForm').addEventListener('submit', function (event) {
+        event.preventDefault();
+        submit('/auth/bootstrap', event.currentTarget).catch(function (error) {
+          message.textContent = error.message;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

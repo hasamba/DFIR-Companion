@@ -17,6 +17,15 @@ describe("CompanionClient", () => {
     expect((init as RequestInit).method).toBe("POST");
   });
 
+  it("authenticates capture and import requests with the configured service identity", async () => {
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response("{}", { status: 201 }));
+    const client = new CompanionClient("http://127.0.0.1:4773", fetchFn, "case-service-token");
+    await client.postCapture(payload);
+    expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).Authorization)
+      .toBe("Bearer case-service-token");
+  });
+
   it("postCapture reports the 404 status when the case does not exist", async () => {
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 404 }));
     const client = new CompanionClient("http://127.0.0.1:4773", fetchFn);

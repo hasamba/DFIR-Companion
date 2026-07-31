@@ -77,6 +77,7 @@ function readForm(running: boolean): Settings {
   return {
     caseId: caseSelect().value.trim(),
     companionUrl: normalizeCompanionUrl($("companionUrl").value),
+    serviceToken: $("serviceToken").value.trim(),
     intervalSeconds: Math.max(5, Number($("intervalSeconds").value) || 10),
     dedupThreshold: Math.max(0, Number($("dedupThreshold").value) || 5),
     running,
@@ -105,10 +106,17 @@ async function refreshStatus(s: Settings): Promise<void> {
 // to existing cases — they're created in the dashboard — so this is the only way to pick
 // one. On failure (companion offline, or an older server without GET /cases) fall back to
 // the last-used case id so Start can still resume an existing case.
-async function loadCases(companionUrl: string, selectedId: string): Promise<boolean> {
+async function loadCases(
+  companionUrl: string,
+  selectedId: string,
+  serviceToken: string,
+): Promise<boolean> {
   const sel = caseSelect();
   try {
-    const res = await fetch(`${companionUrl}/cases`, { method: "GET" });
+    const res = await fetch(`${companionUrl}/cases`, {
+      method: "GET",
+      headers: serviceToken ? { Authorization: `Bearer ${serviceToken}` } : {},
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cases = (await res.json()) as Array<{ caseId: string; name: string }>;
     sel.innerHTML = "";
@@ -173,9 +181,10 @@ async function showHotkey(): Promise<void> {
 async function init() {
   const s = await load();
   $("companionUrl").value = s.companionUrl;
+  $("serviceToken").value = s.serviceToken;
   $("intervalSeconds").value = String(s.intervalSeconds);
   $("dedupThreshold").value = String(s.dedupThreshold);
-  await loadCases(s.companionUrl, s.caseId);
+  await loadCases(s.companionUrl, s.caseId, s.serviceToken);
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
@@ -192,7 +201,7 @@ async function init() {
   // pointing Companion URL at a different instance.
   document.getElementById("refreshCases")!.onclick = async () => {
     const url = normalizeCompanionUrl($("companionUrl").value);
-    const ok = await loadCases(url, caseSelect().value);
+    const ok = await loadCases(url, caseSelect().value, $("serviceToken").value.trim());
     statusEl().textContent = ok ? "case list refreshed" : `companion offline — check URL (${url})`;
   };
   // Cases are created in the dashboard — open it in a new tab.

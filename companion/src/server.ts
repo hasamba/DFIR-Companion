@@ -178,6 +178,9 @@ import {
 import { createSecurityHeaders } from "./http/securityHeaders.js";
 import { getAiLimiter } from "./http/rateLimiter.js";
 import { registerStaticAssets } from "./http/staticAssets.js";
+import type { TeamAuth } from "./auth/teamAuth.js";
+import { registerTeamAuthRoutes } from "./auth/authRoutes.js";
+import { createTeamAuthRuntime } from "./auth/authFactory.js";
 import { TemplateStore } from "./analysis/templateStore.js";
 import { IncidentTypeStore } from "./analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "./analysis/collectionPlanStore.js";
@@ -290,6 +293,7 @@ export interface AiStatusEvent {
 
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
+  teamAuth?: TeamAuth;
   // Per-case mutex serializing load->save critical sections so concurrent state writes
   // (manual adds vs background enrichment/synthesis) cannot clobber each other.
   stateLock?: StateLock;
@@ -846,15 +850,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     next();
   });
 
-  // ── Case id validation ────────────────────────────────────────────────────────────────
-  // Gates every /cases/:id/* route behind isValidCaseId (#248) — CaseStore's own methods do
-  // zero sanitization (join(root, caseId)), so an unvalidated id of "../other" resolves outside
-  // the cases root. Mounted here, before ANY /cases/:id/* route (including the lock gate right
-  // below, whose own getCaseMeta() call is itself unvalidated), so this covers all of them via
-  // prefix matching — see caseIdGate.ts for why a per-route-file opt-in isn't enough.
+  if (options.teamAuth) {
+    registerTeamAuthRoutes(app, options.teamAuth, store);
+    app.use(options.teamAuth.middleware());
+  }
   app.use("/cases/:id", createCaseIdGate());
-
-  // ── Case password protection ─────────────────────────────────────────────────────────
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
   // here, before ANY /cases/:id/* route is registered, so it covers all of them via prefix
   // matching — a route added later is protected with no change to this file. See
@@ -3558,11 +3558,11 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
 }
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
-  // Case storage is SQLite-backed. Fail before binding the HTTP port so an unsupported runtime
-  // produces one actionable startup error instead of a dashboard that breaks on the first case.
   loadDatabaseSync();
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
+  const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
+  if (writerGuard) process.once("exit", () => writerGuard.release());
   // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
   // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
   // with the case. The global log dir defaults to logs/ beside the cases root but is overridable
@@ -3899,6 +3899,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     : (Number(process.env.DFIR_FLUSH_INTERVAL_MS) || undefined);
 
   const app = createApp(store, {
+    teamAuth,
     pipeline: wiredPipeline,
     aiConfigured: Boolean(provider),
     flushIntervalMs,
@@ -4122,6 +4123,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       }).catch((e) => warnLine(`[preflight] error: ${(e as Error).message}`));
     }
   });
+  server.once("close", () => {
+    teamAuth?.store.close();
+    writerGuard?.release();
+  });
 
   // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
   // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
@@ -4196,16 +4201,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     throw err;
   });
 
-  // Live state socket. Subscribing hands the socket every future broadcast of that case's FULL
-  // investigation state, so the upgrade is authorized first (#212): recognised host and trusted
-  // origin (#280), real case, and — because Express middleware never runs for a WebSocket upgrade
-  // — the same case-password check the HTTP routes get. See src/live/wsGate.ts.
   attachLiveSocket(server, hub, {
     store,
-    // Same load-or-create call createApp makes, so both gates verify unlock cookies with one key.
+    teamAuth,
     secret: loadOrCreateInstanceSecret(store.casesRoot),
-    // Same guard config the HTTP middleware gets, so a socket can never be admitted where a fetch
-    // to the same path would be refused.
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
     allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),

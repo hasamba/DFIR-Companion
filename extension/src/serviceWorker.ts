@@ -19,7 +19,10 @@ async function getSettings(): Promise<Settings> {
 }
 
 function controllerFor(settings: Settings): CaptureController {
-  return new CaptureController(new CompanionClient(settings.companionUrl), queue);
+  return new CaptureController(
+    new CompanionClient(settings.companionUrl, undefined, settings.serviceToken),
+    queue,
+  );
 }
 
 async function captureActiveTab(trigger: TriggerType): Promise<void> {
@@ -108,7 +111,7 @@ async function pushArtifact(msg: PushArtifactMessage): Promise<PushArtifactResul
   // Name the evidence file after the source artifact/notebook when known (nicer audit trail + a
   // Velociraptor-looking name keeps detectImportKind routing it to the Velociraptor importer).
   const filename = buildArtifactFilename(msg.sourceLabel?.trim() || msg.adapterId, new Date());
-  const client = new CompanionClient(settings.companionUrl);
+  const client = new CompanionClient(settings.companionUrl, undefined, settings.serviceToken);
   // Exactly one of rows/text is set (context-menu selection/link pushes text; table pushes rows —
   // see PushArtifactMessage). The companion's importDetect classifies either shape identically to
   // an uploaded file, so no format hint beyond the filename is needed.

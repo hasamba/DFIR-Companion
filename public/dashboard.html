@@ -7,6 +7,88 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <script nonce="__CSP_NONCE__">
+    // Team mode is optional. When present, bind every same-origin write to the signed-in
+    // browser session without changing the dashboard's many existing fetch call sites.
+    (function () {
+      var nativeFetch = window.fetch.bind(window);
+      var authReady = nativeFetch('/auth/me', {
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin'
+      }).then(function (response) {
+        return response.ok ? response.json() : { enabled: false, authenticated: false };
+      }).catch(function () {
+        return { enabled: false, authenticated: false };
+      });
+      window.dfirAuthState = null;
+      window.dfirAuthReady = authReady;
+      authReady.then(function (state) {
+        window.dfirAuthState = state;
+        if (!state.enabled || !state.authenticated) return;
+        function showIdentity() {
+          var wrap = document.getElementById('profileMenuWrap');
+          var button = document.getElementById('profileMenuBtn');
+          var menu = document.getElementById('profileMenu');
+          var name = document.getElementById('profileIdentityName');
+          var logout = document.getElementById('profileSignOut');
+          if (!wrap || !button || !menu || !name || !logout) return;
+          wrap.hidden = false;
+          name.textContent = state.identity.displayName;
+          button.title = state.identity.displayName + ' — account menu';
+          button.addEventListener('click', function (event) {
+            event.stopPropagation();
+            menu.hidden = !menu.hidden;
+            button.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+          });
+          logout.addEventListener('click', function () {
+            window.fetch('/auth/logout', { method:'POST' }).then(function () {
+              location.assign('/login');
+            });
+          });
+          document.addEventListener('click', function (event) {
+            if (wrap.contains(event.target)) return;
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+          });
+          document.addEventListener('keydown', function (event) {
+            if (event.key !== 'Escape' || menu.hidden) return;
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.focus();
+          });
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', showIdentity, { once:true });
+        } else {
+          showIdentity();
+        }
+      });
+      window.fetch = async function (input, init) {
+        var options = Object.assign({}, init || {});
+        var request = input instanceof Request ? input : null;
+        var url = new URL(request ? request.url : String(input), location.href);
+        var method = String(options.method || (request && request.method) || 'GET').toUpperCase();
+        var sameOrigin = url.origin === location.origin;
+        if (sameOrigin && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+          var state = await authReady;
+          if (state.enabled && state.authenticated && state.csrfToken) {
+            var headers = new Headers(request ? request.headers : undefined);
+            new Headers(options.headers || undefined).forEach(function (value, key) {
+              headers.set(key, value);
+            });
+            headers.set('X-DFIR-CSRF', state.csrfToken);
+            options.headers = headers;
+          }
+        }
+        options.credentials = sameOrigin ? 'same-origin' : options.credentials;
+        var response = await nativeFetch(input, options);
+        if (sameOrigin && response.status === 401 && !url.pathname.startsWith('/auth/')) {
+          location.assign('/login?returnTo=' + encodeURIComponent(location.pathname + location.search));
+        }
+        return response;
+      };
+    })();
+  </script>
   <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape.min.js"></script>
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
@@ -2567,6 +2649,24 @@
       display: flex; align-items: center; border-radius: 7px; line-height: 0;
       transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
     #settingsBtn:hover { color: var(--text-primary); background: var(--hover-wash); }
+    /* Signed-in profile menu — the final control in the header, after Settings. */
+    #profileMenuWrap { position: relative; display: flex; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+    #profileMenuWrap[hidden] { display: none; }
+    #profileMenuBtn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+      display: flex; align-items: center; border-radius: 7px; line-height: 0;
+      transition: color .15s, background .15s; }
+    #profileMenuBtn:hover, #profileMenuBtn[aria-expanded="true"] { color: var(--text-primary); background: var(--hover-wash); }
+    .profile-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 220px;
+      background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+      padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
+    .profile-menu[hidden] { display: none; }
+    .profile-menu-identity { display: block; padding: 7px 9px 8px; color: var(--text-muted); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border-subtle); }
+    .profile-menu a, .profile-menu button { display: flex; width: 100%; justify-content: flex-start;
+      box-sizing: border-box; margin: 3px 0 0; padding: 7px 9px; border: none; border-radius: 5px;
+      background: none; color: var(--text-primary); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+    .profile-menu a:hover, .profile-menu button:hover { background: var(--bg-hover); }
+    .profile-menu #profileSignOut { color: var(--badge-danger-text); }
     /* Settings modal — flex column so the tab-bar (top) and footer (bottom) stay fixed and only the
        active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
        (footer clipped) whenever the .stab-bar wrapped to two lines. */
@@ -2883,6 +2983,14 @@
     <button id="themeToggle" type="button" title="Theme — click to change" aria-label="Change theme" aria-haspopup="menu" aria-expanded="false"><svg class="ti-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="ti-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
     <a id="helpBtn" href="https://hasamba.github.io/DFIR-Companion/manual/" target="_blank" rel="noopener noreferrer" title="Open the online user manual (new tab)" aria-label="User manual"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg></a>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
+    <span id="profileMenuWrap" hidden>
+      <button id="profileMenuBtn" type="button" title="Account menu" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
+      <span id="profileMenu" class="profile-menu" role="menu" hidden>
+        <span id="profileIdentityName" class="profile-menu-identity"></span>
+        <a href="/admin" role="menuitem">Account &amp; team</a>
+        <button id="profileSignOut" type="button" role="menuitem">Sign out</button>
+      </span>
+    </span>
     <div class="scope-group">
       <span style="color:var(--text-primary);">Scope:</span>
       <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
@@ -13003,6 +13111,22 @@
       b.style.setProperty("--ipb-w", "100%");
       setTimeout(() => { b.classList.remove("ipb-active"); b.style.setProperty("--ipb-w", "0%"); }, 400);
     }
+    function cancelImportProgress() {
+      const b = _ipb(); if (!b) return;
+      b.classList.remove("ipb-active", "ipb-indeterminate");
+      b.style.setProperty("--ipb-w", "0%");
+    }
+    function importPermissionMessage(caseId) {
+      const state = window.dfirAuthState;
+      if (!state || !state.enabled || !state.authenticated) return "";
+      if (state.identity && state.identity.globalRole === "administrator") return "";
+      const role = state.caseRoles && state.caseRoles[caseId];
+      if (role === "investigator" || role === "administrator") return "";
+      if (role) {
+        return `Your ${role} role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.`;
+      }
+      return "You do not have a case role that permits importing evidence. Ask a case administrator for the investigator or administrator role.";
+    }
     // Read a File as text while driving the progress bar (0 → 40%).
     function readFileTextWithProgress(file) {
       return new Promise((resolve, reject) => {
@@ -20991,8 +21115,14 @@
     // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
     // and routes it to the right importer. Multiple files can be selected at once.
     document.getElementById("importBtn").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) {
         document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      const permissionError = importPermissionMessage(caseId);
+      if (permissionError) {
+        document.getElementById("status").textContent = permissionError;
         return;
       }
       document.getElementById("importFile").click();
@@ -21002,6 +21132,13 @@
       const files = Array.from(e.target.files || []);
       if (!caseId || !files.length) return;
       const statusEl = document.getElementById("status");
+      const permissionError = importPermissionMessage(caseId);
+      if (permissionError) {
+        cancelImportProgress();
+        statusEl.textContent = permissionError;
+        e.target.value = "";
+        return;
+      }
       const isImage = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
       // Raw evidence an external tool handles (built-in EVTX/PCAP + any extension a CUSTOM tool claims)
       // can't be read as text. The set of "raw" extensions comes from /tools/status so custom tools work
@@ -21062,6 +21199,13 @@
             });
           }
           const jr = await r.json().catch(() => ({}));
+          if (r.status === 403) {
+            cancelImportProgress();
+            statusEl.textContent = importPermissionMessage(caseId) || jr.error ||
+              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+            e.target.value = "";
+            return;
+          }
           if (r.status === 423) { hideImportProgress(); statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
           // The case doesn't exist (Connect attaches without creating). All files in the batch would
           // hit the same wall, so abort with the actionable reason instead of a generic "failed".
@@ -21091,6 +21235,14 @@
               tabTitle: f.name.replace(/\.[^.]+$/, ""), triggerType, imageBase64,
             }),
           });
+          if (r.status === 403) {
+            const jr = await r.json().catch(() => ({}));
+            cancelImportProgress();
+            statusEl.textContent = importPermissionMessage(caseId) || jr.error ||
+              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+            e.target.value = "";
+            return;
+          }
           if (r.status === 423) { const jr = await r.json().catch(() => ({})); statusEl.textContent = jr.error || "Case is closed — reopen it to add screenshots"; e.target.value = ""; return; }
           if (!r.ok) { imgFail++; continue; }
           const meta = await r.json();

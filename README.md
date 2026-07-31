@@ -320,6 +320,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Per-source noise/trust scores** — weights sources by reliability for correlation wording and confidence capping; overridable per case
 
 ### Investigation workflow
+- **Optional authenticated team mode** — OIDC plus an audited local emergency account, secure sessions/CSRF, reader/investigator/reviewer/administrator case roles, case-scoped service identities, immutable analyst attribution, and HTTP/WebSocket/capture/export enforcement; the zero-config loopback-only single-user mode remains the default ([setup guide](mkdocs-docs/reference/team-authentication.md))
 - **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
@@ -838,13 +839,22 @@ All companion behavior is configured via env vars (`companion/.env` or shell). C
 |---|---|---|
 | `DFIR_CASES_ROOT` | `./cases` | Case folder location; relative paths resolve against `companion/` |
 | `DFIR_PORT` | `4773` | Server port (must match the extension and dashboard) |
-| `DFIR_HOST` | `127.0.0.1` | Bind interface; Docker image sets `0.0.0.0`, Compose re-maps to localhost on the host |
+| `DFIR_HOST` | `127.0.0.1` | Bind interface. An unauthenticated non-loopback bind is refused; Docker Compose documents its host-loopback-only exception |
 | `DFIR_MAX_BODY_MB` | `256` | Max upload size in MB; raise if large SIEM/EDR exports fail with HTTP 413 |
 | `DFIR_ALLOWED_ORIGINS` | _(none)_ | Extra browser origins allowed to call the API, comma-separated. The capture extension, loopback, and any origin the companion itself served are always trusted, so localhost/LAN/Docker need no setting; every other web origin is refused. Callers sending no `Origin` (curl, scripts, Velociraptor) are unaffected. Needed when the dashboard is served from a **hostname** — a reverse proxy or a hosted deployment |
 | `DFIR_ALLOWED_HOSTS` | _(none)_ | Extra hostnames this companion answers to, comma-separated. Loopback and bare IP addresses are always accepted, so localhost, Docker, and reaching the dashboard over the LAN at `http://192.168.1.50:4773` need no setting. Any **name** that is not listed is refused — that is what stops DNS rebinding (a hostile site pointing its own domain at your machine). Set this when a reverse proxy forwards a `Host` that differs from the origin you put in `DFIR_ALLOWED_ORIGINS` |
 | `DFIR_ALLOWED_HOST_SUFFIXES` | _(none)_ | Same as above but matched on a domain suffix, e.g. `.lab.example.com`, for platforms that mint a fresh hostname per session. Matching is on a label boundary, so `.acme.com` never matches `evilacme.com` |
 | `DFIR_LOG_LEVEL` | `info` | Log verbosity (`debug`/`info`/`warn`/`error`). Tees to console + `logs/session-<time>.log` (global) + `cases/<id>/logs/session-<time>.log` (per-case). `debug` traces AI calls, captures, OCR, anonymization, enrichment. Change live (no restart) via Settings → Log verbosity |
 | `DFIR_LOG_DIR` | `logs/` beside cases root | Folder for the **global** session log. Relative paths anchor to `companion/`. Per-case logs always stay in the case folder |
+
+### Authentication (optional team deployment)
+
+`DFIR_AUTH_MODE=team` enables OIDC/local sign-in, secure browser sessions, per-case roles, and
+case-scoped service identities. Authentication and identity-provider settings are deployment
+security controls: configure them in `.env` or a secret store, then restart. See the
+[Team Accounts and Case Roles guide](mkdocs-docs/reference/team-authentication.md) for the
+complete variable list, HTTPS setup, first-admin bootstrap, role matrix, extension token, and
+single-writer process model.
 
 ### AI — extraction (required to enable analysis)
 

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { join, relative, isAbsolute, sep } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { StateLock } from "./stateLock.js";
+import { authenticatedActorFields } from "../auth/identityContext.js";
 
 // Evidence here is disk images, memory dumps and Plaso super-timelines — routinely 400 MB+, and
 // past V8's ~512 MB string ceiling. readFile() would OOM on exactly the artifacts custody matters
@@ -32,6 +33,9 @@ export interface CustodyRecord {
   artifactPath: string;
   sha256: string;
   collectedBy: string;
+  actorId?: string;
+  actorDisplayName?: string;
+  actorKind?: "local" | "oidc" | "service";
   collectedAt: string;
   source: string;
   trigger: string;
@@ -171,6 +175,7 @@ export class CustodyStore {
    */
   private async appendChained(caseId: string, inputs: CustodyRecordInput[]): Promise<CustodyRecord[]> {
     if (inputs.length === 0) return [];
+    const authenticated = authenticatedActorFields();
     return this.appendLock.runExclusive(caseId, async () => {
       const lines = await this.storedLines(caseId);
       // The chain links STORED lines, not resolved ones: a case-relative path is what is actually on
@@ -183,6 +188,7 @@ export class CustodyStore {
       for (const input of inputs) {
         const record: CustodyRecord = {
           ...input,
+          ...(authenticated ? { ...authenticated, collectedBy: authenticated.actorDisplayName } : {}),
           event: isCustodyEvent(input.event) ? input.event : "collected",
           seq: await this.cases.nextCustodySeq(caseId),
           prevHash,

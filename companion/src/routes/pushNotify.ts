@@ -5,6 +5,7 @@ import { resolvePushAuth } from "../analysis/pushAuth.js";
 import { extractPushPayload } from "../analysis/pushPayload.js";
 import { parseChannelInput, redactChannel } from "../analysis/notifications.js";
 import type { RouteContext } from "./context.js";
+import { requestAuthentication } from "../auth/types.js";
 
 /**
  * Push + notification routes: the generic external push-ingest endpoint (#84) with its per-case
@@ -32,13 +33,18 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
   app.post("/cases/:id/push", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
-    // Auth: global DFIR_PUSH_TOKEN and/or a per-case token. 403 when push is unconfigured, 401 on a bad key.
-    let caseToken: string | undefined;
-    if (options.pushTokenStore) { try { caseToken = (await options.pushTokenStore.get(caseId))?.token; } catch { /* none */ } }
-    const bearer = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    const presented = String(req.get("x-dfir-key") || bearer || "");
-    const auth = resolvePushAuth({ globalToken: options.pushToken, caseToken, presented });
-    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const teamService = requestAuthentication(req)?.kind === "service-token";
+    if (!teamService) {
+      // Legacy single-user automation uses the global or per-case push key. In team mode the
+      // central gate has already validated a case-scoped service identity, so a second secret
+      // would add no authority and would make scoped-token rotation needlessly brittle.
+      let caseToken: string | undefined;
+      if (options.pushTokenStore) { try { caseToken = (await options.pushTokenStore.get(caseId))?.token; } catch { /* none */ } }
+      const bearer = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+      const presented = String(req.get("x-dfir-key") || bearer || "");
+      const auth = resolvePushAuth({ globalToken: options.pushToken, caseToken, presented });
+      if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    }
 
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
 

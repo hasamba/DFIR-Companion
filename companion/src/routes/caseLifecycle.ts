@@ -38,6 +38,7 @@ import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
 import { pushFindingToJira, pushFindingsToJira } from "../integrations/jira/jiraPush.js";
 import { pushFindingToServiceNow, pushFindingsToServiceNow } from "../integrations/servicenow/servicenowPush.js";
 import { isTerminal, type Job } from "../analysis/jobRegistry.js";
+import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { ImportMetadata } from "../types.js";
 import type {  IocBlocklistOptions, BlocklistIocType } from "../reports/iocBlocklist.js";
@@ -56,7 +57,6 @@ import type { RouteContext } from "./context.js";
  *     notion,clickup} and the /{timesketch,misp,notion,clickup}/status + /timesketch/reconnect endpoints.
  *   - manual timeline event — POST /cases/:id/events.
  *   - declarative importers CRUD — GET/POST/DELETE /importers, /importers/{prompt,reload,precedence}.
- *   - background jobs — GET /api/jobs, GET /api/jobs/:id, POST /api/jobs/:id/cancel.
  *   - activity log — GET /cases/:id/activity-log.
  *   - settings/env + setup — GET/POST /settings/env, POST /settings/{ai-reload,reload}, GET /setup/status.
  *   - static app shell — GET /, /dashboard, /mobile, /manifest.webmanifest, /sw.js (these five were
@@ -92,12 +92,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // moved call sites stay verbatim.
   const logLine = (msg: string): void => serverLogger.info(msg);
   const errLine = (msg: string): void => serverLogger.error(msg);
-
-  // List existing cases (newest first) so the extension can present a picker of cases
-  // to attach to — case CREATION lives in the dashboard, the extension only connects.
-  app.get("/cases", async (_req: Request, res: Response) => {
+  app.get("/cases", async (req: Request, res: Response) => {
     try {
-      return res.status(200).json((await store.listCases()).map(sanitizeCaseMeta));
+      const listed = await store.listCases();
+      const visible = options.teamAuth?.visibleCaseIds(req);
+      return res.status(200).json(listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -116,8 +115,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (typeof caseId !== "string" || !isValidCaseId(caseId)) return res.status(400).json({ error: "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal" });
       if (await store.caseExists(caseId)) return res.status(409).json({ error: `case ${caseId} already exists` });
       const meta = await store.createCase({
-        caseId, name, investigator: investigator ?? "unknown", aiProvider: aiProvider ?? null,
+        caseId, name, investigator: requestAuthentication(req)?.identity.displayName ?? investigator ?? "unknown", aiProvider: aiProvider ?? null,
       });
+      options.teamAuth?.grantCreator(req, caseId);
       if (templateId && options.templateStore && options.stateStore) {
         const template = await options.templateStore.get(String(templateId));
         if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
@@ -180,6 +180,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         }
       }
       const result = await seedDemoCase(store.casesRoot, { caseId, force });
+      options.teamAuth?.grantCreator(req, result.caseId);
       return res.status(201).json(result);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
@@ -282,13 +283,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Best-effort: permanently deletes a case's folder AFTER the caller has already fully built any
-  // requested archive. Failure here must NOT be treated as though the archive itself failed — the
-  // caller already has (or is about to send) that file; this just means the case's folder remains
-  // on disk until deletion is retried.
-  async function deleteCaseFolderBestEffort(id: string): Promise<{ deleted: boolean; error?: string }> {
+  // Delete only after building an archive; revoke roles and service identities only after success.
+  async function deleteCaseFolderBestEffort(id: string, actor?: AuthIdentity): Promise<{ deleted: boolean; error?: string }> {
     try {
       await store.deleteCaseFolder(id);
+      options.teamAuth?.store.deleteCaseAccess(id, actor);
       logLine(`[delete] case=${id} deleted`);
       return { deleted: true };
     } catch (err) {
@@ -332,7 +331,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         }
         const archive = await exportEncryptedCase(store, id, password);
         const filename = dfircaseFilename(id, meta.name);
-        const { deleted } = await deleteCaseFolderBestEffort(id);
+        const { deleted } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
         res.type("application/octet-stream");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
         res.setHeader("Cache-Control", "private, no-cache");
@@ -346,7 +345,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         logLine(`[delete] case=${id} archived to ZIP before deletion: ${archiveResult.archivePath}`);
       }
 
-      const { deleted, error: deleteError } = await deleteCaseFolderBestEffort(id);
+      const { deleted, error: deleteError } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
 
       return res.status(200).json({
         deleted,
@@ -548,6 +547,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const { meta, counts } = await importEncryptedCase(store, fileBuffer, password, {
         targetCaseId: typeof targetCaseId === "string" && targetCaseId.trim() ? targetCaseId.trim() : undefined,
       });
+      options.teamAuth?.grantCreator(req, meta.caseId);
       // An archived case.json is written back byte-for-byte on import (see
       // caseExportArchive.ts), so an exported case that had a case-lock password carries
       // its salt+hash into the archive. Sanitize before responding — never let it reach
