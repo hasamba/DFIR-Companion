@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures/test.js";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 // Covers: US-002
 // (feature-user-stories.csv) — POST /cases through the real dialog, including the id-validation and duplicate refusals.
@@ -10,6 +10,26 @@ import type { Page } from "@playwright/test";
 //
 // Deliberately does not use the demoCase fixture: the point is to exercise the path the fixture
 // bypasses.
+
+/**
+ * Open the new-case dialog and wait until it has finished populating itself.
+ *
+ * openNewCase() adds the .open class, then AWAITS suggestCaseId(), which fetches /cases and
+ * overwrites #ncCaseId with the next free INC-YYYY-NNN. Typing before that resolves means the
+ * suggestion lands on top of the typed id — under a loaded server that silently turned the
+ * path-traversal test into a successful creation of a perfectly valid case, so the dialog closed
+ * and the assertion failed for a reason that had nothing to do with validation.
+ *
+ * Waiting for the suggested id to arrive is the fix. It is not a timing tweak: without it the test
+ * asserts against whichever value won a race.
+ */
+async function openNewCaseDialog(page: Page): Promise<Locator> {
+  await page.locator("#newCaseBtn").click();
+  const dialog = page.locator("#newCaseOverlay");
+  await expect(dialog).toHaveClass(/\bopen\b/);
+  await expect(dialog.locator("#ncCaseId")).not.toHaveValue("");
+  return dialog;
+}
 
 /**
  * Open the dashboard and wait until it can actually respond to a click.
@@ -35,9 +55,7 @@ test("creates a case through the dialog and connects to it", async ({ page }, te
   const caseId = freshCaseId("e2e-ui", testInfo.testId);
   await openDashboard(page);
 
-  await page.locator("#newCaseBtn").click();
-  const dialog = page.locator("#newCaseOverlay");
-  await expect(dialog).toHaveClass(/\bopen\b/);
+  const dialog = await openNewCaseDialog(page);
   // The dialog semantics from PR 2 must hold on the real user path, not only when a test forces
   // the overlay open.
   await expect(dialog).toHaveAttribute("role", "dialog");
@@ -60,8 +78,7 @@ test("creates a case through the dialog and connects to it", async ({ page }, te
 
 test("refuses a case id containing path traversal", async ({ page }) => {
   await openDashboard(page);
-  await page.locator("#newCaseBtn").click();
-  const dialog = page.locator("#newCaseOverlay");
+  const dialog = await openNewCaseDialog(page);
 
   await dialog.locator("#ncCaseId").fill("../escape");
   await dialog.locator("#ncName").fill("bad");
@@ -76,8 +93,7 @@ test("refuses a case id containing path traversal", async ({ page }) => {
 
 test("refuses a duplicate case id", async ({ page, demoCase }) => {
   await openDashboard(page);
-  await page.locator("#newCaseBtn").click();
-  const dialog = page.locator("#newCaseOverlay");
+  const dialog = await openNewCaseDialog(page);
 
   await dialog.locator("#ncCaseId").fill(demoCase);
   await dialog.locator("#ncName").fill("duplicate");
