@@ -4,6 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken } from "../analysis/casePassword.js";
 import { isRequestAllowed, type GuardConfig } from "../http/originGuard.js";
 import type { LiveHub, SocketLike } from "./hub.js";
+import type { TeamAuth } from "../auth/teamAuth.js";
 
 /**
  * Authorization for a `/ws` upgrade (issue #212).
@@ -34,6 +35,7 @@ export interface WsUpgradeRequest {
 export interface WsUpgradeDeps extends GuardConfig {
   store: CaseStore;
   secret: Buffer;
+  teamAuth?: TeamAuth;
 }
 
 // Mirrors the id shape CaseStore is willing to create, so a traversal-flavoured id is refused
@@ -55,6 +57,9 @@ export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeD
   }
   if (!caseId) return { ok: false, reason: "caseId is required" };
   if (!SAFE_CASE_ID.test(caseId)) return { ok: false, reason: `invalid caseId "${caseId}"` };
+  if (deps.teamAuth && !deps.teamAuth.authorizeWebSocket(headers.cookie, caseId)) {
+    return { ok: false, reason: "authentication or case access denied" };
+  }
 
   let meta;
   try {

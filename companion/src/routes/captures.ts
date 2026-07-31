@@ -64,8 +64,11 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
   // The most-recent capture across ALL cases (in-memory; resets on restart) + its age in ms.
   // A freshly-connected dashboard checks this to warn when screenshots are landing on a different
   // case than the one it's viewing — catching the mismatch even without a live capture event.
-  app.get("/captures/recent", (_req: Request, res: Response) => {
+  app.get("/captures/recent", (req: Request, res: Response) => {
     if (!lastCapture) return res.status(200).json({ caseId: null });
+    if (options.teamAuth && !options.teamAuth.canReadCase(req, lastCapture.caseId)) {
+      return res.status(200).json({ caseId: null });
+    }
     return res.status(200).json({ caseId: lastCapture.caseId, ageMs: Date.now() - lastCapture.at });
   });
 

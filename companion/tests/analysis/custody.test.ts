@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { CustodyStore } from "../../src/analysis/custody.js";
+import { runWithIdentity } from "../../src/auth/identityContext.js";
+import type { AuthIdentity } from "../../src/auth/types.js";
 
 describe("CustodyStore", () => {
   let store: CustodyStore;
@@ -40,6 +42,37 @@ describe("CustodyStore", () => {
     expect(list).toHaveLength(1);
     expect(list[0].collectedBy).toBe("alice");
     expect(list[0].sha256).toHaveLength(64);
+  });
+
+  it("binds custody to the authenticated immutable identity", async () => {
+    const identity: AuthIdentity = {
+      id: "usr-immutable",
+      kind: "oidc",
+      username: "alice@example.invalid",
+      displayName: "Alice Analyst",
+      globalRole: "member",
+      disabled: false,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    };
+    const record = await runWithIdentity(identity, () =>
+      store.record("c1", {
+        artifactPath,
+        sha256: createHash("sha256").update("hello world\n").digest("hex"),
+        collectedBy: "forged client name",
+        collectedAt: "2026-07-31T00:00:00.000Z",
+        source: "import",
+        trigger: "manual",
+        caseId: "c1",
+      }),
+    );
+
+    expect(record).toMatchObject({
+      actorId: "usr-immutable",
+      actorDisplayName: "Alice Analyst",
+      actorKind: "oidc",
+      collectedBy: "Alice Analyst",
+    });
   });
 
   it("skips a malformed line instead of throwing", async () => {

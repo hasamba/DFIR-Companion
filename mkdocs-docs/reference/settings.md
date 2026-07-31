@@ -76,6 +76,25 @@ remembered Essential/All preference, and closing Settings clears the box.
 
 ---
 
+## Authentication
+
+Authentication settings are deployment security controls, so they are intentionally not editable
+from the dashboard. Set them in `.env` or the deployment's secret store and restart.
+
+- `DFIR_AUTH_MODE` — `single-user` (default) or `team`; stop the server, change this value, and
+  restart to switch modes. Team identities and roles remain stored while single-user mode is active.
+- `DFIR_AUTH_COOKIE_SECURE` — secure cookies; defaults on in team mode
+- `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
+- `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup from a remote client
+- `DFIR_AUTH_DATA_DIR` — optional identity/session database location
+- `DFIR_AUTH_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, `_SCOPES` — optional
+  organization sign-in
+
+See [Team Accounts and Case Roles](team-authentication.md) for setup, roles, service
+identities, emergency access, and the one-writer deployment model.
+
+---
+
 ## AI
 
 - Provider, model, API key, base URL (extraction)
