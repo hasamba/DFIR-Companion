@@ -2,8 +2,8 @@
 
 ## The gates
 
-Six checks run in CI on every pull request. All six run locally, and all six are fast enough to run
-before you push. Everything below is from `companion/` unless it says otherwise.
+Seven checks run in CI on every pull request. All seven run locally, and all seven are fast enough to
+run before you push. Everything below is from `companion/` unless it says otherwise.
 
 ```bash
 npm run build          # tsc: compiles src/ to dist/. This is the production build.
@@ -12,13 +12,14 @@ npm run lint           # eslint: typed rules over the same three trees.
 npm run format:check   # prettier, on the files THIS BRANCH changed.
 npm run check:size     # no source file grew past its recorded size.
 npm run check:imports  # no new runtime import cycle.
+npm run check:boundaries  # no import crosses a module boundary the wrong way.
 npm test               # vitest: 486 files, ~6,200 tests.
 ```
 
 Run the whole set in one go:
 
 ```bash
-cd companion && npm run build && npm run typecheck && npm run lint && npm run format:check && npm run check:size && npm run check:imports && npm test
+cd companion && npm run build && npm run typecheck && npm run lint && npm run format:check && npm run check:size && npm run check:imports && npm run check:boundaries && npm test
 ```
 
 CI splits these across two jobs on purpose. **Companion build + test** failing means the code is
@@ -182,6 +183,35 @@ back-reference `import type`. Only if the cycle is genuinely intended:
 
 ```bash
 npm run check:imports -- --update   # and say why in the PR
+```
+
+---
+
+## `npm run check:boundaries` — the module-boundary ratchet
+
+Every file in `src/` belongs to a domain, every domain sits in a layer, and **an import may go down a
+layer or sideways within one — never up.** [ARCHITECTURE.md](ARCHITECTURE.md) is the map;
+`scripts/module-map.json` is what CI actually reads, and a test asserts the two agree.
+
+Unlike `check:imports`, **type-only imports count here.** An erased import cannot form a runtime
+cycle, but it still means one domain knows another's shape, which is the coupling the map exists to
+control.
+
+There are **48** recorded violations in `scripts/boundary-violations.json`, listed as
+`source-file -> target-file` rather than as domain pairs — otherwise one grandfathered violation
+becomes a licence to add more imports along the same edge.
+
+When it fails on a **new violation**, the usual fixes are: move the shared helper down to a domain
+both callers already depend on, invert the call so the higher layer drives, or — if the module is
+simply filed in the wrong domain — correct its entry in `module-map.json`.
+
+When it fails because a **file has no domain**, classify it. That is a hard error, never a ledger
+entry: a new `src/analysis/*.ts` file needs a `flatAnalysisFiles` entry, and an unclassified file is
+an unanswered design question rather than a known debt.
+
+```bash
+npm run check:boundaries -- --update   # shrink-only; refuses to add an entry
+npm run check:boundaries -- --init     # re-baseline; additions are printed, justify them
 ```
 
 ---

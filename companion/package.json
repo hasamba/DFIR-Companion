@@ -17,6 +17,7 @@
     "format:all": "prettier --write .",
     "check:size": "node scripts/check-file-size.mjs",
     "check:imports": "node scripts/check-imports.mjs",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
