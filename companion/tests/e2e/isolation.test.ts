@@ -19,9 +19,7 @@ describe("assertTempCasesRoot", () => {
   });
 
   it("rejects a directory outside the OS temp dir", () => {
-    expect(() => assertTempCasesRoot(join(REPO_ROOT, "cases"), REPO_ROOT)).toThrow(
-      /refusing to start/,
-    );
+    expect(() => assertTempCasesRoot(join(REPO_ROOT, "cases"), REPO_ROOT)).toThrow(/refusing to start/);
   });
 
   it("rejects a path inside the repository even if it is also under tmp", () => {
@@ -34,9 +32,9 @@ describe("assertTempCasesRoot", () => {
   });
 
   it("rejects a path that does not exist", () => {
-    expect(() =>
-      assertTempCasesRoot(join(tmpdir(), "definitely-not-here-12345"), REPO_ROOT),
-    ).toThrow(/refusing to start/);
+    expect(() => assertTempCasesRoot(join(tmpdir(), "definitely-not-here-12345"), REPO_ROOT)).toThrow(
+      /refusing to start/,
+    );
   });
 
   it("does not treat a sibling with a shared prefix as being inside the repo", () => {
