@@ -133,11 +133,17 @@ describe("deriveCockpit — investigator usability scenarios", () => {
         id: "job_1",
         caseId: investigation.caseId,
         kind: "import",
-        status: "error",
+        status: "failed",
+        priority: "normal",
+        queuedAt: "2026-07-30T11:45:00.000Z",
         startedAt: "2026-07-30T11:45:00.000Z",
         endedAt: "2026-07-30T11:46:00.000Z",
         updatedAt: "2026-07-30T11:46:00.000Z",
         error: "Parser rejected the archive",
+        warnings: [],
+        attempt: 1,
+        maxRetries: 0,
+        resumable: false,
         cancellable: false,
       }],
       investigator: "Alice",
@@ -197,6 +203,41 @@ describe("deriveCockpit — investigator usability scenarios", () => {
 });
 
 describe("deriveCockpit — review and card decisions", () => {
+  it("keeps a running job card stable while its detailed progress changes", () => {
+    const investigation = state();
+    const job = {
+      id: "job_live",
+      caseId: investigation.caseId,
+      kind: "import" as const,
+      label: "security.evtx",
+      status: "running" as const,
+      priority: "normal" as const,
+      queuedAt: "2026-07-30T11:45:00.000Z",
+      startedAt: "2026-07-30T11:45:00.000Z",
+      updatedAt: "2026-07-30T11:46:00.000Z",
+      warnings: [],
+      attempt: 1,
+      maxRetries: 0,
+      resumable: true,
+      cancellable: true,
+    };
+    const first = deriveCockpit({
+      state: investigation,
+      jobs: [{ ...job, detail: "reading Windows events 100/1000" }],
+      investigator: "Alice",
+      now: NOW,
+    });
+    const second = deriveCockpit({
+      state: investigation,
+      jobs: [{ ...job, detail: "reading Windows events 900/1000" }],
+      investigator: "Alice",
+      now: NOW,
+    });
+
+    expect(first.sections.activity[0].summary).toBe("security.evtx");
+    expect(second.sections.activity[0].summary).toBe(first.sections.activity[0].summary);
+  });
+
   it("shows only changes after this investigator's last review", () => {
     const result = deriveCockpit({
       state: state({

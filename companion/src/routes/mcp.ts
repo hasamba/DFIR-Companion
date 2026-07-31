@@ -1,6 +1,5 @@
 import type { Express, Request, Response } from "express";
 import { join, basename } from "node:path";
-import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { listServers, listTools, type McpBridgeServer } from "../integrations/mcp/mcpBridge.js";
@@ -253,7 +252,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
   // A job id is the preview's filename, and it arrives from the client on the approve/discard
   // routes. Only the shape JobManager mints is accepted, so nothing can walk out of the directory.
-  const isJobId = (v: string): boolean => /^job_\d+$/.test(v);
+  const isJobId = (v: string): boolean =>
+    /^job_[A-Za-z0-9][A-Za-z0-9_-]{0,159}$/.test(v);
   const previewDir = (caseId: string): string => join(store.caseDir(caseId), ".mcpwork", "preview");
 
   interface StagedPreview {
@@ -262,17 +262,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     label: string;
     kind: string;
     outName: string;
-    runId?: string;
     importedAt?: string;
     reportId?: string;
   }
-
-  /**
-   * Identifies THIS process. JobManager numbers jobs from 1 on every start, and a preview is named
-   * after its job, so without this a restart makes job_1's stale file answer for a brand-new job_1 —
-   * observed in testing, serving a previous run's output as if it were the current one.
-   */
-  const RUN_ID = randomUUID();
 
   async function stagePreview(
     caseId: string, jobId: string, p: StagedPreview & { text: string; reportText?: string },
@@ -281,7 +273,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const dir = previewDir(caseId);
     await mkdir(dir, { recursive: true });
     const { text, reportText, ...rest } = p;
-    const meta: StagedPreview = { ...rest, runId: RUN_ID };
+    const meta: StagedPreview = rest;
     await writeFile(join(dir, `${jobId}.out`), text, "utf8");
     if (reportText !== undefined) await writeFile(join(dir, `${jobId}.report`), reportText, "utf8");
     await writeFile(join(dir, `${jobId}.json`), JSON.stringify(meta), "utf8");
@@ -294,8 +286,6 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const dir = previewDir(caseId);
     try {
       const meta = JSON.parse(await readFile(join(dir, `${jobId}.json`), "utf8")) as StagedPreview;
-      // A preview from a previous process is not this job's — drop it rather than serve it.
-      if (meta.runId !== RUN_ID && !meta.importedAt) { await dropPreview(caseId, jobId); return null; }
       const text = await readFile(join(dir, `${jobId}.out`), "utf8");
       const reportText = await readFile(join(dir, `${jobId}.report`), "utf8").catch(() => undefined);
       return { ...meta, text, ...(reportText !== undefined ? { reportText } : {}) };
@@ -317,7 +307,6 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
   ): Promise<void> {
     await atomicWrite(join(previewDir(caseId), `${jobId}.json`), JSON.stringify({
       ...preview,
-      runId: RUN_ID,
       reportId,
       importedAt,
     }));
@@ -341,6 +330,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
 
     void (async () => {
       try {
+        await job?.ready;
         const outcome = await runMcpTool({
           server,
           ...(options.mcpClaudeRunner ? { claudeRunner: options.mcpClaudeRunner } : {}),
@@ -389,7 +379,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           // a second time. That would double the cost of a Volatility run and, for a tool with side
           // effects, do the thing twice.
           await stagePreview(caseId, job?.jobId ?? "", { server: server.id, tool, label, kind, outName, text: outcome.text });
-          if (job) options.jobManager?.finish(job.jobId);
+          if (job) await options.jobManager?.finish(job.jobId);
           void logActivity(options.activityLogStore, options.onActivity, caseId, {
             category: "import", action: "mcp-preview",
             detail: `${server.id}/${tool} on ${label} → ${outcome.text.length} byte(s), detected as "${kind}" — awaiting review`
@@ -407,14 +397,14 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             addedIocs: r.addedIocs, updatedIocs: 0,
           },
         });
-        if (job) options.jobManager?.finish(job.jobId);
+        if (job) await options.jobManager?.finish(job.jobId);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import", action: "mcp-run",
           detail: `${server.id}/${tool} on ${label} → ${r.addedEvents} event(s), ${r.addedIocs} IOC(s)`
             + (outcome.destination ? ` (evidence sent to ${outcome.destination})` : ""),
         });
       } catch (err) {
-        if (job) options.jobManager?.fail(job.jobId, err);
+        if (job) await options.jobManager?.fail(job.jobId, err);
         recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import", action: "mcp-run",
@@ -662,6 +652,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     void (async () => {
       let cleanupRemote: (() => Promise<void>) | undefined;
       try {
+        await job?.ready;
         let prompt = request.prompt;
         if (targetPath) {
           if (servers.length !== 1) throw new Error("choose one MCP server when investigating an evidence file");
@@ -715,7 +706,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
             kind: AGENT_DELTA_KIND, outName: `agent.${Date.now()}.json`, text: JSON.stringify(result.delta, null, 2),
             reportText: result.rawText,
           });
-          if (job) options.jobManager?.finish(job.jobId);
+          if (job) await options.jobManager?.finish(job.jobId);
           void logActivity(options.activityLogStore, options.onActivity, caseId, {
             category: "ai", action: "mcp-agent",
             detail: `agent on ${servers.map((s) => s.id).join(", ")} → awaiting review`,
@@ -732,13 +723,13 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
           text: result.rawText,
           counts: r,
         });
-        if (job) options.jobManager?.finish(job.jobId);
+        if (job) await options.jobManager?.finish(job.jobId);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} → ${r.addedFindings} finding(s) added, ${r.updatedFindings} updated, ${r.addedIocs} IOC(s), ${r.addedEvents} event(s)`,
         });
       } catch (err) {
-        if (job) options.jobManager?.fail(job.jobId, err);
+        if (job) await options.jobManager?.fail(job.jobId, err);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai", action: "mcp-agent",
           detail: `agent on ${servers.map((s) => s.id).join(", ")} FAILED: ${(err as Error).message}`,

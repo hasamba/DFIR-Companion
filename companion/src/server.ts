@@ -39,6 +39,8 @@ import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
 import { registerAnalysisRunRoutes } from "./routes/analysisRuns.js";
 import { registerCasePasswordRoutes } from "./routes/casePassword.js";
 import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
+import { registerJobRoutes } from "./routes/jobs.js";
+import { registerDeepPassRoutes } from "./routes/deepPass.js";
 import { registerIncidentTypeRoutes } from "./routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "./routes/collectionPlan.js";
 import { registerClockSkewRoutes } from "./routes/clockSkew.js";
@@ -49,6 +51,7 @@ import { registerCockpitRoutes } from "./routes/cockpit.js";
 import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
 import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
 import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
+import { JobLedgerStore } from "./analysis/jobLedgerStore.js";
 import { AnonControlStore } from "./analysis/anonControl.js";
 import { CustomEntitiesStore } from "./analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
@@ -544,8 +547,8 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
-  // Background-job registry (#225): tracks heavy async operations (import / synthesis / enrichment)
-  // as cancellable Jobs for the dashboard Jobs panel + /api/jobs. Constructed in startServer (its
+  // Durable background-job ledger (#225, #380): tracks heavy async operations across restarts.
+  // Jobs appear in the dashboard Jobs panel + /api/jobs. Constructed in startServer (its
   // onJob hook WS-broadcasts job_changed); absent in createApp-only unit tests + scripts/* pipelines.
   jobManager?: JobManager;
   // Hunting feedback loop (#157): per-case ledger of deployed hunts + their outcomes (hit/miss +
@@ -1072,6 +1075,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerPlaybookHuntsRoutes(app, ctx);
   registerPlaybookMatchRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
+  registerDeepPassRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so
   // registering the interactive report after it makes the route permanently unreachable.
@@ -1079,11 +1083,9 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerReportsExportRoutes(app, ctx);
   registerReportVersionsRoutes(app, ctx);
   registerAnalysisRunRoutes(app, ctx);
-  // Case-password routes first (mirrors their original registration order, right after the case-lock gate),
-  // then the case-core catch-all (lifecycle, archives, integration pushes, importers, jobs, settings, static
-  // app shell). Both register before the terminal error handler at the end of createApp.
   registerCasePasswordRoutes(app, ctx);
   registerCaseLifecycleRoutes(app, ctx);
+  registerJobRoutes(app, ctx);
   registerIncidentTypeRoutes(app, ctx);
   registerCollectionPlanRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
@@ -1091,9 +1093,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   registerCockpitRoutes(app, ctx);
   registerComplianceRoutes(app, ctx);
   registerSlashCommandRoutes(app, ctx);
-  // Outbound-only command transports (#235) — neither needs an inbound URL. Opt-in, and gated on
-  // the flags so createApp-only unit tests never reach the network. Exposed on app.locals so a host
-  // can stop them on shutdown.
+  // Outbound command transports (#235) are opt-in; app.locals lets the host stop them on shutdown.
   if (options.telegramPolling) app.locals.telegramPoller = startTelegramPolling(ctx);
   if (options.slackSocketMode) app.locals.slackSocketMode = startSlackSocketMode(ctx);
 
@@ -1188,11 +1188,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // exclusive: a manual re-synthesize racing this live run (synthInFlight only serializes
       // auto-vs-auto) supersedes rather than running alongside it.
       const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "live synthesis", cancellable: true, exclusive: true });
-      options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {})
-        .then(() => { if (job) options.jobManager?.finish(job.jobId); options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
-        .catch((err) => {
+      (job?.ready ?? Promise.resolve()).then(() => options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {}))
+        .then(async () => { if (job) await options.jobManager?.finish(job.jobId); options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
+        .catch(async (err) => {
           const aborted = job?.signal?.aborted === true;
-          if (job) options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
+          if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
           recordAiError(caseId, "synthesizing", err);
           // A newer exclusive registration may have superseded this run — if a synthesis job for
           // this case is still active, that newer run owns the status; don't stomp it to idle.
@@ -1934,7 +1934,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // moved to _processed/ can't be un-imported — so there's nothing safe to cancel mid-flight.
       job = options.jobManager?.register({
         caseId, kind: "import", label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
-      });
+      }); if (job) await job.ready;
 
       const imported: string[] = [];
       // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
@@ -1967,7 +1967,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
           }
         }));
       }
-      if (job) options.jobManager?.finish(job.jobId);
+      if (job) await options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
 
       if (options.dropStatusStore) {
@@ -2000,7 +2000,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     } catch (err) {
       // A sweep-level failure (listing/meta/store I/O) must terminate the job — a job stuck "running"
       // forever is a worse UI bug than the original invisibility. No-op if it already finished.
-      if (job) options.jobManager?.fail(job.jobId, err);
+      if (job) await options.jobManager?.fail(job.jobId, err);
       throw err;
     } finally {
       dropScanning.delete(caseId);
@@ -2728,7 +2728,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   function enrichInBackground(caseId: string, force = false, parentRunId?: string): void {
     if (allProviders.length === 0 || !options.stateStore) return;
-    let job: { jobId: string; signal?: AbortSignal } | undefined; // #225: registered once providers are known
+    let job: RegisteredJob | undefined; // #225: registered once providers are known
     void (async () => {
       const startedAt = new Date().toISOString();
       const providers = await enabledProvidersFor(caseId);
@@ -2742,7 +2742,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
         if (!work) { enrichPending.delete(caseId); return; }
       }
       // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
-      job = options.jobManager?.register({ caseId, kind: "enrichment", label: `enrich (${providers.map((p) => p.name).join(", ")})`, cancellable: true });
+      job = options.jobManager?.register({ caseId, kind: "enrichment", label: `enrich (${providers.map((p) => p.name).join(", ")})`, cancellable: true }); if (job) await job.ready;
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
       logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
       const { iocs, summary } = await enrichIocs(state.iocs, {
@@ -2803,10 +2803,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       });
       const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
       const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
-      if (job) options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
+      if (job) await options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}` });
-    })().catch((err) => {
-      if (job) options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
+    })().catch(async (err) => {
+      if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
       options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
     });
   }
@@ -2857,16 +2857,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       // lookups, not an LLM call), so it still runs regardless of the AI toggle.
       if (!(await getControl(caseId)).enabled) { autoEnrichIfEnabled(caseId); return; }
       // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
-      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true });
+      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true }); if (job) await job.ready;
       options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
       try {
         await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
-        if (job) options.jobManager?.finish(job.jobId);
+        if (job) await options.jobManager?.finish(job.jobId);
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         autoEnrichIfEnabled(caseId);
       } catch (err) {
         const aborted = job?.signal?.aborted === true;
-        if (job) options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
+        if (job) await options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
         options.onAiStatus?.(caseId, aborted
           ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
           : { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
@@ -3689,11 +3689,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const velociraptorClient = buildVelociraptorClient();
   const velociraptorClientStore = new VelociraptorClientStore(join(dirname(casesRoot), "velociraptor", "clients.json"));
   const hub = new LiveHub();
-  // #225: background-job registry. onJob WS-broadcasts job_changed so the dashboard Jobs panel
-  // re-fetches; capped by DFIR_JOBS_MAX (oldest terminal jobs evicted).
   const jobManager = new JobManager({
-    onJob: (caseId) => hub.broadcastTo(caseId, { type: "job_changed" }),
-    max: Number(process.env.DFIR_JOBS_MAX) || undefined,
+    onJob: (caseId) => { if (caseId) hub.broadcastTo(caseId, { type: "job_changed" }); },
+    onError: (error) => logLine(`[jobs] durable ledger error: ${error.message}`),
+    ledger: new JobLedgerStore(store),
+    max: Number(process.env.DFIR_JOBS_MAX) || undefined, globalConcurrency: Number(process.env.DFIR_JOBS_CONCURRENCY) || undefined, perCaseConcurrency: Number(process.env.DFIR_JOBS_PER_CASE) || undefined,
   });
   const reportMetaStore = new ReportMetaStore(store);
   const reportVersionStore = new ReportVersionStore(store);   // #77 report versioning (diff & rollback)

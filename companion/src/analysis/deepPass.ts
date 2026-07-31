@@ -14,6 +14,7 @@
 // Everything here is pure and deterministic: no I/O, no AI, no state mutation.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { z } from "zod";
 import { SEVERITY_RANK, applySeverityFloor } from "./severityFloor.js";
 import { collapseForPrompt, groupEnvOptions, promptCandidates } from "./synthGroup.js";
 import { estimateTokens } from "./promptBudget.js";
@@ -114,6 +115,33 @@ export interface Observation {
   firstSeen?: string;
   lastSeen?: string;
 }
+
+export interface DeepPassCheckpoint {
+  nextBatch: number;
+  totalBatches: number;
+  floor: Severity;
+  selectionHash: string;
+  observations: Observation[];
+  batchesFailed: number;
+}
+
+export const deepPassCheckpointSchema: z.ZodType<DeepPassCheckpoint> = z.object({
+  nextBatch: z.number().int().nonnegative(),
+  totalBatches: z.number().int().nonnegative(),
+  floor: z.enum(["Critical", "High", "Medium", "Low", "Info"]),
+  selectionHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  observations: z.array(
+    z.object({
+      summary: z.string(),
+      whyItMatters: z.string(),
+      eventIds: z.array(z.string()),
+      hosts: z.array(z.string()).optional(),
+      firstSeen: z.string().optional(),
+      lastSeen: z.string().optional(),
+    }),
+  ),
+  batchesFailed: z.number().int().nonnegative(),
+});
 
 function str(v: unknown, max: number): string {
   return String(v ?? "").trim().slice(0, max);

@@ -1128,27 +1128,6 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     try { await options.importerStore.setPrecedence(p); ctx.setImporterPrecedence(p); options.onImporters?.(); return res.status(200).json({ precedence: p }); }
     catch (err) { return res.status(500).json({ error: (err as Error).message }); }
   });
-  // Background jobs (#225): list + inspect + cancel the heavy async operations (import / synthesis /
-  // enrichment) tracked by the JobManager, so the dashboard can render a Jobs panel and stop a
-  // long/stuck run. Read-only when no jobManager is wired (createApp-only unit tests) — empty list.
-  app.get("/api/jobs", (req: Request, res: Response) => {
-    const caseId = typeof req.query.caseId === "string" ? req.query.caseId : undefined;
-    return res.status(200).json({ jobs: options.jobManager?.list(caseId) ?? [] });
-  });
-  app.get("/api/jobs/:id", (req: Request, res: Response) => {
-    const job = options.jobManager?.get(req.params.id);
-    if (!job) return res.status(404).json({ error: `unknown job: ${req.params.id}` });
-    return res.status(200).json(job);
-  });
-  app.post("/api/jobs/:id/cancel", (req: Request, res: Response) => {
-    if (!options.jobManager) return res.status(501).json({ error: "job manager not configured" });
-    const result = options.jobManager.cancel(req.params.id);
-    if (result.ok) return res.status(200).json(result.job);
-    if (result.reason === "unknown") return res.status(404).json({ error: `unknown job: ${req.params.id}` });
-    if (result.reason === "terminal") return res.status(409).json({ error: "job already finished" });
-    return res.status(422).json({ error: "this job cannot be cancelled" });
-  });
-
   // Per-case investigation activity log (#238): every security-relevant action taken on this
   // case, newest first. Filter by category; cap by limit (default 200, so a long-lived case
   // doesn't dump its entire history in one response).

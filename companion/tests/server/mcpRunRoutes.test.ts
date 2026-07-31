@@ -66,7 +66,7 @@ async function harness(opts: { text?: string } = {}) {
 async function settle(jobManager: JobManager, jobId: string) {
   for (let i = 0; i < 200; i++) {
     const job = jobManager.get(jobId);
-    if (job && (job.status === "done" || job.status === "error" || job.status === "cancelled")) return job;
+    if (job && (job.status === "succeeded" || job.status === "failed" || job.status === "cancelled")) return job;
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error("job never settled");
@@ -87,7 +87,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
     expect(res.body).toMatchObject({ ok: true, server: "sift-mcp", tool: "run_command" });
 
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
 
     // scp out, ssh in to clean up.
     expect(transfers.map((t) => t.binary)).toEqual(["scp", "ssh"]);
@@ -127,7 +127,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = await settle(jobManager, res.body.jobId);
 
-    expect(job.status).toBe("error");
+    expect(job.status).toBe("failed");
     expect(job.error).toMatch(/sift-mcp\/run_command: returned no output/);
   });
 
@@ -141,7 +141,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send(RUN_BODY);
     const job = await settle(jobManager, res.body.jobId);
 
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
   });
 
   it("400s a target path outside the case directory", async () => {
@@ -161,7 +161,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
 
     // The guard runs inside the job, so the refusal lands there — and nothing was transferred.
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("error");
+    expect(job.status).toBe("failed");
     expect(job.error).toMatch(/not allowed to run "curl"/);
   });
 
@@ -194,7 +194,7 @@ describe("preview before import", () => {
     const res = await request(app).post("/cases/c1/mcp/sift-mcp/run").send({ ...RUN_BODY, preview: true });
     expect(res.body.preview).toBe(true);
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
 
     const state = await request(app).get("/cases/c1/state");
     expect(state.body.iocs).toHaveLength(0);
@@ -339,7 +339,7 @@ describe("POST /cases/:id/mcp/agent", () => {
     expect(res.status).toBe(202);
     expect(res.body.servers).toEqual(["sift-mcp"]);
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
 
     const state = await request(app).get("/cases/c1/state");
     expect(state.body.findings.some((f: { title: string }) => f.title === "Injected process")).toBe(true);
@@ -371,7 +371,7 @@ describe("POST /cases/:id/mcp/agent", () => {
     expect(running.progress).toEqual({ done: 2, total: 4 });
 
     release();
-    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
   });
 
   it("makes an agent run undoable", async () => {
@@ -387,7 +387,7 @@ describe("POST /cases/:id/mcp/agent", () => {
     const { app, jobManager } = await agentHarness();
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go", preview: true });
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
 
     const before = await request(app).get("/cases/c1/state");
     expect(before.body.findings).toHaveLength(0);
@@ -421,7 +421,7 @@ describe("POST /cases/:id/mcp/agent", () => {
     await mcpServerStore.update("sift-mcp", { allowedTools: [] });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "go" });
     expect(res.status).toBe(202);
-    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
   });
 
   it("delivers case evidence and tells the agent its analysis-host path", async () => {
@@ -439,7 +439,7 @@ describe("POST /cases/:id/mcp/agent", () => {
       targetPath: "imports/mem.raw",
     });
     expect(res.status).toBe(202);
-    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
     expect(prompt).toContain("Investigate this RAM dump");
     expect(prompt).toContain("/cases/incoming/mem.raw");
     expect(transfers.map((t) => t.binary)).toEqual(["scp", "ssh"]);
@@ -461,7 +461,7 @@ describe("POST /cases/:id/mcp/agent", () => {
       preview: true,
     });
     expect(res.status).toBe(202);
-    expect((await settle(jobManager, res.body.jobId)).status).toBe("done");
+    expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
     expect(prompt).toContain("/cases/incoming/sample.exe");
     expect(transfers[0].args.some((a) => a.includes("sample.exe"))).toBe(true);
   });
@@ -480,7 +480,7 @@ describe("POST /cases/:id/mcp/:serverId/run-upload", () => {
 
     expect(res.status).toBe(202);
     const job = await settle(jobManager, res.body.jobId);
-    expect(job.status).toBe("done");
+    expect(job.status).toBe("succeeded");
     // The staged file was what got pushed.
     expect(transfers[0].args.some((a) => a.includes("sample.bin"))).toBe(true);
   });

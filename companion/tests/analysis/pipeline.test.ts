@@ -11,6 +11,7 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { CaptureMetadata } from "../../src/types.js";
 import { AiCostStore } from "../../src/analysis/aiCost.js";
 import { AnonControlStore } from "../../src/analysis/anonControl.js";
+import { lastCommittedImportBatch } from "../../src/analysis/importResume.js";
 
 let caseStore: CaseStore;
 let stateStore: StateStore;
@@ -729,14 +730,23 @@ describe("AnalysisPipeline", () => {
     });
 
     const csv = "Time,Process\n09:00,a.exe\n09:01,b.exe\n09:02,c.exe\n"; // 3 rows
+    const durableProgress: number[] = [];
     const state = await pipeline.analyzeCsv("c1", csv, {
       label: "0001_results.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z", rowsPerBatch: 2,
+      onProgress: async (done) => {
+        const committed = await stateStore.load("c1");
+        durableProgress.push(
+          lastCommittedImportBatch(committed.timeline, "0001_results.csv"),
+        );
+        expect(durableProgress.at(-1)).toBe(done);
+      },
     });
 
     // 3 rows / 2 per batch = 2 batches → 2 events with distinct ids, both from the CSV.
     expect(state.forensicTimeline).toHaveLength(2);
     expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
     expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
+    expect(durableProgress).toEqual([1, 2]);
   });
 
   it("analyzeCsv deduplicates an identical event re-imported (e.g. the same file twice)", async () => {
