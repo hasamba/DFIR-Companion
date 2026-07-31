@@ -21,6 +21,7 @@ export const SNAPSHOT_STATE_FILES = [
   "import-meta.json",       // when the last import ran + timeline/IOC diff (investigation history)
   "hunt-outcomes.json",     // #157 per-case hunting profile (what was hunted, what hit/missed) — investigation data
   "hunt-run-snapshots.json", // #80 per-fingerprint latest run snapshot, so a hunt re-run diff stays in sync with hunt-outcomes.json across an undo
+  "saved-hunts.json",       // #376 typed hunt templates and their execution history
   "dwell-windows.json",     // analyst-defined attacker-presence windows (label/start/end) — investigation data
   "pinned-findings.json",   // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
   "cockpit.json",           // #375 per-investigator review timestamps + audited cockpit decisions

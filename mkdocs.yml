@@ -68,6 +68,7 @@ nav:
     - Dashboard Panels: reference/dashboard.md
     - IOC Enrichment: reference/ioc-enrichment.md
     - Threat Hunting: reference/threat-hunting.md
+    - Hunt Workbench & Query Language: reference/hunt-workbench.md
     - Reports & Exports: reference/reports.md
     - Chain of Custody: reference/chain-of-custody.md
     - Integrations: reference/integrations.md

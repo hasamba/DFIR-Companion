@@ -3025,8 +3025,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // used by the Login/Assets/Evidence graphs, the command palette #238, and the Settings search
   // filter). Whitelisted paths only — a new module under public/js/ is NOT served until it is
   // named here, and the browser's only symptom is a silent 404 with the feature simply absent.
-  // tests/settings/settingsSearch.test.ts pins every /js/ module dashboard.html loads to an entry
-  // in this map, so the next one cannot ship half-wired.
+  // The settings-search test pins every dashboard /js/ module here so none ship half-wired.
   // Registered inside createApp so the routes are available in tests (startServer calls createApp).
   const vendorFiles: Record<string, string> = {
     "/vendor/leaflet/leaflet.js": "application/javascript; charset=utf-8",
@@ -3037,6 +3036,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/js/graph-view.js": "application/javascript; charset=utf-8",
     "/js/command-palette.js": "application/javascript; charset=utf-8",
     "/js/settings-search.js": "application/javascript; charset=utf-8",
+    "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
   };
   for (const [route, type] of Object.entries(vendorFiles)) {
     app.get(route, async (_req, res) => {

@@ -352,6 +352,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Exclude filter** — chip-list control (beside the toolbar search) hides timeline events / IOCs / findings matching any of several exclude terms; per-browser
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
+- **Internal Hunt Workbench** — typed field queries over an explicit forensic/super-timeline dataset with Boolean logic, ranges, safe regex, time windows, grouping/stats/rare values, indexed cursor paging, saved parameterized hunts, charts/timeline views and one-click entity pivots; raw super-timeline hits stay out of AI until individually promoted
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity, relative hunt expiry 1h/1d/1w, default 1h) → auto-collect + import, with live hunt-status polling (a deleted hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
 - **AI-suggested fleet hunts** — AI proposes proactive fleet-sweep hunts grounded in the causal evidence graph (spawn chains, file lineage, lateral movement), so hunts target the relationship, not just the leaf indicator
 - **AI-suggested playbook hunts** — AI proposes hunts per endpoint-related task (single-endpoint collection or fleet hunt)

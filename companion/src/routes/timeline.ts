@@ -5,6 +5,7 @@ import { mapForensicEvent } from "../integrations/timesketch/timesketchMap.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { registerHuntWorkbenchRoutes } from "./huntWorkbench.js";
 
 /**
  * Timeline domain: the timeline VIEWS + EXPORTS derived from a case's state.
@@ -31,6 +32,7 @@ import type { RouteContext } from "./context.js";
  * in createApp; only the timeline/super-timeline views + exports move here.
  */
 export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
+  registerHuntWorkbenchRoutes(app, ctx);
   const { options, resynthesizeInBackground } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
