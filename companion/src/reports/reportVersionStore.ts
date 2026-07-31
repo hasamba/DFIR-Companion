@@ -34,6 +34,8 @@ export interface ReportVersionSummary {
   findingsCount: number;
   iocsCount: number;
   eventsCount: number;
+  /** Exact analysis/import/enrichment/report runs this released snapshot was derived from (#377). */
+  analysisRunIds?: string[];
 }
 
 export interface ReportVersionRecord extends ReportVersionSummary {
@@ -129,12 +131,22 @@ export class ReportVersionStore {
   // report generation itself.
   async snapshot(
     caseId: string,
-    input: { markdown: string; meta: ReportMeta; state: ReportVersionDiffState },
+    input: {
+      markdown: string;
+      meta: ReportMeta;
+      state: ReportVersionDiffState;
+      analysisRunIds?: string[];
+    },
   ): Promise<ReportVersionSummary> {
     const contentHash = createHash("sha256").update(input.markdown).digest("hex");
     const existing = await this.list(caseId);
     const latest = existing[0];
-    if (latest && latest.contentHash === contentHash) return latest;
+    const analysisRunIds = input.analysisRunIds ?? [];
+    if (
+      latest
+      && latest.contentHash === contentHash
+      && JSON.stringify(latest.analysisRunIds ?? []) === JSON.stringify(analysisRunIds)
+    ) return latest;
 
     const createdAt = new Date().toISOString();
     const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
@@ -150,6 +162,7 @@ export class ReportVersionStore {
       findingsCount: input.state.findings.length,
       iocsCount: input.state.iocs.length,
       eventsCount: input.state.forensicTimeline.length,
+      analysisRunIds,
     };
     const record: ReportVersionRecord = { ...summary, markdown: input.markdown, meta: input.meta, state: input.state };
 

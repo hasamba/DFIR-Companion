@@ -172,7 +172,7 @@ export interface RouteContext {
   //                          manual IOC add).
   //   enabledProvidersFor  — resolve the enrichment PROVIDER objects enabled for a case (the
   //                          bulk-enrich route enriches a selected subset with them).
-  enrichInBackground(caseId: string, force?: boolean): void;
+  enrichInBackground(caseId: string, force?: boolean, parentRunId?: string): void;
   autoEnrichIfEnabled(caseId: string): void;
   enabledProvidersFor(caseId: string): Promise<EnrichmentProvider[]>;
   // Velociraptor domain machinery shared with routes/velociraptor.ts. The live-monitor + hunt-status

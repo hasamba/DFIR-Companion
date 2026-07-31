@@ -72,6 +72,9 @@ import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { KevCatalog } from "../analysis/kev.js";
 import type { ReportVersionStore } from "./reportVersionStore.js";
+import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
+import { claimSnapshot, hashManifestValue } from "../analysis/analysisRunHash.js";
+import { createHash } from "node:crypto";
 
 export interface ReportPaths {
   markdown: string;
@@ -81,6 +84,7 @@ export interface ReportPaths {
   timelineCsv: string;
   forensicTimelineCsv: string;
   stateJson: string;
+  analysisRuns: string;
 }
 
 // The optional stores ReportWriter draws on for report sections. Named fields instead of a long
@@ -102,6 +106,7 @@ export interface ReportWriterOptions {
   synthMeta?: SynthMetaStore;   // #11 deferred: second-look collection leads in the report
   lateralPathDismissals?: LateralPathDismissStore;   // analyst-rejected lateral chains
   reportVersions?: ReportVersionStore;   // #77 report versioning (diff & rollback)
+  analysisRuns?: AnalysisRunStore;   // #377 reproducible analysis manifests + report pinning
   complianceControl?: ComplianceControlStore;   // #336 discovery date + framework filter
   clockSkew?: ClockSkewStore;   // #228 per-host clock offsets + the alignment toggle
   custodyStore?: CustodyStore;   // #231 chain-of-custody appendix
@@ -125,6 +130,7 @@ export class ReportWriter {
   private readonly clockSkew?: ClockSkewStore;
   private readonly lateralPathDismissals?: LateralPathDismissStore;
   private readonly reportVersions?: ReportVersionStore;
+  private readonly analysisRuns?: AnalysisRunStore;
   private readonly complianceControl?: ComplianceControlStore;
   private readonly custodyStore?: CustodyStore;
   private readonly instanceSecret?: Buffer;
@@ -150,6 +156,7 @@ export class ReportWriter {
     this.synthMeta = opts.synthMeta;
     this.lateralPathDismissals = opts.lateralPathDismissals;
     this.reportVersions = opts.reportVersions;
+    this.analysisRuns = opts.analysisRuns;
     this.complianceControl = opts.complianceControl;
     this.clockSkew = opts.clockSkew;
   }
@@ -520,7 +527,8 @@ export class ReportWriter {
     };
   }
 
-  async writeAll(caseId: string): Promise<ReportPaths> {
+  async writeAll(caseId: string, opts: { parentRunId?: string } = {}): Promise<ReportPaths> {
+    const startedAt = new Date().toISOString();
     const state = await this.loadFilteredState(caseId);
     const dir = this.cases.reportsDir(caseId);
     const paths: ReportPaths = {
@@ -531,6 +539,7 @@ export class ReportWriter {
       timelineCsv: join(dir, "timeline.csv"),
       forensicTimelineCsv: join(dir, "forensic-timeline.csv"),
       stateJson: join(dir, "state-export.json"),
+      analysisRuns: join(dir, "analysis-runs.json"),
     };
     const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     const exposure = await this.loadExposure(caseId);
@@ -556,6 +565,73 @@ export class ReportWriter {
     await writeFile(paths.timelineCsv, c.timelineCsv, "utf8");
     await writeFile(paths.forensicTimelineCsv, c.forensicTimelineCsv, "utf8");
     await writeFile(paths.stateJson, c.stateJson, "utf8");
+    const sourceRuns = this.analysisRuns ? await this.analysisRuns.list(caseId) : [];
+    let reportRunId: string | undefined;
+    if (this.analysisRuns) {
+      const reportRun = await this.analysisRuns.record(caseId, {
+        kind: "report",
+        parentRunId: opts.parentRunId,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        versions: { schema: "report/v1" },
+        input: {
+          artifacts: [],
+          eventIds: state.forensicTimeline.map((event) => event.id),
+          entityIds: [
+            ...state.findings.map((finding) => finding.id),
+            ...state.iocs.map((ioc) => ioc.id),
+          ],
+          selectionHash: hashManifestValue({
+            sourceRunIds: sourceRuns.map((run) => run.id),
+            eventIds: state.forensicTimeline.map((event) => event.id),
+          }),
+        },
+        configuration: {
+          templateHash: hashManifestValue(template),
+          parameters: {
+            templateId: template.id,
+            pinnedRunIds: sourceRuns.map((run) => run.id),
+          },
+          filteringPolicy: {
+            reportScopeApplied: true,
+            falsePositivesExcluded: true,
+          },
+        },
+        output: {
+          entityIds: [
+            "report.md",
+            "report.html",
+            "findings.csv",
+            "iocs.csv",
+            "timeline.csv",
+            "forensic-timeline.csv",
+            "state-export.json",
+          ],
+          hashes: [
+            ["report.md", c.markdown],
+            ["report.html", c.html],
+            ["findings.csv", c.findingsCsv],
+            ["iocs.csv", c.iocsCsv],
+            ["timeline.csv", c.timelineCsv],
+            ["forensic-timeline.csv", c.forensicTimelineCsv],
+            ["state-export.json", c.stateJson],
+          ].map(([id, contents]) => ({
+            id,
+            sha256: createHash("sha256").update(contents).digest("hex"),
+          })),
+          claims: state.findings.map((finding) => claimSnapshot(finding.id, {
+            title: finding.title,
+            severity: finding.severity,
+            description: finding.description,
+            evidenceEventIds: finding.relatedEventIds,
+          })),
+        },
+      });
+      reportRunId = reportRun.id;
+      await writeFile(paths.analysisRuns, JSON.stringify(await this.analysisRuns.list(caseId), null, 2), "utf8");
+    } else {
+      await writeFile(paths.analysisRuns, "[]\n", "utf8");
+    }
     // #77 report versioning: snapshot markdown + meta + the diff-relevant slice of state so the
     // dashboard can diff two generations and roll back to a prior version's editable meta.
     // Best-effort — a version-store failure must never break report generation itself.
@@ -565,6 +641,10 @@ export class ReportWriter {
           markdown: c.markdown,
           meta,
           state: { findings: state.findings, iocs: state.iocs, forensicTimeline: state.forensicTimeline },
+          analysisRunIds: [
+            ...sourceRuns.map((run) => run.id),
+            ...(reportRunId ? [reportRunId] : []),
+          ],
         });
       } catch { /* best-effort — see comment above */ }
     }

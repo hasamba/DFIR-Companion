@@ -6,6 +6,8 @@ import { compileText } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { hashManifestValue } from "../analysis/analysisRunHash.js";
+import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 
 /**
  * Tagger domain: the content-based event tagger (Timesketch tagger analyzer, ported). Rules live in
@@ -73,6 +75,8 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     const caseId = req.params.id;
     const { scope } = readTaggerSettings();
     try {
+      const startedAt = new Date().toISOString();
+      const activeRules = await options.taggerStore.readActive();
       const ruleset = await options.taggerStore.load(); // throws on an invalid ruleset → 400 below
       if (!ruleset.rules.length) return res.status(200).json({ scope, totalMatched: 0, tagsWritten: 0, mutatedCount: 0, perRule: [] });
 
@@ -97,6 +101,28 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
 
       options.onTags?.(caseId);
       if (summary.mutatedCount > 0) options.onState?.(await options.stateStore.load(caseId));
+      if (options.analysisRunStore) {
+        const state = await options.stateStore.load(caseId);
+        await options.analysisRunStore.record(caseId, {
+          kind: "deterministic",
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          versions: {
+            schema: "tagger/v1",
+            rules: hashManifestValue(activeRules.text),
+          },
+          input: {
+            artifacts: [],
+            eventIds: state.forensicTimeline.map((event) => event.id),
+            entityIds: [],
+          },
+          configuration: {
+            parameters: { analyzer: "tagger", mode: "manual" },
+            filteringPolicy: { scope },
+          },
+          output: investigationOutput(state),
+        });
+      }
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage", action: "tagger-run", actor: "tagger",
         detail: `tagged ${summary.result.totalMatched} event(s), ${summary.tagsWritten} tag(s), ${summary.mutatedCount} severity/MITRE update(s)`,

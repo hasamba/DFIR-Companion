@@ -2850,6 +2850,7 @@
       <option value="redacted">Redacted case package (ZIP)…</option>
       <option value="save-template">Save as Template…</option>
       <option value="report-versions">Report versions (diff &amp; rollback)…</option>
+      <option value="analysis-runs">Analysis run ledger (replay &amp; compare)…</option>
     </select>
     <select id="pushSelect" class="toolbar-select" data-tip="Push this case to an external platform" style="display:none">
       <option value="">Push to…</option>
@@ -3290,6 +3291,29 @@
       <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="rvCancel" style="background:var(--border-color);">Close</button>
         <span id="rvMsg" style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="analysisRunsOverlay" class="comment-overlay">
+    <div class="comment-modal" style="max-width:760px">
+      <h3>Analysis run ledger</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin:0 0 10px">
+        Immutable manifests show exactly which evidence, rules, prompt, model and filters shaped each
+        result. Replay checks that every pinned dependency is still available before it starts and
+        always creates a child run; historical output is never replaced.</p>
+      <div id="arIntegrity" style="font-size:12px;margin-bottom:8px;color:var(--text-muted)">checking integrity…</div>
+      <div id="arList" style="max-height:280px;overflow:auto;font-size:12px;margin-bottom:10px;border:1px solid var(--border-color);border-radius:4px;padding:6px">loading…</div>
+      <div id="arDetail" style="display:none;max-height:280px;overflow:auto;font-size:12px;margin-bottom:10px;border:1px solid var(--border-color);border-radius:4px;padding:8px"></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <label style="font-size:12px">From <select id="arFrom" style="margin-left:4px"></select></label>
+        <label style="font-size:12px">To <select id="arTo" style="margin-left:4px"></select></label>
+        <button id="arCompare" type="button">Compare claims</button>
+      </div>
+      <div id="arCompareResult" style="font-size:12px;max-height:220px;overflow:auto"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button id="arCancel" style="background:var(--border-color)">Close</button>
+        <span id="arMsg" style="color:var(--text-muted);font-size:12px"></span>
       </div>
     </div>
   </div>
@@ -19392,6 +19416,169 @@
       }
     }
 
+    // ── Reproducible analysis runs (#377) ────────────────────────────────────
+    function openAnalysisRuns() {
+      document.getElementById("arMsg").textContent = "";
+      document.getElementById("arCompareResult").innerHTML = "";
+      document.getElementById("arDetail").style.display = "none";
+      document.getElementById("analysisRunsOverlay").classList.add("open");
+      loadAnalysisRuns();
+    }
+    function closeAnalysisRuns() { document.getElementById("analysisRunsOverlay").classList.remove("open"); }
+
+    function analysisRunLabel(run) {
+      const model = run.configuration?.provider
+        ? ` · ${run.configuration.provider}${run.configuration.model ? "/" + run.configuration.model : ""}`
+        : "";
+      return `${run.kind}${model} · ${new Date(run.startedAt).toLocaleString()}`;
+    }
+
+    async function loadAnalysisRuns() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const list = document.getElementById("arList");
+      const integrity = document.getElementById("arIntegrity");
+      if (!caseId) { list.textContent = "no case loaded"; return; }
+      list.textContent = "loading…";
+      integrity.textContent = "checking integrity…";
+      try {
+        const c = encodeURIComponent(caseId);
+        const [runsRes, integrityRes] = await Promise.all([
+          fetch(`/cases/${c}/analysis-runs`),
+          fetch(`/cases/${c}/analysis-runs/integrity`),
+        ]);
+        const runs = await runsRes.json();
+        const check = await integrityRes.json();
+        if (!runsRes.ok) throw new Error(runs.error || ("HTTP " + runsRes.status));
+        integrity.textContent = check.ok
+          ? `✓ Ledger intact — ${check.manifests} manifest(s), hash chain verified`
+          : `⚠ Ledger integrity FAILED — ${(check.problems || []).join("; ")}`;
+        integrity.style.color = check.ok ? "var(--sev-low)" : "var(--badge-danger-text)";
+        if (!runs.length) {
+          list.textContent = "no runs yet — import evidence, run analysis, enrich, or generate a report";
+          document.getElementById("arFrom").innerHTML = "";
+          document.getElementById("arTo").innerHTML = "";
+          return;
+        }
+        list.innerHTML = runs.map(run => {
+          const warnings = run.execution?.warnings?.length
+            ? `<div style="color:var(--sev-medium)">⚠ ${run.execution.warnings.map(esc).join("; ")}</div>`
+            : "";
+          const parent = run.parentRunId
+            ? `<span title="${escAttr(run.parentRunId)}"> · child of ${esc(run.parentRunId.slice(0, 12))}…</span>`
+            : "";
+          const artifacts = run.input?.artifacts?.length
+            ? ` · ${run.input.artifacts.length} artifact(s)`
+            : "";
+          return `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-color)">
+            <div><strong>${esc(run.kind)}</strong>${parent} · ${esc(new Date(run.startedAt).toLocaleString())}
+              · ${(run.durationMs / 1000).toFixed(1)}s${artifacts}
+              · ${run.input?.eventCount || 0} evidence event(s) → ${run.output?.claimCount || 0} claim(s)
+              ${run.configuration?.provider ? `<div style="color:var(--text-muted)">${esc(run.configuration.provider)}${run.configuration.model ? "/" + esc(run.configuration.model) : ""} · app ${esc(run.versions.application)}</div>` : ""}
+              ${warnings}</div>
+            <div style="display:flex;gap:5px;align-items:flex-start;flex:none">
+              <button type="button" data-ar-view="${escAttr(run.id)}" style="font-size:11px">View manifest</button>
+              <button type="button" data-ar-replay="${escAttr(run.id)}" style="font-size:11px" title="Verify pinned dependencies, then create a new child run">Replay</button>
+            </div>
+          </div>`;
+        }).join("");
+        list.querySelectorAll("[data-ar-view]").forEach(btn =>
+          btn.onclick = () => viewAnalysisRun(btn.getAttribute("data-ar-view")));
+        list.querySelectorAll("[data-ar-replay]").forEach(btn =>
+          btn.onclick = () => replayAnalysisRun(btn.getAttribute("data-ar-replay")));
+        const options = runs.map(run =>
+          `<option value="${escAttr(run.id)}">${esc(analysisRunLabel(run))}</option>`).join("");
+        document.getElementById("arFrom").innerHTML = options;
+        document.getElementById("arTo").innerHTML = options;
+        document.getElementById("arFrom").selectedIndex = Math.min(1, runs.length - 1);
+        document.getElementById("arTo").selectedIndex = 0;
+      } catch (err) {
+        list.textContent = "failed to load: " + err.message;
+      }
+    }
+
+    async function viewAnalysisRun(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const detail = document.getElementById("arDetail");
+      if (!caseId || !id) return;
+      detail.style.display = "block";
+      detail.textContent = "loading manifest…";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/analysis-runs/${encodeURIComponent(id)}`);
+        const run = await res.json();
+        if (!res.ok) throw new Error(run.error || ("HTTP " + res.status));
+        const eventLinks = ids => ids?.length
+          ? ids.map(eventId => `<button type="button" data-ar-evid="${escAttr(eventId)}" class="ev-jump">${esc(eventId)}</button>`).join(" ")
+          : "none";
+        const artifacts = run.input.artifacts?.length
+          ? run.input.artifacts.map(item => `<div><code>${esc(item.path)}</code><br><span style="color:var(--text-muted)">SHA-256 ${esc(item.sha256)}</span></div>`).join("")
+          : "none";
+        const claims = run.output.claims?.length
+          ? run.output.claims.map(claim => `<div style="margin:4px 0"><strong>${esc(claim.id)}</strong> · ${esc(claim.hash)}<br>evidence: ${eventLinks(claim.evidenceEventIds)}</div>`).join("")
+          : "none";
+        detail.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px">
+          <strong>Manifest #${run.sequence} · ${esc(run.kind)} · ${esc(run.status)}</strong>
+          <button type="button" data-ar-hide style="font-size:11px">Hide</button></div>
+          <div style="color:var(--text-muted);margin:4px 0">Run ${esc(run.id)}${run.parentRunId ? ` · parent ${esc(run.parentRunId)}` : ""}<br>
+          ${esc(run.startedAt)} → ${esc(run.finishedAt)} · ${run.durationMs} ms<br>
+          manifest SHA-256 ${esc(run.manifestHash)}<br>previous ${run.previousManifestHash ? esc(run.previousManifestHash) : "ledger start"}</div>
+          <strong>Source artifacts</strong><div>${artifacts}</div>
+          <strong>Evidence events (${run.input.eventIds?.length || 0})</strong><div>${eventLinks(run.input.eventIds)}</div>
+          <strong>Input entities (${run.input.entityIds?.length || 0})</strong><div>${esc((run.input.entityIds || []).join(", ") || "none")}</div>
+          <strong>Pinned versions and configuration</strong>
+          <pre style="white-space:pre-wrap;margin:3px 0">${esc(JSON.stringify({ versions: run.versions, configuration: run.configuration, execution: run.execution }, null, 2))}</pre>
+          <strong>Output claims (${run.output.claims?.length || 0})</strong><div>${claims}</div>`;
+        detail.querySelector("[data-ar-hide]").onclick = () => { detail.style.display = "none"; };
+      } catch (err) {
+        detail.textContent = "manifest failed to load: " + err.message;
+      }
+    }
+
+    async function replayAnalysisRun(id) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("arMsg");
+      if (!caseId || !id) return;
+      if (!confirm("Replay this run? The Companion will verify its model, prompt, rules and source evidence first. A replay creates a new child run and may spend provider credits.")) return;
+      msg.textContent = "checking dependencies…";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/analysis-runs/${encodeURIComponent(id)}/replay`, { method: "POST" });
+        const body = await res.json();
+        if (!res.ok) {
+          const blockers = Array.isArray(body.blockers) ? body.blockers.join("; ") : body.error;
+          throw new Error(blockers || ("HTTP " + res.status));
+        }
+        msg.textContent = res.status === 202 ? "replay accepted — refresh shortly for its child run" : "replay completed ✓";
+        setTimeout(loadAnalysisRuns, res.status === 202 ? 1500 : 100);
+      } catch (err) {
+        msg.textContent = "replay not started: " + err.message;
+      }
+    }
+
+    async function compareAnalysisRuns() {
+      const caseId = document.getElementById("caseId").value.trim();
+      const from = document.getElementById("arFrom").value;
+      const to = document.getElementById("arTo").value;
+      const out = document.getElementById("arCompareResult");
+      if (!caseId || !from || !to) return;
+      out.textContent = "comparing…";
+      try {
+        const q = new URLSearchParams({ from, to }).toString();
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/analysis-runs/compare?${q}`);
+        const diff = await res.json();
+        if (!res.ok) throw new Error(diff.error || ("HTTP " + res.status));
+        const evidence = ids => ids.length
+          ? ids.map(id => `<button type="button" data-ar-evid="${escAttr(id)}" class="ev-jump">${esc(id)}</button>`).join(" ")
+          : "no linked events";
+        const rows = [
+          ...diff.added.map(claim => `<div style="margin-bottom:5px">+ <strong>${esc(claim.id)}</strong> — ${evidence(claim.evidenceEventIds)}</div>`),
+          ...diff.removed.map(claim => `<div style="margin-bottom:5px">− <strong>${esc(claim.id)}</strong> — ${evidence(claim.evidenceEventIds)}</div>`),
+          ...diff.changed.map(claim => `<div style="margin-bottom:5px">~ <strong>${esc(claim.id)}</strong><br>before: ${evidence(claim.beforeEvidenceEventIds)}<br>after: ${evidence(claim.afterEvidenceEventIds)}</div>`),
+        ];
+        out.innerHTML = rows.length ? rows.join("") : "no claim changes between these runs";
+      } catch (err) {
+        out.textContent = "compare failed: " + err.message;
+      }
+    }
+
     // ── ZIP case archive (unencrypted, "(no password)" in the filename) ─────
     function openZipArchive() {
       document.getElementById("zaRemoveFromList").checked = false;
@@ -20217,6 +20404,16 @@
     document.getElementById("rvDiff").onclick = doReportVersionsDiff;
     document.getElementById("rvCancel").onclick = closeReportVersions;
     document.getElementById("reportVersionsOverlay").addEventListener("click", (e) => { if (e.target.id === "reportVersionsOverlay") closeReportVersions(); });
+    document.getElementById("arCompare").onclick = compareAnalysisRuns;
+    document.getElementById("arCancel").onclick = closeAnalysisRuns;
+    document.getElementById("analysisRunsOverlay").addEventListener("click", (e) => {
+      if (e.target.id === "analysisRunsOverlay") { closeAnalysisRuns(); return; }
+      const jump = e.target.closest && e.target.closest("[data-ar-evid]");
+      if (jump) {
+        closeAnalysisRuns();
+        jumpToEvent(jump.getAttribute("data-ar-evid"));
+      }
+    });
     document.getElementById("eeDownload").onclick = doEncryptedExport;
     document.getElementById("eeCancel").onclick = closeEncryptedExport;
     document.getElementById("encryptedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "encryptedExportOverlay") closeEncryptedExport(); });
@@ -20827,6 +21024,8 @@
         openSaveTemplate();
       } else if (action === "report-versions") {
         openReportVersions();
+      } else if (action === "analysis-runs") {
+        openAnalysisRuns();
       }
     };
 
