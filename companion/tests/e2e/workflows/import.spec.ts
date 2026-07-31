@@ -48,25 +48,15 @@ test("refuses a CSV with a header but no data rows", async ({ page, demoCase }) 
   expect(res.status()).toBe(400);
 });
 
-// ---------------------------------------------------------------------------------------------
-// CHARACTERIZATION TEST — DOCUMENTS A DEFECT, DOES NOT ENDORSE IT.
+// Importing into a case id that does not exist used to be ACCEPTED (202): the server created the
+// case directory on the spot and wrote the evidence, an imports.jsonl entry and a custody.jsonl
+// entry into it — but the case never appeared in GET /cases, so the investigator could not see it.
+// A typo in a case id silently swallowed an evidence import into an orphaned directory.
 //
-// Importing into a case id that does not exist is ACCEPTED (202). The server creates the case
-// directory on the spot and writes the evidence, an imports.jsonl entry and a custody.jsonl entry
-// into it — but the case never appears in GET /cases, so the investigator cannot see it. A typo in
-// a case id therefore swallows an evidence import into an orphaned directory, silently.
-//
-// 20 of the 23 /cases/:id/import* routes skip store.caseExists(). Only /import, /import-file and
-// /import-wazuh check it; GET /cases/:id/custody checks it too and correctly answers 404.
-//
-// This asserts what the server ACTUALLY does today so the suite tells the truth. When the routes
-// are fixed to reject an unknown case, this test will fail — that failure is the signal to flip it
-// to the 404 assertion below, not to re-baseline it.
-// ---------------------------------------------------------------------------------------------
-test("KNOWN DEFECT: an import for a non-existent case is accepted and orphaned", async ({
-  page,
-  demoCase,
-}) => {
+// registerImportCaseGuard (companion/src/routes/importCaseGuard.ts, #403) now 404s an unknown case
+// ahead of all 24 /cases/:id/import* routes, matching GET /cases/:id/custody. This asserted 202 as
+// a characterization test until that landed; it is flipped, not re-baselined.
+test("an import for a non-existent case is rejected, not orphaned", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
   const ghost = "no-such-case-e2e";
@@ -74,10 +64,9 @@ test("KNOWN DEFECT: an import for a non-existent case is accepted and orphaned",
     data: { csv: CSV, filename: "e2e.csv" },
   });
 
-  // Desired behavior is 404, as GET /cases/:id/custody already does.
-  expect(res.status()).toBe(202);
+  expect(res.status(), await res.text()).toBe(404);
 
-  // And the damage: the case is not listed, so the evidence just written is invisible.
+  // The case must not have been conjured as a side effect of the rejected import.
   const listed = await page.request.get("/cases");
   expect(await listed.text()).not.toContain(ghost);
 });
