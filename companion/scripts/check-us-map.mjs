@@ -90,7 +90,11 @@ const declared = new Map(); // US id -> Set(spec paths)
 for (const file of walk(E2E)) {
   const rel = relative(E2E, file).replace(/\\/g, "/");
   const src = readFileSync(file, "utf8");
-  const covers = src.match(/^\/\/ Covers: (.+)$/m);
+  // ALL "// Covers:" lines, not just the first. A banner long enough to wrap onto a second line is
+  // normal once a spec covers a dozen stories, and matching only the first silently dropped every
+  // id after it — under-reporting coverage in the file whose job is to report it accurately.
+  const coverLines = [...src.matchAll(/^\/\/ Covers: (.+)$/gm)].map((m) => m[1]);
+  const covers = coverLines.length > 0 ? [coverLines.join(", ")] : null;
   if (!covers) {
     problems.push(
       `${rel} has no "// Covers:" banner. Declare the US ids it exercises, or state ` +
@@ -98,8 +102,8 @@ for (const file of walk(E2E)) {
     );
     continue;
   }
-  if (/NO USER STORY EXISTS/.test(covers[1])) continue;
-  const ids = covers[1].match(/US-\d+/g) ?? [];
+  if (/NO USER STORY EXISTS/.test(covers[0])) continue;
+  const ids = covers[0].match(/US-\d+/g) ?? [];
   if (ids.length === 0) {
     problems.push(`${rel} has a "// Covers:" banner naming no US ids and no NO-USER-STORY note.`);
     continue;

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test, expect } from "../fixtures/test.js";
 
 // Covers: NO USER STORY EXISTS.
@@ -27,6 +29,7 @@ const ROUTES: ReadonlyArray<{ route: string; required: string }> = [
   { route: "import-cybertriage", required: "text" },
   { route: "import-aws", required: "text" },
   { route: "import-cloud-activity", required: "text" },
+  { route: "import-m365", required: "text" },
   { route: "import-plaso", required: "text" },
   { route: "import-sandbox", required: "text" },
   { route: "import-memory", required: "text" },
@@ -37,6 +40,20 @@ const ROUTES: ReadonlyArray<{ route: string; required: string }> = [
   { route: "import-sysdig", required: "text" },
   { route: "import-wazuh", required: "text" },
 ];
+
+test("the table below really is every import route", () => {
+  // This spec claims to cover EVERY import route. That claim was false the moment it was written:
+  // the table was built with a regex that stopped at the first digit, so /cases/:id/import-m365 was
+  // silently absent — a route with no contract coverage, in a file whose whole point is that the
+  // guard applies to all of them. Checking the table against the source makes the claim testable
+  // instead of aspirational.
+  const src = readFileSync(join(import.meta.dirname, "..", "..", "..", "src", "routes", "import.ts"), "utf8");
+  const inSource = [...src.matchAll(/app\.post\("\/cases\/:id\/(import[A-Za-z0-9-]*)"/g)]
+    .map((m) => m[1])
+    .sort();
+  const inTable = ROUTES.map((r) => r.route).sort();
+  expect(inTable).toEqual(inSource);
+});
 
 test("every import route 404s an unknown case instead of conjuring one", async ({ page, demoCase }) => {
   test.setTimeout(120_000);
