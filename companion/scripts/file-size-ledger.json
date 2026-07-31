@@ -12,5 +12,5 @@
   "routes/import.ts": 1784,
   "routes/mcp.ts": 854,
   "routes/velociraptor.ts": 888,
-  "server.ts": 4303
+  "server.ts": 4280
 }

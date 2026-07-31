@@ -15,6 +15,7 @@
   <script type="module" src="/js/command-palette.js"></script>
   <script type="module" src="/js/settings-search.js"></script>
   <script type="module" src="/js/hunt-workbench.js"></script>
+  <script type="module" src="/js/case-load-progress.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference.
@@ -2676,6 +2677,40 @@
       0%   { transform: translateX(-100%); }
       100% { transform: translateX(250%); }
     }
+    /* Case-load progress — the overlay's staged bar, driven by /js/case-load-progress.js.
+       The fill is the floor of the last COMPLETED stage; .clp-shimmer animates the PENDING
+       segment only, which is how a stage with no signal behind it (server think time, parse,
+       render) says "working" without implying a position. */
+    #caseLoadingBar { position: relative; width: 280px; height: 6px; margin: 16px auto 8px;
+      background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
+    #caseLoadingBar .clp-fill { position: absolute; top: 0; bottom: 0; left: 0;
+      width: var(--clp-w, 0%); background: var(--badge-success-text); border-radius: 4px;
+      transition: width 0.25s ease; }
+    #caseLoadingBar .clp-pending { position: absolute; top: 0; bottom: 0; right: 0;
+      left: var(--clp-w, 0%); overflow: hidden; }
+    #caseLoadingBar.clp-shimmer .clp-pending::after {
+      content: ''; position: absolute; top: 0; bottom: 0; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+      animation: clpShimmer 1.4s ease-in-out infinite;
+    }
+    @keyframes clpShimmer {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    #caseLoadingPct { color: var(--text-muted); font-size: 12px; min-height: 15px; }
+    /* Panel-load strip — the ~60 secondary panels that keep loading after the overlay hides.
+       Bottom edge, deliberately peripheral: it is informative, not urgent. Kept off the top edge
+       so it can never collide with #importProgressBar. */
+    #panelProgressBar {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 3px; z-index: 9998;
+      overflow: hidden; display: none; pointer-events: none; background: transparent;
+    }
+    #panelProgressBar.ppb-active { display: block; }
+    #panelProgressBar::after {
+      content: ''; position: absolute; top: 0; left: 0; height: 100%;
+      width: var(--ppb-w, 0%); background: var(--accent-solid); transition: width 0.2s ease;
+    }
+    #panelProgressBar.ppb-failed::after { background: var(--sev-medium); }
     /* Disk-space warning banner (#119). */
     #diskWarnBanner { display: flex; align-items: center; gap: 10px; padding: 6px 16px;
       border-bottom: 1px solid; font-size: 12.5px; }
@@ -6300,8 +6335,14 @@
     <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:32px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.3);">
       <div style="width:40px;height:40px;border:3px solid var(--border-color);border-top-color:var(--badge-success-text);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div>
       <div id="caseLoadingText" style="color:var(--text-primary);font-size:14px;font-weight:500;">Loading case…</div>
+      <div id="caseLoadingBar"><div class="clp-fill"></div><div class="clp-pending"></div></div>
+      <div id="caseLoadingPct"></div>
     </div>
   </div>
+  <!-- Panel-load strip: the ~60 secondary panels that keep loading after the overlay hides, so
+       "the dashboard is done filling in" is something the UI can actually say. Bottom edge, and
+       hidden until a load starts. -->
+  <div id="panelProgressBar"></div>
   <script nonce="__CSP_NONCE__">
     // ---- Theme (issue #53) -------------------------------------------------------------------
     // The effective theme lives in <html data-theme>. It is set FOUC-free by the <head> bootstrap;
@@ -18769,6 +18810,8 @@
     // case is currently authoritative — used by render()'s stale-response guard above.
     let connectAbortController = null;
     let activeCaseId = null;
+    // Same idea for the panel strip: only the newest generation's loaders may paint it.
+    let _panelLoadGen = 0;
 
     function connect() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -18794,23 +18837,65 @@
     // panels (geo map, host ranking, playbook, ...) keep loading in the background afterward, same
     // as before this change — only these two block the overlay.
     let _caseLoadingTimeoutId = null;
+    // The staged progress tracker for the CURRENT load generation, and the module that owns the
+    // arithmetic. The module is an ES module, so it executes after this classic inline script —
+    // every call site therefore reads it lazily and no-ops if it is absent. By the time a stage is
+    // reported the load has already been through a network round-trip, so in practice it is there;
+    // if it somehow is not, the case still loads exactly as it did before, just without a bar.
+    let caseLoadState = null;
+    const clpApi = () => window.DfirCaseLoadProgress || null;
+    function clpPaint() {
+      const api = clpApi();
+      if (api && caseLoadState) api.paintOverlay(caseLoadState);
+    }
+    // Advance the bar AND re-arm the stall failsafe. Visible movement is the evidence that nothing
+    // is stuck, which is exactly what the old fixed 15s timer had no way of knowing.
+    function clpStage(stageId) {
+      const api = clpApi();
+      if (api && caseLoadState) { api.advanceStage(caseLoadState, stageId); clpPaint(); }
+      armCaseLoadingStall();
+    }
+    function clpEvents(n) {
+      const api = clpApi();
+      if (api && caseLoadState) api.setEventCount(caseLoadState, n);
+    }
+    // Let the browser paint before a main-thread-blocking phase (JSON.parse, render). Without this
+    // the label for that phase is queued behind the work it describes and never appears until after
+    // it finishes — the bar would freeze on the PREVIOUS stage and read as hung.
+    function clpAfterPaint() {
+      const api = clpApi();
+      return api ? api.afterPaint() : Promise.resolve();
+    }
+    // Failsafe: never block the screen forever if a load hangs. Re-armed on every stage transition
+    // (see clpStage), so it now fires on evidence of a STALL rather than on a fixed deadline — a
+    // large case moving steadily through five stages is no longer told it is stuck.
+    function armCaseLoadingStall() {
+      const overlay = document.getElementById("caseLoadingOverlay");
+      if (!overlay || overlay.style.display === "none") return;
+      clearTimeout(_caseLoadingTimeoutId);
+      _caseLoadingTimeoutId = setTimeout(() => {
+        const textEl = document.getElementById("caseLoadingText");
+        // Name the stage that stalled — "which part is stuck" is the first thing an analyst needs,
+        // and the old message withheld it.
+        const api = clpApi();
+        const stuck = api && caseLoadState ? api.progressOf(caseLoadState).label.replace(/…$/, "") : "Still loading";
+        if (textEl) textEl.textContent = `${stuck} — click to dismiss`;
+        overlay.style.cursor = "pointer";
+        overlay.onclick = dismissCaseLoading;
+      }, 15000);
+    }
     function showCaseLoadingOverlay() {
       const overlay = document.getElementById("caseLoadingOverlay");
       if (!overlay) return;
+      const api = clpApi();
+      caseLoadState = api ? api.createLoadState() : null;
       const textEl = document.getElementById("caseLoadingText");
       if (textEl) textEl.textContent = "Loading case…";
       overlay.onclick = null;
       overlay.style.cursor = "";
       overlay.style.display = "flex";
-      clearTimeout(_caseLoadingTimeoutId);
-      // Failsafe: never block the screen forever if a load hangs — after 15s, tell the analyst
-      // honestly that it's still loading and let them dismiss it manually, rather than either
-      // lying that it finished or leaving them stuck with no way out.
-      _caseLoadingTimeoutId = setTimeout(() => {
-        if (textEl) textEl.textContent = "Still loading — click to dismiss";
-        overlay.style.cursor = "pointer";
-        overlay.onclick = dismissCaseLoading;
-      }, 15000);
+      clpPaint();
+      armCaseLoadingStall();
     }
     function hideCaseLoadingOverlay() {
       const overlay = document.getElementById("caseLoadingOverlay");
@@ -18820,7 +18905,7 @@
       overlay.style.cursor = "";
       clearTimeout(_caseLoadingTimeoutId);
     }
-    // The "Still loading — click to dismiss" click handler (#174): actually abandons the in-flight
+    // The stalled-overlay click handler (#174): actually abandons the in-flight
     // state/lifecycle load instead of merely hiding the overlay, so those requests stop being able to
     // block or clobber a case the analyst connects to next. Selecting a new case has the same effect
     // (proceedConnect aborts the previous generation itself) — this covers giving up without picking
@@ -18852,58 +18937,38 @@
       // Remember the case so a page refresh reconnects automatically.
       localStorage.setItem("dfir.caseId", caseId);
       history.replaceState(null, "", "?caseId=" + encodeURIComponent(caseId) + location.hash);   // keep #event=... (deep link) intact
-      const stateLoadPromise = fetch(`/cases/${caseId}/state`, { signal: loadSignal }).then(r => r.json()).then(state => { render(state); jumpToEventFromHash(); }).catch(() => {});
+      // Staged case load (progress bar). Every clpStage() call below marks a milestone that has
+      // ACTUALLY happened, which is the whole basis for the overlay's bar claiming a position.
+      // The two phases that block the main thread — JSON.parse and render() — are each preceded by
+      // a forced paint, so their labels appear BEFORE the thread locks up rather than after it
+      // frees again. Reading the body by hand instead of r.json() is what makes the download the
+      // one phase with a true percentage behind it (Content-Length).
+      const stateLoadPromise = (async () => {
+        try {
+          const res = await fetch(`/cases/${caseId}/state`, { signal: loadSignal });
+          clpStage("query");   // headers are in — the server has finished querying
+          const api = clpApi();
+          const body = api
+            ? await api.readBodyWithProgress(caseLoadState, res, clpPaint)
+            : await res.text();
+          clpStage("download");
+          await clpAfterPaint();
+          const state = JSON.parse(body);
+          clpEvents(typeof state.forensicTimelineTotal === "number"
+            ? state.forensicTimelineTotal
+            : (state.forensicTimeline || []).length);
+          clpStage("parse");
+          await clpAfterPaint();
+          render(state);
+          jumpToEventFromHash();
+          clpStage("render");
+        } catch {
+          // Aborted (#174), offline, or a non-JSON error body. Same outcome as the .catch(() => {})
+          // this replaced: the overlay hides via allSettled below and the dashboard stays as-is.
+        }
+      })();
       verifyCustodyOnOpen(caseId);
-      loadCustody(caseId);
-      pollCount(caseId);
-      loadAiToggle(caseId);
-      loadEnrichToggle(caseId);
-      loadAnonToggle(caseId);
-      loadPresidioPending(caseId);
-      loadFalsePositives(caseId);
-      loadLearnedPatterns(caseId);
-      loadSourceTrust(caseId);
-      loadScope(caseId);
-      loadConfidenceControl(caseId);
-      loadCorrProfile(caseId);
-      loadReportMeta(caseId);
-      loadCaseTemplatePicker(caseId);
       applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
-      loadCockpit(caseId);
-      loadAssetGraph(caseId);
-      loadLoginGraph(caseId);
-      loadAssetOverrides(caseId);
-      loadEvidenceGraph(caseId);
-      loadPhases(caseId);
-      loadTimelineGaps(caseId);
-      loadEvidenceGaps(caseId);
-      loadBeacons(caseId);
-      loadAnomalies(caseId);
-      loadSessions(caseId);
-      loadAdversaryHints(caseId);
-      loadPlaybookMatch(caseId);
-      loadHostRanking(caseId);
-      loadD3fend(caseId);
-      loadAttackMitigations(caseId);
-      loadCompliance(caseId);
-      loadGeoMap(caseId);
-      loadSwimlane(caseId);
-      loadIocSources(caseId);
-      loadIocProvenance(caseId);
-      loadIocRisk(caseId);
-      loadIocProvenanceChains(caseId);
-      loadComments(caseId);
-      loadActivityLog(caseId);
-      loadTags(caseId);
-      loadPins(caseId);
-      loadFindingWorkflow(caseId);
-      loadNotebook(caseId);
-      loadNbAiToggle(caseId);
-      loadHypotheses(caseId);
-      loadSavedTimeframes(caseId);
-      loadSuperTimeline(caseId);
-      loadSavedStarredReport(caseId);
-      loadPlaybook(caseId);
       starredEvents = new Set(); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
       selectedEvents.clear();
       selectedIocs.clear();
@@ -18931,18 +18996,94 @@
       const cfBtn = document.getElementById("clearFiltersBtn"); if (cfBtn) cfBtn.hidden = true;
       const smcEl = document.getElementById("searchMatchCount"); if (smcEl) smcEl.textContent = "";
       setSearchBarOpen(false, false); _updateSearchToggleIndicator();
-      loadSynthMeta(caseId);
-      loadSecondOpinion(caseId);
-      loadImportMeta(caseId);
-      loadDropStatus(caseId);
-      loadJobs(caseId);   // #225 background-jobs badge/popover
-      loadMcpRun();       // #296 MCP Analysis section — servers + this case's evidence paths
-      loadUndoStack(caseId);
-      loadCustomerExposure(caseId);
+      // The secondary panels. They were 59 bare calls; they are a table now so the strip at the
+      // bottom of the screen can say how many have actually landed — the overlay only ever blocked
+      // on the timeline and the lifecycle status, so the dashboard visibly kept filling in after it
+      // hid, with nothing telling the analyst how much was still outstanding.
+      //
+      // They run AFTER the synchronous per-case resets above (they used to straddle them). Order
+      // among themselves is preserved; moving them after the resets is strictly safer, since every
+      // one of them is async and its response now cannot land before the state it resets.
+      //
+      // runPanelLoaders observes completion at the transport — none of these returns a promise —
+      // and counts a rejected request as settled, because several of these routes 501 by design
+      // when their store is not configured and a fulfilled-only tally would never complete.
+      const panelGen = ++_panelLoadGen;
+      const panelApi = clpApi();
+      const CASE_PANEL_LOADERS = [
+        ["custody", () => loadCustody(caseId)],
+        ["count", () => pollCount(caseId)],
+        ["aiToggle", () => loadAiToggle(caseId)],
+        ["enrichToggle", () => loadEnrichToggle(caseId)],
+        ["anonToggle", () => loadAnonToggle(caseId)],
+        ["presidioPending", () => loadPresidioPending(caseId)],
+        ["falsePositives", () => loadFalsePositives(caseId)],
+        ["learnedPatterns", () => loadLearnedPatterns(caseId)],
+        ["sourceTrust", () => loadSourceTrust(caseId)],
+        ["scope", () => loadScope(caseId)],
+        ["confidenceControl", () => loadConfidenceControl(caseId)],
+        ["corrProfile", () => loadCorrProfile(caseId)],
+        ["reportMeta", () => loadReportMeta(caseId)],
+        ["caseTemplatePicker", () => loadCaseTemplatePicker(caseId)],
+        ["cockpit", () => loadCockpit(caseId)],
+        ["assetGraph", () => loadAssetGraph(caseId)],
+        ["loginGraph", () => loadLoginGraph(caseId)],
+        ["assetOverrides", () => loadAssetOverrides(caseId)],
+        ["evidenceGraph", () => loadEvidenceGraph(caseId)],
+        ["phases", () => loadPhases(caseId)],
+        ["timelineGaps", () => loadTimelineGaps(caseId)],
+        ["evidenceGaps", () => loadEvidenceGaps(caseId)],
+        ["beacons", () => loadBeacons(caseId)],
+        ["anomalies", () => loadAnomalies(caseId)],
+        ["sessions", () => loadSessions(caseId)],
+        ["adversaryHints", () => loadAdversaryHints(caseId)],
+        ["playbookMatch", () => loadPlaybookMatch(caseId)],
+        ["hostRanking", () => loadHostRanking(caseId)],
+        ["d3fend", () => loadD3fend(caseId)],
+        ["attackMitigations", () => loadAttackMitigations(caseId)],
+        ["compliance", () => loadCompliance(caseId)],
+        ["geoMap", () => loadGeoMap(caseId)],
+        ["swimlane", () => loadSwimlane(caseId)],
+        ["iocSources", () => loadIocSources(caseId)],
+        ["iocProvenance", () => loadIocProvenance(caseId)],
+        ["iocRisk", () => loadIocRisk(caseId)],
+        ["iocProvenanceChains", () => loadIocProvenanceChains(caseId)],
+        ["comments", () => loadComments(caseId)],
+        ["activityLog", () => loadActivityLog(caseId)],
+        ["tags", () => loadTags(caseId)],
+        ["pins", () => loadPins(caseId)],
+        ["findingWorkflow", () => loadFindingWorkflow(caseId)],
+        ["notebook", () => loadNotebook(caseId)],
+        ["nbAiToggle", () => loadNbAiToggle(caseId)],
+        ["hypotheses", () => loadHypotheses(caseId)],
+        ["savedTimeframes", () => loadSavedTimeframes(caseId)],
+        ["superTimeline", () => loadSuperTimeline(caseId)],
+        ["savedStarredReport", () => loadSavedStarredReport(caseId)],
+        ["playbook", () => loadPlaybook(caseId)],
+        ["synthMeta", () => loadSynthMeta(caseId)],
+        ["secondOpinion", () => loadSecondOpinion(caseId)],
+        ["importMeta", () => loadImportMeta(caseId)],
+        ["dropStatus", () => loadDropStatus(caseId)],
+        ["jobs", () => loadJobs(caseId)],          // #225 background-jobs badge/popover
+        ["mcpRun", () => loadMcpRun()],            // #296 MCP Analysis — servers + this case's evidence paths
+        ["undoStack", () => loadUndoStack(caseId)],
+        ["customerExposure", () => loadCustomerExposure(caseId)],
+        ["veloTriage", () => loadVeloTriage(caseId)],
+        ["huntProfile", () => loadHuntProfile(caseId)],   // #157 what's been hunted, what hit/missed
+      ];
+      if (panelApi) {
+        panelApi.hidePanelStrip();
+        // Generation-guarded like the state load (#174): switching cases mid-load must not let the
+        // abandoned case's panels keep painting the strip for the case now on screen.
+        panelApi.runPanelLoaders(CASE_PANEL_LOADERS, (tally) => {
+          if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
+        });
+      } else {
+        for (const [, run] of CASE_PANEL_LOADERS) { try { run(); } catch {} }
+      }
       const lifecycleLoadPromise = loadCaseLifecycle(caseId, loadSignal);
+      lifecycleLoadPromise.then(() => clpStage("lifecycle"), () => clpStage("lifecycle"));
       Promise.allSettled([stateLoadPromise, lifecycleLoadPromise]).then(hideCaseLoadingOverlay);
-      loadVeloTriage(caseId);
-      loadHuntProfile(caseId);  // #157 hunting feedback loop — what's been hunted, what hit/missed
       resetVeloHuntSuggest();   // clear AI-suggested fleet hunts; analyst regenerates per case on demand
       resetPlaybookHuntSuggest();   // clear AI-suggested playbook hunts (#70) too
       resetGapHypotheses();     // clear AI gap hypotheses (#96); analyst regenerates per case on demand
