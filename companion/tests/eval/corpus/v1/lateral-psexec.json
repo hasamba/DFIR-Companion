@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "lateral-psexec",
+  "title": "Synthetic PsExec lateral movement",
+  "scenario": "lateral-movement",
+  "traits": ["complete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional authentication and service-install events written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "lat-e1",
+      "timestamp": "2026-05-04T10:00:00.000Z",
+      "description": "Network logon from WS-02 to APP-01 using admin-user",
+      "severity": "High",
+      "mitreTechniques": ["T1078.002"],
+      "asset": "APP-01",
+      "sources": ["Windows Security"]
+    },
+    {
+      "id": "lat-e2",
+      "timestamp": "2026-05-04T10:00:08.000Z",
+      "description": "PSEXESVC service installed on APP-01 from WS-02",
+      "severity": "High",
+      "mitreTechniques": ["T1021.002"],
+      "asset": "APP-01",
+      "sources": ["EDR"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "lat-f1",
+        "severity": "High",
+        "confidence": 92,
+        "confidenceReason": "Authentication and service creation corroborate the same source-to-target movement.",
+        "title": "Lateral movement via PsExec",
+        "description": "WS-02 moved laterally to APP-01 with an admin logon and PsExec service.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1078.002", "T1021.002"],
+        "status": "open",
+        "relatedEventIds": ["lat-e1", "lat-e2"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "WS-02 authenticated to APP-01 and installed PSEXESVC.",
+    "narrativeTimeline": "",
+    "summary": "The source and destination of lateral movement are directly supported.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "lat-n1",
+        "priority": "high",
+        "action": "Collect Security.evtx from WS-02",
+        "rationale": "This can identify how admin-user credentials were obtained.",
+        "pointer": "WS-02 Security.evtx",
+        "relatedFindingIds": ["lat-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Credential source",
+        "status": "unknown",
+        "basis": "Credential use is observed but acquisition is not.",
+        "gap": "Credential-access evidence from WS-02 is missing."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "psexec-lateral",
+        "requiredTerms": ["lateral movement", "PsExec"],
+        "evidenceEventIds": ["lat-e1", "lat-e2"],
+        "confidence": { "min": 65, "max": 100 }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [],
+    "uncertainties": [
+      {
+        "id": "credential-source-gap",
+        "topicTerms": ["credential source"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-source-auth", "requiredTerms": ["Security.evtx", "WS-02"] }],
+    "expectAbstention": false
+  }
+}

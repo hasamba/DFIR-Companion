@@ -73,6 +73,12 @@ jobs:
         working-directory: companion
         run: npm run check:imports
 
+      # A built-in prompt or default model can compile perfectly while making investigations worse.
+      # When either changes, #378 requires a hash-pinned real-model no-regression attestation.
+      - name: AI prompt/model no-regression gate
+        working-directory: companion
+        run: npm run eval:change-gate
+
   companion:
     name: Companion build + test
     runs-on: ubuntu-latest
