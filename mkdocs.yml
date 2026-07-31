@@ -75,5 +75,6 @@ nav:
     - War-Room Slash-Command Bot: reference/war-room-bot.md
     - Live Monitoring & Push Ingest: reference/live-monitoring.md
     - Settings Reference: reference/settings.md
+    - Team Accounts & Case Roles: reference/team-authentication.md
     - Advanced Features: reference/advanced.md
   - Tips for Analysts: tips.md

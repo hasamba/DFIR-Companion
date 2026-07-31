@@ -16,6 +16,8 @@ import { emptyState, type InvestigationState } from "../../src/analysis/stateTyp
 import type { CaptureMetadata } from "../../src/types.js";
 import type { GoldenEvent, ProducedEvent, ProducedFinding, Thresholds } from "./scorer.js";
 import type { ExtractionFixture, ScreenshotFixture, SynthesisFixture } from "./fixtures.js";
+import type { CorpusCase } from "./corpus.js";
+import type { QualityOutput } from "./qualityScorer.js";
 
 const IMPORTED_AT = "2026-06-01T00:00:00Z"; // fixed clock input — keeps runs reproducible
 
@@ -198,4 +200,51 @@ export async function runSynthesisFixture(fx: SynthesisFixture, provider: AIProv
   await stateStore.save(seeded);
   const state = await pipeline.synthesize(caseId, { force: true });
   return { events: producedEvents(state), findings: producedFindings(state) };
+}
+
+function qualityOutput(
+  state: InvestigationState,
+  evidenceEventIds: readonly string[],
+): QualityOutput {
+  return {
+    evidenceEventIds: [...evidenceEventIds],
+    claims: state.findings.map((finding) => ({
+      id: finding.id,
+      title: finding.title,
+      description: finding.description,
+      evidenceEventIds: [...(finding.relatedEventIds ?? [])],
+      ...(finding.confidence !== undefined ? { confidence: finding.confidence } : {}),
+      ...(finding.confidenceReason ? { confidenceReason: finding.confidenceReason } : {}),
+    })),
+    iocs: state.iocs.map((ioc) => ({ id: ioc.id, type: ioc.type, value: ioc.value })),
+    uncertainties: state.uncertainties.map((uncertainty) => ({ ...uncertainty })),
+    nextSteps: state.nextSteps.map((step) => ({
+      action: step.action,
+      rationale: step.rationale,
+      pointer: step.pointer,
+    })),
+  };
+}
+
+export async function runCorpusCase(
+  fixture: CorpusCase,
+  provider: AIProvider,
+): Promise<QualityOutput> {
+  const { pipeline, stateStore, caseId } = await makeEvalPipeline(provider);
+  const seeded = {
+    ...emptyState(caseId),
+    forensicTimeline: fixture.seedEvents.map((event) => ({
+      ...event,
+      mitreTechniques: [...event.mitreTechniques],
+      relatedFindingIds: [...event.relatedFindingIds],
+      sourceScreenshots: [...event.sourceScreenshots],
+      ...(event.sources ? { sources: [...event.sources] } : {}),
+    })),
+  };
+  await stateStore.save(seeded);
+  const state = await pipeline.synthesize(caseId, { force: true });
+  return qualityOutput(
+    state,
+    fixture.seedEvents.map((event) => event.id),
+  );
 }

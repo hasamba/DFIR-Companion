@@ -1,4 +1,5 @@
 node_modules/
+eval-artifacts/
 cases/
 .qa-cases-root/
 # Notification channel config (issue #58) — holds webhook URLs + SMTP passwords. Never commit.

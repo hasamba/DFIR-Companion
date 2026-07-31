@@ -1,0 +1,60 @@
+name: Protected AI quality evaluation
+
+on:
+  schedule:
+    - cron: "17 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protected-ai-evaluation
+  cancel-in-progress: false
+
+jobs:
+  production-evaluation:
+    name: Pinned real-model quality and calibration
+    runs-on: ubuntu-latest
+    environment: ai-evaluation
+    timeout-minutes: 45
+    env:
+      DFIR_AI_SYNTH_PROVIDER: ${{ vars.DFIR_EVAL_PROVIDER }}
+      DFIR_AI_SYNTH_MODEL: ${{ vars.DFIR_EVAL_MODEL }}
+      DFIR_AI_SYNTH_KEY: ${{ secrets.DFIR_EVAL_KEY }}
+      DFIR_EVAL_BASELINE_PATH: ${{ vars.DFIR_EVAL_BASELINE_PATH }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      - name: Run pinned real-model evaluation
+        working-directory: companion
+        shell: bash
+        run: |
+          args=(all --real --require-provider --output eval-artifacts/eval-report.json --write-baseline eval-artifacts/baselines)
+          if [[ -n "${DFIR_EVAL_BASELINE_PATH}" ]]; then
+            args+=(--baseline "${DFIR_EVAL_BASELINE_PATH}" --require-baseline --attestation eval-artifacts/no-regression.json)
+          fi
+          npm run eval:real -- "${args[@]}"
+
+      - name: Upload privacy-safe metrics and candidate baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-evaluation-${{ github.run_id }}
+          path: companion/eval-artifacts/
+          if-no-files-found: error
+          retention-days: 90

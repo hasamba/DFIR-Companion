@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "id": "network-egress-gap",
+  "title": "Synthetic unusual egress with an evidence gap",
+  "scenario": "network",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional proxy metadata written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "net-e1",
+      "timestamp": "2026-05-09T18:00:00.000Z",
+      "description": "WS-11 sent 850 MB to upload.example over TLS; content and process attribution were unavailable",
+      "severity": "High",
+      "mitreTechniques": ["T1041"],
+      "asset": "WS-11",
+      "dstIp": "192.0.2.90",
+      "sources": ["Proxy"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "net-f1",
+        "severity": "Medium",
+        "confidence": 55,
+        "confidenceReason": "Transfer volume is observed, but payload and initiating process are absent.",
+        "title": "Unusual outbound transfer requires validation",
+        "description": "An unusual outbound transfer to upload.example may be exfiltration, but it is not confirmed.",
+        "relatedIocs": ["net-i1"],
+        "mitreTechniques": ["T1041"],
+        "status": "open",
+        "relatedEventIds": ["net-e1"]
+      }
+    ],
+    "iocs": [{ "id": "net-i1", "type": "domain", "value": "upload.example" }],
+    "mitreTechniques": [],
+    "attackerPath": "",
+    "narrativeTimeline": "",
+    "summary": "Large egress is observed without enough evidence to confirm exfiltration.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "net-n1",
+        "priority": "high",
+        "action": "Collect EDR network telemetry from WS-11",
+        "rationale": "Process attribution and file-access telemetry can confirm or refute exfiltration.",
+        "pointer": "WS-11 EDR network telemetry",
+        "relatedFindingIds": ["net-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Data exfiltration",
+        "status": "speculated",
+        "basis": "Only transfer volume and destination are known.",
+        "gap": "The initiating process, payload, and business justification are missing."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "unusual-egress",
+        "requiredTerms": ["unusual outbound transfer"],
+        "evidenceEventIds": ["net-e1"],
+        "confidence": { "min": 30, "max": 65 }
+      }
+    ],
+    "iocs": [{ "type": "domain", "value": "upload.example" }],
+    "forbiddenConclusions": [{ "id": "causal-overreach", "terms": ["confirmed exfiltration"] }],
+    "uncertainties": [
+      {
+        "id": "exfil-gap",
+        "topicTerms": ["data exfiltration"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      }
+    ],
+    "nextSteps": [{ "id": "collect-edr-network", "requiredTerms": ["EDR network telemetry", "WS-11"] }],
+    "expectAbstention": false
+  }
+}

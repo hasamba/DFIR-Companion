@@ -1,41 +1,99 @@
-// Background-job registry (#225) — pure core.
+// Durable background-job model (#380) — pure core.
 //
-// The Companion runs heavy operations (imports, LLM synthesis, threat-intel enrichment) off the
-// HTTP response cycle. Historically their only trace was a transient "AI status" WS ping, so a
-// stuck synthesis or a runaway enrichment could not be listed or stopped. This module models each
-// such operation as a trackable Job with a stable id, status, progress and error, so the dashboard
-// can render a Jobs panel and offer a Cancel button.
-//
-// Everything here is PURE and I/O-free (immutable transitions returning new objects; ids and
-// timestamps are injected by the caller) so it unit-tests deterministically — the impure side
-// (AbortControllers, WS broadcast, monotonic ids/clock) lives in jobManager.ts. Nothing is
-// persisted: an in-flight job is meaningless after a restart, so the table is in-memory only.
+// The impure manager persists every transition in SQLite and owns AbortControllers. This module
+// only validates records and returns immutable state transitions, which keeps recovery, retry and
+// cancellation behavior deterministic under unit tests.
 
-export type JobKind = "import" | "synthesis" | "enrichment" | "deep-pass" | "mcp";
-export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
+import { z } from "zod";
+import type { ManifestValue } from "./analysisRunTypes.js";
+
+export const JOB_KINDS = [
+  "import",
+  "synthesis",
+  "enrichment",
+  "deep-pass",
+  "mcp",
+] as const;
+export type JobKind = (typeof JOB_KINDS)[number];
+
+export const JOB_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "interrupted",
+] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+export type JobPriority = "low" | "normal" | "high";
+
+export interface JobProgress {
+  done: number;
+  total: number;
+}
+
+export interface JobCheckpoint {
+  sequence: number;
+  at: string;
+  progress: JobProgress;
+  detail?: string;
+  cursor?: ManifestValue;
+}
+
+export interface JobFailure {
+  code: string;
+  message: string;
+  retryable: boolean;
+  at: string;
+}
+
+export interface JobResourceBudget {
+  maxRuntimeMs?: number;
+  maxCostUsd?: number;
+  maxInputTokens?: number;
+}
 
 export interface Job {
   id: string;
-  caseId: string;
+  caseId: string | null;
   kind: JobKind;
-  label?: string; // human-friendly subject, e.g. the import filename
+  label?: string;
   status: JobStatus;
-  progress?: { done: number; total: number };
-  detail?: string; // human-readable current step
-  startedAt: string; // ISO
-  updatedAt: string; // ISO, refreshed by progress/heartbeat transitions
-  endedAt?: string; // ISO, set on any terminal transition
+  priority: JobPriority;
+  parentJobId?: string;
+  idempotencyKey?: string;
+  parameters?: Record<string, ManifestValue>;
+  runManifestId?: string;
+  progress?: JobProgress;
+  detail?: string;
+  queuedAt: string;
+  startedAt?: string;
+  updatedAt: string;
+  endedAt?: string;
   error?: string;
-  // Only AI/network jobs can be aborted mid-flight (synthesis, enrichment, CSV/log import). A
-  // deterministic import parses synchronously and is already done before a cancel could arrive.
+  failure?: JobFailure;
+  warnings: string[];
+  lastCheckpoint?: JobCheckpoint;
+  throughputPerSecond?: number;
+  etaAt?: string;
+  attempt: number;
+  maxRetries: number;
+  resourceBudget?: JobResourceBudget;
+  resumable: boolean;
   cancellable: boolean;
+  cancelRequestedAt?: string;
 }
 
 export interface JobTable {
   jobs: Job[];
 }
 
-export const TERMINAL_STATUSES: readonly JobStatus[] = ["done", "error", "cancelled"];
+export const TERMINAL_STATUSES: readonly JobStatus[] = [
+  "succeeded",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
 
 export function isTerminal(status: JobStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
@@ -47,97 +105,377 @@ export function emptyJobTable(): JobTable {
 
 export interface CreateJobInput {
   id: string;
-  caseId: string;
+  caseId: string | null;
   kind: JobKind;
   label?: string;
   detail?: string;
+  priority?: JobPriority;
+  parentJobId?: string;
+  idempotencyKey?: string;
+  parameters?: Record<string, ManifestValue>;
+  runManifestId?: string;
+  resourceBudget?: JobResourceBudget;
+  attempt?: number;
+  maxRetries?: number;
+  resumable?: boolean;
   cancellable?: boolean;
-  now: string; // injected ISO timestamp
+  status?: "queued" | "running";
+  now: string;
 }
 
-// Append a new RUNNING job. (We skip a distinct "queued" phase — the impure layer starts work
-// immediately; "queued" stays in the type for a future real pool but is unused here.)
 export function createJob(table: JobTable, input: CreateJobInput): JobTable {
+  const status = input.status ?? "running";
   const job: Job = {
     id: input.id,
     caseId: input.caseId,
     kind: input.kind,
-    label: input.label,
-    detail: input.detail,
-    status: "running",
-    startedAt: input.now,
+    ...(input.label !== undefined ? { label: input.label } : {}),
+    ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    status,
+    priority: input.priority ?? "normal",
+    ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.parameters ? { parameters: input.parameters } : {}),
+    ...(input.runManifestId ? { runManifestId: input.runManifestId } : {}),
+    queuedAt: input.now,
+    ...(status === "running" ? { startedAt: input.now } : {}),
     updatedAt: input.now,
+    warnings: [],
+    attempt: input.attempt ?? 1,
+    maxRetries: input.maxRetries ?? 0,
+    ...(input.resourceBudget ? { resourceBudget: input.resourceBudget } : {}),
+    resumable: input.resumable ?? false,
     cancellable: input.cancellable ?? false,
   };
   return { jobs: [...table.jobs, job] };
 }
 
-// Immutably replace the job with matching id via an updater. Unknown id → table unchanged.
 function patchJob(table: JobTable, id: string, patch: (job: Job) => Job): JobTable {
   let changed = false;
-  const jobs = table.jobs.map((j) => {
-    if (j.id !== id) return j;
-    changed = true;
-    return patch(j);
+  const jobs = table.jobs.map((job) => {
+    if (job.id !== id) return job;
+    const next = patch(job);
+    changed = changed || next !== job;
+    return next;
   });
   return changed ? { jobs } : table;
+}
+
+export function startJob(table: JobTable, id: string, now: string): JobTable {
+  return patchJob(table, id, (job) =>
+    job.status !== "queued"
+      ? job
+      : { ...job, status: "running", startedAt: now, updatedAt: now },
+  );
+}
+
+function validProgress(progress: JobProgress): JobProgress {
+  const total = Math.max(0, Math.floor(progress.total));
+  const done = Math.max(0, Math.min(total, Math.floor(progress.done)));
+  return { done, total };
+}
+
+function progressMetrics(
+  job: Job,
+  progress: JobProgress,
+  now: string,
+): Pick<Job, "throughputPerSecond" | "etaAt"> {
+  if (!job.startedAt || progress.done <= 0 || progress.total <= progress.done) return {};
+  const elapsedMs = Date.parse(now) - Date.parse(job.startedAt);
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return {};
+  const throughputPerSecond = progress.done / (elapsedMs / 1000);
+  if (!Number.isFinite(throughputPerSecond) || throughputPerSecond <= 0) return {};
+  const remainingMs = ((progress.total - progress.done) / throughputPerSecond) * 1000;
+  return {
+    throughputPerSecond,
+    etaAt: new Date(Date.parse(now) + remainingMs).toISOString(),
+  };
+}
+
+export function checkpointJob(
+  table: JobTable,
+  id: string,
+  input: {
+    progress: JobProgress;
+    detail?: string;
+    cursor?: ManifestValue;
+  },
+  now: string,
+): JobTable {
+  return patchJob(table, id, (job) => {
+    if (job.status !== "running") return job;
+    const progress = validProgress(input.progress);
+    if (
+      job.lastCheckpoint &&
+      progress.total === job.lastCheckpoint.progress.total &&
+      progress.done < job.lastCheckpoint.progress.done
+    ) return job;
+    const checkpoint: JobCheckpoint = {
+      sequence: (job.lastCheckpoint?.sequence ?? 0) + 1,
+      at: now,
+      progress,
+      ...(input.detail !== undefined ? { detail: input.detail } : {}),
+      ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+    };
+    const metrics = progressMetrics(job, progress, now);
+    return {
+      ...job,
+      progress,
+      ...(input.detail !== undefined ? { detail: input.detail } : {}),
+      throughputPerSecond: metrics.throughputPerSecond,
+      etaAt: metrics.etaAt,
+      lastCheckpoint: checkpoint,
+      updatedAt: now,
+    };
+  });
+}
+
+export function warnJob(
+  table: JobTable,
+  id: string,
+  warning: string,
+  now: string,
+): JobTable {
+  const normalized = warning.trim();
+  if (!normalized) return table;
+  return patchJob(table, id, (job) =>
+    isTerminal(job.status) || job.warnings.includes(normalized)
+      ? job
+      : {
+          ...job,
+          warnings: [...job.warnings, normalized],
+          updatedAt: now,
+        },
+  );
 }
 
 export function progressJob(
   table: JobTable,
   id: string,
-  progress: { done: number; total: number },
+  progress: JobProgress,
   detail?: string,
   now?: string,
 ): JobTable {
-  return patchJob(table, id, (j) =>
-    isTerminal(j.status) ? j : {
-      ...j, progress,
+  return patchJob(table, id, (job) => {
+    if (job.status !== "running") return job;
+    const nextProgress = validProgress(progress);
+    if (job.progress && nextProgress.done < job.progress.done) return job;
+    const metrics = now ? progressMetrics(job, nextProgress, now) : {};
+    return {
+      ...job,
+      progress: nextProgress,
       ...(detail !== undefined ? { detail } : {}),
-      ...(now !== undefined ? { updatedAt: now } : {}),
-    },
+      ...(now
+        ? {
+            throughputPerSecond: metrics.throughputPerSecond,
+            etaAt: metrics.etaAt,
+            updatedAt: now,
+          }
+        : {}),
+    };
+  });
+}
+
+function terminate(
+  table: JobTable,
+  id: string,
+  status: Extract<JobStatus, "succeeded" | "failed" | "cancelled" | "interrupted">,
+  now: string,
+  extra: Partial<Job> = {},
+): JobTable {
+  return patchJob(table, id, (job) =>
+    isTerminal(job.status)
+      ? job
+      : {
+          ...job,
+          ...extra,
+          status,
+          updatedAt: now,
+          endedAt: now,
+          etaAt: undefined,
+          ...(status === "cancelled" ? { cancelRequestedAt: now } : {}),
+        },
   );
 }
 
-// Mark a job terminal. A no-op if the job is already terminal (so a late finish can't clobber a
-// prior cancel, and a double-cancel is harmless).
-function terminate(table: JobTable, id: string, status: JobStatus, now: string, extra: Partial<Job> = {}): JobTable {
-  return patchJob(table, id, (j) =>
-    (isTerminal(j.status) ? j : { ...j, ...extra, status, updatedAt: now, endedAt: now }));
-}
-
 export function finishJob(table: JobTable, id: string, now: string): JobTable {
-  return terminate(table, id, "done", now);
+  return terminate(table, id, "succeeded", now);
 }
 
-export function failJob(table: JobTable, id: string, error: string, now: string): JobTable {
-  return terminate(table, id, "error", now, { error });
+export function failJob(
+  table: JobTable,
+  id: string,
+  failure: JobFailure | string,
+  now: string,
+): JobTable {
+  const normalized: JobFailure =
+    typeof failure === "string"
+      ? { code: "job_failed", message: failure, retryable: false, at: now }
+      : failure;
+  return terminate(table, id, "failed", now, {
+    error: normalized.message,
+    failure: normalized,
+  });
 }
 
 export function cancelJob(table: JobTable, id: string, now: string): JobTable {
   return terminate(table, id, "cancelled", now);
 }
 
+export function interruptJob(table: JobTable, id: string, now: string): JobTable {
+  return terminate(table, id, "interrupted", now, {
+    error: "server restarted before this job reached a terminal state",
+    failure: {
+      code: "server_restart",
+      message: "server restarted before this job reached a terminal state",
+      retryable: true,
+      at: now,
+    },
+  });
+}
+
+export function requeueJob(table: JobTable, id: string, now: string): JobTable {
+  return patchJob(table, id, (job) => {
+    if (job.status !== "interrupted" && job.status !== "failed") return job;
+    return {
+      ...job,
+      status: "queued",
+      queuedAt: now,
+      updatedAt: now,
+      attempt: job.attempt + 1,
+      startedAt: undefined,
+      endedAt: undefined,
+      error: undefined,
+      failure: undefined,
+      progress: job.lastCheckpoint?.progress,
+      detail: job.lastCheckpoint?.detail ?? job.detail,
+      throughputPerSecond: undefined,
+      etaAt: undefined,
+      cancelRequestedAt: undefined,
+    };
+  });
+}
+
+export function allowJobCancellation(table: JobTable, id: string): JobTable {
+  return patchJob(table, id, (job) =>
+    job.cancellable ? job : { ...job, cancellable: true },
+  );
+}
+
 export function getJob(table: JobTable, id: string): Job | undefined {
-  return table.jobs.find((j) => j.id === id);
+  return table.jobs.find((job) => job.id === id);
 }
 
-// Newest first (by insertion order — ids are monotonic), optionally filtered by case.
-export function listJobs(table: JobTable, opts: { caseId?: string } = {}): Job[] {
-  const filtered = opts.caseId ? table.jobs.filter((j) => j.caseId === opts.caseId) : table.jobs;
-  return [...filtered].reverse();
+export function findJobByIdempotencyKey(
+  table: JobTable,
+  caseId: string | null,
+  key: string,
+): Job | undefined {
+  return table.jobs.find((job) => job.caseId === caseId && job.idempotencyKey === key);
 }
 
-// Ring-buffer cap: when over the limit, evict the OLDEST terminal jobs (never a running one, so an
-// in-flight job is never dropped from the registry). Insertion order is preserved.
+export function listJobs(table: JobTable, opts: { caseId?: string | null } = {}): Job[] {
+  const filtered =
+    opts.caseId !== undefined
+      ? table.jobs.filter((job) => job.caseId === opts.caseId)
+      : table.jobs;
+  return [...filtered].sort(
+    (a, b) => b.queuedAt.localeCompare(a.queuedAt) || b.id.localeCompare(a.id),
+  );
+}
+
 export function capJobs(table: JobTable, max: number): JobTable {
   if (max <= 0 || table.jobs.length <= max) return table;
   const over = table.jobs.length - max;
-  const evict = new Set<Job>();
-  for (const j of table.jobs) {
+  const evict = new Set<string>();
+  for (const job of table.jobs) {
     if (evict.size >= over) break;
-    if (isTerminal(j.status)) evict.add(j);
+    if (isTerminal(job.status)) evict.add(job.id);
   }
-  if (evict.size === 0) return table;
-  return { jobs: table.jobs.filter((j) => !evict.has(j)) };
+  return evict.size
+    ? { jobs: table.jobs.filter((job) => !evict.has(job.id)) }
+    : table;
 }
+
+export function capJobsByScope(table: JobTable, max: number): JobTable {
+  if (max <= 0) return table;
+  let bounded = table;
+  const scopes = new Set(table.jobs.map((job) => job.caseId));
+  for (const scope of scopes) {
+    const scoped = bounded.jobs.filter((job) => job.caseId === scope);
+    const kept = new Set(capJobs({ jobs: scoped }, max).jobs.map((job) => job.id));
+    bounded = {
+      jobs: bounded.jobs.filter(
+        (job) => job.caseId !== scope || kept.has(job.id),
+      ),
+    };
+  }
+  return bounded;
+}
+
+const manifestValueSchema: z.ZodType<ManifestValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(manifestValueSchema),
+    z.record(z.string(), manifestValueSchema),
+  ]),
+);
+const progressSchema = z.object({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+
+export const jobSchema: z.ZodType<Job> = z.object({
+  id: z.string().min(1).max(160),
+  caseId: z.string().min(1).nullable(),
+  kind: z.enum(JOB_KINDS),
+  label: z.string().optional(),
+  status: z.enum(JOB_STATUSES),
+  priority: z.enum(["low", "normal", "high"]),
+  parentJobId: z.string().optional(),
+  idempotencyKey: z.string().min(1).max(300).optional(),
+  parameters: z.record(z.string(), manifestValueSchema).optional(),
+  runManifestId: z.string().optional(),
+  progress: progressSchema.optional(),
+  detail: z.string().optional(),
+  queuedAt: z.string().datetime(),
+  startedAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime(),
+  endedAt: z.string().datetime().optional(),
+  error: z.string().optional(),
+  failure: z
+    .object({
+      code: z.string().min(1),
+      message: z.string(),
+      retryable: z.boolean(),
+      at: z.string().datetime(),
+    })
+    .optional(),
+  warnings: z.array(z.string()),
+  lastCheckpoint: z
+    .object({
+      sequence: z.number().int().positive(),
+      at: z.string().datetime(),
+      progress: progressSchema,
+      detail: z.string().optional(),
+      cursor: manifestValueSchema.optional(),
+    })
+    .optional(),
+  throughputPerSecond: z.number().nonnegative().optional(),
+  etaAt: z.string().datetime().optional(),
+  attempt: z.number().int().positive(),
+  maxRetries: z.number().int().nonnegative(),
+  resourceBudget: z
+    .object({
+      maxRuntimeMs: z.number().int().positive().optional(),
+      maxCostUsd: z.number().nonnegative().optional(),
+      maxInputTokens: z.number().int().positive().optional(),
+    })
+    .optional(),
+  resumable: z.boolean(),
+  cancellable: z.boolean(),
+  cancelRequestedAt: z.string().datetime().optional(),
+});

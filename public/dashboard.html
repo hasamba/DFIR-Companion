@@ -7,6 +7,88 @@
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <script nonce="__CSP_NONCE__">
+    // Team mode is optional. When present, bind every same-origin write to the signed-in
+    // browser session without changing the dashboard's many existing fetch call sites.
+    (function () {
+      var nativeFetch = window.fetch.bind(window);
+      var authReady = nativeFetch('/auth/me', {
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin'
+      }).then(function (response) {
+        return response.ok ? response.json() : { enabled: false, authenticated: false };
+      }).catch(function () {
+        return { enabled: false, authenticated: false };
+      });
+      window.dfirAuthState = null;
+      window.dfirAuthReady = authReady;
+      authReady.then(function (state) {
+        window.dfirAuthState = state;
+        if (!state.enabled || !state.authenticated) return;
+        function showIdentity() {
+          var wrap = document.getElementById('profileMenuWrap');
+          var button = document.getElementById('profileMenuBtn');
+          var menu = document.getElementById('profileMenu');
+          var name = document.getElementById('profileIdentityName');
+          var logout = document.getElementById('profileSignOut');
+          if (!wrap || !button || !menu || !name || !logout) return;
+          wrap.hidden = false;
+          name.textContent = state.identity.displayName;
+          button.title = state.identity.displayName + ' — account menu';
+          button.addEventListener('click', function (event) {
+            event.stopPropagation();
+            menu.hidden = !menu.hidden;
+            button.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+          });
+          logout.addEventListener('click', function () {
+            window.fetch('/auth/logout', { method:'POST' }).then(function () {
+              location.assign('/login');
+            });
+          });
+          document.addEventListener('click', function (event) {
+            if (wrap.contains(event.target)) return;
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+          });
+          document.addEventListener('keydown', function (event) {
+            if (event.key !== 'Escape' || menu.hidden) return;
+            menu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.focus();
+          });
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', showIdentity, { once:true });
+        } else {
+          showIdentity();
+        }
+      });
+      window.fetch = async function (input, init) {
+        var options = Object.assign({}, init || {});
+        var request = input instanceof Request ? input : null;
+        var url = new URL(request ? request.url : String(input), location.href);
+        var method = String(options.method || (request && request.method) || 'GET').toUpperCase();
+        var sameOrigin = url.origin === location.origin;
+        if (sameOrigin && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+          var state = await authReady;
+          if (state.enabled && state.authenticated && state.csrfToken) {
+            var headers = new Headers(request ? request.headers : undefined);
+            new Headers(options.headers || undefined).forEach(function (value, key) {
+              headers.set(key, value);
+            });
+            headers.set('X-DFIR-CSRF', state.csrfToken);
+            options.headers = headers;
+          }
+        }
+        options.credentials = sameOrigin ? 'same-origin' : options.credentials;
+        var response = await nativeFetch(input, options);
+        if (sameOrigin && response.status === 401 && !url.pathname.startsWith('/auth/')) {
+          location.assign('/login?returnTo=' + encodeURIComponent(location.pathname + location.search));
+        }
+        return response;
+      };
+    })();
+  </script>
   <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape.min.js"></script>
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
@@ -2319,14 +2401,20 @@
     .job-kind { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: var(--text-muted); }
     .job-label { color: var(--text-bright); word-break: break-all; flex: 1 1 140px; min-width: 0; }
     .job-st { border-radius: 3px; padding: 0 6px; font-size: 10px; font-weight: bold; white-space: nowrap; flex: 0 0 auto; align-self: center; }
+    .job-queued { background: #9aa4b222; color: #b6c0cc; border: 1px solid #9aa4b255; }
     .job-running { background: #6aa9ff22; color: #6aa9ff; border: 1px solid #6aa9ff55; }
-    .job-done { background: #2f8f4e22; color: #6bcb77; border: 1px solid #2f8f4e55; }
-    .job-error { background: #ff5a5a22; color: #ff8f8f; border: 1px solid #ff5a5a55; }
+    .job-succeeded { background: #2f8f4e22; color: #6bcb77; border: 1px solid #2f8f4e55; }
+    .job-failed { background: #ff5a5a22; color: #ff8f8f; border: 1px solid #ff5a5a55; }
     .job-cancelled { background: #9aa4b222; color: #9aa4b2; border: 1px solid #9aa4b255; }
-    .job-cancel { margin-left: auto; flex: 0 0 auto; align-self: center; white-space: nowrap; background: var(--sev-high); border: 1px solid var(--sev-high);
+    .job-interrupted { background: #ffb34722; color: #ffbd66; border: 1px solid #ffb34755; }
+    .job-cancel, .job-resume { margin-left: auto; flex: 0 0 auto; align-self: center; white-space: nowrap; background: var(--sev-high); border: 1px solid var(--sev-high);
       color: #1a1f29; border-radius: 4px; padding: 3px 12px; font-size: 11px; font-weight: bold; line-height: 1.4; cursor: pointer; }
-    .job-cancel:hover { filter: brightness(1.1); }
-    .job-cancel:disabled { opacity: .5; cursor: default; }
+    .job-resume { background: var(--accent); border-color: var(--accent); }
+    /* The popover lives inside .toolbar-main, but its actions are not toolbar controls. Keep their
+       labels visible when the outer toolbar collapses its own buttons to icons-only. */
+    .toolbar-main.icons-only .jobs-menu button { font-size: 11px; padding: 3px 12px; }
+    .job-cancel:hover, .job-resume:hover { filter: brightness(1.1); }
+    .job-cancel:disabled, .job-resume:disabled { opacity: .5; cursor: default; }
     .job-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; }
     .jobs-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
     .ai-unknown { background: var(--border-color); color: var(--text-muted); }
@@ -2628,6 +2716,24 @@
       display: flex; align-items: center; border-radius: 7px; line-height: 0;
       transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
     #settingsBtn:hover { color: var(--text-primary); background: var(--hover-wash); }
+    /* Signed-in profile menu — the final control in the header, after Settings. */
+    #profileMenuWrap { position: relative; display: flex; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+    #profileMenuWrap[hidden] { display: none; }
+    #profileMenuBtn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+      display: flex; align-items: center; border-radius: 7px; line-height: 0;
+      transition: color .15s, background .15s; }
+    #profileMenuBtn:hover, #profileMenuBtn[aria-expanded="true"] { color: var(--text-primary); background: var(--hover-wash); }
+    .profile-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 220px;
+      background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+      padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
+    .profile-menu[hidden] { display: none; }
+    .profile-menu-identity { display: block; padding: 7px 9px 8px; color: var(--text-muted); font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border-subtle); }
+    .profile-menu a, .profile-menu button { display: flex; width: 100%; justify-content: flex-start;
+      box-sizing: border-box; margin: 3px 0 0; padding: 7px 9px; border: none; border-radius: 5px;
+      background: none; color: var(--text-primary); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+    .profile-menu a:hover, .profile-menu button:hover { background: var(--bg-hover); }
+    .profile-menu #profileSignOut { color: var(--badge-danger-text); }
     /* Settings modal — flex column so the tab-bar (top) and footer (bottom) stay fixed and only the
        active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
        (footer clipped) whenever the .stab-bar wrapped to two lines. */
@@ -2950,6 +3056,14 @@
     <button id="themeToggle" type="button" title="Theme — click to change" aria-label="Change theme" aria-haspopup="menu" aria-expanded="false"><svg class="ti-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg class="ti-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
     <a id="helpBtn" href="https://hasamba.github.io/DFIR-Companion/manual/" target="_blank" rel="noopener noreferrer" title="Open the online user manual (new tab)" aria-label="User manual"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg></a>
     <button id="settingsBtn" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.07 7.07 0 0 0-1.62-.94l-.36-2.54A.484.484 0 0 0 14 3h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.47.47 0 0 0-.59.22L2.74 9.47a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41H14c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.09-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
+    <span id="profileMenuWrap" hidden>
+      <button id="profileMenuBtn" type="button" title="Account menu" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
+      <span id="profileMenu" class="profile-menu" role="menu" hidden>
+        <span id="profileIdentityName" class="profile-menu-identity"></span>
+        <a href="/admin" role="menuitem">Account &amp; team</a>
+        <button id="profileSignOut" type="button" role="menuitem">Sign out</button>
+      </span>
+    </span>
     <div class="scope-group">
       <span style="color:var(--text-primary);">Scope:</span>
       <button class="scope-preset" data-hours="1" title="Last hour of activity">1h</button>
@@ -5065,7 +5179,9 @@
 
         <div class="sfield-row" style="margin-bottom:10px">
           <div class="sfield"><label>Size scan file limit<span class="sfield-hint">DFIR_DIAG_MAX_FILES — max files visited by "Compute case sizes" before stopping (default 100000)</span></label><input id="env-DFIR_DIAG_MAX_FILES" placeholder="100000" /></div>
-          <div class="sfield"><label>Job registry retention<span class="sfield-hint">DFIR_JOBS_MAX — max finished jobs kept in the jobs badge/popover before the oldest are evicted (default 100); running jobs are never evicted</span></label><input id="env-DFIR_JOBS_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Job history retention<span class="sfield-hint">DFIR_JOBS_MAX — max durable job rows kept before the oldest finished jobs are evicted (default 100)</span></label><input id="env-DFIR_JOBS_MAX" placeholder="100" /></div>
+          <div class="sfield"><label>Job concurrency<span class="sfield-hint">DFIR_JOBS_CONCURRENCY — jobs running across all cases (default 4)</span></label><input id="env-DFIR_JOBS_CONCURRENCY" placeholder="4" /></div>
+          <div class="sfield"><label>Jobs per case<span class="sfield-hint">DFIR_JOBS_PER_CASE — per-case running cap, preventing queue starvation (default 1)</span></label><input id="env-DFIR_JOBS_PER_CASE" placeholder="1" /></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <button id="diagRefreshBtn" type="button">↻ Refresh</button>
@@ -6641,6 +6757,7 @@
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
     let lastState = null;                    // last raw state from server, for re-render on scope change
     let lastCockpit = null;                  // server-derived Now cockpit, including this investigator's review state
+    let lastCockpitRenderSignature = "";     // generatedAt changes every request; repaint only when the decisions change
     let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
     let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
     let lastIocs = [];                        // last scoped IOC list, for the Host & Account Ranking expand view (#237)
@@ -13073,6 +13190,22 @@
       b.style.setProperty("--ipb-w", "100%");
       setTimeout(() => { b.classList.remove("ipb-active"); b.style.setProperty("--ipb-w", "0%"); }, 400);
     }
+    function cancelImportProgress() {
+      const b = _ipb(); if (!b) return;
+      b.classList.remove("ipb-active", "ipb-indeterminate");
+      b.style.setProperty("--ipb-w", "0%");
+    }
+    function importPermissionMessage(caseId) {
+      const state = window.dfirAuthState;
+      if (!state || !state.enabled || !state.authenticated) return "";
+      if (state.identity && state.identity.globalRole === "administrator") return "";
+      const role = state.caseRoles && state.caseRoles[caseId];
+      if (role === "investigator" || role === "administrator") return "";
+      if (role) {
+        return `Your ${role} role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.`;
+      }
+      return "You do not have a case role that permits importing evidence. Ask a case administrator for the investigator or administrator role.";
+    }
     // Read a File as text while driving the progress bar (0 → 40%).
     function readFileTextWithProgress(file) {
       return new Promise((resolve, reject) => {
@@ -13446,7 +13579,7 @@
       const retry = document.getElementById("mcpRunRetryBtn");
       const running = job && (job.status === "running" || job.status === "queued");
       cancel.style.display = running && job.cancellable ? "" : "none";
-      retry.style.display = job && (job.status === "error" || job.status === "cancelled") ? "" : "none";
+      retry.style.display = job && (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") ? "" : "none";
     }
     function cancelMcpJob() {
       if (!_mcpActiveJobId) return;
@@ -13499,8 +13632,8 @@
           setMcpJobButtons(job);
           if (job.status === "running" || job.status === "queued") { setTimeout(tick, 1000); return; }
           _mcpActiveJobId = "";
-          if (job.status === "done" && preview) { showMcpPreview(caseIdStr, jobId); }
-          else if (job.status === "done") { msg.textContent = "done — result imported"; loadMcpRunTargets(); }
+          if (job.status === "succeeded" && preview) { showMcpPreview(caseIdStr, jobId); }
+          else if (job.status === "succeeded") { msg.textContent = "done — result imported"; loadMcpRunTargets(); }
           else { msg.textContent = job.status === "cancelled" ? "cancelled" : (job.error || "failed"); }
         }).catch(() => { if (token === _mcpWatchToken) setTimeout(tick, 3000); });
       };
@@ -13522,46 +13655,122 @@
       const r = document.getElementById("mcpRunRetryBtn"); if (r) r.onclick = retryMcpJob;
     }
 
-    // A toolbar badge shows the count of RUNNING heavy operations (import / synthesis / enrichment);
+    // A toolbar badge shows the count of queued/running heavy operations;
     // clicking it opens a popover to view recent jobs and cancel a long/stuck one. Fed by GET
     // /api/jobs and refreshed on the job_changed WS event.
     let _jobsCache = [];
+    let _jobsMenuShape = "";
+    let _jobsLoadPromise = null;
+    let _jobsLoadCaseId = "";
+    const JOB_UI_REFRESH_MS = 1000;
+    let _jobUiRefreshTimer = null;
+    let _jobUiRefreshRunning = false;
+    let _jobUiRefreshQueued = false;
+    let _jobUiRefreshCaseId = "";
     // Resolve the connected case id from the input element. NOTE: a bare `caseId` at this outer
     // script scope resolves to the #caseId DOM ELEMENT (browsers expose id'd elements as window
     // globals), NOT the string — so we must read `.value` here rather than trust any argument.
     function jobsCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
     function loadJobs() {
       const cid = jobsCaseId();
-      if (!cid) return;
-      fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`)
+      if (!cid) return Promise.resolve();
+      if (_jobsLoadPromise && _jobsLoadCaseId === cid) return _jobsLoadPromise;
+      _jobsLoadCaseId = cid;
+      const request = fetch(`/api/jobs?caseId=${encodeURIComponent(cid)}`)
         .then(r => (r.ok ? r.json() : { jobs: [] }))
-        .then(d => { _jobsCache = Array.isArray(d.jobs) ? d.jobs : []; renderJobs(); })
-        .catch(() => {});
+        .then(d => {
+          if (cid !== jobsCaseId()) return;
+          _jobsCache = Array.isArray(d.jobs) ? d.jobs : [];
+          renderJobs();
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (_jobsLoadPromise === request) {
+            _jobsLoadPromise = null;
+            _jobsLoadCaseId = "";
+          }
+        });
+      _jobsLoadPromise = request;
+      return request;
+    }
+    function scheduleJobUiRefresh(caseId) {
+      const cid = caseId || jobsCaseId();
+      if (!cid) return;
+      _jobUiRefreshCaseId = cid;
+      _jobUiRefreshQueued = true;
+      if (_jobUiRefreshTimer || _jobUiRefreshRunning) return;
+      _jobUiRefreshTimer = setTimeout(runJobUiRefresh, JOB_UI_REFRESH_MS);
+    }
+    async function runJobUiRefresh() {
+      _jobUiRefreshTimer = null;
+      const cid = _jobUiRefreshCaseId;
+      if (!cid || cid !== jobsCaseId()) { _jobUiRefreshQueued = false; return; }
+      _jobUiRefreshQueued = false;
+      _jobUiRefreshRunning = true;
+      try { await Promise.all([loadJobs(), loadCockpit(cid)]); }
+      finally {
+        _jobUiRefreshRunning = false;
+        if (_jobUiRefreshQueued && _jobUiRefreshCaseId === jobsCaseId()) {
+          _jobUiRefreshTimer = setTimeout(runJobUiRefresh, JOB_UI_REFRESH_MS);
+        }
+      }
+    }
+    function jobMenuView(j) {
+      const cancel = (j.status === "running" || j.status === "queued") && j.cancellable;
+      const resume = j.resumable && (j.status === "interrupted" || (j.status === "failed" && j.failure && j.failure.retryable));
+      const progress = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
+      const speed = j.throughputPerSecond ? ` · ${Number(j.throughputPerSecond).toFixed(1)}/s` : "";
+      const eta = j.etaAt ? ` · ETA ${new Date(j.etaAt).toLocaleTimeString()}` : "";
+      const checkpoint = j.lastCheckpoint ? ` · durable checkpoint ${j.lastCheckpoint.progress.done}/${j.lastCheckpoint.progress.total}` : "";
+      const warnings = Array.isArray(j.warnings) && j.warnings.length ? ` · ${j.warnings.length} warning(s)` : "";
+      const detail = j.detail || progress || j.error ? `${j.detail || j.error || ""}${progress}${speed}${eta}${checkpoint}${warnings}` : "";
+      return { job: j, cancel, resume, detail };
+    }
+    function jobRowHtml(view) {
+      const j = view.job;
+      const cancel = view.cancel ? `<button class="job-cancel" data-job="${esc(j.id)}" title="Cancel this job">✕ Cancel</button>` : "";
+      const resume = view.resume ? `<button class="job-resume" data-job="${esc(j.id)}" title="Resume from the last durable checkpoint">↻ Resume</button>` : "";
+      return `<div class="job-row" data-job-id="${esc(j.id)}"><span class="job-kind">${esc(j.kind)}</span>`
+        + `<span class="job-label">${esc(j.label || "")}</span>`
+        + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
+        + cancel + resume
+        + `<span class="job-detail"${view.detail ? "" : ' style="display:none"'}>${esc(view.detail)}</span></div>`;
+    }
+    function updateJobRow(row, view) {
+      const status = row.querySelector(".job-st");
+      const detail = row.querySelector(".job-detail");
+      row.querySelector(".job-kind").textContent = view.job.kind;
+      row.querySelector(".job-label").textContent = view.job.label || "";
+      status.className = `job-st job-${view.job.status}`;
+      status.textContent = view.job.status;
+      detail.textContent = view.detail;
+      detail.style.display = view.detail ? "" : "none";
+    }
+    function rebuildJobsMenu(menu, views) {
+      menu.innerHTML = `<h3>Background jobs</h3>` + (views.length
+        ? views.map(jobRowHtml).join("")
+        : `<div class="jobs-empty">No jobs yet.</div>`);
+      menu.querySelectorAll(".job-cancel").forEach(b => b.addEventListener("click", () => cancelJob(b.dataset.job, b)));
+      menu.querySelectorAll(".job-resume").forEach(b => b.addEventListener("click", () => resumeJob(b.dataset.job, b)));
     }
     function renderJobs() {
       const badge = document.getElementById("jobsBadge");
       const menu = document.getElementById("jobsMenu");
       if (!badge || !menu) return;
-      const running = _jobsCache.filter(j => j.status === "running");
+      const running = _jobsCache.filter(j => j.status === "running" || j.status === "queued");
+      const attention = _jobsCache.filter(j => j.resumable && (j.status === "interrupted" || (j.status === "failed" && j.failure && j.failure.retryable)));
       const menuOpen = menu.style.display !== "none";
-      if (running.length) { badge.style.display = ""; badge.textContent = `⚙ ${running.length} job${running.length > 1 ? "s" : ""}`; }
-      else if (menuOpen && _jobsCache.length) { badge.style.display = ""; badge.textContent = "⚙ jobs"; } // keep it clickable while the popover is open so it can't vanish under the cursor
+      let badgeText = "";
+      if (running.length) { badge.style.display = ""; badgeText = `⚙ ${running.length} job${running.length > 1 ? "s" : ""}`; }
+      else if (attention.length) { badge.style.display = ""; badgeText = `⚠ ${attention.length} job${attention.length > 1 ? "s" : ""} need attention`; }
+      else if (menuOpen && _jobsCache.length) { badge.style.display = ""; badgeText = "⚙ jobs"; } // keep it clickable while the popover is open so it can't vanish under the cursor
       else { badge.style.display = "none"; if (menuOpen && !_jobsCache.length) menu.style.display = "none"; }
-      const recent = _jobsCache.slice(0, 12); // running + recently finished
-      menu.innerHTML = `<h3>Background jobs</h3>` + (recent.length
-        ? recent.map(j => {
-            const cancelBtn = (j.status === "running" && j.cancellable)
-              ? `<button class="job-cancel" data-job="${esc(j.id)}">Cancel</button>` : "";
-            const prog = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
-            const detail = (j.detail || prog)
-              ? `<span class="job-detail">${esc(j.detail || "")}${esc(prog)}</span>` : "";
-            return `<div class="job-row"><span class="job-kind">${esc(j.kind)}</span>`
-              + `<span class="job-label">${esc(j.label || "")}</span>`
-              + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
-              + cancelBtn + detail + `</div>`;
-          }).join("")
-        : `<div class="jobs-empty">No jobs yet.</div>`);
-      menu.querySelectorAll(".job-cancel").forEach(b => b.addEventListener("click", () => cancelJob(b.dataset.job, b)));
+      if (badgeText && badge.textContent !== badgeText) badge.textContent = badgeText;
+      const views = _jobsCache.slice(0, 12).map(jobMenuView); // running + recently finished
+      const shape = JSON.stringify(views.map(v => [v.job.id, v.cancel, v.resume]));
+      if (shape !== _jobsMenuShape) rebuildJobsMenu(menu, views);
+      else menu.querySelectorAll(".job-row").forEach((row, i) => updateJobRow(row, views[i]));
+      _jobsMenuShape = shape;
       applyHeavyAiJobLock();   // deep pass ↔ synthesis mutual lock + the deep-pass progress line (#204)
     }
     function cancelJob(id, btn) {
@@ -13569,13 +13778,23 @@
       fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" })
         .then(r => { if (!r.ok && r.status === 404) document.getElementById("status").textContent = "Job endpoint missing — restart the companion server."; })
         .catch(() => {})
-        .finally(() => loadJobs(caseId));
+        .finally(() => loadJobs());
+    }
+    function resumeJob(id, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "Resuming…"; }
+      fetch(`/api/jobs/${encodeURIComponent(id)}/resume`, { method: "POST" })
+        .then(async r => {
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) document.getElementById("status").textContent = body.error || "Job could not resume.";
+        })
+        .catch(() => {})
+        .finally(() => loadJobs());
     }
     document.getElementById("jobsBadge").addEventListener("click", () => {
       const menu = document.getElementById("jobsMenu");
       const show = menu.style.display === "none";
       menu.style.display = show ? "" : "none";
-      if (show) loadJobs(caseId);
+      if (show) loadJobs();
     });
     document.addEventListener("click", (e) => {
       const menu = document.getElementById("jobsMenu");
@@ -13709,7 +13928,7 @@
     // True while THIS case has a running deep pass — either the POST is still in flight (before the
     // job shows up) or the registry lists one.
     function deepPassJob() {
-      return _jobsCache.find(j => j.kind === "deep-pass" && j.status === "running") || null;
+      return _jobsCache.find(j => j.kind === "deep-pass" && (j.status === "running" || j.status === "queued")) || null;
     }
     function deepPassBusy() { return deepPassPosting || !!deepPassJob(); }
 
@@ -13795,7 +14014,7 @@
     // Nothing server-side prevents that, so the buttons lock each other out here.
     function applyHeavyAiJobLock() {
       const dp = deepPassBusy();
-      const synth = _jobsCache.some(j => j.kind === "synthesis" && j.status === "running");
+      const synth = _jobsCache.some(j => j.kind === "synthesis" && (j.status === "running" || j.status === "queued"));
       const synthBtn = document.getElementById("synthesize");
       const soBtn = document.getElementById("secondOpinion");
       for (const btn of [synthBtn, soBtn]) {
@@ -18457,7 +18676,13 @@
     }
 
     function renderCockpit(snapshot) {
+      const { generatedAt: _generatedAt, ...stableSnapshot } = snapshot;
+      const signature = JSON.stringify(stableSnapshot);
+      const unchanged = lastCockpit && lastCockpit.caseId === snapshot.caseId
+        && signature === lastCockpitRenderSignature;
       lastCockpit = snapshot;
+      if (unchanged) return;
+      lastCockpitRenderSignature = signature;
       const body = document.getElementById("cockpitBody");
       const phase = document.getElementById("cockpitPhase");
       const reviewMeta = document.getElementById("cockpitReviewMeta");
@@ -18489,7 +18714,8 @@
       caseId = caseId || document.getElementById("caseId").value.trim();
       const body = document.getElementById("cockpitBody");
       if (!caseId || !body) return;
-      body.innerHTML = `<div class="now-state">Loading the current decisions…</div>`;
+      const hasCurrentSnapshot = lastCockpit && lastCockpit.caseId === caseId;
+      if (!hasCurrentSnapshot) body.innerHTML = `<div class="now-state">Loading the current decisions…</div>`;
       const investigator = investigatorName();
       try {
         const query = investigator ? `?investigator=${encodeURIComponent(investigator)}` : "";
@@ -18500,7 +18726,11 @@
         renderCockpit(payload);
       } catch (err) {
         if (caseId !== document.getElementById("caseId").value.trim()) return;
-        body.innerHTML = `<div class="now-state"><strong>Cockpit could not load.</strong> ${esc(err.message || "Unknown error")} <button data-act="cockpitRetry">Retry</button><br><span>Use Import evidence, Findings, Jobs and Report workspaces directly while this is unavailable.</span></div>`;
+        if (!hasCurrentSnapshot) {
+          body.innerHTML = `<div class="now-state"><strong>Cockpit could not load.</strong> ${esc(err.message || "Unknown error")} <button data-act="cockpitRetry">Retry</button><br><span>Use Import evidence, Findings, Jobs and Report workspaces directly while this is unavailable.</span></div>`;
+        } else {
+          console.warn("Cockpit refresh failed; keeping the last stable view:", err);
+        }
       }
     }
 
@@ -19233,7 +19463,7 @@
         if (msg.type === "state") { render(msg.state); loadCockpit(caseId); scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload(); scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload(); scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload(); scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload(); scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload(); loadSynthMeta(caseId); loadPlaybook(caseId); loadHypotheses(caseId); loadSuperTimeline(caseId); }
         else if (msg.type === "second_opinion_changed") loadSecondOpinion(caseId);
         else if (msg.type === "ai_status") applyAiStatus(msg);
-        else if (msg.type === "job_changed") { loadJobs(caseId); loadCockpit(caseId); }
+        else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId);
         else if (msg.type === "capture_ingest") {
           // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
           // otherwise the extension is feeding a different case than we're viewing — warn.
@@ -20968,8 +21198,14 @@
     // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
     // and routes it to the right importer. Multiple files can be selected at once.
     document.getElementById("importBtn").onclick = () => {
-      if (!document.getElementById("caseId").value.trim()) {
+      const caseId = document.getElementById("caseId").value.trim();
+      if (!caseId) {
         document.getElementById("status").textContent = "enter/connect a Case ID first";
+        return;
+      }
+      const permissionError = importPermissionMessage(caseId);
+      if (permissionError) {
+        document.getElementById("status").textContent = permissionError;
         return;
       }
       document.getElementById("importFile").click();
@@ -20979,6 +21215,13 @@
       const files = Array.from(e.target.files || []);
       if (!caseId || !files.length) return;
       const statusEl = document.getElementById("status");
+      const permissionError = importPermissionMessage(caseId);
+      if (permissionError) {
+        cancelImportProgress();
+        statusEl.textContent = permissionError;
+        e.target.value = "";
+        return;
+      }
       const isImage = (f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
       // Raw evidence an external tool handles (built-in EVTX/PCAP + any extension a CUSTOM tool claims)
       // can't be read as text. The set of "raw" extensions comes from /tools/status so custom tools work
@@ -21039,6 +21282,13 @@
             });
           }
           const jr = await r.json().catch(() => ({}));
+          if (r.status === 403) {
+            cancelImportProgress();
+            statusEl.textContent = importPermissionMessage(caseId) || jr.error ||
+              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+            e.target.value = "";
+            return;
+          }
           if (r.status === 423) { hideImportProgress(); statusEl.textContent = jr.error || "Case is closed — reopen it to import evidence"; e.target.value = ""; return; }
           // The case doesn't exist (Connect attaches without creating). All files in the batch would
           // hit the same wall, so abort with the actionable reason instead of a generic "failed".
@@ -21068,6 +21318,14 @@
               tabTitle: f.name.replace(/\.[^.]+$/, ""), triggerType, imageBase64,
             }),
           });
+          if (r.status === 403) {
+            const jr = await r.json().catch(() => ({}));
+            cancelImportProgress();
+            statusEl.textContent = importPermissionMessage(caseId) || jr.error ||
+              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+            e.target.value = "";
+            return;
+          }
           if (r.status === 423) { const jr = await r.json().catch(() => ({})); statusEl.textContent = jr.error || "Case is closed — reopen it to add screenshots"; e.target.value = ""; return; }
           if (!r.ok) { imgFail++; continue; }
           const meta = await r.json();
@@ -25197,11 +25455,17 @@
       } else {
         window.addEventListener("resize", fitToolbar);
       }
-      // React to dynamic label changes (Enrich/Anon/AI toggle text, Collapse/Expand, case load).
-      // Observe text/children only — NOT attributes — so our own class toggle doesn't loop.
-      if (window.MutationObserver) {
-        new MutationObserver(fitToolbar).observe(tb, { childList: true, characterData: true, subtree: true });
-      }
+       // React to dynamic label changes (Enrich/Anon/AI toggle text, Collapse/Expand, case load).
+       // Observe text/children only — NOT attributes — so our own class toggle doesn't loop.
+       if (window.MutationObserver) {
+         new MutationObserver(changes => {
+           const affectsToolbarLayout = changes.some(change => {
+             const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
+             return !target || !target.closest("#jobsMenu");
+           });
+           if (affectsToolbarLayout) fitToolbar();
+         }).observe(tb, { childList: true, characterData: true, subtree: true });
+       }
       fitToolbar();
     })();
   </script>

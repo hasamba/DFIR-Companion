@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "id": "bec-mailbox-takeover",
+  "title": "Synthetic business email compromise",
+  "scenario": "bec",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional identity and mailbox audit events written for this corpus.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "seedEvents": [
+    {
+      "id": "bec-e1",
+      "timestamp": "2026-05-02T07:40:00.000Z",
+      "description": "Successful cloud login for finance-user from 198.51.100.23 without a managed device",
+      "severity": "High",
+      "mitreTechniques": ["T1078.004"],
+      "asset": "MAILBOX-01",
+      "srcIp": "198.51.100.23",
+      "sources": ["Cloud Identity"]
+    },
+    {
+      "id": "bec-e2",
+      "timestamp": "2026-05-02T07:44:00.000Z",
+      "description": "Inbox rule ForwardInvoices created for finance-user and sent messages to archive@relay.example",
+      "severity": "High",
+      "mitreTechniques": ["T1114.003"],
+      "asset": "MAILBOX-01",
+      "sources": ["Mailbox Audit"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "bec-f1",
+        "severity": "High",
+        "confidence": 88,
+        "confidenceReason": "A new external login and a forwarding rule are directly linked in time.",
+        "title": "Mailbox takeover with invoice forwarding",
+        "description": "The mailbox takeover used an external login followed by an invoice-forwarding rule.",
+        "relatedIocs": ["bec-i1"],
+        "mitreTechniques": ["T1078.004", "T1114.003"],
+        "status": "open",
+        "relatedEventIds": ["bec-e1", "bec-e2"]
+      }
+    ],
+    "iocs": [{ "id": "bec-i1", "type": "ip", "value": "198.51.100.23" }],
+    "mitreTechniques": [],
+    "attackerPath": "An external cloud login was followed by mailbox collection.",
+    "narrativeTimeline": "",
+    "summary": "Synthetic mailbox takeover is supported; payment impact is not established.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "bec-n1",
+        "priority": "critical",
+        "action": "Review payment records and sent messages for finance-user",
+        "rationale": "This determines whether the mailbox activity caused financial impact.",
+        "pointer": "finance-user sent items and payment records",
+        "relatedFindingIds": ["bec-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "Payment impact",
+        "status": "unknown",
+        "basis": "Mailbox access and forwarding are observed, but no payment record is present.",
+        "gap": "Sent messages and payment approvals have not been reviewed."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "mailbox-takeover",
+        "requiredTerms": ["mailbox takeover"],
+        "evidenceEventIds": ["bec-e1", "bec-e2"],
+        "confidence": { "min": 60, "max": 100 }
+      }
+    ],
+    "iocs": [{ "type": "ip", "value": "198.51.100.23" }],
+    "forbiddenConclusions": [{ "id": "invented-payment", "terms": ["payment was sent"] }],
+    "uncertainties": [
+      {
+        "id": "payment-gap",
+        "topicTerms": ["payment impact"],
+        "allowedStatuses": ["unknown", "inferred"]
+      }
+    ],
+    "nextSteps": [{ "id": "review-payments", "requiredTerms": ["payment records", "finance-user"] }],
+    "expectAbstention": false
+  }
+}

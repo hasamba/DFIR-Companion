@@ -3,9 +3,12 @@ import {
   emptyJobTable,
   createJob,
   progressJob,
+  checkpointJob,
   finishJob,
   failJob,
   cancelJob,
+  interruptJob,
+  requeueJob,
   getJob,
   listJobs,
   capJobs,
@@ -49,13 +52,33 @@ describe("jobRegistry", () => {
     expect(getJob(t2, "job_0")!.updatedAt).toBe(T1);
   });
 
+  it("keeps live parser progress separate from resumable durable checkpoints", () => {
+    let table = checkpointJob(
+      withJobs(1),
+      "job_0",
+      { progress: { done: 0, total: 1 }, detail: "evidence committed" },
+      T0,
+    );
+    table = progressJob(table, "job_0", { done: 500, total: 1000 }, "reading events", T1);
+    expect(getJob(table, "job_0")?.lastCheckpoint?.progress).toEqual({ done: 0, total: 1 });
+
+    table = checkpointJob(table, "job_0", { progress: { done: 1, total: 1 }, detail: "timeline committed" }, T1);
+    table = requeueJob(interruptJob(table, "job_0", T1), "job_0", T1);
+    expect(getJob(table, "job_0")).toMatchObject({
+      status: "queued",
+      progress: { done: 1, total: 1 },
+      detail: "timeline committed",
+      lastCheckpoint: { progress: { done: 1, total: 1 } },
+    });
+  });
+
   it("finish / fail / cancel set a terminal status + endedAt", () => {
     const t = withJobs(3);
     const done = finishJob(t, "job_0", T1);
     const errored = failJob(done, "job_1", "boom", T1);
     const cancelled = cancelJob(errored, "job_2", T1);
-    expect(getJob(cancelled, "job_0")!.status).toBe("done");
-    expect(getJob(cancelled, "job_1")!).toMatchObject({ status: "error", error: "boom", endedAt: T1 });
+    expect(getJob(cancelled, "job_0")!.status).toBe("succeeded");
+    expect(getJob(cancelled, "job_1")!).toMatchObject({ status: "failed", error: "boom", endedAt: T1 });
     expect(getJob(cancelled, "job_2")!.status).toBe("cancelled");
     expect(getJob(cancelled, "job_2")!.updatedAt).toBe(T1);
     for (const id of ["job_0", "job_1", "job_2"]) expect(isTerminal(getJob(cancelled, id)!.status)).toBe(true);

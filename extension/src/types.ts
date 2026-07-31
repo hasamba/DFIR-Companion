@@ -12,6 +12,7 @@ export interface CapturePayload {
 export interface Settings {
   caseId: string;
   companionUrl: string;    // default http://127.0.0.1:4773
+  serviceToken: string;    // optional case-scoped team-mode identity
   intervalSeconds: number; // default 10
   dedupThreshold: number;  // default 5 (informational; dedup runs companion-side)
   running: boolean;
@@ -20,6 +21,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   caseId: "",
   companionUrl: "http://127.0.0.1:4773",
+  serviceToken: "",
   intervalSeconds: 10,
   dedupThreshold: 5,
   running: false,

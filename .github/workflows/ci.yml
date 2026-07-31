@@ -73,6 +73,12 @@ jobs:
         working-directory: companion
         run: npm run check:imports
 
+      # A built-in prompt or default model can compile perfectly while making investigations worse.
+      # When either changes, #378 requires a hash-pinned real-model no-regression attestation.
+      - name: AI prompt/model no-regression gate
+        working-directory: companion
+        run: npm run eval:change-gate
+
       # Keeps the browser suite's coverage claims honest: every "// Covers: US-xxx" banner must name
       # a story that exists, and feature-user-stories.csv's browser_test column must agree with the
       # specs in both directions. A coverage table that is quietly wrong reads as "this is tested".

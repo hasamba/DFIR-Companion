@@ -26,6 +26,9 @@ services:
       - "127.0.0.1:4773:4773"
     environment:
       DFIR_HOST: "0.0.0.0"
+      # The published port above is host-loopback-only. This exact value is the sole exception to
+      # the server's refusal to expose unauthenticated single-user mode on a non-loopback bind.
+      DFIR_ALLOW_UNAUTHENTICATED_REMOTE: "container-loopback-proxy"
       DFIR_PORT: "4773"
       DFIR_CASES_ROOT: "/data/cases"
       DFIR_MAX_BODY_MB: "256"

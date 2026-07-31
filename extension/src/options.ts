@@ -5,11 +5,17 @@ async function init() {
   const stored = await browserApi.storage.local.get("settings");
   const settings: Settings = { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
   const input = document.getElementById("companionUrl") as HTMLInputElement;
+  const tokenInput = document.getElementById("serviceToken") as HTMLInputElement;
   const msg = document.getElementById("msg")!;
   input.value = settings.companionUrl;
+  tokenInput.value = settings.serviceToken;
 
   document.getElementById("save")!.onclick = async () => {
-    const updated = { ...settings, companionUrl: normalizeCompanionUrl(input.value) };
+    const updated = {
+      ...settings,
+      companionUrl: normalizeCompanionUrl(input.value),
+      serviceToken: tokenInput.value.trim(),
+    };
     await browserApi.storage.local.set({ settings: updated });
     await browserApi.runtime.sendMessage({ kind: "settings_changed" }).catch(() => {});
     msg.textContent = "Saved.";

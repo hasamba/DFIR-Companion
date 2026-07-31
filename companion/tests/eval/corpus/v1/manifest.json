@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "license": "AGPL-3.0-only",
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Authored from fictional events for deterministic evaluation; no case export or production evidence was used.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-07-31"
+  },
+  "cases": [
+    { "id": "ransomware-impact", "file": "ransomware-impact.json" },
+    { "id": "bec-mailbox-takeover", "file": "bec-mailbox-takeover.json" },
+    { "id": "insider-removable-media", "file": "insider-removable-media.json" },
+    { "id": "lateral-psexec", "file": "lateral-psexec.json" },
+    { "id": "linux-ssh-compromise", "file": "linux-ssh-compromise.json" },
+    { "id": "cloud-vpn-contradiction", "file": "cloud-vpn-contradiction.json" },
+    { "id": "email-prompt-injection", "file": "email-prompt-injection.json" },
+    { "id": "memory-process-injection", "file": "memory-process-injection.json" },
+    { "id": "network-egress-gap", "file": "network-egress-gap.json" },
+    { "id": "clean-maintenance", "file": "clean-maintenance.json" }
+  ]
+}

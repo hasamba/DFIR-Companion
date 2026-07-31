@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import {
+  AnalysisPipeline,
+} from "../../src/analysis/pipeline.js";
+import type { DeepPassCheckpoint } from "../../src/analysis/deepPass.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { PresidioApprovalRequired, type PresidioClient } from "../../src/analysis/presidio.js";
@@ -150,6 +153,35 @@ describe("deepPass", () => {
 
     expect(seen.filter((s) => /batch/i.test(s))).toHaveLength(3);
     expect(seen.some((s) => /synthesiz/i.test(s))).toBe(true);
+  });
+
+  it("resumes after the last durable observation checkpoint without re-reading completed batches", async () => {
+    await seed(seedEvents(250));
+    const firstProvider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
+    const controller = new AbortController();
+    let checkpoint: DeepPassCheckpoint | undefined;
+    firstProvider.onCall = () => {
+      if (firstProvider.observeRequests.length === 1) controller.abort();
+    };
+
+    await makePipeline(firstProvider).deepPass("c1", {
+      minSeverity: "High",
+      signal: controller.signal,
+      onCheckpoint: async (saved) => {
+        checkpoint = saved;
+      },
+    });
+    expect(checkpoint?.nextBatch).toBe(1);
+
+    const resumedProvider = new ScriptedProvider(OBSERVATIONS, SYNTH_DELTA);
+    const result = await makePipeline(resumedProvider).deepPass("c1", {
+      minSeverity: "High",
+      resumeFrom: checkpoint,
+    });
+
+    expect(resumedProvider.observeRequests).toHaveLength(2);
+    expect(resumedProvider.synthRequests).toHaveLength(1);
+    expect(result.observations).toBeGreaterThan(0);
   });
 
   it("returns a run summary the route can serialise", async () => {

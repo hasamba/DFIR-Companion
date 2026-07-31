@@ -45,9 +45,10 @@ Choose the method that fits your setup:
 === "Docker"
 
     ```bash
-    docker run -p 4773:4773 \
+    docker run -p 127.0.0.1:4773:4773 \
       -v /your/cases:/cases \
       -e DFIR_CASES_ROOT=/cases \
+      -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
       ghcr.io/hasamba/dfir-companion:latest
     ```
 
