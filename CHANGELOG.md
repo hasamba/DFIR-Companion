@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One-click Jira / ServiceNow push from the finding panel** (#297) — the routes shipped in #272 finally have a UI: every finding row carries a **Jira** and a **SNow** chip, and the finding bulk bar gains **Push to Jira** / **Push to ServiceNow** for the whole selection via the new `POST /cases/:id/push/{jira,servicenow}/bulk` endpoints. A batch reports created / updated / skipped, and a finding the ticket system refuses is named rather than aborting the rest. Both sets of buttons stay hidden until the integration is configured; re-pushing still updates the ticket the Companion opened instead of duplicating it. The ten `DFIR_JIRA_*` / `DFIR_SERVICENOW_*` environment variables are now documented in `.env.example`, the README route table and the manual.
 
 ### Fixed
+- **The "port already in use" message now tells Linux and macOS users how to stop the other companion** — it only ever printed the PowerShell one-liner; it now also prints `kill $(lsof -ti tcp:4773)` (and the `fuser -k 4773/tcp` fallback). Same addition in the manual, the getting-started page and `companion/README.md`.
 - **A Jira ticket link no longer opens raw JSON** (#297) — the issue URL the Companion records pointed at the REST resource (`/rest/api/3/issue/10001`) taken from the create response's `self` field; it is now the browse page (`/browse/IR-42`) an analyst can actually read. A link recorded by an earlier build is corrected the next time that finding is pushed.
 
 ### Added
