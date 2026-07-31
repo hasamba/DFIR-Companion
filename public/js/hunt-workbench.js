@@ -123,6 +123,8 @@ export function csvFromRows(columns, rows) {
 
 function installStyle() {
   const style = document.createElement("style");
+  const runtimeStyles = document.getElementById("dfir-runtime-styles");
+  if (runtimeStyles?.nonce) style.nonce = runtimeStyles.nonce;
   style.textContent = `
     #sec-hunt-workbench .hq-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:12px}
     #sec-hunt-workbench textarea{width:100%;min-height:116px;box-sizing:border-box;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:6px;padding:9px;font:12px ui-monospace,Menlo,Consolas,monospace;resize:vertical}
@@ -262,7 +264,7 @@ function initialize() {
       .slice(0, 30)
       .map((row) => {
         const value = Number(row[valueColumn]) || 0;
-        return `<div class="hq-chart-row"><span>${escapeHtml(row[labelColumn])}</span><span class="hq-bar" style="width:${Math.max(1, (value / max) * 100)}%"></span><span>${escapeHtml(value)}</span></div>`;
+        return `<div class="hq-chart-row"><span>${escapeHtml(row[labelColumn])}</span><span class="hq-bar" data-safe-style="width:${Math.max(1, (value / max) * 100)}%"></span><span>${escapeHtml(value)}</span></div>`;
       })
       .join("");
   }

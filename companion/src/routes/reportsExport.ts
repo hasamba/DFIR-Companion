@@ -9,6 +9,7 @@ import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import type { RouteContext } from "./context.js";
+import { withNonce } from "../http/securityHeaders.js";
 
 /**
  * Report generation / export / DFIR-IRIS + ClickUp domain: turning the synthesized case into
@@ -107,7 +108,11 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       // PDF export: an opened-in-browser HTML report that auto-triggers the print dialog.
       // Mutually exclusive with download — the saved PDF must come from the print dialog, not a file.
       if (file === "report.html" && req.query.print !== undefined && !download) {
-        return res.send(injectPrintTrigger(buf.toString("utf8")));
+        const printable = injectPrintTrigger(buf.toString("utf8"));
+        return res.send(withNonce(printable, String(res.locals.cspNonce ?? "")));
+      }
+      if (file === "report.html" && !download) {
+        return res.send(withNonce(buf.toString("utf8"), String(res.locals.cspNonce ?? "")));
       }
       return res.send(buf);
     } catch (err) {

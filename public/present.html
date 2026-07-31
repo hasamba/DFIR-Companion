@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-safe-dom>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,7 +7,12 @@
 <!-- DECK_INJECT: the standalone-HTML export injects `window.__DECK__ = {…}` here so the deck
      renders offline with no server. In live mode the script below fetches it instead. -->
 <!--DECK_INJECT-->
-<style>
+<script src="/js/safe-dom.js"></script>
+<style nonce="__CSP_NONCE__" id="dfir-runtime-styles">
+  html[data-safe-dom] body { visibility: hidden; }
+  html[data-safe-dom].dfir-styles-ready body { visibility: visible; }
+</style>
+<style nonce="__CSP_NONCE__">
   :root {
     --accent: #2d6cdf;
     --bg: #0e1116;
@@ -87,7 +92,7 @@
 <body>
   <header>
     <span class="brand">▶ Presentation</span>
-    <span id="deckName" style="color:var(--muted)"></span>
+    <span id="deckName" data-safe-style="color:var(--muted)"></span>
     <span class="spacer"></span>
     <label id="sevWrap">Severity
       <select id="sevSelect" title="Only show findings/events at or above this severity">

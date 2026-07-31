@@ -13,6 +13,7 @@ import { renderAssetGraphSvg } from "./assetGraphSvg.js";
 import { renderSwimlaneSvg } from "./swimlaneSvg.js";
 import { buildSwimlaneData } from "../analysis/swimlane.js";
 import type { AssetGraph } from "../analysis/assetGraph.js";
+import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 
 // Standalone HTML export of the incident report. We render the canonical Markdown report
 // (single source of truth) and convert it to HTML with `marked` (GFM tables), then wrap it
@@ -102,9 +103,9 @@ function reportTitle(state: InvestigationState, meta: ReportMeta): string {
 const PRINT_TRIGGER = `
 <div class="print-hint" role="note">
   Use your browser's print dialog → set the destination to <b>Save as PDF</b>.
-  <button type="button" onclick="window.print()">Print again</button>
+  <button id="print-again" type="button">Print again</button>
 </div>
-<style>
+<style nonce="${CSP_NONCE_PLACEHOLDER}">
   .print-hint { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; margin: 0;
     padding: 10px 16px; background: #16213a; color: #fff; text-align: center;
     font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -114,7 +115,10 @@ const PRINT_TRIGGER = `
   body { padding-top: 48px; }
   @media print { .print-hint { display: none !important; } body { padding-top: 0 !important; } }
 </style>
-<script>window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 350); });</script>
+<script nonce="${CSP_NONCE_PLACEHOLDER}">
+  document.getElementById("print-again").addEventListener("click", function () { window.print(); });
+  window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 350); });
+</script>
 `;
 
 // Inject the print trigger into an already-rendered report HTML (before </body>). Pure string
@@ -168,7 +172,7 @@ export function renderHtmlReport(state: InvestigationState, meta: ReportMeta = e
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(reportTitle(state, meta))}</title>`,
-    `<style>${styleFor(template.accentColor)}</style>`,
+    `<style nonce="${CSP_NONCE_PLACEHOLDER}">${styleFor(template.accentColor)}</style>`,
     "</head>",
     "<body>",
     '<main class="report">',

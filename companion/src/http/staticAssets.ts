@@ -23,6 +23,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/vendor/cytoscape/cytoscape.min.js": "application/javascript; charset=utf-8",
   "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
   "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
+  "/js/safe-dom.js": "application/javascript; charset=utf-8",
   "/js/graph-view.js": "application/javascript; charset=utf-8",
   "/js/command-palette.js": "application/javascript; charset=utf-8",
   "/js/settings-search.js": "application/javascript; charset=utf-8",

@@ -18,6 +18,7 @@ const PUBLIC_GET = new Set([
   "/favicon-32.png",
   "/apple-touch-icon.png",
   "/dfir-companion-logo.jpg",
+  "/js/safe-dom.js",
 ]);
 const AUTHENTICATED_SHELLS = new Set(["/", "/dashboard", "/mobile"]);
 const AUTHENTICATED_ASSET_PREFIXES = ["/js", "/vendor"];

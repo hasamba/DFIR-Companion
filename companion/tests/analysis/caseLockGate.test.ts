@@ -59,6 +59,8 @@ describe("createCaseLockGate", () => {
     expect(res.status).toBe(401);
     expect(res.type).toBe("text/html");
     expect(res.text).toContain("password-protected");
+    expect(res.text).toContain('<style nonce="">');
+    expect(res.text).not.toMatch(/\sstyle\s*=/i);
   });
 
   it("allows a gated route through with a valid unlock cookie", async () => {

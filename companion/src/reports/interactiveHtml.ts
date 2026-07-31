@@ -200,6 +200,7 @@ const STYLES = `
   .meta { color: #5a6675; font-size: 13.5px; margin: 0 0 20px; }
   .banner { background: #fff3cd; border: 1px solid #ffe69c; color: #664d03;
     padding: 10px 14px; border-radius: 6px; margin: 0 0 20px; font-size: 13.5px; }
+  .banner[hidden] { display: none; }
   .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
   .controls label { font-size: 13px; color: #44506a; }
   .controls select, .controls input[type="text"], .controls input[type="range"] { font: inherit; }
@@ -221,8 +222,11 @@ const STYLES = `
   .finding-card.open .finding-body { display: block; }
   .chevron { color: #5a6675; transition: transform .15s; }
   .finding-card.open .chevron { transform: rotate(90deg); }
-  .conf-bar { display: inline-block; width: 60px; height: 8px; background: #e6e8ec; border-radius: 4px; overflow: hidden; vertical-align: middle; margin-left: 6px; }
-  .conf-bar > span { display: block; height: 100%; background: #24314f; }
+  .conf-bar { width: 60px; height: 8px; border: 0; border-radius: 4px; overflow: hidden;
+    vertical-align: middle; margin-left: 6px; background: #e6e8ec; appearance: none; }
+  .conf-bar::-webkit-progress-bar { background: #e6e8ec; }
+  .conf-bar::-webkit-progress-value { background: #24314f; }
+  .conf-bar::-moz-progress-bar { background: #24314f; }
   .empty { color: #5a6675; font-style: italic; padding: 8px 0; }
   .count { color: #5a6675; font-size: 12.5px; }
 `;
@@ -258,7 +262,7 @@ const SCRIPT = `
   // ── Banner ───────────────────────────────────────────────────────────────
   var banner = document.getElementById("size-banner");
   if (DATA.truncated) {
-    banner.style.display = "block";
+    banner.hidden = false;
     banner.textContent = "Warning: this case has " + DATA.totalEvents + " forensic events, more than fits in a " +
       "single portable file. The " + timeline.length + " highest-severity events are included here; the remaining " +
       (DATA.totalEvents - timeline.length) + " are in the full case. Findings are complete and unaffected.";
@@ -341,7 +345,7 @@ const SCRIPT = `
         el("span", { class: "chevron", text: "▶" }),
         el("span", { class: sevClass(f.severity), text: f.severity }),
         el("span", { class: "title", text: f.title }),
-        el("span", { class: "conf-bar" }, [el("span", { style: "width:" + confidence(f) + "%" })]),
+        el("progress", { class: "conf-bar", max: "100", value: String(confidence(f)) }),
         el("span", { text: confidence(f) + "%" }),
       ]);
       head.addEventListener("click", function () { card.classList.toggle("open"); });
@@ -383,7 +387,7 @@ export function renderInteractiveHtmlReport(
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(title)}</title>`,
-    `<style>${STYLES}</style>`,
+    `<style nonce="${CSP_NONCE_PLACEHOLDER}">${STYLES}</style>`,
     "</head>",
     "<body>",
     '<main class="report">',
@@ -396,7 +400,7 @@ export function renderInteractiveHtmlReport(
     data.restrictions ? ` · ${escapeHtml(data.restrictions)}` : "",
     ` · Updated: ${escapeHtml(data.updatedAt)}`,
     `</p>`,
-    `<div id="size-banner" class="banner" style="display:none;"></div>`,
+    `<div id="size-banner" class="banner" hidden></div>`,
     `<h2>Findings</h2>`,
     `<div class="controls">`,
     `<label>Min confidence: <input id="conf-slider" type="range" min="0" max="100" value="0"></label>`,
