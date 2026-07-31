@@ -19,37 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.34.0] - 2026-07-31
 
 ### Added
-- **Now investigator cockpit** — a focused default dashboard ranks the next three leads and surfaces hypotheses, contradictions, exact collection gaps, live/failed work, report blockers, and per-investigator changes since review; lead pin/dismiss/defer/assign actions retain an audit history and link back to their evidence (closes #375).
-- **Canonical forensic event schema** — versioned structured identities, timestamps, source pointers, artifact hashes, mapping versions, and field-level provenance now underpin representative Windows, Linux, cloud, network, email, memory, and EDR imports while legacy cases upgrade incrementally and graph joins no longer depend on description wording (closes #374).
-- **Indexed SQLite case storage** — investigation entities and the distinct super-timeline now use a worker-backed, cursor-paged database with atomic legacy-JSON migration, integrity-checked backups/restores, bounded timeline/graph reads, and a Node 22.5+ runtime floor (closes #373).
-- **One-click Jira / ServiceNow push from the finding panel** (#297) — every finding row carries a **Jira** and a **SNow** chip, and the finding bulk bar gains **Push to Jira** / **Push to ServiceNow** for the whole selection via the new `POST /cases/:id/push/{jira,servicenow}/bulk` endpoints. A batch reports created / updated / skipped, and a finding the ticket system refuses is named rather than aborting the rest. Re-pushing updates the ticket the Companion opened instead of duplicating it.
-- **Chain of custody** (#231) — a court-ready record per artifact: every screenshot and import is recorded automatically with who collected it, when, from where and its SHA-256, and every export appends an `exported` event. Records form a hash chain; a signed `custody-manifest.json` ships in the report and the encrypted archive. Evidence is re-verified in the background when you open a case, surfaced in Diagnostics, a Chain of Custody dashboard panel, and a report appendix. Custody hashes survive a redacted export field-by-field, and the redacted package's own signed manifest is built over the redacted records.
-- **Collection plan** (#347) — the incident type's evidence checklist as a dashboard panel: what to collect, in order, each item ticking itself off once matching evidence is in the case, whichever tool produced it. *Have it* / *N/A* retire a step manually.
-- **Incident-type auto-playbooks** (#236) — the New case dialog's *Incident type* picker pre-configures a case for a recurring pattern: eight built-in types seed key questions, priority-ordered next steps, and expected findings; synthesis prioritizes the relevant ATT&CK techniques for that type.
-- **Attack-sequence matching against known playbooks** (#230) — checks whether the case's ATT&CK techniques happened in the ORDER a published ransomware playbook describes (eight chains from CISA advisories), matched fuzzily case-wide and per host. The Playbook Match dashboard panel and report show a matched / out-of-order / not-observed breakdown per step; a step the chain implies but nothing recorded becomes an Evidence Gaps item. Offline, deterministic, no AI.
-- **Clock-skew detection & cross-host timeline alignment** (#228) — measures each host's clock offset from cross-tool timestamp anchors, flags hosts beyond 60s in Diagnostics, and offers an "Align timelines" toggle projecting every host onto a common axis for the timeline, correlation windows, evidence graph and report. Alignment never rewrites the case — each row keeps its recorded timestamp.
-- **Attacker session / story reconstruction** (#229) — the forensic timeline re-threaded as per-host chapters. A session is a contiguous run of activity on one host, ending on a long gap (`DFIR_SESSION_GAP_S`) or a logon under a different account; events sharing a concrete indicator survive a longer gap (`DFIR_SESSION_IOC_GRACE`). New Attacker Sessions dashboard panel (click a card to filter the timeline to it), a "✨ Summarize session" AI action, and a toggleable report section. Pure and deterministic.
-- **Compliance Impact mapping** (#234, #336) — maps confirmed findings' ATT&CK techniques to control failures and obligations across NIST 800-53 Rev. 5, PCI-DSS v4.0, HIPAA, GDPR, SEC, and ISO 27001:2022, with real breach-notification clocks (GDPR 72h, HIPAA 60 days, Reg S-P 30 days, Form 8-K Item 1.05 four business days). Dashboard panel and report section, both with a not-legal-advice disclaimer; per-case framework filter; included in the Executive Brief template by default.
-- **`DFIR_ALLOWED_HOSTS` / `DFIR_ALLOWED_HOST_SUFFIXES`** — name the hostnames a proxied or hosted deployment answers to. Railway auto-detects its own; the Killercoda tutorial reads its exact session origin from `/etc/killercoda/host`.
-- **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action from one overlay; `>` filters by category, recently-run actions float to the top, and actions unavailable for the current case are hidden (closes #238).
-- **Three new local PII detectors** — credit card numbers (issuer-prefix + Luhn check), phone numbers (E.164/Israeli/NANP), and Israeli Teudat Zehut national ID numbers, joining the existing anonymization categories.
-- **Optional Presidio layer** — point `DFIR_PRESIDIO_URL` at a self-run [Presidio Analyzer](mkdocs-docs/reference/presidio.md) container to catch what regex can't, principally people's names, in already-masked text. Fails closed if configured but unreachable; new PII surfaces through an analyst approval gate before it ever reaches the model. The Anonymization panel now shows which masking needs it — a read-only **Real names (people)** row greyed as *needs Presidio* until `DFIR_PRESIDIO_URL` is set.
-- **Essential / All view in Settings** — Settings opens on **Essential**, showing only the 43 controls a feature is dead without, instead of 257 fields across 16 tabs. **All** restores the full view, remembered per browser.
-- **Signed custody manifest in the redacted package** (#362) — a redacted case package now carries its own `custody-manifest.json`, so the sender can later prove what they sent.
-- **Firefox build for the capture extension** (#270, #366) — `npm run build:firefox` inside `extension/` emits `extension/dist-firefox/`, loaded via *Load Temporary Add-on…* in Firefox 128+; a `v*` tag now also publishes the Firefox zip alongside the Chrome one.
+- **Now investigator cockpit** — focused default dashboard ranking next leads, gaps, and blockers (closes #375).
+- **Canonical forensic event schema** — versioned structured event identities/provenance across importers (closes #374).
+- **Indexed SQLite case storage** — worker-backed, cursor-paged database replaces flat JSON case state (closes #373).
+- **One-click Jira / ServiceNow push** — push findings from the panel individually or in bulk (#297).
+- **Chain of custody** — automatic per-artifact custody chain with a signed manifest (#231).
+- **Collection plan** — incident-type evidence checklist as a self-updating dashboard panel (#347).
+- **Incident-type auto-playbooks** — picking an incident type seeds key questions and next steps (#236).
+- **Attack-sequence / playbook matching** — checks technique order against known ransomware chains (#230).
+- **Clock-skew detection & timeline alignment** — flags host clock drift, can align timelines (#228).
+- **Attacker session / story reconstruction** — timeline re-threaded into per-host session chapters (#229).
+- **Compliance Impact mapping** — findings mapped to NIST/PCI/HIPAA/GDPR/SEC/ISO obligations (#234, #336).
+- **`DFIR_ALLOWED_HOSTS` / `DFIR_ALLOWED_HOST_SUFFIXES`** — name hostnames a hosted deployment answers to.
+- **Command palette (Ctrl+K / ⌘K)** — fuzzy-search every dashboard action (closes #238).
+- **Three new local PII detectors** — credit cards, phone numbers, Israeli Teudat Zehut IDs.
+- **Optional Presidio layer** — `DFIR_PRESIDIO_URL` adds NLP name detection on top of the built-in patterns.
+- **Essential / All view in Settings** — opens on a curated 43-control view instead of all ~257 fields.
+- **Signed custody manifest in the redacted package** — a redacted export gets its own signed manifest (#362).
+- **Firefox build for the capture extension** — `npm run build:firefox`, zipped into every release (#270, #366).
 
 ### Fixed
-- **The "port already in use" message now tells Linux and macOS users how to stop the other companion** — it only ever printed the PowerShell one-liner; it now also prints `kill $(lsof -ti tcp:4773)` (and the `fuser -k 4773/tcp` fallback).
-- **A Jira ticket link no longer opens raw JSON** (#297) — the recorded issue URL pointed at the REST resource; it is now the browse page an analyst can actually read. A link recorded by an earlier build is corrected the next time that finding is pushed.
-- **MCP analysis reports survive import** — imported previews remain available as read-only case history, malicious verdicts cannot disappear without a finding, and import totals distinguish findings added from findings updated (part of #296).
-- **Correlation no longer merges one artifact across hosts** (#345) — the same binary hash or file path seen on two machines was collapsed into a single event, erasing the lateral-movement edge the evidence graph derives from it. The hash, path and exact-duplicate steps now correlate within a host. Note: timelines correlated by an earlier build stay merged.
+- **The "port already in use" message now tells Linux/macOS users how to stop the other companion.**
+- **A Jira ticket link no longer opens raw JSON** — now links to the browse page instead (#297).
+- **MCP analysis reports survive import** — previews, verdicts, and totals no longer lost on re-import (part of #296).
+- **Correlation no longer merges one artifact across hosts** — hash/path/duplicate steps now stay host-scoped (#345).
 
 ### Changed
-- **Public IP addresses are now tokenized on the AI wire** (`ANON_EXTIP_n`), not just internal ones — restored to the real value in the model's answer. The redacted case export is unchanged and still keeps public IPs visible.
-- **Actionable oversized legacy-state recovery** — if an unmigrated JSON case already exceeds V8's decode ceiling, startup explains how to restore a smaller backup and confirms that the original JSON and any incomplete SQLite migration remain untouched.
+- **Public IP addresses are now tokenized on the AI wire**, not just internal ones (`ANON_EXTIP_n`).
+- **Actionable oversized legacy-state recovery** — startup explains how to recover when a JSON case exceeds V8's decode ceiling.
 
 ### Security
-- **A website you merely visit could read your case data via DNS rebinding** (#280) — the API now refuses any request arriving under a hostname it does not recognise, closing the attack for every method including the no-`Origin` GETs an origin check cannot see. Loopback and bare IP addresses are trusted automatically.
+- **Closed a DNS-rebinding hole** — the API now refuses requests to any hostname it doesn't recognise (#280).
 
 ## [0.33.0] - 2026-07-24
 
