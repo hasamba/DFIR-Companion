@@ -1,0 +1,402 @@
+// Case-load progress — the arithmetic and labelling behind the loading overlay's bar and the
+// panel strip that outlives it.
+//
+// Loaded in the browser as an ES module (<script type="module" src="/js/case-load-progress.js">),
+// the same arrangement command-palette.js uses. The pure half below is exported by name so Vitest
+// can drive it in node, where there is no DOM — see companion/tests/analysis/caseLoadProgress.test.ts.
+//
+// THE RULE THIS FILE EXISTS TO ENFORCE: never display a number that nothing actually measured.
+// The old overlay spun a CSS animation that knew nothing and then claimed "Still loading" on a
+// 15-second timer whether or not anything was stuck. Of the phases in a case load, exactly one —
+// the JSON download — yields a true fraction (Content-Length; the server sets no compression
+// middleware, so it is present). Server think time, JSON.parse and render() yield nothing. So the
+// bar fills to the floor of the last COMPLETED stage, which is a claim the code can defend, and the
+// pending segment shimmers instead of creeping. A shimmer says "working, no estimate available";
+// a creeping fill would say "I know how far along this is", which would be a lie.
+//
+// Stages are weighted EQUALLY on purpose. Time-proportional weights were considered and rejected:
+// a weight is a guess about duration, and a bar whose position encodes a guess is the thing this
+// module exists to remove. Equal weights make the bar mean "3 of 5 stages done", which is true.
+
+/**
+ * The phases the overlay is up for, in order.
+ *
+ * The lock-status fetch is deliberately absent. It happens in connect(), BEFORE proceedConnect()
+ * shows the overlay, so a stage for it would always be complete by the time the bar first paints —
+ * padding the bar with progress the analyst never waited for.
+ *
+ * `lifecycle` (the /cases fetch) is listed last but actually runs in parallel from the start. That
+ * is why progress counts a contiguous PREFIX rather than a total: an early lifecycle finish must
+ * not claim progress through stages that have not happened. See prefixCount().
+ */
+export const LOAD_STAGES = ["query", "download", "parse", "render", "lifecycle"];
+
+const BYTES_PER_MB = 1024 * 1024;
+
+/** Fresh tracker for one case-load generation. */
+export function createLoadState() {
+  return { done: new Set(), loaded: 0, total: 0, eventCount: null, high: 0 };
+}
+
+/**
+ * Mark a stage complete. Unknown, duplicate and out-of-order ids are no-ops rather than throws —
+ * a progress bar must never be able to break a case load.
+ */
+export function advanceStage(state, stageId) {
+  if (!state || !LOAD_STAGES.includes(stageId)) return;
+  state.done.add(stageId);
+}
+
+/**
+ * Record download progress. A total that is zero, negative or non-finite means the response carried
+ * no usable Content-Length (a proxy chunking it, typically) — the download stage then shimmers like
+ * the others rather than inventing a denominator.
+ */
+export function setDownloadBytes(state, loaded, total) {
+  if (!state) return;
+  state.total = Number.isFinite(total) && total > 0 ? total : 0;
+  state.loaded = Number.isFinite(loaded) && loaded > 0 ? loaded : 0;
+}
+
+/** The parsed payload's forensicTimelineTotal — the real figure behind the render stage's label. */
+export function setEventCount(state, n) {
+  if (!state) return;
+  state.eventCount = Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+// How many leading stages are complete. A gap stops the count: `lifecycle` done with `query` still
+// running reads as zero, not one.
+function prefixCount(state) {
+  let n = 0;
+  for (const stage of LOAD_STAGES) {
+    if (!state.done.has(stage)) break;
+    n++;
+  }
+  return n;
+}
+
+function formatBytes(b) {
+  if (!Number.isFinite(b) || b < 0) return "";
+  if (b >= BYTES_PER_MB) return (b / BYTES_PER_MB).toFixed(1) + " MB";
+  if (b >= 1024) return Math.round(b / 1024) + " KB";
+  return Math.round(b) + " B";
+}
+
+// Grouped by hand rather than via toLocaleString so the label is identical in every locale and in
+// the tests that assert it.
+function formatCount(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function labelFor(stage, state) {
+  const hasTotal = state.total > 0;
+  switch (stage) {
+    case "query":
+      return "Querying case database…";
+    case "download":
+      return hasTotal
+        ? `Downloading ${formatBytes(state.loaded)} of ${formatBytes(state.total)}`
+        : "Downloading…";
+    // Bytes, not events: nothing has parsed yet, so an event count here would be a guess. The
+    // render stage below can name the true count precisely because parse has finished by then.
+    case "parse":
+      return hasTotal ? `Parsing ${formatBytes(state.total)}…` : "Parsing…";
+    case "render":
+      return state.eventCount === null
+        ? "Rendering…"
+        : `Rendering ${formatCount(state.eventCount)} events…`;
+    case "lifecycle":
+      return "Loading case status…";
+    default:
+      return "Case loaded";
+  }
+}
+
+/**
+ * Current progress: `fraction` (0..1), `percent`, the `label` for the stage now RUNNING (not the
+ * one just finished), and whether that stage has any signal behind it.
+ *
+ * `fraction` is monotonic by construction — a high-water mark lives in the state, so a duplicated
+ * or retried byte-progress event reporting less than a previous one cannot rewind the bar. That is
+ * enforced here rather than left to the caller's discipline.
+ */
+export function progressOf(state) {
+  const done = prefixCount(state);
+  const stage = done < LOAD_STAGES.length ? LOAD_STAGES[done] : null;
+  let raw = done / LOAD_STAGES.length;
+  let shimmer = stage !== null;
+  if (stage === "download" && state.total > 0) {
+    // Clamped: a body longer than Content-Length claimed must not spill into the next stage's share.
+    raw += Math.min(1, state.loaded / state.total) / LOAD_STAGES.length;
+    shimmer = false;
+  }
+  state.high = Math.max(state.high, raw);
+  return {
+    fraction: state.high,
+    percent: Math.round(state.high * 100),
+    label: labelFor(stage, state),
+    shimmer,
+  };
+}
+
+// ── Panel tally ─────────────────────────────────────────────────────────────────────────────────
+// The ~60 load*/poll* panel loaders that keep running after the overlay hides.
+
+/** Fresh tally over a denominator fixed before any loader runs, so the strip cannot run backwards. */
+export function createPanelTally(total) {
+  const n = Math.floor(Number(total));
+  return { total: Number.isFinite(n) && n > 0 ? n : 0, settled: new Set(), failed: new Set() };
+}
+
+/** Record a panel as finished. Idempotent per name. */
+export function settlePanel(tally, name) {
+  if (tally) tally.settled.add(name);
+}
+
+/**
+ * Record a panel as finished unsuccessfully. It still counts as SETTLED — several routes 501 by
+ * design when their store is not configured, and a fulfilled-only tally would sit short of the
+ * total forever waiting for panels that are never coming.
+ */
+export function failPanel(tally, name) {
+  if (!tally) return;
+  tally.settled.add(name);
+  tally.failed.add(name);
+}
+
+/** Tally state: `fraction` (0..1), `settled`, `total`, `failed`. Empty tallies read as complete. */
+export function panelProgressOf(tally) {
+  const settled = Math.min(tally.settled.size, tally.total);
+  return {
+    settled,
+    total: tally.total,
+    failed: tally.failed.size,
+    fraction: tally.total === 0 ? 1 : settled / tally.total,
+  };
+}
+
+// ── Streaming read ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read a response body to text while reporting real byte progress into `state`.
+ *
+ * This is the ONE phase of a case load with a true denominator, which is why it is worth streaming
+ * by hand rather than calling response.text(): Content-Length is present (the server sets no
+ * compression middleware), so every chunk yields a fraction that actually means something.
+ *
+ * Falls back to text() when the body cannot be streamed, and to a shimmer when the header is
+ * missing — never to a guess.
+ */
+export async function readBodyWithProgress(state, response, onProgress) {
+  const total = Number(response.headers ? response.headers.get("Content-Length") : 0);
+  setDownloadBytes(state, 0, total);
+  if (!response.body || typeof response.body.getReader !== "function") return response.text();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    setDownloadBytes(state, loaded, total);
+    if (onProgress) onProgress();
+  }
+  const joined = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(joined);
+}
+
+// ── Panel runner ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run every panel loader, tallying each one as its requests settle.
+ *
+ * None of the dashboard's panel loaders returns a promise — they are all fire-and-forget
+ * `fetch(...).then(...)` chains — so completion is observed at the transport instead. `fetch` is
+ * swapped for a wrapper that attributes each request to whichever loader is running when it is
+ * CALLED, which works because these loaders all call fetch synchronously in their body.
+ *
+ * THE WRAPPER'S LIFETIME IS THE SAFETY PROPERTY. Attribution happens at call time, so the wrapper
+ * only needs to be installed while the loop below runs — one synchronous block with no `await` in
+ * it, during which no other code can observe the patched global. It is restored in a `finally`, and
+ * restored to the CAPTURED ORIGINAL rather than to whatever is installed at that moment, so a
+ * nested install cannot strand a wrapper permanently.
+ *
+ * The returned promise is the original, untouched, so callers' abort handling and `.catch` chains
+ * behave exactly as before.
+ *
+ * A loader that throws synchronously is recorded as a failed panel rather than taking the rest of
+ * the fan-out with it. A loader that starts no request at all settles immediately.
+ */
+export function runPanelLoaders(entries, onProgress) {
+  const list = Array.isArray(entries) ? entries : [];
+  const tally = createPanelTally(list.length);
+  const originalFetch = globalThis.fetch;
+  const outstanding = new Map();
+  const broke = new Set();
+  let current = null;
+
+  const finish = (name) => {
+    if (broke.has(name)) failPanel(tally, name);
+    else settlePanel(tally, name);
+    if (onProgress) {
+      try {
+        onProgress(tally);
+      } catch {
+        /* a progress callback must never break the fan-out */
+      }
+    }
+  };
+  const settleOne = (owner, failed) => {
+    if (failed) broke.add(owner);
+    const left = (outstanding.get(owner) || 1) - 1;
+    outstanding.set(owner, left);
+    if (left <= 0) finish(owner);
+  };
+
+  if (typeof originalFetch !== "function") {
+    // No fetch to instrument (node without a global fetch). Still run every loader.
+    for (const [name, fn] of list) {
+      try {
+        fn();
+        settlePanel(tally, name);
+      } catch {
+        failPanel(tally, name);
+      }
+    }
+    return tally;
+  }
+
+  globalThis.fetch = function (...args) {
+    const owner = current;
+    const p = originalFetch.apply(this, args);
+    if (owner === null || !p || typeof p.then !== "function") return p;
+    outstanding.set(owner, (outstanding.get(owner) || 0) + 1);
+    p.then(
+      () => settleOne(owner, false),
+      () => settleOne(owner, true),
+    );
+    return p;
+  };
+
+  try {
+    for (const [name, fn] of list) {
+      current = name;
+      try {
+        fn();
+      } catch {
+        broke.add(name);
+      }
+      current = null;
+      // Promise callbacks are microtasks and cannot have run yet, so an absent entry here really
+      // does mean "this loader issued no request".
+      if (!outstanding.has(name)) finish(name);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  return tally;
+}
+
+// ── Browser glue ────────────────────────────────────────────────────────────────────────────────
+// Everything below touches the DOM and is deliberately thin — the logic worth testing lives above.
+//
+// The inline dashboard script owns the load sequence (it is the only code that can see render(),
+// the 60 loaders and the abort generation from #174), so this half publishes a facade it calls into
+// rather than driving anything itself. Every call site there guards on the facade being present, so
+// if this module has not executed yet the load proceeds exactly as it did before — without a bar,
+// never broken.
+
+function paintOverlay(state) {
+  const p = progressOf(state);
+  const bar = document.getElementById("caseLoadingBar");
+  if (bar) {
+    bar.style.setProperty("--clp-w", (p.fraction * 100).toFixed(1) + "%");
+    // The shimmer sits over the PENDING segment only: it says "working, no estimate available"
+    // for the stage in progress without implying anything about how far along it is.
+    bar.classList.toggle("clp-shimmer", p.shimmer);
+  }
+  const text = document.getElementById("caseLoadingText");
+  if (text) text.textContent = p.label;
+  const pct = document.getElementById("caseLoadingPct");
+  // Only shown once it means something. "0%" next to a shimmer is noise, not information.
+  if (pct) pct.textContent = p.fraction > 0 ? p.percent + "%" : "";
+}
+
+/**
+ * Resolves after the browser has actually painted — or after `timeoutMs`, whichever comes first.
+ *
+ * Awaited immediately before JSON.parse and render(), both of which block the main thread for as
+ * long as they take. Without this the label change for those stages is queued behind the very work
+ * it describes and never appears until after it finishes — so the bar would freeze showing the
+ * PREVIOUS stage and read as hung during the two phases that most need explaining. Two frames: the
+ * first schedules the style change, the second guarantees it was painted.
+ *
+ * THE TIMEOUT IS NOT OPTIONAL, and neither is the hidden-document check. A backgrounded or
+ * throttled tab does not run rAF callbacks AT ALL, and this await sits in the middle of the case
+ * load. Without a way out it does not degrade the bar — it hangs the LOAD: the dashboard never
+ * renders and the overlay never hides. Found live: opening a case and switching browser tabs (which
+ * is exactly what an analyst does while waiting) left the dashboard stuck at "Parsing …" forever
+ * with an empty timeline. A cosmetic paint hint must never be able to block the work it describes.
+ */
+export function afterPaint(timeoutMs = 50) {
+  if (typeof requestAnimationFrame !== "function") return Promise.resolve();
+  // Nothing is being painted in a hidden document, so there is no paint to wait for.
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    setTimeout(finish, timeoutMs);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
+}
+
+function paintPanelStrip(tally) {
+  const el = document.getElementById("panelProgressBar");
+  if (!el) return;
+  const p = panelProgressOf(tally);
+  el.classList.add("ppb-active");
+  el.classList.toggle("ppb-failed", p.failed > 0);
+  el.style.setProperty("--ppb-w", (p.fraction * 100).toFixed(1) + "%");
+  el.title = p.failed > 0
+    ? `${p.settled} of ${p.total} panels loaded, ${p.failed} unavailable`
+    : `${p.settled} of ${p.total} panels loaded`;
+  // Said once, then it goes away. A permanent bar reporting "5 unavailable" would nag about
+  // routes that are 501 by design in this deployment.
+  if (p.fraction >= 1) setTimeout(() => el.classList.remove("ppb-active"), 900);
+}
+
+function hidePanelStrip() {
+  const el = document.getElementById("panelProgressBar");
+  if (!el) return;
+  el.classList.remove("ppb-active", "ppb-failed");
+  el.style.setProperty("--ppb-w", "0%");
+}
+
+// Guarded so the pure exports above can be imported in node (Vitest) with no DOM present.
+if (typeof document !== "undefined" && typeof window !== "undefined") {
+  window.DfirCaseLoadProgress = {
+    createLoadState,
+    advanceStage,
+    setEventCount,
+    progressOf,
+    readBodyWithProgress,
+    runPanelLoaders,
+    panelProgressOf,
+    paintOverlay,
+    afterPaint,
+    paintPanelStrip,
+    hidePanelStrip,
+  };
+}
