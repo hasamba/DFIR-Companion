@@ -13,6 +13,10 @@ WORKDIR /app/companion
 # Install with the lockfile first (better layer caching). npm ci inside the image fetches the
 # correct linux-native binaries (e.g. sharp's libvips) — never copy host node_modules in.
 COPY companion/package.json companion/package-lock.json ./
+# Playwright is a devDependency and its browsers (~150MB+) are never needed in an image — the
+# runtime stage below copies only dist/, the pruned node_modules, public/ and data/. Without this,
+# `npm ci` here may fetch browsers that are then thrown away, slowing every build for nothing.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci
 COPY companion/tsconfig.json ./
 COPY companion/src ./src

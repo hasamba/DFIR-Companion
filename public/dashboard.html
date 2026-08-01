@@ -104,6 +104,23 @@
   <script type="module" src="/js/hunt-workbench.js"></script>
     <script type="module" src="/js/diagnostics-panel.js"></script>
   <script type="module" src="/js/case-load-progress.js"></script>
+  <!-- Dialog semantics, focus trap, Escape and focus restoration for every modal (#386). Watches
+       the `open` class the modals already toggle, so there is one place to get right rather than
+       72 call sites. See js/a11y/modal-autowire.js. -->
+  <script type="module" src="/js/a11y/modal-autowire.js"></script>
+  <!-- Mirrors the #status line into an aria-live region so job, AI and error state reach a screen
+       reader instead of being visual-only (#386). See js/a11y/announcer.js. -->
+  <script type="module" src="/js/a11y/announcer.js"></script>
+  <!-- Names each <section> so it is exposed as a navigable region. An unnamed <section> is not a
+       landmark at all, so the region rotor listed nothing on a 53-section page (#386). -->
+  <script type="module" src="/js/a11y/landmarks.js"></script>
+  <!-- Table equivalent of the swimlane <canvas>, whose content is otherwise absent from the
+       accessibility tree entirely (#386). -->
+  <script type="module" src="/js/a11y/describe-as-table.js"></script>
+  <!-- Gives data-tip controls an accessible name. The custom tooltip attribute is invisible to
+       assistive tech, so 23 of the 24 controls using it announced as just "checkbox"/"button" (#386,
+       and #220 specifically). See js/a11y/tooltips.js. -->
+  <script type="module" src="/js/a11y/tooltips.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference.
@@ -1490,6 +1507,8 @@
     /* The generic toolbar-select chevron (used before the per-select overrides win) also darkens. */
     :root[data-theme="light"] .toolbar-select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
     body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg-primary); color: var(--text-bright); }
+
+    /* Skip link, focus ring, reduced motion and .visually-hidden are in /css/a11y.css. */
     header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
     /* The action controls live in their own wrapping flex container so the settings gear
        (a sibling of it) is always pinned to the top-right of the first line, no matter how
@@ -2839,7 +2858,7 @@
     #preflightBanner { display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
       background: #3a0000; color: #ff5c5c; border-bottom: 1px solid #7a0000; font-size: 12.5px; }
     #preflightBanner[hidden] { display: none; }
-    #preflightBanner span { flex: 1; }
+    /* #preflightBanner span is in /css/a11y.css (it stops the banner forcing horizontal scroll). */
     #preflightBanner a { color: #ffaaaa; }
     #preflightBanner button { background: rgba(0,0,0,0.3); color: inherit;
       border: 1px solid rgba(255,255,255,0.2); border-radius: 5px;
@@ -2909,8 +2928,14 @@
     #ocrSearchResults .ocr-hit mark { background: var(--sev-medium); color: #000; padding: 0 1px; border-radius: 2px; }
     #ocrSearchResults .ocr-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
   </style>
+  <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
+       Loaded after the inline styles above so it is last in the cascade. -->
+  <link rel="stylesheet" href="/css/a11y.css" />
 </head>
 <body>
+<!-- First thing in the tab order (#386). Without it a keyboard user walks the entire toolbar —
+     dozens of controls — on every page load before reaching any case content. -->
+<a class="skip-link" href="#main">Skip to main content</a>
 <div id="importProgressBar"></div>
   <header>
     <div id="toolbarMain" class="toolbar-main">
@@ -5326,7 +5351,10 @@
     <button id="caseMismatchDismiss" type="button" title="Dismiss">✕</button>
   </div>
 
-  <main>
+  <!-- tabindex="-1" is required for the skip link to actually MOVE focus here. Without it the
+       browser scrolls to <main> but leaves focus in the header, so the next Tab drops the user
+       straight back into the toolbar they just skipped. -->
+  <main id="main" tabindex="-1">
     <!-- Raw-file (EVTX/PCAP) prompts — shown at the top of the content so they're not buried in a section. #211 -->
     <div id="rawToolBanner" class="raw-banner" data-safe-style="display:none;grid-column:1 / -1"></div>
     <div id="dropStatus" class="raw-banner" data-safe-style="display:none;grid-column:1 / -1"></div>
@@ -5583,6 +5611,9 @@
           <canvas id="swimlaneCanvas"></canvas>
         </div>
       </div>
+      <!-- Table equivalent of the canvas above, for screen readers (#386). Populated by
+           js/a11y/describe-as-table.js from the same lane data the canvas is drawn from. -->
+      <div id="swimlaneTableAlt"></div>
       <div id="swimlaneDetail" class="swimlane-detail" hidden></div>
       <!-- Kept inside the section so the hover tooltip still renders in fullscreen (only the
            fullscreen element's descendants paint). position:fixed keeps it viewport-anchored. -->
@@ -16625,6 +16656,8 @@
         ctx.beginPath(); ctx.moveTo(bx0 + .5, 0); ctx.lineTo(bx0 + .5, axY); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(bx1 + .5, 0); ctx.lineTo(bx1 + .5, axY); ctx.stroke();
       }
+      // The canvas above reaches no screen reader; see js/a11y/describe-as-table.js (#386).
+      if (window.DfirChartTable) window.DfirChartTable.renderSwimlaneTable(swLanes);
     }
 
     function swHitTest(canvas, cx, cy) {

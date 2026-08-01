@@ -1,0 +1,20 @@
+{
+  "dashboard-empty": {
+    "color-contrast": 6,
+    "select-name": 2
+  },
+  "dashboard-case": {
+    "color-contrast": 33,
+    "select-name": 1
+  },
+  "modal-enrichOverlay": {
+    "color-contrast": 1
+  },
+  "modal-anonOverlay": {
+    "select-name": 1
+  },
+  "modal-settingsOverlay": {
+    "color-contrast": 5,
+    "select-name": 2
+  }
+}
