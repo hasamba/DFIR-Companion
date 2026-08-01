@@ -27,12 +27,14 @@ export class LiveHub {
   }
 
   /** For the ping/reaper: every socket that has not ponged since the last sweep is dead. */
-  sweepReaper(): void {
+  sweepReaper(): number {
+    let reaped = 0;
     for (const [caseId, set] of this.subs) {
       for (const socket of set) {
         if (socket.isAlive === false) {
           socket.terminate?.();
           set.delete(socket);
+          reaped++;
           continue;
         }
         socket.isAlive = false;
@@ -43,10 +45,18 @@ export class LiveHub {
         } catch {
           set.delete(socket);
           socket.terminate?.();
+          reaped++;
         }
       }
       if (set.size === 0) this.subs.delete(caseId);
     }
+    return reaped;
+  }
+
+  connectionCount(): number {
+    let count = 0;
+    for (const sockets of this.subs.values()) count += sockets.size;
+    return count;
   }
 
   broadcast(state: InvestigationState): void {

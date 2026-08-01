@@ -5,17 +5,22 @@ import { performance } from "node:perf_hooks";
 import { CaseStore } from "../src/storage/caseStore.js";
 import { StateStore } from "../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent } from "../src/analysis/stateTypes.js";
+import { percentile } from "../src/analysis/operationalDiagnostics.js";
 
 interface BenchResult {
   events: number;
   databaseBytes: number;
   importMs: number;
+  importEventsPerSecond: number;
   coldOpenMs: number;
   filteredQueryMs: number;
+  queryP50Ms: number;
+  queryP95Ms: number;
   filteredMatches: number;
   exportMs: number;
   exportedBytes: number;
   rssMiB: number;
+  peakRssMiB: number;
 }
 
 const arg = (name: string): string | undefined => {
@@ -29,6 +34,7 @@ const sizes = (arg("sizes") ?? "1000000,10000000")
   .filter((value) => Number.isSafeInteger(value) && value > 0);
 const chunkSize = Math.max(100, Number(arg("chunk")) || 10_000);
 const temporaryRoot = arg("temp-root") ?? tmpdir();
+const queryRuns = Math.max(3, Number(arg("query-runs")) || 20);
 
 function eventAt(index: number): ForensicEvent {
   return {
@@ -57,10 +63,12 @@ async function benchmark(events: number): Promise<BenchResult> {
     await store.save(emptyState(caseId));
 
     const importStart = performance.now();
+    let peakRssBytes = process.memoryUsage().rss;
     for (let start = 0; start < events; start += chunkSize) {
       const count = Math.min(chunkSize, events - start);
       const chunk = Array.from({ length: count }, (_, offset) => eventAt(start + offset));
       await store.appendForensicEvents(caseId, chunk);
+      peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
     }
     const importMs = performance.now() - importStart;
 
@@ -69,18 +77,27 @@ async function benchmark(events: number): Promise<BenchResult> {
     await coldStore.queryForensicTimeline(caseId, { limit: 1 });
     const coldOpenMs = performance.now() - coldStart;
 
-    const queryStart = performance.now();
-    const filtered = await coldStore.queryForensicTimeline(caseId, {
-      host: "HOST-040",
-      technique: "T1059.001",
-      limit: 500,
-    });
-    const filteredQueryMs = performance.now() - queryStart;
+    const queryDurations: number[] = [];
+    let filteredMatches = 0;
+    for (let run = 0; run < queryRuns; run++) {
+      const queryStart = performance.now();
+      const filtered = await coldStore.queryForensicTimeline(caseId, {
+        host: "HOST-040",
+        technique: "T1059.001",
+        limit: 500,
+      });
+      queryDurations.push(performance.now() - queryStart);
+      filteredMatches = filtered.total;
+      peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+    }
+    const queryP50Ms = percentile(queryDurations, 0.5);
+    const queryP95Ms = percentile(queryDurations, 0.95);
 
     let exportedBytes = 0;
     const exportStart = performance.now();
     for await (const batch of coldStore.forensicTimelineBatches(caseId, { limit: chunkSize })) {
       for (const event of batch) exportedBytes += Buffer.byteLength(`${JSON.stringify(event)}\n`);
+      peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
     }
     const exportMs = performance.now() - exportStart;
     const databaseBytes = (await stat(store.databasePath(caseId))).size;
@@ -89,12 +106,16 @@ async function benchmark(events: number): Promise<BenchResult> {
       events,
       databaseBytes,
       importMs,
+      importEventsPerSecond: importMs > 0 ? events / (importMs / 1000) : 0,
       coldOpenMs,
-      filteredQueryMs,
-      filteredMatches: filtered.total,
+      filteredQueryMs: queryP50Ms,
+      queryP50Ms,
+      queryP95Ms,
+      filteredMatches,
       exportMs,
       exportedBytes,
       rssMiB: process.memoryUsage().rss / 1024 / 1024,
+      peakRssMiB: peakRssBytes / 1024 / 1024,
     };
   } finally {
     await rm(root, { recursive: true });

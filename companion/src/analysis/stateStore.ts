@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { CaseStore } from "../storage/caseStore.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
 
 export const INVESTIGATION_DB_FILENAME = "investigation.sqlite";
 const LEGACY_STATE_FILENAME = "investigation.json";
@@ -11,6 +13,7 @@ const DEFAULT_QUERY_LIMIT = 500;
 
 export interface StateStoreDeps {
   readFile?: (path: string) => Promise<string>;
+  operationalMetrics?: OperationalMetricsStore;
 }
 
 export interface EntityQuery {
@@ -56,6 +59,17 @@ interface WorkerEntityPage<T> {
   total: number;
 }
 
+function queryIndex(query: EntityQuery): QueryIndex {
+  if (query.ioc) return "ioc";
+  if (query.technique) return "technique";
+  if (query.entityId) return "entity";
+  if (query.host) return "host";
+  if (query.source) return "source";
+  if (query.severity) return "severity";
+  if (query.from || query.to) return "timestamp";
+  return "ordinal";
+}
+
 // A legacy JSON case can be below SQLite's practical capacity but still above V8's maximum string
 // size. The original file remains untouched, so this error names recovery rather than presenting a
 // half-migrated database as authoritative.
@@ -69,6 +83,7 @@ function isTooLargeToDecode(err: unknown): boolean {
 export class StateStore implements InvestigationStateStorage {
   private readonly readLegacyFile: (path: string) => Promise<string>;
   private readonly hasInjectedReader: boolean;
+  private readonly operationalMetrics?: OperationalMetricsStore;
 
   // onRetry remains in the stable constructor signature for server/tests. SQLite transactions use
   // their own busy handling inside the worker, so atomic-rename retry reporting no longer applies.
@@ -79,6 +94,15 @@ export class StateStore implements InvestigationStateStorage {
   ) {
     this.hasInjectedReader = deps.readFile !== undefined;
     this.readLegacyFile = deps.readFile ?? ((path) => readFile(path, "utf8"));
+    this.operationalMetrics = deps.operationalMetrics;
+  }
+
+  private recordQuery(operation: QueryOperation, index: QueryIndex, startedAt: number, rows: number): void {
+    void this.operationalMetrics?.record({
+      type: "query", operation, index,
+      durationMs: Math.max(0, performance.now() - startedAt),
+      rows: Math.max(0, Math.floor(rows)),
+    });
   }
 
   databasePath(caseId: string): string {
@@ -138,6 +162,7 @@ export class StateStore implements InvestigationStateStorage {
   }
 
   private async loadState(caseId: string, excludedKinds: string[]): Promise<InvestigationState> {
+    const startedAt = performance.now();
     if (!(await this.ensureMigrated(caseId))) return emptyState(caseId);
     const parsed = await caseSqliteWorker.request<Partial<InvestigationState> | null>({
       op: "loadState",
@@ -152,12 +177,15 @@ export class StateStore implements InvestigationStateStorage {
       });
     }
     const state = { ...emptyState(caseId), ...(parsed ?? {}), caseId };
-    return state.forensicTimeline.length
+    const result = state.forensicTimeline.length
       ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
       : state;
+    this.recordQuery("state_load", "entity", startedAt, result.forensicTimeline.length);
+    return result;
   }
 
   async save(state: InvestigationState): Promise<void> {
+    const startedAt = performance.now();
     const canonicalState = state.forensicTimeline.length
       ? { ...state, forensicTimeline: state.forensicTimeline.map(upgradeForensicEvent) }
       : state;
@@ -166,6 +194,7 @@ export class StateStore implements InvestigationStateStorage {
       dbPath: this.databasePath(canonicalState.caseId),
       state: canonicalState,
     });
+    this.recordQuery("state_save", "entity", startedAt, canonicalState.forensicTimeline.length);
     void this.onRetry;
   }
 
@@ -173,6 +202,7 @@ export class StateStore implements InvestigationStateStorage {
     caseId: string,
     query: EntityQuery = {},
   ): Promise<EntityPage<ForensicEvent>> {
+    const startedAt = performance.now();
     await this.ensureMigrated(caseId);
     const indexName = query.ioc ? "ioc" : query.technique ? "technique" : undefined;
     const indexValue = query.ioc ?? query.technique;
@@ -194,20 +224,25 @@ export class StateStore implements InvestigationStateStorage {
         includeTotal: query.includeTotal,
       },
     });
-    return { ...page, entities: page.entities.map(upgradeForensicEvent) };
+    const result = { ...page, entities: page.entities.map(upgradeForensicEvent) };
+    this.recordQuery("forensic_timeline", queryIndex(query), startedAt, result.entities.length);
+    return result;
   }
 
   async appendForensicEvents(caseId: string, events: readonly ForensicEvent[]): Promise<number> {
     if (!events.length) return 0;
+    const startedAt = performance.now();
     if (!(await this.ensureMigrated(caseId))) {
       await this.save(emptyState(caseId));
     }
-    return caseSqliteWorker.request<number>({
+    const appended = await caseSqliteWorker.request<number>({
       op: "appendEntities",
       dbPath: this.databasePath(caseId),
       kind: "forensicTimeline",
       entities: events.map(upgradeForensicEvent),
     });
+    this.recordQuery("event_append", "entity", startedAt, appended);
+    return appended;
   }
 
   async hasForensicEventIds(caseId: string, ids: readonly string[]): Promise<Set<string>> {

@@ -5,6 +5,7 @@ import { parseCookieHeader, unlockCookieName, verifyUnlockToken } from "../analy
 import { isRequestAllowed, type GuardConfig } from "../http/originGuard.js";
 import type { LiveHub, SocketLike } from "./hub.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
+import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 
 /**
  * Authorization for a `/ws` upgrade (issue #212).
@@ -36,6 +37,7 @@ export interface WsUpgradeDeps extends GuardConfig {
   store: CaseStore;
   secret: Buffer;
   teamAuth?: TeamAuth;
+  operationalMetrics?: OperationalMetricsStore;
 }
 
 // Mirrors the id shape CaseStore is willing to create, so a traversal-flavoured id is refused
@@ -92,6 +94,7 @@ export async function authorizeWsUpgrade(req: WsUpgradeRequest, deps: WsUpgradeD
  */
 export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDeps): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  let lastDisconnectAt = 0;
 
   // Ping/reaper: every 30s, mark each socket dead (isAlive=false), ping it, and let the pong
   // handler flip it back alive. On the NEXT sweep, anything still dead is terminated and dropped
@@ -100,7 +103,11 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
   // forever (memory leak) and the next broadcast's `send()` to the half-open socket throws an
   // unhandled 'error' on the WebSocket (no error listener was attached) → process crash.
   const REAPER_INTERVAL_MS = 30_000;
-  const reaper = setInterval(() => hub.sweepReaper(), REAPER_INTERVAL_MS);
+  const reaper = setInterval(() => {
+    const reaped = hub.sweepReaper();
+    for (let count = 0; count < reaped; count++)
+      void deps.operationalMetrics?.record({ type: "websocket", event: "reap", durationMs: 0 });
+  }, REAPER_INTERVAL_MS);
   // Don't keep the process alive just for the reaper (tests rely on the event loop emptying).
   if (typeof reaper.unref === "function") reaper.unref();
   // Stop sweeping once this server is closed, so a test (or a /settings/reload) that attaches a
@@ -115,6 +122,7 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
     void authorizeWsUpgrade({ url: req.url, headers: req.headers }, deps)
       .then((decision) => {
         if (!decision.ok) {
+          void deps.operationalMetrics?.record({ type: "websocket", event: "reject", durationMs: 0 });
           // Refuse before the handshake: the client gets an HTTP error and never has a socket.
           socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
           socket.destroy();
@@ -122,6 +130,10 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
         }
         const { caseId } = decision;
         wss.handleUpgrade(req, socket, head, (ws) => {
+          const connectedAt = Date.now();
+          void deps.operationalMetrics?.record({ type: "websocket", event: "connect", durationMs: 0 });
+          if (connectedAt - lastDisconnectAt <= REAPER_INTERVAL_MS)
+            void deps.operationalMetrics?.record({ type: "websocket", event: "reconnect", durationMs: 0 });
           const sock = ws as unknown as SocketLike;
           // Track liveness for the ping/reaper: pong flips isAlive back to true.
           sock.isAlive = true;
@@ -129,17 +141,25 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
           // half-open peer, a protocol/RST error) would throw "Unhandled 'error' event" and
           // kill the process. Contain it: log + drop from the hub so we stop broadcasting to it.
           ws.on("error", () => {
+            void deps.operationalMetrics?.record({ type: "websocket", event: "error", durationMs: Date.now() - connectedAt });
             try { ws.terminate(); } catch { /* already gone */ }
             hub.unsubscribe(caseId, sock);
           });
           // pong handler: mark alive so the next reaper sweep doesn't terminate us.
           ws.on("pong", () => { sock.isAlive = true; });
           hub.subscribe(caseId, sock);
-          ws.on("close", () => hub.unsubscribe(caseId, sock));
+          ws.on("close", () => {
+            hub.unsubscribe(caseId, sock);
+            lastDisconnectAt = Date.now();
+            void deps.operationalMetrics?.record({ type: "websocket", event: "disconnect", durationMs: Date.now() - connectedAt });
+          });
           wss.emit("connection", ws, req);
         });
       })
-      .catch(() => socket.destroy());
+      .catch(() => {
+        void deps.operationalMetrics?.record({ type: "websocket", event: "error", durationMs: 0 });
+        socket.destroy();
+      });
   });
 
   return wss;
