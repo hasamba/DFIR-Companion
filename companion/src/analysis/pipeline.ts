@@ -1,6 +1,6 @@
-import { createReadStream } from "node:fs";
+
 import { mkdir, writeFile } from "node:fs/promises";
-import { createInterface } from "node:readline";
+
 import { join as joinPath } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -27,7 +27,7 @@ import type { StateLock } from "./stateLock.js";
 import { sortByEventTime } from "./forensicSort.js";
 import { segmentSessions, sessionEnvOptions } from "./sessionSegmentation.js";
 import { applySeverityFloor } from "./severityFloor.js";
-import type { ExternalImporter } from "./declarativeImporter.js";
+
 import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { buildLearnedPatternsBlock } from "./learnedPatterns.js";
@@ -60,6 +60,17 @@ import { loadKnownPlaybooks } from "./knownPlaybooksData.js";
 import { buildPlaybookMatchResult, playbookMatchEnvOptions } from "./playbookMatch.js";
 import { buildSynthesisCoverage, type SynthMetaStore, type SynthesisCoverage } from "./synthMeta.js";
 import { AiCostStore, bucketForLabel } from "./aiCost.js";
+import * as ingest from "./ingest/index.js";
+import type { ImportContext } from "./ingest/importContext.js";
+
+/**
+ * The argument list of an importer, minus the ImportContext it takes first (#384).
+ *
+ * Every import method below is a one-line delegation to src/analysis/ingest/. Deriving the
+ * parameters rather than restating them means the two cannot drift: change an importer's signature
+ * and the delegation stops compiling, which is the property a hand-copied signature would not have.
+ */
+type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
 // The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and
 // re-exported below, because 23 modules and the eval harness import these names from here.
 import {
@@ -94,40 +105,9 @@ import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWin
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
-import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
-import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
-import { parseEvtxXmlProgress } from "./evtxXmlImport.js";
-import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
-import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
-import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
-import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
-import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
-import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
-import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
-import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
-import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
-import { parseSyslog, SYSLOG_SOURCE, type SyslogImportOptions } from "./syslogImport.js";
-import { pickImportYear } from "./timeYearClamp.js";
-import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
-import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
-import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
-import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
-import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageImport.js";
-import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
-import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
-import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
-import { parseK8sAudit, type K8sAuditImportOptions } from "./k8sAuditImport.js";
-import { parseOsqueryLog, type OsqueryImportOptions } from "./osqueryImport.js";
-import { parsePlasoCsv, parsePlasoFromLines, type PlasoImportOptions, type PlasoParseResult } from "./plasoImport.js";
-import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
-import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
-import { parseEmail, type EmailImportOptions } from "./emailImport.js";
-import { parseTheHive, type TheHiveImportOptions } from "./theHiveImport.js";
-import { parseIrisCase, type IrisCaseData, type IrisImportOptions } from "./irisImport.js";
-import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
-import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
-import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
-import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
+
+import { type PlasoParseResult } from "./plasoImport.js";
+
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
 import {
@@ -242,11 +222,6 @@ async function dumpRedactedImage(
     console.warn(`[OCR dump] ${(err as Error).message}`);
   }
 }
-
-
-
-
-
 
 /** What one deep-pass run did, for the analyst and the route response. */
 export interface DeepPassResult {
@@ -454,14 +429,18 @@ export class AnalysisPipeline {
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
   private kevCatalogCache: KevCatalog | undefined;
 
-  constructor(private readonly opts: PipelineOptions) {
+  // `opts` and the four collaborators below are public because src/analysis/ingest/ takes an
+  // ImportContext, and AnalysisPipeline satisfies that interface structurally (#384). They are the
+  // pipeline's internal surface for the importers, not an invitation for routes to reach in --
+  // ImportContext is deliberately the smallest type that lets an importer do its job.
+  constructor(public readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
   }
 
   // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
   // Every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged
   // duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
-  private async mergeWithAliases(
+  async mergeWithAliases(
     state: InvestigationState,
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
@@ -477,7 +456,7 @@ export class AnalysisPipeline {
   // immediately when no lock is configured (e.g. some script/test call sites).
   // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
   // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
-  private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
+  withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
 
@@ -1146,7 +1125,7 @@ export class AnalysisPipeline {
   // `total` is the importer's own parsed-record count, so the note says how much was READ, not just
   // that nothing came out — "0 events from 0 records" (wrong format) and "0 events from 75,951
   // records" (understood but uninteresting) are very different problems.
-  private async noteEmptyImport(
+  async noteEmptyImport(
     caseId: string,
     opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
     kind: string,
@@ -1177,49 +1156,8 @@ export class AnalysisPipeline {
   // finding maps straight to a forensic event + IOCs with NO AI extraction call.
   // Scan-lifecycle/info noise (module init, "Info" level) is dropped by default.
   // Findings/attacker-path still come from a later synthesize().
-  async importThor(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "t3") so ids never collide
-      importedAt: string;
-      thor?: ThorImportOptions;  // filtering overrides (dropInfo, dropLifecycleModules…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseThorReport(jsonText, opts.thor);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "THOR", parsed.total);
-
-    // Assign stable, collision-free ids and validate the delta against the schema
-    // (fills defaults like relatedFindingIds). No model call — purely structural.
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({ ...e, id: `${opts.idPrefix}e${i + 1}` })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `THOR import: ${parsed.kept} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importThor(...args: ImporterArgs<typeof ingest.importThor>): Promise<InvestigationState> {
+    return ingest.importThor(this, ...args);
   }
 
   // Import a SIEM / EDR JSON export (Elastic/Kibana, Splunk, an EDR console, a raw
@@ -1227,209 +1165,29 @@ export class AnalysisPipeline {
   // container is unwrapped, Windows/Sysmon events get a per-EID mapping, other records
   // fall back to field auto-detection, and repetitive events are aggregated. The
   // detected tool name (from the filename / source) tags each event's `sources`.
-  async importSiem(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
-      importedAt: string;
-      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSiemExport(jsonText, opts.siem);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "SIEM", parsed.total);
-
-    const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [source] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSiem(...args: ImporterArgs<typeof ingest.importSiem>): Promise<InvestigationState> {
+    return ingest.importSiem(this, ...args);
   }
 
   // Import Windows Event XML through the shared deterministic SIEM/EVTX mapping.
-  async importEvtxXml(
-    caseId: string,
-    xmlText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
-      importedAt: string;
-      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void | Promise<void>; onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>; signal?: AbortSignal; startBatch?: number;
-    },
-  ): Promise<InvestigationState> {
-    if ((opts.startBatch ?? 0) >= 1) { await opts.onProgress?.(1, 1); return this.opts.stateStore.load(caseId); }
-    let parseTotal = 0;
-    const parsedRaw = await parseEvtxXmlProgress(xmlText, opts.siem, (done, total) => { parseTotal = total; return opts.onParseProgress?.(done, total * 2, "reading Windows events"); }, (done, total) => opts.onParseProgress?.(parseTotal + done, parseTotal + total, "processing Windows events"), opts.signal);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Windows Event Log (XML)", parsed.total);
-
-    const source = detectTool(opts.label) ?? "Windows Event Log";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Windows Event Log (XML) import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      if (opts.signal?.aborted) throw Object.assign(new Error("import processing cancelled; stored evidence retained"), { name: "AbortError" });
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      await opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEvtxXml(...args: ImporterArgs<typeof ingest.importEvtxXml>): Promise<InvestigationState> {
+    return ingest.importEvtxXml(this, ...args);
   }
 
   // Import a Linux/Unix shell history file (.bash_history / .zsh_history / …). Deterministic
   // host-triage: one forensic event per command at the artifact's own time (bash HISTTIMEFORMAT
   // `#<epoch>` / zsh extended history), Info by default with a conservative tradecraft bump. The
   // account is derived from the filename and shown in each event.
-  async importBashHistory(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "b3") so ids never collide
-      importedAt: string;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const user = userFromHistoryFilename(opts.label);
-    const parsedRaw = parseShellHistoryFile(text, { user });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Shell history", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Shell history"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Shell history import${user ? ` (${user})` : ""}: ${parsed.kept} command(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importBashHistory(...args: ImporterArgs<typeof ingest.importBashHistory>): Promise<InvestigationState> {
+    return ingest.importBashHistory(this, ...args);
   }
 
   // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
   // deterministic wrappers exactly: parse -> severity floor -> standard delta (findings/MITRE empty,
   // MITRE rides inside each event) -> mergeDelta -> save -> notify. Does NOT depend on any shared-runner
   // refactor of the built-ins.
-  async importDeclarative(
-    caseId: string,
-    text: string,
-    opts: {
-      importer: ExternalImporter;
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-      // Per-importer health (#84): fired with the raw parse stats (total/kept/dropped/format) right
-      // after parsing, BEFORE the zero-events early return, so a run that legitimately produced
-      // nothing still counts as a completed (not failed) run in the diagnostics table.
-      onParsed?: (result: SiemParseResult) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
-    opts.onParsed?.(parsedRaw);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, opts.importer.label, parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [opts.importer.label],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `${opts.importer.label} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importDeclarative(...args: ImporterArgs<typeof ingest.importDeclarative>): Promise<InvestigationState> {
+    return ingest.importDeclarative(this, ...args);
   }
 
   // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
@@ -1437,38 +1195,8 @@ export class AnalysisPipeline {
   // routed there exclusively) that is never synthesized; this is how the analyst pulls the events that
   // matter into the analyzed timeline. Reuses mergeDelta (dedups forensic events by id) — a stored super
   // event keeps its id, so a double-promote is a no-op. No AI here; the caller re-synthesizes.
-  async promoteSuperTimeline(
-    caseId: string,
-    events: ForensicEvent[],
-    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
-  ): Promise<InvestigationState> {
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      if (!events.length) return state;
-      const delta = deltaSchema.parse({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: opts.note ?? `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
-        forensicEvents: events.map((e) => ({ ...e })),
-      });
-      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
-      // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
-      // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
-      // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-      if (opts.tagById) {
-        const tagged = new Set(Object.keys(opts.tagById));
-        state = {
-          ...state,
-          forensicTimeline: state.forensicTimeline.map((e) =>
-            tagged.has(e.id)
-              ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...opts.tagById![e.id]])] }
-              : e,
-          ),
-        };
-      }
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      return state;
-    });
+  promoteSuperTimeline(...args: ImporterArgs<typeof ingest.promoteSuperTimeline>): Promise<InvestigationState> {
+    return ingest.promoteSuperTimeline(this, ...args);
   }
 
   // Import Chainsaw (WithSecure) hunt output or a raw EVTX-as-JSON dump. Like THOR/SIEM
@@ -1476,174 +1204,24 @@ export class AnalysisPipeline {
   // per-EID Windows mapping as the SIEM import, and — for Chainsaw — the matched Sigma
   // rule's level drives severity while its `attack.tXXXX` tags become MITRE techniques.
   // Each event is tagged Chainsaw / EVTX as its source for cross-source correlation.
-  async importChainsaw(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;               // unique per import (e.g. "c3") so ids never collide
-      importedAt: string;
-      chainsaw?: ChainsawImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Chainsaw", parsed.total);
-
-    const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [fallback],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importChainsaw(...args: ImporterArgs<typeof ingest.importChainsaw>): Promise<InvestigationState> {
+    return ingest.importChainsaw(this, ...args);
   }
 
   // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
   // other deterministic paths there is no AI call: the matched Sigma rule's level drives
   // severity, its title leads the description, its tactics/tags become MITRE, and IOCs /
   // asset / process-chain come from the rendered detail fields. Tagged Hayabusa as source.
-  async importHayabusa(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                  // unique per import (e.g. "h3") so ids never collide
-      importedAt: string;
-      hayabusa?: HayabusaImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Hayabusa", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Hayabusa"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importHayabusa(...args: ImporterArgs<typeof ingest.importHayabusa>): Promise<InvestigationState> {
+    return ingest.importHayabusa(this, ...args);
   }
 
   // Import Velociraptor native JSON output (collection results / hunt export). Like the
   // other deterministic paths there is no AI call: each row is classified (Sigma / YARA /
   // EventLog / generic) and mapped — detection rows are verdict-driven, the rest auto-detect
   // the artifact's own time + IOCs. Every event is tagged Velociraptor as its source.
-  async importVelociraptor(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                       // unique per import (e.g. "v3") so ids never collide
-      importedAt: string;
-      velociraptor?: VelociraptorImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      veloUrl?: string;          // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
-    // label so generic/detection events show their source — e.g. "DetectRaptor.Windows.Detection.NamedPipes".
-    const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-    let artifact = rawArtifact;
-    try { artifact = decodeURIComponent(rawArtifact); } catch { /* malformed %xx — keep the raw label */ }
-    // Chunked async parse: reports (rowsDone, rowsTotal) as it goes (→ the import job's progress bar
-    // and the "importing X/Y" status) and yields to the event loop between chunks, so a huge MFT/USN
-    // import streams live progress instead of freezing the server on one synchronous pass.
-    const parsedRaw = await parseVelociraptorJsonProgress(text, { artifact, ...opts.velociraptor }, opts.onProgress);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Velociraptor", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return {
-        ...rest, id, sources: rest.sources?.length ? rest.sources : ["Velociraptor"],
-        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
-      };
-    });
-
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importVelociraptor(...args: ImporterArgs<typeof ingest.importVelociraptor>): Promise<InvestigationState> {
+    return ingest.importVelociraptor(this, ...args);
   }
 
   // Import ECAR — EDR Common Activity Record telemetry (NDJSON of (object, action) endpoint events).
@@ -1651,425 +1229,60 @@ export class AnalysisPipeline {
   // reads `timestamp_ms`, scrapes PUBLIC IPs as IOCs, and keeps severity conservative (Info evidence,
   // bumped only on real tradecraft) so high-volume raw telemetry doesn't flood the timeline. See
   // ecarImport.ts for the mapping (and the lsass-access false-positive rationale).
-  async importEcar(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import so ids never collide
-      importedAt: string;
-      ecar?: EcarImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseEcarJson(text, { ...opts.ecar });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "ECAR", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [ECAR_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEcar(...args: ImporterArgs<typeof ingest.importEcar>): Promise<InvestigationState> {
+    return ingest.importEcar(this, ...args);
   }
 
   // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
   // (no AI): raw web/proxy telemetry, Info by default with a conservative bump only for an
   // access-denied response; git smart-HTTP clone/push tagged T1213. See combinedLogImport.ts.
-  async importCombinedLog(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      combinedLog?: CombinedLogImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Web/proxy access-log", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [COMBINED_LOG_SOURCE] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCombinedLog(...args: ImporterArgs<typeof ingest.importCombinedLog>): Promise<InvestigationState> {
+    return ingest.importCombinedLog(this, ...args);
   }
 
   // Import a Cisco ASA firewall syslog export. Deterministic (no AI): Built/Teardown telemetry
   // stays Info, an explicit Deny bumps to Low, dynamic-NAT-translation noise is dropped,
   // year-less timestamps are re-anchored by the mergeDelta year-clamp. See ciscoAsaImport.ts.
-  async importCiscoAsa(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      ciscoAsa?: CiscoAsaImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.ciscoAsa?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cisco ASA", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [CISCO_ASA_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cisco ASA import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCiscoAsa(...args: ImporterArgs<typeof ingest.importCiscoAsa>): Promise<InvestigationState> {
+    return ingest.importCiscoAsa(this, ...args);
   }
 
   // Import a Snort / Suricata "fast" alert log — a real IDS verdict feed. Deterministic (no AI):
   // severity is the rule's Priority verdict, public src/dst IPs become IOCs, year-less timestamps are
   // re-anchored by the mergeDelta year-clamp. See snortImport.ts.
-  async importSnort(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      snort?: SnortImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.snort?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseSnortLog(text, { ...opts.snort, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Snort", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SNORT_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSnort(...args: ImporterArgs<typeof ingest.importSnort>): Promise<InvestigationState> {
+    return ingest.importSnort(this, ...args);
   }
 
   // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
   // match becomes a file-match event (default Medium, bumped only on an explicit rule-meta signal),
   // matched file + hash meta become IOCs. YARA output is undated, so mergeDelta stamps events at import
   // time. Used by the external-tools run path (#211). See yaraImport.ts.
-  async importYara(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      yara?: YaraImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseYaraOutput(text, { ...opts.yara });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "YARA", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [YARA_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `YARA import: ${parsed.kept} match event(s) from ${parsed.total} match(es)` +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importYara(...args: ImporterArgs<typeof ingest.importYara>): Promise<InvestigationState> {
+    return ingest.importYara(this, ...args);
   }
 
   // Import a plain Linux/Unix syslog export (RFC 5424 / RFC 3164). Deterministic (no AI): host
   // telemetry stays Info, an auth-failure or crit/alert/emerg PRI bumps to Low, the host is carried
   // as the event's asset, RFC-3164 year-less timestamps are re-anchored by the mergeDelta year-clamp.
   // See syslogImport.ts.
-  async importSyslog(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      syslog?: SyslogImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseSyslog(text, { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Syslog", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SYSLOG_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Syslog import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSyslog(...args: ImporterArgs<typeof ingest.importSyslog>): Promise<InvestigationState> {
+    return ingest.importSyslog(this, ...args);
   }
 
   // Import network-monitor logs — Suricata `eve.json` and Zeek JSON (Security Onion's
   // network side). Deterministic (no AI call): the timeline is built from the detections
   // (Suricata alerts + Zeek notices); surrounding telemetry (dns/http/tls/files/conn)
   // contributes IOCs only. Events are tagged Suricata / Zeek.
-  async importNetwork(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "n3") so ids never collide
-      importedAt: string;
-      network?: NetworkImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Pass the import filename so per-stream Zeek JSON (conn.json / dns.json / … with no `_path`)
-    // routes to the right stream (#197).
-    const parsedRaw = parseNetworkLogs(text, { ...opts.network, filename: opts.network?.filename ?? opts.label });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Network", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Suricata"] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
-        (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importNetwork(...args: ImporterArgs<typeof ingest.importNetwork>): Promise<InvestigationState> {
+    return ingest.importNetwork(this, ...args);
   }
 
   // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
   // Sigma log detections — as the browser extension pushes them (or a raw export). Deterministic
   // (no AI). Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
-  async importSocrates(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "s4") so ids never collide
-      importedAt: string;
-      socrates?: SocratesImportOptions;
-      minSeverity?: Severity;          // gate-aware import floor (unified Import button)
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSocrates(text, opts.socrates);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "SO-CRATES", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["SO-CRATES"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `SO-CRATES import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
-        ` — ${parsed.alerts} Suricata alert(s), ${parsed.yara} YARA, ${parsed.sigma} Sigma, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSocrates(...args: ImporterArgs<typeof ingest.importSocrates>): Promise<InvestigationState> {
+    return ingest.importSocrates(this, ...args);
   }
 
   // Import Security Onion Console (SOC) events — the Alerts / Hunt views the browser extension
@@ -2077,107 +1290,16 @@ export class AnalysisPipeline {
   // event's own `event.severity_label` drives severity, `rule.name` leads the description, ECS
   // threat fields become MITRE, and source/destination IPs + app-layer fields become IOCs.
   // Events are tagged "Security Onion".
-  async importSecurityOnion(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "so3") so ids never collide
-      importedAt: string;
-      securityOnion?: SecurityOnionImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Security Onion", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Security Onion"] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSecurityOnion(...args: ImporterArgs<typeof ingest.importSecurityOnion>): Promise<InvestigationState> {
+    return ingest.importSecurityOnion(this, ...args);
   }
 
   // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
   // UsnJrnl, MFT, SRUM, Recycle Bin, Shellbags). Deterministic (no AI call): the EZ tool is
   // detected from the CSV header, then each row maps to a forensic event reading the
   // artifact's own time + file/hash/process IOCs. Events are tagged by artifact name.
-  async importKape(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;             // unique per import (e.g. "k3") so ids never collide
-      importedAt: string;
-      kape?: KapeImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseKapeCsv(text, opts.kape);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [parsed.artifact],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importKape(...args: ImporterArgs<typeof ingest.importKape>): Promise<InvestigationState> {
+    return ingest.importKape(this, ...args);
   }
 
   // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Deterministic (no AI call):
@@ -2185,318 +1307,52 @@ export class AnalysisPipeline {
   // unscored process/task rows become Info evidence, the bulk File super-timeline is dropped
   // (unless `fileTelemetry`), and Active-Connection remote IPs become IOCs. Events tagged
   // "Cyber Triage".
-  async importCybertriage(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                  // unique per import (e.g. "ct3") so ids never collide
-      importedAt: string;
-      cybertriage?: CybertriageImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCybertriage(text, opts.cybertriage);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Cyber Triage", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Cyber Triage"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cyber Triage import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.notable > 0 ? `, ${parsed.notable} scored item(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
+    return ingest.importCybertriage(this, ...args);
   }
 
   // Import Microsoft 365 Unified Audit Log + Entra ID (sign-in / directory audit) data.
   // Deterministic (no AI call): each record is classified (UAL / sign-in / audit) and mapped,
   // severity derived from the operation (BEC tradecraft) or Entra's own risk verdict; the
   // source IP becomes an IOC and the UPN is surfaced for the asset graph.
-  async importM365(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "m3") so ids never collide
-      importedAt: string;
-      m365?: M365ImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseM365Audit(text, opts.m365);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Microsoft 365", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Microsoft 365"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
+    return ingest.importM365(this, ...args);
   }
 
   // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
   // severity derived from the action (IAM persistence, logging/detection tampering, S3
   // exposure, secrets access) + denied/root/console-failure bumps; the caller IP → IOC.
-  async importAws(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "a3") so ids never collide
-      importedAt: string;
-      aws?: AwsImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCloudTrail(text, opts.aws);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "AWS CloudTrail", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `AWS CloudTrail import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
+    return ingest.importAws(this, ...args);
   }
 
   // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
   // is routed (GCP / Azure) and mapped, severity derived from the action (+ denied bump); the
   // caller IP → IOC and the principal email is surfaced for the asset graph.
-  async importCloudActivity(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "g3") so ids never collide
-      importedAt: string;
-      cloud?: CloudActivityImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCloudActivity(text, opts.cloud);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cloud activity", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Cloud Audit"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cloud activity import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCloudActivity(...args: ImporterArgs<typeof ingest.importCloudActivity>): Promise<InvestigationState> {
+    return ingest.importCloudActivity(this, ...args);
   }
 
   // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit
   // Event → a forensic event whose severity is derived from the (verb, resource, subresource) tuple
   // (pod exec/attach, secret access, RBAC change, privileged-pod create, anonymous access), Info by
   // default. Source IP → IOC. Tagged Kubernetes Audit.
-  async importK8sAudit(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "k3") so ids never collide
-      importedAt: string;
-      k8s?: K8sAuditImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseK8sAudit(text, opts.k8s);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Kubernetes audit", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Kubernetes Audit"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Kubernetes audit import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
+    return ingest.importK8sAudit(this, ...args);
   }
 
   // Import osquery scheduled-query result logs (differential `columns` rows + `snapshot` sets).
   // Deterministic (no AI call): Info-by-default endpoint telemetry, with a conservative tradecraft
   // bump on a command-line column; columns → IOCs (path/hash/ip/process). Tagged osquery.
-  async importOsquery(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "o3") so ids never collide
-      importedAt: string;
-      osquery?: OsqueryImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseOsqueryLog(text, opts.osquery);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "osquery", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["osquery"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `osquery import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importOsquery(...args: ImporterArgs<typeof ingest.importOsquery>): Promise<InvestigationState> {
+    return ingest.importOsquery(this, ...args);
   }
 
   // Import a Plaso / log2timeline super-timeline (psort CSV — dynamic or l2tcsv). Deterministic
   // (no AI call): each row is an Info evidence event read at its own time, with IOCs scraped
   // from the message (hashes/URLs/IPs) and the source file path. Tagged Plaso.
-  async importPlaso(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "p3") so ids never collide
-      importedAt: string;
-      plaso?: PlasoImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parsePlasoCsv(text, opts.plaso);
-    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  importPlaso(...args: ImporterArgs<typeof ingest.importPlaso>): Promise<InvestigationState> {
+    return ingest.importPlaso(this, ...args);
   }
 
   // Streaming-from-disk Plaso import: for super-timelines too large to hold as one JS string (a
@@ -2504,35 +1360,14 @@ export class AnalysisPipeline {
   // length"). Reads the file line-by-line via node:readline and feeds parsePlasoFromLines, which
   // keeps memory bounded by the distinct-key set, not the row count. Same downstream merge as
   // importPlaso. The route persists the evidence file separately (by copy, not as a string).
-  async importPlasoFile(
-    caseId: string,
-    filePath: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      plaso?: PlasoImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8", highWaterMark: 1 << 20 }),
-      crlfDelay: Infinity,
-    });
-    let parsedRaw: PlasoParseResult;
-    try {
-      parsedRaw = await parsePlasoFromLines(rl, opts.plaso);
-    } finally {
-      rl.close();
-    }
-    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  importPlasoFile(...args: ImporterArgs<typeof ingest.importPlasoFile>): Promise<InvestigationState> {
+    return ingest.importPlasoFile(this, ...args);
   }
 
   // Shared tail of both Plaso entry points: apply the severity floor, build the delta and merge it
   // into the case state. (Keeping this in one place means the in-memory and streaming importers
   // produce identical timeline rows / IOCs / notes.)
-  private async persistPlasoParsed(
+  async persistPlasoParsed(
     caseId: string,
     parsedRaw: PlasoParseResult,
     opts: { label: string; idPrefix: string; importedAt: string; minSeverity?: Severity; onProgress?: (done: number, total: number) => void },
@@ -2574,254 +1409,39 @@ export class AnalysisPipeline {
   // Deterministic (no AI call): records sharing a serial collapse into one logical event, mapped
   // to severity/MITRE by record type (logins, account/group mgmt, sudo, SELinux denials, audit-config
   // tampering), bumped on a failed auth or a suspicious command. Read at the audit() epoch. Tagged auditd.
-  async importAuditd(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "ad3") so ids never collide
-      importedAt: string;
-      auditd?: AuditdImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseAuditdLog(text, opts.auditd);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "auditd", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["auditd"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `auditd import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importAuditd(...args: ImporterArgs<typeof ingest.importAuditd>): Promise<InvestigationState> {
+    return ingest.importAuditd(this, ...args);
   }
 
   // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Deterministic
   // (no AI call): each entry is read at its own time (_SOURCE/__REALTIME µs epoch), severity derived
   // from PRIORITY then bumped from the message (sshd auth, sudo, useradd, kernel), with IOCs scraped
   // from _EXE/_COMM and the MESSAGE. Tagged journald.
-  async importJournald(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "jd3") so ids never collide
-      importedAt: string;
-      journald?: JournaldImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseJournald(text, opts.journald);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "journald", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["journald"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `journald import: ${parsed.kept} event(s) from ${parsed.total} entr(y/ies)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importJournald(...args: ImporterArgs<typeof ingest.importJournald>): Promise<InvestigationState> {
+    return ingest.importJournald(this, ...args);
   }
 
   // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Deterministic
   // (no AI call): Falco rule hits are the DETECTIONS (verdict-first: priority → severity, tags →
   // MITRE) and surface on the timeline; raw sysdig syscall events are telemetry → Info evidence;
   // both contribute proc/file/network IOCs. Tagged Falco / sysdig.
-  async importSysdig(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "sd3") so ids never collide
-      importedAt: string;
-      sysdig?: SysdigImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSysdig(text, opts.sysdig);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "sysdig/Falco", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["sysdig"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `sysdig/Falco import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.alerts > 0 ? `, ${parsed.alerts} Falco alert(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSysdig(...args: ImporterArgs<typeof ingest.importSysdig>): Promise<InvestigationState> {
+    return ingest.importSysdig(this, ...args);
   }
 
   // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export). Deterministic
   // (no AI call): rule.level drives severity (≥13 Critical, ≥10 High, ≥7 Medium, else Info),
   // rule.mitre.technique → MITRE, agent.name → asset, data.srcip/dstip/md5/sha256/url → IOCs.
-  async importWazuh(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "w3") so ids never collide
-      importedAt: string;
-      wazuh?: WazuhImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Wazuh", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Wazuh"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Wazuh import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importWazuh(...args: ImporterArgs<typeof ingest.importWazuh>): Promise<InvestigationState> {
+    return ingest.importWazuh(this, ...args);
   }
 
   // Import a malware-sandbox detonation report (CAPEv2 or CrowdStrike Falcon Sandbox).
   // Deterministic (no AI call): the sample verdict + each behavioural signature map to events
   // (severity from the report's own score/verdict, MITRE from its ATT&CK), and every
   // dropped/extracted file hash + network host/domain/URL is harvested as an IOC.
-  async importSandbox(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "sb3") so ids never collide
-      importedAt: string;
-      sandbox?: SandboxImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSandboxReport(text, opts.sandbox);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Sandbox", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Sandbox"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Sandbox import (${parsed.format}): ${parsed.kept} event(s)` +
-        (parsed.signatures > 0 ? `, ${parsed.signatures} signature(s)` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSandbox(...args: ImporterArgs<typeof ingest.importSandbox>): Promise<InvestigationState> {
+    return ingest.importSandbox(this, ...args);
   }
 
   // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -2830,202 +1450,31 @@ export class AnalysisPipeline {
   // port IOCs), malfind → High injected-code events (ATT&CK T1055), cmdline → command-line events
   // (bumped on LOLBin/encoded tradecraft), svcscan/modules → service/driver evidence. Tagged
   // "Volatility" / "Rekall" for cross-source correlation; reads the artifact's own time.
-  async importMemory(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "mem3") so ids never collide
-      importedAt: string;
-      memory?: MemoryImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Memory", parsed.total);
-
-    const tool = parsed.tool || "Volatility";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [tool],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
-        (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
-        (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importMemory(...args: ImporterArgs<typeof ingest.importMemory>): Promise<InvestigationState> {
+    return ingest.importMemory(this, ...args);
   }
 
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
   // ONE forensic event dated at the message's own Date: header, severity DERIVED from the email's
   // SPF/DKIM/DMARC verdict + sender heuristics; URLs, sender/reply-to domains, originating IP and
   // attachment names/hashes become IOCs. Covers ATT&CK T1566 (Phishing). Tagged "Email".
-  async importEmail(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "em3") so ids never collide
-      importedAt: string;
-      email?: EmailImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseEmail(text, opts.email);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Email", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Email"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Email import (${parsed.format}): ${parsed.kept} event(s)` +
-        (parsed.subject ? ` — "${parsed.subject.slice(0, 80)}"` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEmail(...args: ImporterArgs<typeof ingest.importEmail>): Promise<InvestigationState> {
+    return ingest.importEmail(this, ...args);
   }
 
   // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
   // case/alert records → forensic events (severity from TheHive's own 1–4 scale, MITRE from
   // ATT&CK-tagged tags, TLP/PAP labels prepended); observable records → IOCs by dataType.
-  async importTheHive(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "th3") so ids never collide
-      importedAt: string;
-      thehive?: TheHiveImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseTheHive(text, opts.thehive);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "TheHive", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["TheHive"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `TheHive import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.observables > 0 ? `, ${parsed.observables} observable(s)` : "") +
-        `, ${parsed.iocCount} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importTheHive(...args: ImporterArgs<typeof ingest.importTheHive>): Promise<InvestigationState> {
+    return ingest.importTheHive(this, ...args);
   }
 
   // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
   // case rows already fetched from the IRIS API (analysis/irisImport.ts parses them deterministically,
   // NO AI call): timeline → forensic events, IOCs → IOCs, assets → evidence events. All feed the
   // same forensic timeline via mergeDelta, exactly like the other importers.
-  async importIris(
-    caseId: string,
-    data: IrisCaseData,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "iris3") so ids never collide
-      importedAt: string;
-      iris?: IrisImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseIrisCase(data, opts.iris);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "DFIR-IRIS", parsed.timelineCount);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["DFIR-IRIS"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `DFIR-IRIS import (${parsed.caseName ?? `case #${parsed.irisCaseId ?? "?"}`}): ` +
-        `${parsed.kept} event(s) from ${parsed.timelineCount} timeline + ${parsed.assetCount} asset(s)` +
-        `, ${parsed.iocCount} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importIris(...args: ImporterArgs<typeof ingest.importIris>): Promise<InvestigationState> {
+    return ingest.importIris(this, ...args);
   }
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE

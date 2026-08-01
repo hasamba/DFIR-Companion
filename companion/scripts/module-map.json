@@ -346,7 +346,7 @@
     "redactPaths.ts": "analysis/privacy",
     "redactedExport.ts": "analysis/privacy",
     "regexSafety.ts": "analysis/privacy",
-    "responseSchema.ts": "analysis/ai",
+    "responseSchema.ts": "shared",
     "sandboxImport.ts": "analysis/ingest",
     "savedHuntStore.ts": "analysis/hunt",
     "scope.ts": "analysis/workflow",

@@ -35,7 +35,6 @@
   "analysis/stateMerge.ts -> analysis/initialAccess.ts [runtime]",
   "analysis/stateMerge.ts -> analysis/iocExclude.ts [runtime]",
   "analysis/stateMerge.ts -> analysis/iocValue.ts [runtime]",
-  "analysis/stateMerge.ts -> analysis/responseSchema.ts [type]",
   "analysis/stateMerge.ts -> analysis/uncertainty.ts [runtime]",
   "analysis/stateMerge.ts -> analysis/workLogFilter.ts [runtime]",
   "analysis/stateTypes.ts -> analysis/iocExclude.ts [type]",
