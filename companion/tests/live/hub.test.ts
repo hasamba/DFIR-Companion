@@ -89,8 +89,9 @@ describe("LiveHub", () => {
     expect(pinged).toBe(true);
     expect(terminated).toBe(false);
     // Second sweep (no pong happened in between): isAlive still false → terminate + drop.
-    hub.sweepReaper();
+    const reaped = hub.sweepReaper();
     expect(terminated).toBe(true);
+    expect(reaped).toBe(1);
     // The dead socket is dropped from the hub; a subsequent broadcast is a no-op.
     expect(() => hub.broadcastTo("c1", { type: "state" })).not.toThrow();
     expect(s.sent).toHaveLength(0);
@@ -108,5 +109,6 @@ describe("LiveHub", () => {
     s.isAlive = true;       // pong handler fired
     hub.sweepReaper();      // still alive → ping again, no terminate
     expect(terminated).toBe(false);
+    expect(hub.connectionCount()).toBe(1);
   });
 });

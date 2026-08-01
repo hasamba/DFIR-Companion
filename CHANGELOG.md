@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Local observability and safe support bundles** — bounded evidence-free parser, storage, job, AI, export, WebSocket and capacity diagnostics with proactive warnings and preview-before-download support data (closes #389).
+- **Controlled report review and immutable release** — audited draft/peer-review/approval states, evidence and integrity release gates, identity-bound sign-off, explicit supersession, version diffs, and frozen executive/technical/legal/IOC packs (closes #383).
 - **Authenticated team investigations** — optional OIDC/local sign-in, case RBAC, scoped service identities, signed analyst attribution, secure sessions/CSRF, and single-writer concurrency protection while preserving zero-config localhost mode (closes #382).
 - **Restart-safe background jobs** — durable import and Deep Pass checkpoints, stable job IDs, deterministic cancellation/retry, fair per-case queueing, and reconnect-safe progress recovery (closes #380).
 - **Production AI quality and calibration gates** — a versioned synthetic corpus now grades exact claim-to-evidence grounding, recall, false conclusions, calibrated uncertainty, useful next steps, cost, and clean-case abstention, with protected pinned-model baselines and prompt-change no-regression reports (closes #378).
@@ -19,7 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Internal Hunt Workbench and typed query language** — structured, indexed and cursor-paged searches across an explicitly selected forensic or super-timeline dataset, with Boolean/range/time/regex filters, aggregation, rare values, saved parameterized hunts, result pivots/actions, cancellation and resource limits (closes #376).
 
 ### Fixed
+- **Cockpit import counts** — show forensic- and super-timeline additions separately after an import.
 - **Imports into a non-existent case are rejected** — all 24 `/cases/:id/import*` routes now 404 an unknown case id instead of accepting it; a typo'd id used to return 202 and orphan the evidence, an `imports.jsonl` line and a custody record under a directory that never appeared in the case list.
+
+### Security
+- **Strict browser rendering policy** — dashboard views and HTML exports now sanitize untrusted content under nonce-based CSP and Trusted Types, blocking script, URL, and CSS injection (closes #387).
+- **Least-privilege capture extension** — installs with zero host access, asks for one console origin at a time, supports revocation and one-off active-tab capture, refuses restricted/private pages, and records permission changes locally (closes #388).
 
 ## [0.34.0] - 2026-07-31
 

@@ -284,6 +284,7 @@ describe("createOriginGuard", () => {
     expect(res.status).toBe(204);
     expect(res.headers["access-control-allow-private-network"]).toBe("true");
     expect(res.headers["access-control-allow-methods"]).toMatch(/POST/);
+    expect(res.headers["access-control-allow-headers"]).toMatch(/Authorization/);
   });
 
   it("lets a no-Origin request through untouched", async () => {

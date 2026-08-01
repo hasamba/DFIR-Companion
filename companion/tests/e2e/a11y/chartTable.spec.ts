@@ -1,5 +1,6 @@
 import { test, expect } from "../fixtures/test.js";
 import type { Page } from "@playwright/test";
+import { revealSections } from "../fixtures/sections.js";
 
 // Covers: NO USER STORY EXISTS.
 // feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
@@ -28,19 +29,13 @@ async function openCaseWithSwimlane(page: Page, caseId: string): Promise<void> {
  * focus.
  */
 async function revealSwimlane(page: Page): Promise<void> {
-  // Forced with a stylesheet, not by clearing the inline style. #sec-swimlane is display:none under
-  // the default dashboard view, and the view system REAPPLIES that inline style on every render —
-  // so `sec.style.display = ""` is undone before an assertion can run. A rule carrying !important
-  // outranks the inline style the app keeps setting.
+  // Shares the fixture rather than repeating its stylesheet trick: this file had its own copy, and
+  // when the nonce-based CSP landed it needed the identical fix in two places.
   //
   // This forces the section visible only so keyboard reachability of the table can be asserted at
   // all. That the section is hidden by default is correct — a hidden chart should have a hidden
   // alternative — and is not what this test is about.
-  await page.addStyleTag({
-    content:
-      "#sec-swimlane { display: block !important; } #sec-swimlane.collapsed > *  { display: revert !important; }",
-  });
-  await page.evaluate(() => document.getElementById("sec-swimlane")?.classList.remove("collapsed"));
+  await revealSections(page, "sec-swimlane");
 }
 
 /**

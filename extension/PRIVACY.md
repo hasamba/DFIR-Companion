@@ -1,6 +1,6 @@
 # Privacy Policy — DFIR Companion: Evidence Capture & Push
 
-_Last updated: 2026-07-10_
+_Last updated: 2026-07-31_
 
 This is the privacy policy for the **DFIR Companion — Evidence Capture & Push** browser
 extension (the "Extension"), published for Chrome and other Chromium browsers. It is part of
@@ -14,17 +14,18 @@ licensed AGPL-3.0-only.
 extension authors, to any analytics service, or to any other third party. There is no
 tracking, no telemetry, and no remote logging.**
 
-You — the analyst — are always in control of what is sent and when.
+You — the analyst — are always in control of what is sent and when. A fresh installation has
+**no access to any website**. Persistent access is granted one console origin at a time.
 
 ## What the Extension does
 
 The Extension supports a forensic investigation workflow in two ways:
 
-1. **Screenshot evidence capture.** It captures screenshots of the **active browser tab** —
-   on a periodic timer, on navigation/tab-switch events, or on demand (toolbar button or the
-   `Ctrl+Shift+S` shortcut) — and submits them as evidence to your local DFIR Companion.
+1. **Screenshot evidence capture.** A one-off capture uses temporary `activeTab` access after
+   you click the Extension. Ongoing timer/navigation/tab-switch capture runs only on an origin
+   you previously approved. Screenshots are submitted as evidence to your DFIR Companion.
 
-2. **Detection / artifact push from DFIR consoles.** When you are viewing a recognized
+2. **Detection / artifact push from approved DFIR consoles.** When you are viewing a recognized
    security tool's web console (for example **Splunk**, **Velociraptor**, **Elastic/Kibana**,
    or **CrowdStrike Falcon**), the Extension can extract the **structured results you are
    looking at** (the JSON the console already fetched, or the visible results table) and push
@@ -32,7 +33,7 @@ The Extension supports a forensic investigation workflow in two ways:
    button. This step only ever runs on your explicit click — nothing is sent automatically
    from these pages.
 
-3. **Right-click "Send to DFIR-Companion".** On any page, you can right-click a text
+3. **Right-click "Send to DFIR-Companion".** On a page where you invoke the menu, you can send a text
    selection, a table, or a link and choose "Send to DFIR-Companion" to push that selected
    text, the nearest table's rows, or the link's URL to your local companion. Like the Push
    button above, this only ever runs when you explicitly choose it from the menu.
@@ -47,6 +48,9 @@ The Extension supports a forensic investigation workflow in two ways:
 - **Extension settings and an offline send-queue**, stored locally via `chrome.storage`
   (e.g. the selected case, capture interval, the companion server URL, and any captures that
   could not be delivered yet because the companion was unreachable).
+- **Approved origins and a local permission audit.** The browser retains the origins you approve.
+  The Extension retains the latest 100 grant, denial, and revocation records (time, action, and
+  origin) in local extension storage so permission changes are visible.
 
 ## Where the data goes
 
@@ -63,21 +67,35 @@ The Extension supports a forensic investigation workflow in two ways:
 
 | Permission | Why |
 |---|---|
-| `activeTab` | Read/capture the tab you are currently viewing so it can be saved as evidence. |
-| `tabs` | Identify the active tab and react to tab switches for event-driven capture. |
-| `webNavigation` | Capture on page navigations (so the timeline reflects what you browsed). |
-| `scripting` | Inject the small content script / page hook that powers the Push button and reads the console results you are viewing. |
+| `activeTab` | Temporarily capture the current tab after an explicit toolbar, menu, or shortcut action. |
+| `webNavigation` | React to navigation on an already-approved origin. |
+| `scripting` | Inject the Push button and console-result hook only after host access is granted. |
 | `contextMenus` | Add the right-click "Send to DFIR-Companion" menu items (send selection / table / link). |
 | `storage` | Persist your settings and hold the offline send-queue locally. |
 | `alarms` | Drive the optional periodic-capture timer. |
-| `host_permissions: <all_urls>` | Evidence capture and the DFIR-console Push feature must work on any site or self-hosted console (security tools run on arbitrary hosts/ports), so the Extension needs access to all sites. It still only **sends** data to your local companion, and the Push feature only acts when you click it. |
+| Optional `http://*/*` / `https://*/*` hosts | Lets the browser offer an exact-origin permission at runtime. The wildcard is never granted at install: approving `https://velo.example:8889` grants that origin only. |
+
+The Extension refuses browser-internal pages, local `file:`/`data:` pages, and private/incognito
+tabs. Firefox is marked `not_allowed` for private browsing; Chromium is excluded by default and the
+Extension still refuses private tabs if a user later enables it there.
+
+## What an approved console page exposes
+
+On an approved origin, the content script reads the page URL/title, tool-identifying DOM markers,
+the visible results table when you click Push, and only the API response bodies matching the active
+DFIR-console adapter. Matching response rows stay in that page's memory until you click Push; they
+are not uploaded automatically. Revoking the origin disables the page integration immediately,
+clears the hook's match patterns, removes the Push button, and makes the service worker reject any
+late message from that page.
 
 ## Data retention
 
 The Extension itself does not retain forensic data beyond the local send-queue needed to
 deliver captures to your companion. Once delivered, evidence is stored and managed by **your**
 DFIR Companion server, under your control. Clearing the Extension's storage (or removing the
-Extension) clears its settings and any undelivered queued captures.
+Extension) clears its settings, permission audit, and any undelivered queued captures. Approved
+origins can be revoked from the popup, the Extension options page, or the browser's extension
+permission controls.
 
 ## Children's privacy
 

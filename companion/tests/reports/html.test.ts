@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { renderHtmlReport, injectPrintTrigger } from "../../src/reports/html.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { CSP_NONCE_PLACEHOLDER } from "../../src/http/securityHeaders.js";
 
 describe("renderHtmlReport", () => {
   it("produces a standalone HTML document from the markdown report", () => {
@@ -16,6 +17,8 @@ describe("renderHtmlReport", () => {
     expect(html).toContain("Host compromised via phishing.");
     expect(html).toContain("<table>");        // the IOC markdown table is converted to HTML
     expect(html).toContain("10.0.0.5");
+    expect(html).toContain(`<style nonce="${CSP_NONCE_PLACEHOLDER}">`);
+    expect(html).not.toMatch(/\sstyle\s*=/i);
     expect(html.trim().endsWith("</html>")).toBe(true);
   });
 
@@ -99,6 +102,8 @@ describe("injectPrintTrigger", () => {
     expect(out).toContain("window.print()");
     expect(out).toContain("print-hint");
     expect(out).toContain("Save as PDF");
+    expect(out).toContain(`<script nonce="${CSP_NONCE_PLACEHOLDER}">`);
+    expect(out).not.toMatch(/\son[a-z]+\s*=/i);
     // The trigger lives inside the document body, not after it.
     expect(out.indexOf("window.print()")).toBeLessThan(out.indexOf("</body>"));
     // Screen-only chrome: the banner is hidden when actually printing so the saved PDF is clean.

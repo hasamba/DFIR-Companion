@@ -73,6 +73,13 @@ jobs:
         working-directory: companion
         run: npm run check:imports
 
+      # The module map from #384: every src/ file has a domain, and an import may go down a layer or
+      # sideways within one, never up. See ARCHITECTURE.md for the map and companion/scripts/
+      # module-map.json for what CI actually reads.
+      - name: Module-boundary ratchet
+        working-directory: companion
+        run: npm run check:boundaries
+
       # A built-in prompt or default model can compile perfectly while making investigations worse.
       # When either changes, #378 requires a hash-pinned real-model no-regression attestation.
       - name: AI prompt/model no-regression gate

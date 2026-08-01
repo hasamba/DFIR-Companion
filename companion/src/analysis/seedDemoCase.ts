@@ -752,7 +752,7 @@ export async function seedDemoCase(
     lastImportedAt: "2026-05-22T10:30:00.000Z",
     lastImportKind: "chainsaw",
     lastImportFile: "dc01-evtx-chainsaw.json",
-    addedCount: 19,
+    addedCount: 19, superTimelineAddedCount: 21,
     removedCount: 2,
     lastDiff: {
       added: [

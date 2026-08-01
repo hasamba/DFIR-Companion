@@ -23,11 +23,13 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/vendor/cytoscape/cytoscape.min.js": "application/javascript; charset=utf-8",
   "/vendor/cytoscape/dagre.min.js": "application/javascript; charset=utf-8",
   "/vendor/cytoscape/cytoscape-dagre.js": "application/javascript; charset=utf-8",
+  "/js/safe-dom.js": "application/javascript; charset=utf-8",
   "/js/graph-view.js": "application/javascript; charset=utf-8",
   "/js/command-palette.js": "application/javascript; charset=utf-8",
   "/js/settings-search.js": "application/javascript; charset=utf-8",
   "/js/case-load-progress.js": "application/javascript; charset=utf-8",
   "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
+  "/js/diagnostics-panel.js": "application/javascript; charset=utf-8",
   // Accessibility primitives (#386). modal-autowire is the only one dashboard.html loads directly;
   // the other two are its static imports, and the browser fetches those by URL too — so all three
   // need an entry here or the import chain 404s exactly as described above.
@@ -38,6 +40,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/a11y/landmarks.js": "application/javascript; charset=utf-8",
   "/js/a11y/describe-as-table.js": "application/javascript; charset=utf-8",
   "/js/a11y/tooltips.js": "application/javascript; charset=utf-8",
+  // The accessibility stylesheet. A missing entry here is worse than a missing script: the page
+  // still renders, so the only symptom is that focus rings, the skip link and reduced-motion
+  // support are silently gone.
+  "/css/a11y.css": "text/css; charset=utf-8",
 };
 
 /**

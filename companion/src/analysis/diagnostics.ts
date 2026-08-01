@@ -8,6 +8,7 @@ import { visionEnv } from "../config/aiEnv.js";
 import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn.js";
 import type { ImporterLoadError } from "./importerStore.js";
 import type { EvidenceIntegrityStatus } from "./custodyIntegrity.js";
+import type { OperationalDiagnostics } from "./operationalDiagnostics.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
 export function formatBytes(bytes: number): string {
@@ -272,6 +273,7 @@ export interface DiskDiagnostics extends DiskStats {
 export interface DiagnosticsReport {
   generatedAt: string; // ISO-8601
   uptimeMs: number;
+  operational?: OperationalDiagnostics;
   disk: DiskDiagnostics;
   cases: { count: number; open: number; closed: number; archived: number };
   queue: QueueDiagnostics;

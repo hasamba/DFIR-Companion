@@ -24,6 +24,11 @@ import { ProviderError } from "../providers/provider.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { HttpPresidioClient, PRESIDIO_SAMPLE_TEXT } from "../analysis/presidio.js";
 import type { RouteContext } from "./context.js";
+import {
+  disabledOperationalDiagnostics,
+  summarizeOperationalMetrics,
+} from "../analysis/operationalDiagnostics.js";
+import { buildSupportBundle } from "../analysis/supportBundle.js";
 
 // Recursively collect files (path relative to `baseDir`, size in bytes) under `dir` for the
 // diagnostics size scan (#118). Best-effort: unreadable dirs/files are skipped, never thrown.
@@ -228,9 +233,36 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
 
       const now = Date.now();
       const ai = buildAiDiagnostics(process.env);
+      const metrics = options.operationalMetrics;
+      const databaseBytes = options.stateStore
+        ? (await Promise.all(cases.map(async (item) => {
+            try { return (await stat(options.stateStore!.databasePath(item.caseId))).size; }
+            catch { return 0; }
+          }))).reduce((sum, bytes) => sum + bytes, 0)
+        : 0;
+      const memory = process.memoryUsage();
+      await metrics?.record({
+        type: "capacity",
+        databaseBytes,
+        diskFreeBytes: disk.freeBytes,
+        diskTotalBytes: disk.totalBytes,
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+      });
+      const baseOperational = metrics?.enabled
+        ? summarizeOperationalMetrics(await metrics.snapshot(), options.jobManager?.list() ?? [], now, metrics.retentionMs)
+        : disabledOperationalDiagnostics(metrics?.retentionMs);
+      const operational = {
+        ...baseOperational,
+        websocket: {
+          ...baseOperational.websocket,
+          active: Math.max(0, options.liveConnectionCount?.() ?? 0),
+        },
+      };
       const report: DiagnosticsReport = {
         generatedAt: new Date(now).toISOString(),
         uptimeMs: now - appStartedAt,
+        operational,
         disk,
         cases: { count: cases.length, open, closed: cases.length - open - archived, archived },
         queue: {
@@ -276,7 +308,22 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
           artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
         },
       };
-      return res.status(200).json({ report, text: buildDiagnosticsText(report) });
+      const support = buildSupportBundle({
+        generatedAt: report.generatedAt,
+        version: options.appVersion ?? getAppVersion(),
+        uptimeMs: report.uptimeMs,
+        disk: { totalBytes: disk.totalBytes, freeBytes: disk.freeBytes, usedPct: disk.usedPct, level: disk.level },
+        cases: report.cases,
+        queue: { queued: operational.jobs.queued, running: operational.jobs.running, stalled: operational.jobs.stalled },
+        ai: { configured: ai.configured, local: ai.local, errorsByKind: report.ai.errorCounts },
+        operational,
+      });
+      return res.status(200).json({
+        report,
+        text: buildDiagnosticsText(report),
+        supportFilename: `dfir-companion-support-${report.generatedAt.slice(0, 10)}.json`,
+        supportPreview: JSON.stringify(support, null, 2),
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

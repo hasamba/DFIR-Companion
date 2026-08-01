@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-safe-dom>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -12,7 +12,12 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <style>
+  <script src="/js/safe-dom.js"></script>
+  <style nonce="__CSP_NONCE__" id="dfir-runtime-styles">
+    html[data-safe-dom] body { visibility: hidden; }
+    html[data-safe-dom].dfir-styles-ready body { visibility: visible; }
+  </style>
+  <style nonce="__CSP_NONCE__">
     :root {
       --bg: #0f1115; --panel: #161a22; --panel2: #1c212b; --line: #2a2f3a;
       --text: #e6e6e6; --muted: #9aa4b2; --accent: #6aa9ff; --accent2: #2d6cdf;
@@ -138,7 +143,7 @@
 </head>
 <body>
   <header>
-    <button class="back" id="backBtn" aria-label="Back" style="display:none">‹</button>
+    <button class="back" id="backBtn" aria-label="Back" data-safe-style="display:none">‹</button>
     <div class="title">
       <h1 id="topTitle">DFIR Companion</h1>
       <div class="sub" id="topSub">Mobile · read-only</div>
@@ -264,7 +269,7 @@
     function summaryCard(s) {
       const updated = `Updated ${esc(fmtTime(s.updatedAt))}${relTime(s.updatedAt) ? " · " + esc(relTime(s.updatedAt)) : ""}`;
       const txt = s.summary ? `<div class="txt clamp" id="sumTxt">${esc(s.summary)}</div><button class="more" id="sumMore" type="button">Show more</button>`
-                            : `<div class="txt" style="color:var(--muted)">No summary yet — run analysis on the desktop.</div>`;
+                            : `<div class="txt" data-safe-style="color:var(--muted)">No summary yet — run analysis on the desktop.</div>`;
       return `<div class="summary-card"><div class="updated">${updated}</div>${txt}</div>`;
     }
 

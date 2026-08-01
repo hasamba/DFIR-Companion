@@ -72,6 +72,11 @@ describe("normalizeReportTemplate", () => {
     expect(t.showLogo).toBe(true);
     expect(t.showCompanyName).toBe(true);
     expect(t.sections.length).toBe(ALL_SECTION_KEYS.length);
+    expect(t.releaseRequirements).toEqual({
+      requiredSections: [],
+      requireIndependentReview: false,
+      requireEvidenceLinks: false,
+    });
   });
 
   it("normalizes a malformed payload instead of throwing", () => {
@@ -80,6 +85,21 @@ describe("normalizeReportTemplate", () => {
     expect(t.accentColor).toBe(DEFAULT_ACCENT);
     expect(t.sections.length).toBe(ALL_SECTION_KEYS.length);
     expect(t.showLogo).toBe(true); // lenient .catch → default
+  });
+
+  it("normalizes release requirements and drops unknown required sections", () => {
+    const t = normalizeReportTemplate({
+      releaseRequirements: {
+        requiredSections: ["investigation", "bogus", "investigation"],
+        requireIndependentReview: true,
+        requireEvidenceLinks: true,
+      },
+    });
+    expect(t.releaseRequirements).toEqual({
+      requiredSections: ["investigation"],
+      requireIndependentReview: true,
+      requireEvidenceLinks: true,
+    });
   });
 });
 

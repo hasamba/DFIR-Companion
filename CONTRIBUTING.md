@@ -2,8 +2,8 @@
 
 ## The gates
 
-Six checks run in CI on every pull request. All six run locally, and all six are fast enough to run
-before you push. Everything below is from `companion/` unless it says otherwise.
+Seven checks run in CI on every pull request. All seven run locally, and all seven are fast enough to
+run before you push. Everything below is from `companion/` unless it says otherwise.
 
 ```bash
 npm run build          # tsc: compiles src/ to dist/. This is the production build.
@@ -12,13 +12,14 @@ npm run lint           # eslint: typed rules over the same three trees.
 npm run format:check   # prettier, on the files THIS BRANCH changed.
 npm run check:size     # no source file grew past its recorded size.
 npm run check:imports  # no new runtime import cycle.
+npm run check:boundaries  # no import crosses a module boundary the wrong way.
 npm test               # vitest: 486 files, ~6,200 tests.
 ```
 
 Run the whole set in one go:
 
 ```bash
-cd companion && npm run build && npm run typecheck && npm run lint && npm run format:check && npm run check:size && npm run check:imports && npm test
+cd companion && npm run build && npm run typecheck && npm run lint && npm run format:check && npm run check:size && npm run check:imports && npm run check:boundaries && npm test
 ```
 
 CI splits these across two jobs on purpose. **Companion build + test** failing means the code is
@@ -155,8 +156,21 @@ thousand lines away.
   source files are already under it — it is where this codebase already sits, not an aspiration.)
 - A file **in** the ledger is frozen at its recorded length. Shrink it freely; you cannot grow it.
 
-When it fails, put the new code in its own module. If you shrank a ledgered file, lock the smaller
-number in:
+**It covers `public/` too**, not just `companion/src`:
+
+- `public/js/**.js` — the extracted dashboard modules, under the same 800-line limit.
+- `public/*.html` — the **inline** `<script>` and `<style>` blocks are budgeted separately, as
+  `public/dashboard.html#inline-js` and `#inline-css`. A `<script src=…>` reference is not counted;
+  only code written into the page is. The markup itself is not measured — ~3,000 lines of HTML is
+  not the problem, a 19,000-line program living inside a markup file is.
+
+`dashboard.html` is the reason: 19,256 lines of inline script and 3,231 of inline style, larger than
+`pipeline.ts` and `server.ts` combined, and outside every gate until #384 wired this up.
+
+When it fails, put the new code in its own module — for the dashboard that means a new
+`public/js/<feature>.js` ES module, which is also directly unit-testable (see
+`tests/analysis/huntWorkbenchUi.test.ts`) in a way inline script never is. If you shrank a ledgered
+file, lock the smaller number in:
 
 ```bash
 npm run check:size -- --update   # shrink-only; refuses to raise a recorded number
@@ -167,11 +181,26 @@ npm run check:size -- --init     # re-baseline; prints every raise, justify them
 branch whose landed work legitimately grew a ledgered file. Reaching for it during ordinary work
 means the new code belongs in its own module instead.
 
+**Record the ledger last.** `--update` refuses to raise a number, so if you record a shrink and then
+add three more lines — or run `npm run format` — the gate correctly rejects the number you just
+wrote, and `--update` cannot fix it. Finish the change, format, *then* run `--update` once.
+
+One trap while you are there: `npm run format` is **not** the gate. The gate skips files that were
+never Prettier-clean ("your change is not the reason it is unformatted"), but `--write` reformats
+whatever you point it at. Running it on a legacy file like `src/server.ts` produces a thousand-line
+reflow that CI never asked for and that buries your actual diff. Convert a legacy file only when you
+mean to, in its own commit.
+
 ## `npm run check:imports` — the circular-import ratchet
 
 A runtime import cycle means one module in the loop sees a half-initialised copy of the other. There
 is exactly **one** today (`analysis/adversaryEmulation.ts ↔ analysis/adversaryHints.ts`), recorded in
 `scripts/import-cycles.json`.
+
+It covers `public/js/**.js` as well as `companion/src`. Those modules import nothing from each other
+today, so that root contributes zero cycles — which is why it is wired in now rather than later. As
+#384 pulls features out of `dashboard.html`, they will start importing one another, and the first
+cycle should fail a PR instead of being found later from a blank page.
 
 Type-only imports are ignored — `import type` is erased before the module runs and cannot form a
 runtime cycle. That is why the 30-odd `routes/*.ts ↔ server.ts` back-references a naive tool reports
@@ -182,6 +211,35 @@ back-reference `import type`. Only if the cycle is genuinely intended:
 
 ```bash
 npm run check:imports -- --update   # and say why in the PR
+```
+
+---
+
+## `npm run check:boundaries` — the module-boundary ratchet
+
+Every file in `src/` belongs to a domain, every domain sits in a layer, and **an import may go down a
+layer or sideways within one — never up.** [ARCHITECTURE.md](ARCHITECTURE.md) is the map;
+`scripts/module-map.json` is what CI actually reads, and a test asserts the two agree.
+
+Unlike `check:imports`, **type-only imports count here.** An erased import cannot form a runtime
+cycle, but it still means one domain knows another's shape, which is the coupling the map exists to
+control.
+
+There are **48** recorded violations in `scripts/boundary-violations.json`, listed as
+`source-file -> target-file` rather than as domain pairs — otherwise one grandfathered violation
+becomes a licence to add more imports along the same edge.
+
+When it fails on a **new violation**, the usual fixes are: move the shared helper down to a domain
+both callers already depend on, invert the call so the higher layer drives, or — if the module is
+simply filed in the wrong domain — correct its entry in `module-map.json`.
+
+When it fails because a **file has no domain**, classify it. That is a hard error, never a ledger
+entry: a new `src/analysis/*.ts` file needs a `flatAnalysisFiles` entry, and an unclassified file is
+an unanswered design question rather than a known debt.
+
+```bash
+npm run check:boundaries -- --update   # shrink-only; refuses to add an entry
+npm run check:boundaries -- --init     # re-baseline; additions are printed, justify them
 ```
 
 ---

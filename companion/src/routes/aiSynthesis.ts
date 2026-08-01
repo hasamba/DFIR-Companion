@@ -10,6 +10,7 @@ import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { renderStandalonePresentation } from "../reports/presentationExport.js";
 
 /**
  * AI synthesis / Q&A / summary domain: the large cluster of LLM-backed (and LLM-adjacent) endpoints
@@ -749,12 +750,10 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     try {
       const minSeverity = parseMinSeverity(req.query.minSeverity);
       const deck = await options.reportWriter.presentation(req.params.id, { minSeverity });
-      const tpl = await readPublicAsset("present.html", "utf8");
-      const safeJson = JSON.stringify(deck).replace(/</g, "\\u003c");
-      // Standalone offline deck: opened from the filesystem, where no CSP header exists and a nonce
-      // would mean nothing. Strip the placeholder rather than stamp it, so the downloaded file
-      // carries no dangling __CSP_NONCE__ markers and its inline scripts run unconditionally.
-      const html = withNonce(tpl, "").replace("<!--DECK_INJECT-->", `<script>window.__DECK__=${safeJson};</script>`);
+      // The exported deck stays self-contained: embed the sink guard that the live page loads from
+      // /js. Nonces let the attachment survive this response's CSP and are harmless when the saved
+      // file is later opened without a CSP header.
+      const html = await renderStandalonePresentation(deck, String(res.locals.cspNonce ?? ""));
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res
         .type("html")

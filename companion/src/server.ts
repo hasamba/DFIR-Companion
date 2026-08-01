@@ -76,6 +76,9 @@ import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.j
 import { resolveHuntPlatforms, type HuntPlatform } from "./analysis/huntPlatforms.js";
 import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
 import { detectImportWithCustom } from "./analysis/importDetect.js";
+import { observeImport } from "./analysis/operationalImport.js";
+import { createOperationalHttpMetrics } from "./analysis/operationalHttpMetrics.js";
+import { startOperationalCapacityMonitor } from "./analysis/operationalCapacity.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import { applySeverityFloor } from "./analysis/severityFloor.js";
@@ -97,7 +100,6 @@ import { RdapProvider } from "./enrichment/rdap.js";
 import { GeoIpProvider } from "./enrichment/geoip.js";
 import { ShodanProvider } from "./enrichment/shodan.js";
 import { HashlookupProvider } from "./enrichment/hashlookup.js";
-import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState, Severity, ForensicEvent } from "./analysis/stateTypes.js";
@@ -144,6 +146,7 @@ import { LateralPathDismissStore } from "./analysis/lateralPathDismiss.js";
 import { IocAliasStore } from "./analysis/iocAlias.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
+import { OperationalMetricsStore } from "./analysis/operationalMetrics.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { AnalysisRunStore } from "./analysis/analysisRunStore.js";
@@ -222,14 +225,14 @@ import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js"
 import { type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import { MispPushClient } from "./integrations/misp/mispPushClient.js";
 import { type MispPushOptions } from "./integrations/misp/mispPush.js";
-import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
+import { NotionClient } from "./integrations/notion/notionClient.js";
 import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
-import { JiraClient, type JiraClientLike } from "./integrations/jira/jiraClient.js";
+import { type JiraClientLike } from "./integrations/jira/jiraClient.js";
 import { JiraExportStore } from "./integrations/jira/jiraExportStore.js";
-import { ServiceNowClient, type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
+import { type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
 import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
@@ -251,20 +254,33 @@ import {
 } from "./integrations/customerExposureProviders.js";
 import {
   LoggerImpl,
-  createConsoleLogger,
   normalizeLogLevel,
   type Logger,
 } from "./logging/logger.js";
+import { logLine, warnLine, getServerLogger, setServerLogger } from "./logging/serverLogger.js";
+import { numEnv } from "./composition/env.js";
+import { tlsFetchFor } from "./composition/tlsFetch.js";
+import {
+  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
+  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
+  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
+} from "./composition/integrationClients.js";
 
-// Server logging. A single shared Logger tees every line to the console AND to log files
-// (a global session log + per-case logs); the helpers below delegate to it so the existing
-// call sites keep working. startServer() swaps in the file-backed logger and the dashboard's
-// Logging toggle changes its level live (no restart); tests/CLI get a console-only default.
-let serverLogger: Logger = createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
-export function setServerLogger(logger: Logger): void { serverLogger = logger; }
-export function getServerLogger(): Logger { return serverLogger; }
-function logLine(msg: string): void { serverLogger.info(msg); }
-function warnLine(msg: string): void { serverLogger.warn(msg); }
+// Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
+// tests keep importing them from `src/server.js` — the extraction moved the definitions, not the
+// public surface (#384).
+export { tlsFetchFor } from "./composition/tlsFetch.js";
+export {
+  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
+  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
+  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
+} from "./composition/integrationClients.js";
+
+// Server logging. A single shared Logger tees every line to the console AND to log files (a global
+// session log + per-case logs). The binding moved to logging/serverLogger.ts (#384) so that
+// src/composition/ can warn without importing server.ts — see that file for why. Re-exported here
+// because tests and the settings-reload path reach for these at `src/server.js`.
+export { setServerLogger, getServerLogger } from "./logging/serverLogger.js";
 
 // Delay before the first evidence-integrity sweep after boot. Long enough to stay out of the
 // startup path, short enough that Diagnostics reports a real answer rather than "not verified
@@ -298,11 +314,11 @@ export interface AppOptions {
   // (manual adds vs background enrichment/synthesis) cannot clobber each other.
   stateLock?: StateLock;
   aiConfigured?: boolean;
+  operationalMetrics?: OperationalMetricsStore;
+  liveConnectionCount?: () => number;
   windowSize?: number;
-  // Safety-net flush interval. A `timer`/`click` capture buffers until `windowSize`
-  // accumulates (only a `navigation`/`tab_switch` flushes early), so a lone screenshot could
-  // sit unanalyzed indefinitely. A background sweep drains any non-empty buffer on this
-  // interval so even a single capture is analyzed. Default 5 min; set 0 to disable.
+  // Safety-net interval that drains capture buffers even when a window never fills.
+  // Default 5 min; set 0 to disable.
   flushIntervalMs?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
@@ -667,10 +683,7 @@ export interface AppOptions {
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
   dashboardBaseUrl?: string;
-  // Diagnostics (#118): builds an AI provider from the CURRENT config so the diagnostics
-  // page's "Test AI connectivity" button can make a lightweight live request (validating
-  // auth + timeout). Defaults to the env-based buildProvider in startServer; tests inject a
-  // fake (no network). Absent / returns undefined → the test route reports "not configured".
+  // Diagnostics live probe; tests can inject a no-network provider.
   aiTestProvider?: () => AnalyzeProvider | undefined;
   // Opt-in "newer release available" notice (issue #127). All optional → a bare createApp (tests)
   // gets the feature OFF and never touches the network or a timer.
@@ -690,14 +703,9 @@ export interface AppOptions {
   // startServer stores the function and fires it after app.listen() so the probes run when
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
-  // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
-  // extension and loopback). From DFIR_ALLOWED_ORIGINS — see src/http/originGuard.ts.
-  // Absent → only the built-in trusted origins.
+  // Additional browser origins beyond the always-trusted extension and loopback origins.
   allowedOrigins?: string[];
-  // Extra Host header values this companion answers to, beyond loopback and bare IP addresses.
-  // From DFIR_ALLOWED_HOSTS / DFIR_ALLOWED_HOST_SUFFIXES. Needed only when the dashboard is reached
-  // through a NAME rather than an address (reverse proxy, PaaS) — an unrecognised name is how a
-  // DNS-rebinding attack announces itself, so it cannot be inferred. See src/http/originGuard.ts.
+  // Named hosts/suffixes explicitly trusted by the DNS-rebinding guard.
   allowedHosts?: string[];
   allowedHostSuffixes?: string[];
 }
@@ -719,14 +727,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine },
       caseId, added,
     );
 
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
-  // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
-  // (like the capture-recency marker in routes/captures.ts) — durable history lives in the
-  // per-case audit logs. Capped so a long-running server can't grow them unbounded.
+  // In-memory, capped error rings powering the Health/Diagnostics page.
   const appStartedAt = Date.now();
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
@@ -775,18 +781,18 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     allowedHostSuffixes: options.allowedHostSuffixes,
   }));
 
-  // Content-Security-Policy on every response. Deliberately does NOT constrain script/style — the
-  // dashboard's ~80 inline handlers and ~1157 style attributes have to be converted first, and a
-  // policy carrying 'unsafe-inline' would block nothing anyway. What this DOES buy while inline
-  // script is still allowed is egress: connect-src/img-src pin network access to this origin, so an
-  // injected script (see #281) cannot beacon case data or API keys out. See http/securityHeaders.ts.
+  // Content-Security-Policy on every response. Scripts and styles are confined to this origin or a
+  // per-response nonce, inline attributes are forbidden, and Chromium requires the audited Trusted
+  // Types policies installed by safe-dom.js. Egress is pinned to this origin as a second boundary,
+  // so a missed rendering escape still cannot beacon case data or API keys out. See
+  // http/securityHeaders.ts.
   app.use(createSecurityHeaders());
 
   // Demo mode guard: allow all GETs and the manual reset route; block everything else.
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
   // cannot create new cases, import evidence, trigger AI calls, or change global settings.
   if (options.demoMode) {
-    app.use((req: Request, res: Response, next: NextFunction) => {
+    app.use(function demoModeReadOnlyGate(req: Request, res: Response, next: NextFunction) {
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();
       return res.status(403).json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
@@ -794,13 +800,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   // Log each request and its final status (useful for a local single-user tool).
-  app.use((req: Request, res: Response, next: NextFunction) => {
+  app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
     res.on("finish", () => {
       logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
     });
     next();
   });
-
+  app.use(createOperationalHttpMetrics(options.operationalMetrics));
   // JSON body limit. Bulk evidence imports (CSV / log / THOR / SIEM-EDR JSON exports) wrap the
   // whole file in the request body, and SIEM/EDR exports in particular are routinely tens to
   // hundreds of MB — so the cap is generous and configurable via DFIR_MAX_BODY_MB (default
@@ -816,7 +822,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
   // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
-  app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+  app.use(function bodyParserErrorHandler(err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) {
     if (err?.type === "entity.too.large") {
       return res.status(413).json({ error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files` });
     }
@@ -837,7 +843,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
   // the size report's per-file paths are case-relative, not absolute. Redacting those would break
   // features to no benefit. Request logging is untouched, so the console still shows real paths.
-  app.use((_req: Request, res: Response, next: NextFunction) => {
+  app.use(function errorPathRedactor(_req: Request, res: Response, next: NextFunction) {
     const sendJson = res.json.bind(res);
     res.json = ((body: unknown) => {
       if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
@@ -868,7 +874,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // something checks first. This is that check: skip the (often expensive) handler entirely once the
   // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
   // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function abandonedCaseReadGate(req: Request, res: Response, next: NextFunction) {
     if (req.method === "GET" && req.destroyed) return;
     next();
   });
@@ -907,7 +913,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const ctx: RouteContext = {
     store,
     options,
-    serverLogger,
+    serverLogger: getServerLogger(),
     recordImportFailure,
     recordAiError,
     readUnlockState,
@@ -1030,7 +1036,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/hypothesis-review", "/narrative",                          // narrative + hypothesis AI
     "/memory/next-steps",                                       // memory-forensics next-step AI
   ]);
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {
     if (req.method !== "POST") return next();
     // Strip the /cases/:id/ prefix to compare against the static set.
     const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
@@ -1129,7 +1135,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
             wordCount: text.length === 0 ? 0 : text.split(" ").length,
           });
         } catch (err) {
-          serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
+          getServerLogger().debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
         } finally {
           ocrActive--;
           pumpOcrQueue();
@@ -1141,7 +1147,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
     if (ocrQueue.length >= OCR_MAX_QUEUE) {
       // Runaway safety net only — recover anything dropped here with `npm run ocr-index`.
-      serverLogger.debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
+      getServerLogger().debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
       return;
     }
     ocrQueue.push(metadata);
@@ -1368,11 +1374,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown> {
     const pipeline = options.pipeline;
     if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
+    const startedAt = Date.now();
+    const observe = <T>(work: Promise<T>): Promise<T> => observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work);
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = importerRegistry.importers.get(kind);
     if (custom) {
       let parsed: { total: number; kept: number; dropped: number } | null = null;
-      return pipeline.importDeclarative(caseId, text, {
+      return observe(pipeline.importDeclarative(caseId, text, {
         importer: custom, ...base,
         onParsed: (r) => {
           parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
@@ -1381,43 +1389,43 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }).catch((err) => {
         recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: redactErr(err) });
         throw err;
-      });
+      }));
     }
     switch (kind) {
-      case "thor": return pipeline.importThor(caseId, text, base);
-      case "siem": return pipeline.importSiem(caseId, text, base);
-      case "evtxxml": return pipeline.importEvtxXml(caseId, text, base);
-      case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
-      case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
-      case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
-      case "securityonion": return pipeline.importSecurityOnion(caseId, text, base);
-      case "socrates": return pipeline.importSocrates(caseId, text, base);
-      case "network": return pipeline.importNetwork(caseId, text, base);
-      case "kape": return pipeline.importKape(caseId, text, base);
-      case "cybertriage": return pipeline.importCybertriage(caseId, text, base);
-      case "m365": return pipeline.importM365(caseId, text, base);
-      case "aws": return pipeline.importAws(caseId, text, base);
-      case "cloud": return pipeline.importCloudActivity(caseId, text, base);
-      case "k8s": return pipeline.importK8sAudit(caseId, text, base);
-      case "osquery": return pipeline.importOsquery(caseId, text, base);
-      case "plaso": return pipeline.importPlaso(caseId, text, base);
-      case "sandbox": return pipeline.importSandbox(caseId, text, base);
-      case "memory": return pipeline.importMemory(caseId, text, base);
-      case "email": return pipeline.importEmail(caseId, text, base);
-      case "thehive": return pipeline.importTheHive(caseId, text, base);
-      case "auditd": return pipeline.importAuditd(caseId, text, base);
-      case "journald": return pipeline.importJournald(caseId, text, base);
-      case "sysdig": return pipeline.importSysdig(caseId, text, base);
-      case "wazuh": return pipeline.importWazuh(caseId, text, base);
-      case "bashhistory": return pipeline.importBashHistory(caseId, text, base);
-      case "ecar": return pipeline.importEcar(caseId, text, base);
-      case "snort": return pipeline.importSnort(caseId, text, base);
-      case "yara": return pipeline.importYara(caseId, text, base);
-      case "combinedlog": return pipeline.importCombinedLog(caseId, text, base);
-      case "asa": return pipeline.importCiscoAsa(caseId, text, base);
-      case "syslog": return pipeline.importSyslog(caseId, text, base);
-      case "csv": return pipeline.analyzeCsv(caseId, text, base);
-      case "log": return pipeline.analyzeLog(caseId, text, base);
+      case "thor": return observe(pipeline.importThor(caseId, text, base));
+      case "siem": return observe(pipeline.importSiem(caseId, text, base));
+      case "evtxxml": return observe(pipeline.importEvtxXml(caseId, text, base));
+      case "chainsaw": return observe(pipeline.importChainsaw(caseId, text, base));
+      case "hayabusa": return observe(pipeline.importHayabusa(caseId, text, base));
+      case "velociraptor": return observe(pipeline.importVelociraptor(caseId, text, base));
+      case "securityonion": return observe(pipeline.importSecurityOnion(caseId, text, base));
+      case "socrates": return observe(pipeline.importSocrates(caseId, text, base));
+      case "network": return observe(pipeline.importNetwork(caseId, text, base));
+      case "kape": return observe(pipeline.importKape(caseId, text, base));
+      case "cybertriage": return observe(pipeline.importCybertriage(caseId, text, base));
+      case "m365": return observe(pipeline.importM365(caseId, text, base));
+      case "aws": return observe(pipeline.importAws(caseId, text, base));
+      case "cloud": return observe(pipeline.importCloudActivity(caseId, text, base));
+      case "k8s": return observe(pipeline.importK8sAudit(caseId, text, base));
+      case "osquery": return observe(pipeline.importOsquery(caseId, text, base));
+      case "plaso": return observe(pipeline.importPlaso(caseId, text, base));
+      case "sandbox": return observe(pipeline.importSandbox(caseId, text, base));
+      case "memory": return observe(pipeline.importMemory(caseId, text, base));
+      case "email": return observe(pipeline.importEmail(caseId, text, base));
+      case "thehive": return observe(pipeline.importTheHive(caseId, text, base));
+      case "auditd": return observe(pipeline.importAuditd(caseId, text, base));
+      case "journald": return observe(pipeline.importJournald(caseId, text, base));
+      case "sysdig": return observe(pipeline.importSysdig(caseId, text, base));
+      case "wazuh": return observe(pipeline.importWazuh(caseId, text, base));
+      case "bashhistory": return observe(pipeline.importBashHistory(caseId, text, base));
+      case "ecar": return observe(pipeline.importEcar(caseId, text, base));
+      case "snort": return observe(pipeline.importSnort(caseId, text, base));
+      case "yara": return observe(pipeline.importYara(caseId, text, base));
+      case "combinedlog": return observe(pipeline.importCombinedLog(caseId, text, base));
+      case "asa": return observe(pipeline.importCiscoAsa(caseId, text, base));
+      case "syslog": return observe(pipeline.importSyslog(caseId, text, base));
+      case "csv": return observe(pipeline.analyzeCsv(caseId, text, base));
+      case "log": return observe(pipeline.analyzeLog(caseId, text, base));
       default: return Promise.reject(new Error(`unhandled import kind: ${kind}`));
     }
   }
@@ -3024,14 +3032,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
   // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
   // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
-  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  app.use(function terminalErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction) {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
     if (err instanceof CaseNotFoundError) {
       return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
     }
     const message = err instanceof Error ? err.message : String(err);
-    serverLogger.error(`unhandled error on ${req.method} ${req.path}: ${message}`);
+    getServerLogger().error(`unhandled error on ${req.method} ${req.path}: ${message}`);
     return res.status(500).json({ error: "internal server error" });
   });
 
@@ -3160,220 +3168,9 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
   });
 }
 
-// Build the threat-intel enrichment providers from env. Each is added only when its key
-// is present (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off.
-// Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
-// self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
-// DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-//
-// Resolves each integration's actual target host, so tlsFetchFor can pass hostUrl to
-// buildTlsFetch's loopback guard (#246) — WITHOUT it, insecureSkipVerify's guard defaults to
-// "treat as loopback" and never rejects anything, silently defeating the guard entirely (the
-// bug this map exists to close). MISP/YETI/OPENCTI/IRIS/TIMESKETCH/JIRA/SERVICENOW read their configurable
-// DFIR_<NAME>_URL. NOTION and CLICKUP have no such env var — they're fixed SaaS hosts — so their
-// entries are the literal constants those clients themselves use, which correctly makes the guard
-// treat them as non-loopback (there's no legitimate reason to skip TLS verification against the
-// real api.notion.com/api.clickup.com).
-const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>> = {
-  MISP: () => process.env.DFIR_MISP_URL,
-  YETI: () => process.env.DFIR_YETI_URL,
-  OPENCTI: () => process.env.DFIR_OPENCTI_URL,
-  IRIS: () => process.env.DFIR_IRIS_URL,
-  TIMESKETCH: () => process.env.DFIR_TIMESKETCH_URL,
-  JIRA: () => process.env.DFIR_JIRA_URL,
-  SERVICENOW: () => process.env.DFIR_SERVICENOW_URL,
-  NOTION: "https://api.notion.com",
-  CLICKUP: "https://api.clickup.com/api/v2",
-  // NOTIFY webhooks are arbitrary external URLs (hooks.slack.com, outlook.office.com, a self-
-  // hosted Mattermost) only known at send time from NotificationConfigStore — there's no single
-  // env var to read at boot. That is precisely why DFIR_NOTIFY_INSECURE=1 silently bypassed the
-  // non-loopback TLS-MITM guard for ALL of them: hostUrl was undefined and the guard defaults to
-  // "treat as loopback", i.e. allow. Since we can't know the host, assume the answer that fails
-  // closed — a sentinel that is definitively not loopback, so the guard fires and tlsFetchFor
-  // falls back to the verified global fetch unless the operator ALSO sets
-  // DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. hostUrl feeds nothing but isLoopbackUrl, so a reserved
-  // .invalid name (RFC 2606) is the honest spelling: it names no real host and can't be mistaken
-  // for one being verified. Only consulted when insecure is set — otherwise no custom fetch is
-  // built at all. Threading the real per-send URL through would let a loopback webhook keep
-  // using insecure on its own, which this deliberately no longer does.
-  NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://notify-webhook.invalid" : undefined),
-};
-export function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
-  const hostSource = TLS_HOST_URL[name];
-  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
-  try {
-    return buildTlsFetch({
-      caCertPath: process.env[`DFIR_${name}_CA`],
-      insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-      hostUrl,
-      onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
-    });
-  } catch (err) {
-    // buildTlsFetch throws when insecureSkipVerify targets a non-loopback host without the
-    // explicit DFIR_TLS_ALLOW_INSECURE_EXTERNAL override (#246). Every call site of tlsFetchFor
-    // sits inline in an options object built at server startup (and in the live /settings/reload
-    // path) with no surrounding try/catch — letting this propagate would crash the ENTIRE server
-    // over one optional integration's TLS misconfiguration. Disable custom TLS trust for just this
-    // provider instead (falls back to the default, fully-verified global fetch — a real self-signed
-    // cert then fails that provider's own connection attempts with a normal, contained TLS error,
-    // not a server-wide outage) and say why loudly so the operator can see it in the logs.
-    warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
-    return undefined;
-  }
-}
-
-function isEnvFlag(value: string | undefined): boolean {
-  return /^(1|true|yes|on)$/i.test(value ?? "");
-}
-
-// Parse a numeric env var, honoring an explicit "0". `Number(x) || undefined` would discard 0
-// (falsy) and silently fall back to the hardcoded default — an operator who set
-// DFIR_ENRICH_RETRIES=0 to disable 429 retry still got 2 retries. Returns undefined for
-// unset/empty/non-finite so downstream `?? default` keeps working.
-function numEnv(key: string): number | undefined {
-  const v = process.env[key];
-  if (v === undefined || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-// Build the DFIR-IRIS push client from env (DFIR_IRIS_URL + DFIR_IRIS_KEY). Returns
-// undefined when not configured, which hides the dashboard's "Push to IRIS" button.
-// TLS trust for a self-hosted IRIS honors DFIR_IRIS_CA / DFIR_IRIS_INSECURE.
-export function buildIrisClient(): IrisClient | undefined {
-  const baseUrl = process.env.DFIR_IRIS_URL;
-  const apiKey = process.env.DFIR_IRIS_KEY;
-  if (!baseUrl || !apiKey) return undefined;
-  return new IrisClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("IRIS") });
-}
-
-export function irisPushOptions(): IrisPushOptions {
-  return {
-    baseUrl: process.env.DFIR_IRIS_URL,
-    customerId: Number(process.env.DFIR_IRIS_CUSTOMER_ID) || undefined,
-    classificationId: Number(process.env.DFIR_IRIS_CLASSIFICATION_ID) || undefined,
-  };
-}
-
-// Build the Timesketch push client from env (DFIR_TIMESKETCH_URL + USER + PASSWORD). Returns
-// undefined when not configured, which hides the dashboard's "Push to Timesketch" button. TLS
-// trust for a self-hosted Timesketch honors DFIR_TIMESKETCH_CA / DFIR_TIMESKETCH_INSECURE.
-export function buildTimesketchClient(): TimesketchClient | undefined {
-  const baseUrl = process.env.DFIR_TIMESKETCH_URL;
-  const username = process.env.DFIR_TIMESKETCH_USER;
-  const password = process.env.DFIR_TIMESKETCH_PASSWORD;
-  if (!baseUrl || !username || !password) return undefined;
-  return new TimesketchClient({ baseUrl, username, password, fetchFn: tlsFetchFor("TIMESKETCH") });
-}
-
-export function timesketchPushOptions(): TimesketchPushOptions {
-  return {
-    baseUrl: process.env.DFIR_TIMESKETCH_URL,
-    timelineName: process.env.DFIR_TIMESKETCH_TIMELINE || undefined,
-  };
-}
-
-// Build the MISP push client from env (DFIR_MISP_URL + DFIR_MISP_KEY). Returns undefined
-// when not configured, which hides the dashboard's "Push to MISP" button. TLS trust for a
-// self-hosted MISP honors DFIR_MISP_CA / DFIR_MISP_INSECURE (same env vars as enrichment).
-export function buildMispPushClient(): MispPushClient | undefined {
-  const baseUrl = process.env.DFIR_MISP_URL;
-  const apiKey = process.env.DFIR_MISP_KEY;
-  if (!baseUrl || !apiKey) return undefined;
-  return new MispPushClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("MISP") });
-}
-
-export function mispPushOptions(): MispPushOptions {
-  return {
-    baseUrl: process.env.DFIR_MISP_URL,
-    distribution: process.env.DFIR_MISP_DISTRIBUTION || undefined,
-    analysis: process.env.DFIR_MISP_ANALYSIS || undefined,
-    // Cap on forensic-timeline events per push. The push costs one sequential round-trip per
-    // event, so an unbounded timeline can block the export route for hours; past the cap the
-    // most severe events are kept (Info noise is cut first) and truncation is warned about.
-    // Exposed here because the cap is a property of the operator's MISP instance and case sizes,
-    // not of the code — the warning text tells the analyst to raise it, so it must be raisable.
-    timelineLimit: positiveIntEnv(process.env.DFIR_MISP_TIMELINE_LIMIT),
-  };
-}
-
-// Parse a positive-integer env var, ignoring blank/garbage/non-positive values so a typo falls
-// back to the documented default rather than silently pushing nothing (a `0` cap would).
-function positiveIntEnv(raw: string | undefined): number | undefined {
-  const n = Number(String(raw ?? "").trim());
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-// Build the Notion export client from env (DFIR_NOTION_TOKEN). Returns undefined when not
-// configured, which hides the dashboard's "Export to Notion" option. Notion is public SaaS, so
-// tlsFetchFor("NOTION") is a no-op unless DFIR_NOTION_CA / DFIR_NOTION_INSECURE are set.
-export function buildNotionClient(): NotionClient | undefined {
-  const token = process.env.DFIR_NOTION_TOKEN;
-  if (!token) return undefined;
-  return new NotionClient({ token, fetchFn: tlsFetchFor("NOTION") });
-}
-
-export function notionPushOptions(): NotionPushOptions {
-  return {
-    baseUrl: "https://www.notion.so",
-    // Same normalization the request-body page/parent/database fields go through
-    // (routes/caseLifecycle.ts parseNotionPageId calls) — an operator's .env value is commonly a
-    // full Notion URL, not a bare id, and the client-facing API rejects the unparsed URL.
-    parentPageId: parseNotionPageId(process.env.DFIR_NOTION_PARENT_PAGE_ID ?? "") ?? undefined,
-    databaseId: parseNotionPageId(process.env.DFIR_NOTION_DATABASE_ID ?? "") ?? undefined,
-    containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
-    maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
-  };
-}
-
-// Build the ClickUp client from env (DFIR_CLICKUP_TOKEN). Returns undefined when not configured,
-// which hides the dashboard's "Push to ClickUp" option. An optional DFIR_CLICKUP_LIST_ID is the
-// default target list (the analyst can still override it per push).
-export function buildClickUpClient(): ClickUpClient | undefined {
-  const token = process.env.DFIR_CLICKUP_TOKEN;
-  if (!token) return undefined;
-  return new ClickUpClient({ token, fetchFn: tlsFetchFor("CLICKUP") });
-}
-
-export function clickupOptions(): { defaultListId?: string } {
-  return { defaultListId: process.env.DFIR_CLICKUP_LIST_ID || undefined };
-}
-
-// Build the Jira export client from env (DFIR_JIRA_URL + DFIR_JIRA_USER + DFIR_JIRA_TOKEN + optional
-// DFIR_JIRA_PROJECT_KEY). Returns undefined when not configured, hiding the dashboard button.
-export function buildJiraClient(): JiraClient | undefined {
-  const baseUrl = process.env.DFIR_JIRA_URL;
-  const user = process.env.DFIR_JIRA_USER;
-  const token = process.env.DFIR_JIRA_TOKEN;
-  if (!baseUrl || !user || !token) return undefined;
-  return new JiraClient({ baseUrl, user, token, projectKey: process.env.DFIR_JIRA_PROJECT_KEY || "", fetchFn: tlsFetchFor("JIRA") });
-}
-
-export function jiraOptions(): { projectKey?: string; issueType?: string } {
-  return {
-    projectKey: process.env.DFIR_JIRA_PROJECT_KEY || undefined,
-    issueType: process.env.DFIR_JIRA_ISSUE_TYPE || undefined,
-  };
-}
-
-// Build the ServiceNow export client from env (DFIR_SERVICENOW_URL + DFIR_SERVICENOW_USER +
-// DFIR_SERVICENOW_PASSWORD). Returns undefined when not configured, hiding the dashboard button.
-export function buildServiceNowClient(): ServiceNowClient | undefined {
-  const baseUrl = process.env.DFIR_SERVICENOW_URL;
-  const user = process.env.DFIR_SERVICENOW_USER;
-  const password = process.env.DFIR_SERVICENOW_PASSWORD;
-  if (!baseUrl || !user || !password) return undefined;
-  return new ServiceNowClient({ baseUrl, user, password, fetchFn: tlsFetchFor("SERVICENOW") });
-}
-
-export function servicenowOptions(): { caller?: string; category?: string; subcategory?: string } {
-  return {
-    caller: process.env.DFIR_SERVICENOW_CALLER || undefined,
-    category: process.env.DFIR_SERVICENOW_CATEGORY || undefined,
-    subcategory: process.env.DFIR_SERVICENOW_SUBCATEGORY || undefined,
-  };
-}
-
+// Build the threat-intel enrichment providers from env. Each is added only when its key is present
+// (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off. Per-provider TLS
+// trust for a self-hosted intel host comes from composition/tlsFetch.ts.
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
   const providers: EnrichmentProvider[] = [];
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
@@ -3512,6 +3309,7 @@ export interface RuntimePipelineParams {
   secondOpinionModelLabel?: string;
   stateLock?: StateLock;
   analysisRunStore?: AnalysisRunStore;
+  operationalMetrics?: OperationalMetricsStore;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3535,6 +3333,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
     analysisRunStore: params.analysisRunStore,
+    operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
@@ -3547,7 +3346,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
-    superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined),  // explainEvent falls back here for raw super-only events
+    superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, params.operationalMetrics),  // explainEvent falls back here for raw super-only events
     ocrRunner: params.ocrRunner,
     presidio: params.presidio,
     presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),
@@ -3563,14 +3362,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const store = new CaseStore(casesRoot);
   const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
   if (writerGuard) process.once("exit", () => writerGuard.release());
-  // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
-  // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
-  // with the case. The global log dir defaults to logs/ beside the cases root but is overridable
-  // with DFIR_LOG_DIR (resolved by the caller). Per-case logs always live inside the case dir so
-  // the audit trail stays with the case. Colons/dots are stripped from the timestamp so the
-  // filename is valid on Windows; a logs/ subdir is always creatable (even when DFIR_CASES_ROOT
-  // is a drive-root child like C:\cases). The Settings → Logging toggle changes the level live;
-  // DFIR_LOG_LEVEL sets the default.
+  // File-backed global and per-case session logs retain the investigation audit trail.
+  // Timestamp punctuation is stripped for Windows-compatible filenames.
   const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
   const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
   const logger = new LoggerImpl({
@@ -3581,7 +3374,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateLock = new StateLock();
-  const stateStore = new StateStoreImpl(store);
+  const operationalMetrics = new OperationalMetricsStore(
+    join(dirname(casesRoot), "diagnostics", "operational-metrics.json"),
+    { enabled: !/^(?:0|false|off)$/i.test(process.env.DFIR_LOCAL_TELEMETRY ?? ""), onError: (error) => logLine(`[metrics] ${error.message}`) },
+  );
+  const stateStore = new StateStoreImpl(store, undefined, { operationalMetrics });
+  startOperationalCapacityMonitor(store, stateStore, operationalMetrics, (error) => logLine(`[capacity] ${error.message}`));
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
   // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
@@ -3710,7 +3508,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const sourceTrustStore = new SourceTrustStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
   const clockSkewStore = new ClockSkewStore(store);   // #228 per-host clock offsets + alignment toggle
-  const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
+  const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, operationalMetrics);
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
@@ -3867,6 +3665,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore, incidentTypeStore,
     analysisRunStore,
+    operationalMetrics,
     presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
@@ -3904,6 +3703,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     aiConfigured: Boolean(provider),
     flushIntervalMs,
     stateStore,
+    operationalMetrics,
+    liveConnectionCount: () => hub.connectionCount(),
     stateLock,
     reportWriter,
     // The redacted-export route needs OCR even when the vision model is local (the pipeline's
@@ -4204,6 +4005,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   attachLiveSocket(server, hub, {
     store,
     teamAuth,
+    operationalMetrics,
     secret: loadOrCreateInstanceSecret(store.casesRoot),
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),

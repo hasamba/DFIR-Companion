@@ -1,7 +1,22 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
-import type { CaptureStatusResult, GetCaptureStatusMessage, SetAdapterOverrideMessage } from "./types.js";
+import {
+  appendAuditEntry,
+  hasSiteAccess,
+  isCapturableTab,
+  originPatternFromUrl,
+  requestSiteAccess,
+  revokeSiteAccess,
+  SITE_ACCESS_AUDIT_KEY,
+} from "./siteAccess.js";
+import type {
+  ActivateSiteMessage,
+  CaptureOnceMessage,
+  CaptureStatusResult,
+  GetCaptureStatusMessage,
+  SetAdapterOverrideMessage,
+} from "./types.js";
 import { browserApi, isFirefox } from "./browser.js";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
@@ -10,10 +25,21 @@ const statusEl = () => document.getElementById("status") as HTMLDivElement;
 
 const toolSelect = () => document.getElementById("toolOverride") as HTMLSelectElement;
 const toolHint = () => document.getElementById("toolHint") as HTMLDivElement;
+interface PopupTab {
+  id?: number;
+  url?: string;
+  incognito?: boolean;
+}
+
+let currentTab: PopupTab | null = null;
+
+async function activeTab(): Promise<PopupTab | null> {
+  const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
+  return tab ?? null;
+}
 
 async function activeTabId(): Promise<number | null> {
-  const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
-  return tab?.id ?? null;
+  return currentTab?.id ?? (await activeTab())?.id ?? null;
 }
 
 function populateToolOptions(sel: HTMLSelectElement): void {
@@ -60,6 +86,86 @@ async function initToolOverride(): Promise<void> {
     } catch {
       toolHint().textContent = "override failed — reload the page and try again";
     }
+  };
+}
+
+async function recordDeniedAccess(origin: string): Promise<void> {
+  const stored = await browserApi.storage.local.get(SITE_ACCESS_AUDIT_KEY);
+  const entry = { at: new Date().toISOString(), origin, action: "denied" as const };
+  await browserApi.storage.local.set({
+    [SITE_ACCESS_AUDIT_KEY]: appendAuditEntry(stored[SITE_ACCESS_AUDIT_KEY], entry),
+  });
+}
+
+function setSiteAccessText(state: string, hint: string, className: "on" | "off"): void {
+  const stateEl = document.getElementById("siteAccessState")!;
+  stateEl.textContent = state;
+  stateEl.className = className;
+  document.getElementById("siteAccessHint")!.textContent = hint;
+}
+
+async function refreshSiteAccess(): Promise<void> {
+  const button = document.getElementById("siteAccessAction") as HTMLButtonElement;
+  const originEl = document.getElementById("siteOrigin")!;
+  if (!currentTab || !isCapturableTab(currentTab) || !currentTab.url) {
+    originEl.textContent = "restricted or private browser page";
+    setSiteAccessText("unavailable", "DFIR Companion cannot read or capture this page.", "off");
+    button.hidden = true;
+    return;
+  }
+  const origin = originPatternFromUrl(currentTab.url)!;
+  const allowed = await hasSiteAccess(currentTab.url, browserApi.permissions);
+  originEl.textContent = origin.replace(/\/\*$/, "");
+  button.hidden = false;
+  button.textContent = allowed ? "Revoke this site" : "Allow this site";
+  button.dataset.allowed = String(allowed);
+  setSiteAccessText(
+    allowed ? "connected" : "not connected",
+    allowed
+      ? "This origin can show the console Push button and use ongoing capture."
+      : "No page data is readable until you approve this exact origin.",
+    allowed ? "on" : "off",
+  );
+  if (allowed && typeof currentTab.id === "number") {
+    const message: ActivateSiteMessage = { kind: "activate_site", tabId: currentTab.id };
+    await browserApi.runtime.sendMessage(message).catch(() => false);
+  }
+}
+
+async function grantCurrentSite(): Promise<boolean> {
+  if (!currentTab?.url || !isCapturableTab(currentTab)) return false;
+  try {
+    const result = await requestSiteAccess(currentTab.url, browserApi.permissions);
+    if (result.status === "denied") await recordDeniedAccess(result.origin);
+    await refreshSiteAccess();
+    if (result.status !== "granted") {
+      statusEl().textContent = "site access denied — capture remains off";
+      return false;
+    }
+    await initToolOverride();
+    return true;
+  } catch (error) {
+    statusEl().textContent = `site access unavailable: ${(error as Error).message}`;
+    return false;
+  }
+}
+
+async function revokeCurrentSite(): Promise<void> {
+  if (!currentTab?.url) return;
+  const removed = await revokeSiteAccess(currentTab.url, browserApi.permissions);
+  await refreshSiteAccess();
+  statusEl().textContent = removed ? "site access revoked" : "site access could not be revoked";
+}
+
+function wireSiteAccessControls(): void {
+  document.getElementById("siteAccessAction")!.onclick = async () => {
+    const allowed = (document.getElementById("siteAccessAction") as HTMLButtonElement).dataset.allowed === "true";
+    if (allowed) await revokeCurrentSite();
+    else await grantCurrentSite();
+  };
+  document.getElementById("manageSiteAccess")!.onclick = (event) => {
+    event.preventDefault();
+    void browserApi.runtime.openOptionsPage();
   };
 }
 
@@ -179,6 +285,7 @@ async function showHotkey(): Promise<void> {
 }
 
 async function init() {
+  currentTab = await activeTab();
   const s = await load();
   $("companionUrl").value = s.companionUrl;
   $("serviceToken").value = s.serviceToken;
@@ -188,6 +295,8 @@ async function init() {
   await refreshStatus(s);
   await showLastCapture();
   await showHotkey();
+  wireSiteAccessControls();
+  await refreshSiteAccess();
   await initToolOverride();
 
   // Auto-save the case selection immediately on change so the analyst can switch cases
@@ -216,6 +325,7 @@ async function init() {
       statusEl().textContent = "select a case — create one in the dashboard, then Refresh cases";
       return;
     }
+    if (!(await grantCurrentSite())) return;
     await save(f);
     await refreshStatus(f);
   };
@@ -223,6 +333,23 @@ async function init() {
     const f = readForm(false);
     await save(f);
     await refreshStatus(f);
+  };
+  document.getElementById("captureOnce")!.onclick = async () => {
+    const current = await load();
+    const f = readForm(current.running);
+    if (!f.caseId) {
+      statusEl().textContent = "select a case before capturing";
+      return;
+    }
+    if (!currentTab || !isCapturableTab(currentTab)) {
+      statusEl().textContent = "this browser or private page cannot be captured";
+      return;
+    }
+    await save(f);
+    const message: CaptureOnceMessage = { kind: "capture_once" };
+    const result = await browserApi.runtime.sendMessage(message) as { ok: boolean; error?: string };
+    statusEl().textContent = result.ok ? "one-off capture saved" : `capture blocked — ${result.error ?? "unknown error"}`;
+    await showLastCapture();
   };
 }
 

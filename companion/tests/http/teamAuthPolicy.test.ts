@@ -44,6 +44,14 @@ describe("team-auth configuration and policy", () => {
       permission: "review",
       caseId: "c1",
     });
+    expect(resolveRequestPolicy("POST", "/cases/c1/report-versions/v1/review/approve")).toMatchObject({
+      permission: "review",
+      caseId: "c1",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/c1/report-versions/v1/workflow/release")).toMatchObject({
+      permission: "write",
+      caseId: "c1",
+    });
     expect(resolveRequestPolicy("GET", "/cases/c1/report.docx")).toMatchObject({
       permission: "export",
       caseId: "c1",
@@ -57,6 +65,7 @@ describe("team-auth configuration and policy", () => {
       caseId: "c1",
     });
     expect(resolveRequestPolicy("POST", "/captures")).toEqual({ kind: "capture" });
+    expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("POST", "/api/jobs/job_1/cancel")).toEqual({ kind: "authenticated" });

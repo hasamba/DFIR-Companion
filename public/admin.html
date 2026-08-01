@@ -1,11 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-safe-dom>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Account &amp; team — DFIR Companion</title>
   <link rel="icon" href="/favicon-32.png" />
-  <style>
+  <script src="/js/safe-dom.js"></script>
+  <style nonce="__CSP_NONCE__" id="dfir-runtime-styles">
+    html[data-safe-dom] body { visibility:hidden; }
+    html[data-safe-dom].dfir-styles-ready body { visibility:visible; }
+  </style>
+  <style nonce="__CSP_NONCE__">
     :root { color-scheme:dark; font-family:Inter,system-ui,sans-serif; background:#0f1115; color:#dce4ef; }
     * { box-sizing:border-box; }
     body { margin:0; }

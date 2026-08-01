@@ -30,7 +30,7 @@ export const GECKO_ID = "dfir-companion@hasamba.github.io";
 export const MIN_FIREFOX_VERSION = "128.0";
 
 /** The manifest keys this transform is allowed to change. Asserted by tests/firefox.test.ts. */
-export const FIREFOX_ONLY_KEYS = ["browser_specific_settings", "background"];
+export const FIREFOX_ONLY_KEYS = ["browser_specific_settings", "background", "incognito"];
 
 /**
  * @param {object} base Parsed manifest.json.
@@ -54,6 +54,10 @@ export function toFirefoxManifest(base) {
       out.browser_specific_settings = {
         gecko: { id: GECKO_ID, strict_min_version: MIN_FIREFOX_VERSION },
       };
+      // Chrome rejects `not_allowed`; Firefox supports it and then makes private windows entirely
+      // invisible to the add-on. Chrome stays excluded by default and the runtime independently
+      // refuses every incognito Tab even if an analyst later enables the extension there.
+      out.incognito = "not_allowed";
     }
     if (key === "background") {
       // `type: "module"` carries over — Firefox has supported ES module background scripts since

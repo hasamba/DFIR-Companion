@@ -255,7 +255,13 @@ Manage report templates:
 - Edit the default template or create new ones
 - Set: cover title, subtitle, accent colour, running header/footer, logo visibility
 - Enable/disable and reorder report sections
+- Mark sections as mandatory at release
+- Require independent peer review and/or evidence links for every non-dismissed finding
 - Assign a template per case
+
+Critical and High findings always require valid evidence-event links, regardless of template. A
+template's evidence requirement extends that gate to every non-dismissed finding. Independent review
+requires team authentication; solo self-review cannot satisfy that rule.
 
 Built-in templates: **Standard** (full technical report), **Executive** (condensed), and any you create.
 
@@ -346,9 +352,22 @@ Operator health view:
   Other and by model, read from the provider's real per-call cost and token counts (never a guessed
   price). Providers that don't report cost/tokens show "n/a", never a fabricated `$0.00`.
 - Importer health (attempt counts over 24h/7d)
+- **Local performance and capacity history** — bounded importer yield, indexed-query p50/p95,
+  job stalls/retries, AI latency/rate limits/tokens/cost, export duration/size, live-connection health,
+  memory, disk and projected case growth. Metric labels are fixed categories and never contain case
+  titles, evidence, filenames, hostnames, users or IOCs. Set `DFIR_LOCAL_TELEMETRY=off` to disable it.
+- **Previewed support bundle** — inspect the aggregate-only JSON before copying or downloading it.
+  Secrets, absolute paths, case identifiers and evidence are excluded by default; nothing is sent
+  externally.
 - **Compute case sizes** button
 - **Live AI test** — connectivity test with latency
 - **Pre-flight check** — re-run startup diagnostics on demand
+
+For repeatable capacity testing, run `npm run bench:storage -- --sizes=1000000,10000000
+--query-runs=20` from `companion/`. It creates throwaway data outside the cases folder and emits one
+JSON result per size with import events/second, cold-open latency, filtered-query p50/p95, export
+duration and peak memory. Use the same event sizes, query-run count, hardware and filesystem when
+comparing releases.
 - **Per-case backup list** — state backups with one-click restore
 - **State backup configuration** (retention counts, interval)
 - **Background-job limits** — durable history retention, total concurrency, and a per-case running

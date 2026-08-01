@@ -6,25 +6,37 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
+import { CustodyStore } from "../../src/analysis/custody.js";
 import { ScopeStore } from "../../src/analysis/scope.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import { ReportMetaStore } from "../../src/reports/reportMeta.js";
 import { ReportVersionStore } from "../../src/reports/reportVersionStore.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 
-async function harness() {
+async function harness(withReleaseIntegrity = false) {
   const root = await mkdtemp(join(tmpdir(), "dfir-rv-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const reportMetaStore = new ReportMetaStore(store);
   const reportVersionStore = new ReportVersionStore(store);
+  const analysisRunStore = new AnalysisRunStore(store, { appVersion: "test" });
+  const custodyStore = new CustodyStore(store);
   const reportWriter = new ReportWriter(store, stateStore, {
     scope: new ScopeStore(store),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     reportVersions: reportVersionStore,
+    ...(withReleaseIntegrity ? { analysisRuns: analysisRunStore } : {}),
   });
-  const app = createApp(store, { stateStore, reportWriter, reportMetaStore, reportVersionStore });
+  const app = createApp(store, {
+    stateStore,
+    reportWriter,
+    reportMetaStore,
+    reportVersionStore,
+    analysisRunStore,
+    custodyStore,
+  });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store };
 }
@@ -119,5 +131,74 @@ describe("report-versions routes", () => {
 
     const restore = await request(app).post(`/cases/c1/report-versions/${traversal}/restore`);
     expect(restore.status).toBe(404);
+  });
+
+  it("offers an honest solo self-review path and freezes an immutable release", async () => {
+    const { app } = await harness(true);
+    await request(app).put("/cases/c1/report-meta").send({ organization: "ExampleCorp" });
+    await request(app).post("/cases/c1/report");
+    const version = (await request(app).get("/cases/c1/report-versions")).body[0];
+    expect(version.workflow.status).toBe("draft");
+
+    const workflow = await request(app)
+      .get(`/cases/c1/report-versions/${version.id}/workflow`);
+    expect(workflow.body.reviewMode).toBe("solo");
+    expect(
+      (await request(app)
+        .post(`/cases/c1/report-versions/${version.id}/workflow/submit`)
+        .send({ reviewerId: "someone" })).status,
+    ).toBe(409);
+
+    const approved = await request(app)
+      .post(`/cases/c1/report-versions/${version.id}/workflow/self-approve`)
+      .send({ note: "Checked evidence links and limitations." });
+    expect(approved.status).toBe(200);
+    expect(approved.body.approvals[0].independent).toBe(false);
+
+    const released = await request(app)
+      .post(`/cases/c1/report-versions/${version.id}/workflow/release`)
+      .send({});
+    expect(released.status).toBe(201);
+    expect(released.body.manifestHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(released.body.snapshot.meta.organization).toBe("ExampleCorp");
+    expect((await request(app).get("/cases/c1/report-releases/integrity")).body.ok).toBe(true);
+    expect(
+      (await request(app).get(
+        `/cases/c1/report-releases/${released.body.id}/packs/technical`,
+      )).text,
+    ).toContain("ExampleCorp");
+  });
+
+  it("requires explicit supersession and leaves the prior released snapshot unchanged", async () => {
+    const { app } = await harness(true);
+    await request(app).put("/cases/c1/report-meta").send({ organization: "First version" });
+    await request(app).post("/cases/c1/report");
+    const firstVersion = (await request(app).get("/cases/c1/report-versions")).body[0];
+    await request(app)
+      .post(`/cases/c1/report-versions/${firstVersion.id}/workflow/self-approve`)
+      .send({ note: "Self-reviewed" });
+    const firstRelease = (await request(app)
+      .post(`/cases/c1/report-versions/${firstVersion.id}/workflow/release`)
+      .send({})).body;
+
+    await request(app).put("/cases/c1/report-meta").send({ organization: "Corrected version" });
+    await request(app).post("/cases/c1/report");
+    const secondVersion = (await request(app).get("/cases/c1/report-versions")).body[0];
+    await request(app)
+      .post(`/cases/c1/report-versions/${secondVersion.id}/workflow/self-approve`)
+      .send({ note: "Self-reviewed correction" });
+    expect(
+      (await request(app)
+        .post(`/cases/c1/report-versions/${secondVersion.id}/workflow/release`)
+        .send({})).status,
+    ).toBe(409);
+
+    const secondRelease = await request(app)
+      .post(`/cases/c1/report-versions/${secondVersion.id}/workflow/release`)
+      .send({ supersedesReleaseId: firstRelease.id });
+    expect(secondRelease.status).toBe(201);
+    expect(secondRelease.body.supersedesReleaseId).toBe(firstRelease.id);
+    const preserved = await request(app).get(`/cases/c1/report-releases/${firstRelease.id}`);
+    expect(preserved.body.snapshot.meta.organization).toBe("First version");
   });
 });

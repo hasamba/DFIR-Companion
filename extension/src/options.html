@@ -4,13 +4,20 @@
   <meta charset="utf-8" />
   <title>DFIR Capture — Options</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 20px; }
+    body { font-family: system-ui, sans-serif; max-width: 620px; margin: 40px auto; padding: 0 20px; }
     h2 { font-size: 16px; margin-bottom: 16px; }
     label { display: block; font-size: 13px; margin-top: 12px; }
     input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }
     .hint { margin-top: 6px; font-size: 11px; color: #888; }
     button { margin-top: 16px; padding: 8px 20px; cursor: pointer; }
     #msg { margin-top: 12px; font-size: 13px; color: #2d6cdf; }
+    section { margin-top: 28px; padding-top: 18px; border-top: 1px solid #ddd; }
+    h3 { font-size: 15px; margin: 0 0 8px; }
+    ul { padding: 0; list-style: none; }
+    li { display: flex; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid #eee; }
+    li code { flex: 1; overflow-wrap: anywhere; }
+    li button { margin: 0; padding: 4px 9px; }
+    #accessAudit li { display: block; font: 12px ui-monospace, monospace; }
   </style>
 </head>
 <body>
@@ -27,6 +34,16 @@
   </label>
   <button id="save">Save</button>
   <div id="msg"></div>
+  <section>
+    <h3>Approved console origins</h3>
+    <p class="hint">Only these sites have persistent page access. Approve a new origin by opening that console and clicking the DFIR Companion icon.</p>
+    <ul id="approvedOrigins"></ul>
+  </section>
+  <section>
+    <h3>Permission audit log</h3>
+    <p class="hint">The latest grants, denials, and revocations are kept locally in this browser profile.</p>
+    <ul id="accessAudit"></ul>
+  </section>
   <script type="module" src="options.js"></script>
 </body>
 </html>

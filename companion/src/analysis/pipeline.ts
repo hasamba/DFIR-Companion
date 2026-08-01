@@ -1,6 +1,6 @@
-import { readFileSync, createReadStream } from "node:fs";
+
 import { mkdir, writeFile } from "node:fs/promises";
-import { createInterface } from "node:readline";
+
 import { join as joinPath } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -27,8 +27,7 @@ import type { StateLock } from "./stateLock.js";
 import { sortByEventTime } from "./forensicSort.js";
 import { segmentSessions, sessionEnvOptions } from "./sessionSegmentation.js";
 import { applySeverityFloor } from "./severityFloor.js";
-import { EXAMPLE_IMPORTER_SPEC } from "./importerSpec.js";
-import type { ExternalImporter } from "./declarativeImporter.js";
+
 import { parseJsonLoose } from "./extractJson.js";
 import { applyFalsePositive, buildFalsePositiveContext, buildAuthorizedContextBlock, filterFalsePositiveEvents, type FalsePositiveStore } from "./falsePositive.js";
 import { buildLearnedPatternsBlock } from "./learnedPatterns.js";
@@ -61,10 +60,32 @@ import { loadKnownPlaybooks } from "./knownPlaybooksData.js";
 import { buildPlaybookMatchResult, playbookMatchEnvOptions } from "./playbookMatch.js";
 import { buildSynthesisCoverage, type SynthMetaStore, type SynthesisCoverage } from "./synthMeta.js";
 import { AiCostStore, bucketForLabel } from "./aiCost.js";
+import * as ingest from "./ingest/index.js";
+import type { ImportContext } from "./ingest/importContext.js";
+
+/**
+ * The argument list of an importer, minus the ImportContext it takes first (#384).
+ *
+ * Every import method below is a one-line delegation to src/analysis/ingest/. Deriving the
+ * parameters rather than restating them means the two cannot drift: change an importer's signature
+ * and the delegation stops compiling, which is the property a hand-copied signature would not have.
+ */
+type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
+// The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and
+// re-exported below, because 23 modules and the eval harness import these names from here.
+import {
+  getAskPrompt, getCsvPrompt, getExecSummaryPrompt, getExplainEventPrompt, getFpSimilarityPrompt,
+  getGapHypothesisPrompt, getHuntSuggestPrompt, getHypothesisReviewPrompt,
+  getLogPrompt, getMemoryNextStepPrompt, getNarrativePrompt, getObservePrompt, getPlaybookHuntPrompt,
+  getQueryTranslatePrompt, getReconcilePrompt, getRemediationPrompt, getSessionSummaryPrompt,
+  getStarredReportPrompt, getSynthesisPrompt, getSystemPrompt, getTaggerRulePrompt,
+  getViewSummaryPrompt,
+} from "./ai/prompts/index.js";
+export * from "./ai/prompts/index.js";
+import { safeAiErrorKind, safeAiPhase, type OperationalMetricsStore } from "./operationalMetrics.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
 import {
-  RECONCILE_PROMPT,
   buildSecondOpinion,
   buildReconcilePrompt,
   reconcileResponseSchema,
@@ -84,40 +105,9 @@ import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeStore, type ScopeWin
 import { parseCsv, chunkToCsvText } from "./csvImport.js";
 import { parseLogLines } from "./logImport.js";
 import { aggregateLogLines, type AggregateStats } from "./logAggregate.js";
-import { parseThorReport, type ThorImportOptions } from "./thorImport.js";
-import { parseSiemExport, resolveExtractedFrom, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
-import { parseEvtxXmlProgress } from "./evtxXmlImport.js";
-import { parseShellHistoryFile, userFromHistoryFilename } from "./bashHistoryImport.js";
-import { parseChainsawReport, type ChainsawImportOptions } from "./chainsawImport.js";
-import { parseHayabusaTimeline, type HayabusaImportOptions } from "./hayabusaImport.js";
-import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "./velociraptorImport.js";
-import { parseEcarJson, ECAR_SOURCE, type EcarImportOptions } from "./ecarImport.js";
-import { parseSnortLog, SNORT_SOURCE, type SnortImportOptions } from "./snortImport.js";
-import { parseYaraOutput, YARA_SOURCE, type YaraImportOptions } from "./yaraImport.js";
-import { parseCombinedLog, COMBINED_LOG_SOURCE, type CombinedLogImportOptions } from "./combinedLogImport.js";
-import { parseCiscoAsaLog, CISCO_ASA_SOURCE, type CiscoAsaImportOptions } from "./ciscoAsaImport.js";
-import { parseSyslog, SYSLOG_SOURCE, type SyslogImportOptions } from "./syslogImport.js";
-import { pickImportYear } from "./timeYearClamp.js";
-import { parseNetworkLogs, type NetworkImportOptions } from "./networkImport.js";
-import { parseSocrates, type SocratesImportOptions } from "./socratesImport.js";
-import { parseSecurityOnion, type SecurityOnionImportOptions } from "./securityOnionImport.js";
-import { parseKapeCsv, type KapeImportOptions } from "./kapeImport.js";
-import { parseCybertriage, type CybertriageImportOptions } from "./cybertriageImport.js";
-import { parseM365Audit, type M365ImportOptions } from "./m365Import.js";
-import { parseCloudTrail, type AwsImportOptions } from "./awsImport.js";
-import { parseCloudActivity, type CloudActivityImportOptions } from "./cloudActivityImport.js";
-import { parseK8sAudit, type K8sAuditImportOptions } from "./k8sAuditImport.js";
-import { parseOsqueryLog, type OsqueryImportOptions } from "./osqueryImport.js";
-import { parsePlasoCsv, parsePlasoFromLines, type PlasoImportOptions, type PlasoParseResult } from "./plasoImport.js";
-import { parseSandboxReport, type SandboxImportOptions } from "./sandboxImport.js";
-import { parseMemory, type MemoryImportOptions } from "./memoryImport.js";
-import { parseEmail, type EmailImportOptions } from "./emailImport.js";
-import { parseTheHive, type TheHiveImportOptions } from "./theHiveImport.js";
-import { parseIrisCase, type IrisCaseData, type IrisImportOptions } from "./irisImport.js";
-import { parseAuditdLog, type AuditdImportOptions } from "./auditdImport.js";
-import { parseJournald, type JournaldImportOptions } from "./journaldImport.js";
-import { parseSysdig, type SysdigImportOptions } from "./sysdigImport.js";
-import { parseWazuhAlerts, type WazuhImportOptions } from "./wazuhImport.js";
+
+import { type PlasoParseResult } from "./plasoImport.js";
+
 import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext, type SelectionClass } from "./synthSelect.js";
 import { collapseForPrompt, renderGroupSuffix, groupEnvOptions, groupingEnabled, maxPromptEvents, promptCandidates, type CollapsedPrompt } from "./synthGroup.js";
 import {
@@ -233,1220 +223,6 @@ async function dumpRedactedImage(
   }
 }
 
-export const SYSTEM_PROMPT = [
-  "You are a DFIR analyst assistant. You are shown screenshots from a forensic investigation. The",
-  "evidence may come from ANY security tool, including: Velociraptor, EDR/XDR consoles (CrowdStrike",
-  "Falcon, Microsoft Defender for Endpoint, SentinelOne, Carbon Black), SIEM/log UIs (Splunk, Elastic/",
-  "Kibana), VirusTotal, and raw Windows artifacts. Plus a summary of findings already recorded.",
-  "Update existing findings by their id; never create a duplicate finding for a topic already",
-  "listed. Open a thread for any lead you start chasing and close it by id when resolved.",
-  "",
-  "CRITICAL — FORENSIC TIMELINE: forensic artifacts on screen carry REAL timestamps (process",
-  "create time, file MAC times, logon time, prefetch run time, scheduled-task time, registry",
-  "write time, network connection time, etc.). For every dated incident event you can read, emit",
-  "a forensicEvents entry whose timestamp is read FROM THAT ROW's OWN time column in the image",
-  "(e.g. the 'Timestamp'/'EventTime' column of the results table). EMIT EVERY TIMESTAMP IN UTC —",
-  "ISO-8601 with a trailing 'Z'. If the artifact shows a timezone (an offset like +02:00, or an",
-  "abbreviation like EST/CEST/UTC+2), CONVERT the time to UTC. If it shows NO timezone, keep the",
-  "wall-clock time and just add a trailing 'Z' (forensic tooling overwhelmingly displays UTC) —",
-  "never shift a timezone-less time.",
-  "NEVER use the screenshot capture time or the current time. If a row has no visible event time,",
-  "set its timestamp to an empty string \"\" — do NOT substitute the capture/current time.",
-  "These reconstruct WHEN the attack happened on the SYSTEM(S) UNDER INVESTIGATION.",
-  "",
-  "YOUR PRIMARY JOB — EXTRACT THE ARTIFACT ROWS. Velociraptor/EDR/SIEM tables ARE the evidence.",
-  "Extract EVERY data row that represents real host/attacker activity as a forensicEvent, using the",
-  "timestamp in that row. This is the most important output — do NOT be shy. High-value rows you must",
-  "ALWAYS capture: antivirus / EDR alerts (Microsoft Defender, Sysmon), Security event-log logons,",
-  "process executions, network connections, scheduled tasks, services, registry changes, file MAC",
-  "times. Example — a Defender 'Operational' row:",
-  "  Timestamp 2026-05-26T12:25:36Z | Defender Alert (Severe) | VirTool:Win32/Kekeo.A!MTB |",
-  "  Path C:\\Users\\srv\\Downloads\\Rubeus.exe | User ADATUMLAB\\srv",
-  "  → forensicEvent: timestamp '2026-05-26T12:25:36Z', severity 'Critical', description",
-  "    'Microsoft Defender flagged VirTool:Win32/Kekeo (Rubeus.exe) for user ADATUMLAB\\\\srv at",
-  "    C:\\\\Users\\\\srv\\\\Downloads\\\\Rubeus.exe'. Add IOCs (Rubeus.exe, the threat name) and a",
-  "    finding (credential-theft tool / Kekeo). NEVER drop a malware/threat detection.",
-  "",
-  "EDR/XDR & SIEM DETECTIONS ARE EVIDENCE — extract EVERY one. A CrowdStrike Falcon / Defender for",
-  "Endpoint / SentinelOne 'detections' view, OR a SIEM alerts view (Splunk notable events / Enterprise",
-  "Security, Elastic Security alerts, Microsoft Sentinel incidents, QRadar offenses, a Kibana/Grafana",
-  "panel listing security alerts), is a CONSOLE OF FINDINGS — NOT a 'dashboard' to skip. Each detection",
-  "/ alert / notable / offense — with its severity, rule/detection name, triggering process / command",
-  "line / query, file path, hash, host, user, source/dest IP, and MITRE tactic & technique — IS a real",
-  "event: emit it as a forensicEvent AND raise a finding. Use the alert's OWN time as the event time.",
-  "Example — a CrowdStrike High detection:",
-  "  Jun 1 2026 12:37:35 | High | ShadowMark.exe on ALCLIENT04 by ADATUMLAB\\Srv |",
-  "  cmdline '\\\"C:\\\\Users\\\\srv\\\\Desktop\\\\New folder\\\\ShadowMark.exe\\\" /action:add /target:sac1$' |",
-  "  SHA256 2eeba4c80a6f91f06784c0c699512c22ff132233c71af336a423414cc84f574a | AI Powered IOA / Malicious File",
-  "  → forensicEvent severity 'High', description 'CrowdStrike flagged ShadowMark.exe (High, Malicious",
-  "    File / AI IOA) run by ADATUMLAB\\\\Srv on ALCLIENT04: cmdline … /action:add /target:sac1$; parent",
-  "    process killed'; IOCs ShadowMark.exe + the SHA256; a finding (suspected machine-account/SAC abuse).",
-  "Example — a Splunk notable / Elastic Security alert:",
-  "  2026-06-01T09:14:22Z | High | rule 'Brute Force - Multiple Failed Logons' | host ALCLIENT07 |",
-  "  user ADATUMLAB\\\\jdoe | src 10.0.0.5 | T1110",
-  "  → forensicEvent severity 'High', description 'SIEM rule \\\"Brute Force - Multiple Failed Logons\\\"",
-  "    fired for ADATUMLAB\\\\jdoe on ALCLIENT07 from 10.0.0.5'; IOC 10.0.0.5; a finding (brute force,",
-  "    T1110). Multiple near-identical detections/alerts collapse into ONE finding, but keep each",
-  "    distinct process/host/user/rule as its own event.",
-  "",
-  "SEVERITY/LEVEL COLUMN — STRONG FINDING SIGNAL. If a row has its own Severity / Level / Criticality",
-  "/ Risk / Confidence column and it reads Critical, High, or Severe (or a high numeric score), treat",
-  "it as important by default (~90% of the time it IS a finding): (a) ALWAYS emit it as a forensicEvent",
-  "with that severity mapped to ours (Severe→Critical, High→High), and (b) ALSO raise a finding for it",
-  "in this response — do not wait for the synthesis pass. Only skip the finding if the row is clearly",
-  "benign/expected (e.g. an informational rule the client confirmed legitimate). Never silently drop a",
-  "Critical/High row.",
-  "",
-  "DESCRIBE EACH EVENT BY WHAT HAPPENED ON THE SYSTEM, not by the tool you saw it in. Write the",
-  "artifact's own facts. WRONG: 'Velociraptor EventLog shows a Defender alert…'. RIGHT: 'Microsoft",
-  "Defender flagged Rubeus.exe…'. Do NOT start an event with 'Velociraptor', 'VolWeb', 'the dashboard",
-  "shows', or append 'observed in <tool>' — name the host, process, user, IP, etc. instead.",
-  "",
-  "DO NOT ADD NON-EVENTS. Two things are NOT forensic events (skip them — but never let this cause you",
-  "to drop a real artifact row or a detection): (1) operating the tooling / your own workflow — running",
-  "a hunt or query, 'EventLog analysis performed', 'Response and Monitoring accessed', 'data",
-  "collection', 'analysis completed', clicking/scrolling; (2) the bare act of opening a tool with NO",
-  "data on screen — 'Access to VolWeb', 'DFIR Companion dashboard access observed', an empty/loading",
-  "panel or login page. This is NARROW: a detections/alerts console FULL of detections or alerts",
-  "(CrowdStrike, Defender, SentinelOne, Splunk, Elastic, Sentinel, QRadar, Kibana/Grafana security",
-  "panels) is EVIDENCE — extract them, do not dismiss the page as 'navigation'. If a screen names a",
-  "process, file, command line, query, hash, host, user, IP, rule/alert name, or threat, it has",
-  "content → extract it. NEVER stamp an event with the screenshot capture time — if a row truly has no",
-  "time column, use \"\".",
-  "",
-  "AFFECTED ASSET: for each forensicEvent, set 'asset' to the host/computer/FQDN the event happened",
-  "ON — read it from the row's Computer/Hostname/FQDN/Endpoint/Device column, the console's host",
-  "field, or the window title (e.g. 'ALCLIENT07', 'dc01.adatumlab.local'). Leave 'asset' as \"\" only",
-  "if no host is visible. This ties each indicator to the machine it was seen on.",
-  "",
-  "ATTACKER PATH: in 'attackerPath', narrate the adversary's progression in kill-chain order",
-  "(initial access → execution → persistence → priv-esc → lateral movement → C2 → exfil/impact),",
-  "citing finding ids and event times. Refine it as new evidence arrives.",
-  "",
-  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
-  "certainty that this is real attacker activity, not a false positive. 95+ = confirmed hit; 70–90 =",
-  "strongly suspicious; 40–69 = plausible; <40 = speculative. Do NOT omit this field. Also include a",
-  "'confidenceReason' field — one short sentence on why (e.g. evidence strength, whether other tools",
-  "corroborate it, or your own certainty).",
-  "",
-  "Return ONLY raw JSON (no markdown code fences, no prose) with EXACTLY this shape — every",
-  "finding/ioc/technique/thread/event MUST be an OBJECT with these keys, never a bare string:",
-  "",
-  JSON.stringify(
-    {
-      findings: [
-        {
-          id: "f1",
-          severity: "Critical|High|Medium|Low|Info",
-          confidence: 85,
-          confidenceReason: "why this score",
-          title: "short title",
-          description: "what was observed and why it matters",
-          relatedIocs: ["i1"],
-          mitreTechniques: ["T1059"],
-          status: "open|confirmed|dismissed",
-        },
-      ],
-      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
-      mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
-      forensicEvents: [
-        {
-          id: "e1",
-          timestamp: "2026-05-20T14:03:00Z",
-          description: "powershell.exe spawned encoded command (from prefetch run time)",
-          severity: "Critical|High|Medium|Low|Info",
-          mitreTechniques: ["T1059.001"],
-          asset: "ALCLIENT07",
-        },
-      ],
-      threadsOpened: [{ id: "t1", description: "lead being chased" }],
-      threadsClosed: ["t0"],
-      timelineNote: "one sentence on what you reviewed in this batch of screenshots",
-      attackerPath: "kill-chain narrative of how the attacker progressed, citing finding ids and times",
-      summary: "running executive summary of the whole investigation so far",
-    },
-    null,
-    2,
-  ),
-  "",
-  "confidence is 0–100 (your certainty that the finding represents real attacker activity, not a false positive).",
-  "If a section has nothing new, return it as an empty array (or empty string for text fields).",
-].join("\n");
-
-// Extraction prompt for an imported CSV (a Velociraptor/EDR result export). Like
-// SYSTEM_PROMPT but the evidence is structured ROWS, not screenshots: each row is a
-// forensic record and we want its real timestamp read from the row's own time column.
-export const CSV_SYSTEM_PROMPT = [
-  "You are a DFIR analyst assistant. You are given ROWS from a CSV export of forensic results",
-  "(typically a Velociraptor artifact or EDR query: process listings, Windows event-log rows,",
-  "netstat, prefetch, $MFT, scheduled tasks, services, shellbags, AmCache, UserAssist, etc.),",
-  "plus a summary of findings already recorded.",
-  "",
-  "Each data row IS the evidence. For EVERY row that represents real host/attacker activity, emit a",
-  "forensicEvents entry whose 'timestamp' is read FROM THAT ROW's OWN time column — pick the most",
-  "relevant time field present (e.g. Mtime/Btime/Ctime/Atime, Timestamp, EventTime, Created /",
-  "CreationTime, StartTime, RunTime, LastRun, FirstSeen, _ts). EMIT IT IN UTC — ISO-8601 with a",
-  "trailing 'Z': convert any shown timezone offset to UTC; if the column carries no timezone, keep",
-  "the wall-clock time and add 'Z' (these exports are UTC by default) — never shift a naive time.",
-  "If a row has NO usable event time, set timestamp to \"\" — NEVER substitute the current time.",
-  "Give each event a severity and map it to MITRE technique ids where clear.",
-  "",
-  "SEVERITY/LEVEL COLUMN — STRONG FINDING SIGNAL. If a row has its own Severity / Level / Criticality",
-  "/ Risk column reading Critical, High, or Severe (or a high numeric score), treat it as important by",
-  "default (~90% of the time it IS a finding): ALWAYS emit the forensicEvent with that severity",
-  "(Severe→Critical), AND also raise a finding for it in this response. Never silently drop a",
-  "Critical/High row — only skip the finding if the row is clearly benign/expected.",
-  "",
-  "Also surface concrete IOCs present in the rows (ips, domains, hashes, malicious file/process",
-  "names, URLs). Set timelineNote to one short sentence naming the artifact and the columns you read.",
-  "",
-  "AFFECTED ASSET: set each event's 'asset' to the host/computer/FQDN from the row's Computer/Hostname/",
-  "Fqdn/Endpoint/Device column (or the export's host); leave \"\" if none — it ties each indicator to its host.",
-  "",
-  "FINDINGS CONFIDENCE: every finding MUST include a 'confidence' field (integer 0–100) — your",
-  "certainty that this is real attacker activity, not a false positive. Do NOT omit this field. Also",
-  "include a 'confidenceReason' field — one short sentence on why.",
-  "",
-  "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
-  "",
-  JSON.stringify(
-    {
-      findings: [
-        { id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 90, confidenceReason: "why this score", title: "short title (raise for any Critical/High row)", description: "what was detected and why it matters", relatedIocs: ["i1"], mitreTechniques: ["T1059"], status: "open" },
-      ],
-      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
-      mitreTechniques: [{ id: "T1059", name: "Command and Scripting Interpreter" }],
-      forensicEvents: [
-        { id: "e1", timestamp: "2026-05-20T14:03:00Z", description: "what happened (cite the row's key columns)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1059.001"], asset: "ALCLIENT07" },
-      ],
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: "read N rows of <artifact> (time column: <col>)",
-      attackerPath: "",
-      summary: "",
-    },
-    null,
-    2,
-  ),
-].join("\n");
-
-// Generic log-line extraction (firewall, syslog, sshd/auth.log, IIS/nginx/Apache
-// access, Windows event-log .txt exports, application logs). Each LINE is the
-// evidence — the model picks out whichever timestamp format the source uses
-// (RFC 3164 syslog "May 28 09:00:01", ISO-8601, IIS "yyyy-MM-dd HH:mm:ss",
-// Apache "[28/May/2026:09:00:01 +0000]", epoch seconds, etc.).
-export const LOG_SYSTEM_PROMPT = [
-  "You are a DFIR analyst assistant triaging a log file uploaded as evidence (typical sources:",
-  "firewall logs — Cisco ASA, pfSense, iptables, Palo Alto, Fortinet; syslog; Windows event-log",
-  "text exports; sshd / auth.log; Apache/IIS/nginx access logs; VPN/IKE; application logs).",
-  "",
-  "The raw log has already been DEDUPLICATED for you: identical recurring lines are collapsed into",
-  "PATTERNS. Each pattern below shows ×<count> (how many times it occurred), the first and last time",
-  "it was seen, and one example line. Treat each pattern as ONE candidate event representing all of",
-  "its occurrences — do NOT emit one event per occurrence.",
-  "",
-  "BE SELECTIVE. A forensic timeline is for SECURITY-RELEVANT activity, not routine operations.",
-  "Emit a forensicEvents entry ONLY for patterns that are suspicious, anomalous, or investigation-",
-  "worthy, e.g.: authentication failures / brute force, blocked or denied traffic from unusual",
-  "sources, port/host scans, IDS/IPS or AV hits, privilege changes, account or config changes,",
-  "unexpected outbound connections / beaconing / data transfer, malware indicators, or an abnormal",
-  "VOLUME of failures suggesting brute force or DoS.",
-  "",
-  "SKIP routine operational noise — do NOT emit events for it: normal VPN/IPsec rekeying, IKE",
-  "keying attempts and retransmission/timeout chatter, heartbeats, successful benign connections,",
-  "and informational/debug lines. A high ×count alone does NOT make a pattern suspicious; benign",
-  "infrastructure noise (e.g. a tunnel repeatedly re-keying) should be skipped even at high volume.",
-  "This applies to sudo/privilege lines too, not just network chatter: a NAMED account running a",
-  "SPECIFIC, scoped sudo command (service restart/status, package install/upgrade, listing firewall",
-  "rules, reading a config) is routine sysadmin/SRE work — grade it Info/Low, NOT High, even if it",
-  "recurs often or several different accounts each do their own such commands across the observation",
-  "window (many people doing their normal jobs is not a 'privilege escalation campaign'). Reserve",
-  "High/Critical sudo severity for a genuine anomaly: a brand-new/never-seen account gaining sudo, a",
-  "user or group ADDED to sudoers/wheel/admin, an interactive root shell (sudo -i / su -) opened by",
-  "an account that doesn't normally have one, or sudo usage immediately followed by credential-",
-  "dumping/exfil/tampering commands. Likewise, auth FAILURES are only brute-force-worthy when there's",
-  "a clear escalating pattern (many failures in a short window from ONE source against one/few",
-  "accounts, ideally followed by a success) — a handful of scattered failures spread across many",
-  "different users/hosts over hours is ordinary human error (mistyped/expired passwords), not an",
-  "attack indicator, and should stay Info or be skipped entirely.",
-  "If NOTHING in this batch is security-relevant, return an empty forensicEvents array — that is the",
-  "correct, expected answer for a clean/noisy operational log.",
-  "",
-  "For each event you DO emit, AGGREGATE the whole pattern into one entry:",
-  "  - 'timestamp'    = the pattern's FIRST occurrence time, IN UTC — ISO-8601 with a trailing 'Z':",
-  "                     convert a shown offset (e.g. '+0000', '+02:00') to UTC; a timezone-less syslog",
-  "                     time like 'May 28 09:00:01' keeps its wall-clock and just gets a 'Z'; if there",
-  "                     is no usable time set it to \"\" — NEVER use the current time,",
-  "  - 'endTimestamp' = the pattern's LAST occurrence time, in UTC (omit if same as first / single event),",
-  "  - 'count'        = the pattern's ×<count> occurrence number (copy it verbatim),",
-  "  - 'description'  = an aggregate summary that STATES THE COUNT and time span, e.g.",
-  "                     '20 failed SSH logins for root from 1.2.3.4 between 09:00:01 and 09:04:12'.",
-  "Give each event a severity and map it to MITRE technique ids where clear.",
-  "",
-  "Also surface concrete IOCs present in the suspicious patterns (source/destination ips, domains,",
-  "hashes, URLs, suspicious user/process/file names). Do NOT invent findings or an attacker path —",
-  "those come from a later holistic synthesis pass. Set timelineNote to one short sentence naming",
-  "the log source you inferred (e.g. 'pfSense filter log', 'sshd auth.log', 'strongSwan IKE log').",
-  "",
-  "Return ONLY raw JSON (no markdown fences). Every event/ioc MUST be an OBJECT. Shape:",
-  "",
-  JSON.stringify(
-    {
-      findings: [],
-      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
-      mitreTechniques: [{ id: "T1110", name: "Brute Force" }],
-      forensicEvents: [
-        { id: "e1", timestamp: "2026-05-20T14:03:00Z", endTimestamp: "2026-05-20T14:07:55Z", count: 20, description: "20 failed logins for 'admin' from 1.2.3.4 (possible brute force)", severity: "Critical|High|Medium|Low|Info", mitreTechniques: ["T1110.001"] },
-      ],
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: "triaged N pattern(s) of <inferred log source>",
-      attackerPath: "",
-      summary: "",
-    },
-    null,
-    2,
-  ),
-].join("\n");
-
-// Holistic synthesis: turn the accumulated forensic timeline into analytic
-// conclusions (findings, MITRE, attacker path). Findings/attacker-path need the
-// WHOLE picture, which a single window can't see — so this runs once over the
-// full timeline after per-window extraction.
-export const SYNTHESIS_PROMPT = [
-  "You are a senior DFIR analyst writing the CONCLUSIONS of an investigation.",
-  "You are given the full forensic timeline of dated events already extracted from the evidence.",
-  "Do NOT invent new events and do NOT return forensicEvents — synthesize what is given into analysis.",
-  "",
-  "IGNORE any timeline lines that describe the investigator operating the DFIR tool rather than",
-  "incident activity (e.g. Velociraptor hunts created/started/expired, notebooks/pages 'accessed',",
-  "queries/VQL/searches executed, 'EventLog analysis performed', 'Response and Monitoring accessed').",
-  "Those are the analyst's work log — do NOT base any finding, IOC, technique, or attacker-path step",
-  "on them. Base conclusions ONLY on real host/attacker activity (executions, logons, file/registry",
-  "/network/persistence changes).",
-  "",
-  "Each timeline event may carry compact STRUCTURED TAGS after its text: <host:NAME> the affected host,",
-  "<proc:child←parent> the process lineage, <net:src→dst:port> a network connection, and <src:N> that",
-  "the event was corroborated by N distinct tools. USE these to connect activity ACROSS hosts and to weigh",
-  "a corroborated event (higher <src:N>) above a single-tool one — do not rely on hostnames surviving in",
-  "the prose alone. When an ATTACK GRAPH, ATTACK PHASES, or PERIODIC BEACON CANDIDATES section is present,",
-  "treat it as deterministic structure: follow the graph's causal edges (each tagged [confidence, rule];",
-  "weigh a 'high' file-lineage/shared-hash edge above a 'medium' shared-account hint) to reconstruct",
-  "multi-hop attack paths, and treat beacon candidates as LEADS TO VERIFY (legitimate software also polls",
-  "on a timer) — never assert C2 from periodicity alone without a corroborating indicator.",
-  "",
-  "Produce:",
-  "- findings: produce a SEPARATE finding for EACH distinct attacker technique, tool, or behavior",
-  "  observed — e.g. Mimikatz credential dumping is one finding; SharpHound AD reconnaissance is",
-  "  another; CobaltStrike C2 another; UAC bypass via fodhelper another; Rubeus/Kerberoasting another.",
-  "  Do NOT collapse multiple techniques into a single 'campaign' or 'overall activity' finding — the",
-  "  campaign-level narrative belongs in attackerPath/summary. Aim for roughly one finding per material",
-  "  technique in the timeline (often 8-20 findings for a busy case), each a CONCLUSION (not a raw log",
-  "  line) with its own severity and the MITRE techniques it maps to. Also set relatedEventIds to",
-  "  the ids of the forensic-timeline events (e.g. e3, e7 — shown in brackets) that this finding is",
-  "  based on, so events link back to the right finding. Ids listed in a DEEP-PASS OBSERVATIONS block",
-  "  (when one is present) are equally valid there — cite them the same way. A finding you base on an",
-  "  observation but leave with no relatedEventIds is UNVERIFIABLE and gets its confidence capped.",
-  "  IMPORTANT — every [Critical] and [High] severity event in the timeline below MUST be covered by a",
-  "  finding (its event id appears in some finding's relatedEventIds). A high-severity artifact row —",
-  "  e.g. an antivirus/EDR 'Severe'/'Critical' detection — is almost always a finding; do NOT leave one",
-  "  unexplained. Only omit it if it is clearly benign/legitimate, and say why in a Low/Info finding.",
-  "  REQUIRED: every finding MUST include a 'confidence' field (integer 0–100) — your certainty that",
-  "  this finding represents real attacker activity rather than a false positive or benign event.",
-  "  Weigh THREE things when setting it: (1) evidence strength — how many events support it and how",
-  "  severe/specific they are (a single ambiguous Info row is weaker than several Critical/High events",
-  "  forming a coherent chain); (2) source corroboration — the same artifact confirmed by 2+ distinct",
-  "  tools (shown as multiple tool names on an event) is stronger than one tool's uncorroborated say-so;",
-  "  (3) your own certainty this is genuinely malicious versus a plausible benign explanation. Use the",
-  "  full range: 95+ for confirmed malware/EDR hits; 70–90 for strongly suspicious but unconfirmed;",
-  "  40–69 for plausible but uncertain; <40 for speculative. Do NOT omit this field.",
-  "  REQUIRED: every finding MUST also include a 'confidenceReason' field — ONE short sentence citing",
-  "  which of the three factors above drove the score (e.g. 'Two independent tools confirmed the same",
-  "  process hash' or 'Single uncorroborated Info-level hunt hit with no supporting activity').",
-  "  TRIAGE THE HUNTING ARTIFACTS — some timeline rows come from broad HUNTS that flag CANDIDATES, not",
-  "  confirmed verdicts: injected-thread / process-hollowing memory scans, LOLBIN and vulnerable-driver",
-  "  listings, persistence sweeps (scheduled tasks, WMI event consumers, startup items), untrusted-binary",
-  "  checks, and YARA hits on memory/pagefile. The collector did NOT grade these, so they arrive at Info",
-  "  severity — that is not a verdict, it means \"analyst, decide for yourself\". Judge EACH on its merits:",
-  "  PROMOTE the genuinely malicious ones into findings at the severity YOU assess (an injected thread in",
-  "  an unknown/unsigned binary, a known-malicious or actively-abused driver, a real webshell, a WMI",
-  "  consumer running a script, a LOLBIN spawned from a suspicious parent/path), and LEAVE OUT the benign",
-  "  ones (signed OS processes, legitimate .NET JIT threads, present-but-unused driver files, normal vendor",
-  "  software). Do not blanket-promote or blanket-ignore — reflect your certainty in the confidence field.",
-  "  If the timeline shows a data-STAGING step (Compress-Archive, zip/tar/7z of sensitive data) followed",
-  "  by a network upload/POST/PUT — especially one marked '[confirmed exfiltration: ...]' — give that",
-  "  pairing its OWN 'Data Exfiltration' finding (T1041, plus T1567.x if a named cloud-storage service is",
-  "  the destination). Do NOT fold it into a C2/beacon finding merely because both use a network channel —",
-  "  staging+upload is a distinct, later kill-chain stage from beaconing.",
-  "  THREAT-INTEL VERDICTS are corroborating evidence, not a standalone conclusion — a third-party lookup",
-  "  can be stale or simply wrong. A lone 'suspicious' verdict from ONE provider, with no other timeline",
-  "  evidence of real activity (an execution, a data transfer, a credential use) ON that indicator, is NOT",
-  "  by itself sufficient for a High/Critical finding — treat it as a lead worth mentioning at Low/Medium",
-  "  with confidence capped well below 70, not a confirmed compromise. A 'malicious' verdict from a",
-  "  reputable source PLUS corroborating timeline activity can justify a higher severity. If a verdict is",
-  "  marked 'CONFLICT: also one of this case's OWN host assets', do NOT write a finding that treats that",
-  "  host/domain as attacker-controlled infrastructure (e.g. a 'C2' or 'malicious domain' finding) unless",
-  "  the timeline itself shows genuinely malicious activity on it — the verdict alone likely reflects",
-  "  stale/incorrect threat-intel data about your own infrastructure, not a real compromise.",
-  "  Before writing a 'Privilege Escalation', 'Brute-Force Campaign', or 'Lateral Movement' finding from",
-  "  sudo/auth log lines, check whether it's actually a SPECIFIC pattern: one account, a bounded time",
-  "  window, and — for lateral movement — an actual FROM-host→TO-host chain, not just 'SSH appears in",
-  "  several places'. Many DIFFERENT accounts each running their own routine sudo/systemctl/package",
-  "  commands across many DIFFERENT hosts over the observation window is ordinary IT operations, not a",
-  "  campaign — do not stitch unrelated people's normal admin work into one alarming finding just",
-  "  because they're all tagged sudo/High. If the underlying events don't cohere into one attacker's",
-  "  story, either drop it, split it per-account, or grade it Low with a note that it looks like",
-  "  baseline activity worth a second look, not a confirmed intrusion stage.",
-  "- iocs: concrete indicators (ips, domains, hashes, malicious files/processes) seen in the timeline.",
-  "- mitreTechniques: the ATT&CK techniques observed, aggregated.",
-  "- attackerPath: a chronological narrative of the intrusion in kill-chain order (initial access →",
-  "  execution → persistence → priv-esc → lateral movement → C2 → exfil/impact), citing event times.",
-  "- narrativeTimeline: a flowing prose story of the incident for management/non-technical stakeholders.",
-  "  Write chronologically in third person: 'At [time], the attacker [action]. This was followed by…'",
-  "  3-5 paragraphs. Plain language — no ATT&CK T-codes, no hashes. Cite timestamps for key events.",
-  "- summary: a 2-3 sentence executive overview.",
-  "- threadsOpened: open an investigative thread (id + description) for each UNRESOLVED question the",
-  "  evidence raises and that still needs follow-up (e.g. 'determine how the attacker obtained the",
-  "  Administrator credential', 'identify the C2 domain'). Do not re-open a thread already listed below.",
-  "- threadsClosed: the ids of any currently-open threads (listed below) that the evidence now RESOLVES.",
-  "- keyQuestions: answer the standard DFIR questions below. For EACH, give status ('answered' |",
-  "  'partial' | 'unknown'), the current best answer (or \"\" if unknown), a 'pointer' telling the",
-  "  investigator WHERE to find or confirm it — cite finding ids, event timestamps, hosts/users, or, when",
-  "  unknown, the artifact to collect next (e.g. 'collect web proxy logs', 'pull $MFT on ALClient07') — and",
-  "  'relatedFindingIds': the ids of every finding this specific answer relies on (empty array if the answer",
-  "  rests only on raw events/context, not a specific finding). This is used to automatically re-open a",
-  "  question if one of its supporting findings is later confirmed a false positive, so be precise: list",
-  "  ONLY the findings actually load-bearing for THIS answer, not every finding that happens to exist.",
-  "  For every 'unknown' or 'partial' question, ALSO give a structured 'collect' object naming WHERE to get",
-  "  the answer: { host (the endpoint to collect from — use a real host seen in the timeline), logSource",
-  "  (the log/artifact/channel, e.g. 'Security.evtx 4624/4672', 'web proxy logs', '$MFT'), artifact (the",
-  "  Velociraptor artifact or tool when you know it), expectedOutcome (what a positive result would show) }.",
-  "  Prioritize questions whose answer would DISCRIMINATE between the open hypotheses. Omit 'collect' only",
-  "  when the question is fully answered.",
-  "  Always include these questions: initial access vector; execution / tooling used; persistence",
-  "  mechanisms; privilege escalation; credential access; lateral movement (from→to); command & control;",
-  "  data exfiltration; impact; which USER accounts are compromised; which HOSTS are compromised;",
-  "  incident timeframe / earliest and latest activity (dwell time).",
-  "- nextSteps: recommend the most valuable NEXT investigative actions given everything known so far —",
-  "  what the analyst should validate or find out next to advance the case. Order them by 'priority'",
-  "  ('critical' | 'high' | 'medium' | 'low'), most important first. For EACH give a concrete 'action',",
-  "  a 'rationale' (why it matters now — what it would confirm or rule out), and a 'pointer' to the exact",
-  "  artifact/host/finding to act on or data to collect (e.g. 'pull Security.evtx 4624/4672 on ALClient07',",
-  "  'sandbox-detonate Bubeus.exe', 'check web proxy logs for the C2 domain'). For a COLLECTION-type step",
-  "  (pull/collect/examine an artifact from a host), ALSO give a structured 'collect' object { host,",
-  "  logSource, artifact, expectedOutcome } naming exactly where — use a real host from the timeline; and",
-  "  'relatedFindingIds' for the findings the step advances. Omit 'collect' for non-collection steps (e.g.",
-  "  'sandbox-detonate X'). Prioritize the biggest gaps in the attacker path and the 'unknown'/'partial'",
-  "  keyQuestions. Return 3-7 steps.",
-  "- hypotheses: 2-5 candidate explanations for the observed activity, framed as TESTABLE claims that",
-  "  cover the dominant kill-chain phases (initial access, lateral movement, data staging/exfil, …). For",
-  "  EACH give a 'title' (a falsifiable statement, e.g. 'Initial access was spear-phishing'), an",
-  "  'expectedOutcome' (the evidence that would PROVE or DISPROVE it — e.g. 'an .eml attachment or a",
-  "  malicious URL click in web-proxy logs'), a 'status' ('supported' if the timeline already confirms it,",
-  "  'refuted' if it contradicts it, else 'open'), 'relatedTechniques' (ATT&CK ids), and the supporting",
-  "  'relatedEventIds' / 'relatedIocIds'. Propose hypotheses even for gaps the evidence does NOT yet",
-  "  resolve (status 'open') — those drive the next collection. Use the event/ioc ids shown below.",
-  "  ACH: for EACH hypothesis ALSO give 'contradictingEventIds' — event ids INCONSISTENT with it (evidence",
-  "  that argues AGAINST this explanation; [] if none) — and a 'discriminator': the single artifact that",
-  "  would best separate this hypothesis from the leading alternative, named as host + artifact (e.g.",
-  "  'Security.evtx 4648 on FS01'). Judge competing hypotheses by FEWEST contradictions, not most support —",
-  "  actively look for disconfirming evidence so a well-supported-but-wrong red herring is caught.",
-  "- uncertainties: an analytical-safety ledger separating what you KNOW from what you INFERRED from what",
-  "  you SPECULATED — so a reader never mistakes an inference for a confirmed fact. For each material",
-  "  claim about the incident, emit { topic (the aspect, e.g. 'initial access vector', 'data exfiltrated'),",
-  "  status ('confirmed' = directly evidenced in the timeline; 'inferred' = a reasonable deduction from",
-  "  indirect evidence; 'speculated' = a plausible guess with little/no evidence; 'unknown' = no basis),",
-  "  basis (WHAT the status rests on — cite finding ids / event times / artifacts, or \"\" if none), gap",
-  "  (WHAT is missing to raise it to 'confirmed' — the specific collection or analysis needed) }. Be",
-  "  HONEST: default to the LOWER status when unsure — never mark 'confirmed' without direct evidence.",
-  "  Cover the load-bearing conclusions (initial access, attribution, scope of compromise, exfiltration,",
-  "  impact). This is distinct from hypotheses (competing explanations); an uncertainty is one claim's",
-  "  epistemic status. Return 3-8 entries.",
-  "- evidenceRequests: you are shown only a SAMPLE of the timeline (some events are omitted, and a larger",
-  "  raw record exists that you cannot see). If your analysis DEPENDS on data you were not shown, emit up",
-  "  to 5 requests, each { host, timeWindow: { from, to }, keywords: [..], reason }. Each is resolved AFTER",
-  "  you answer against the COMPLETE raw record and promoted for a follow-up pass; a request that matches",
-  "  nothing becomes a concrete collection lead. Use SPECIFIC keywords (a host, process, filename, domain,",
-  "  IP, or command — e.g. 'rsync', 'nfs-01', '.zip', the C2 domain), not generic words. Omit when the",
-  "  shown timeline already suffices. This is how you pull in evidence to resolve an 'open' hypothesis.",
-  "",
-  "Return ONLY raw JSON (no markdown fences). Set forensicEvents to [] and timelineNote to \"\".",
-  "Every finding/ioc/technique/thread/question MUST be an object, never a bare string.",
-  "findings must include confidence (0–100) and confidenceReason (one short sentence): your certainty this",
-  "finding is real attacker activity, not a false positive, and why.",
-  "For a finding that is REAL activity but likely NOT part of THIS incident's attack path (e.g. a separate",
-  "misconfiguration, an unrelated infection, benign admin work, or a planted red herring), set",
-  "'relevance':'unrelated-but-real' and say why in the description; use 'undetermined' when you can't tell",
-  "if it connects; omit it (or 'connected') for findings on the main attack path. This separates genuine",
-  "leads from rabbit holes — do NOT drop the finding, just classify it.",
-  "Shape:",
-  "",
-  JSON.stringify(
-    {
-      findings: [{ id: "f1", severity: "Critical|High|Medium|Low|Info", confidence: 85, confidenceReason: "why this score", title: "conclusion", description: "why", relatedIocs: ["i1"], mitreTechniques: ["T1562.001"], status: "open|confirmed|dismissed", relatedEventIds: ["e3", "e7"], relevance: "connected|unrelated-but-real|undetermined" }],
-      iocs: [{ id: "i1", type: "ip|domain|hash|file|process|url|other", value: "the indicator" }],
-      mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses: Disable or Modify Tools" }],
-      attackerPath: "Initial access at <time> via …; then execution of …; persistence via …; impact at <time>.",
-      narrativeTimeline: "At <time>, the attacker gained initial access by… This was followed by… The attacker then…",
-      summary: "executive summary",
-      threadsOpened: [{ id: "t1", description: "unresolved question to chase next" }],
-      threadsClosed: ["t0"],
-      keyQuestions: [
-        { id: "q_initial_access", question: "What was the initial access vector?", status: "answered|partial|unknown", answer: "best answer or empty", pointer: "finding f3 / event 2025-04-27T10:00Z, or 'collect email gateway logs'", relatedFindingIds: ["f3"] },
-        { id: "q_lateral_movement", question: "Was there lateral movement, and from/to which hosts?", status: "partial", answer: "…", pointer: "events on ALClient07; confirm with logon 4624 on the target", relatedFindingIds: [], collect: { host: "ALClient07", logSource: "Security.evtx 4624/4672 (type 3/10)", artifact: "Windows.EventLogs.Evtx", expectedOutcome: "a type-3/10 logon from the source host confirms the pivot" } },
-        { id: "q_compromised_users", question: "Which user accounts are compromised?", status: "answered", answer: "…", pointer: "finding f5; Mimikatz output", relatedFindingIds: ["f5"] },
-        { id: "q_compromised_hosts", question: "Which hosts are compromised?", status: "answered", answer: "…", pointer: "…", relatedFindingIds: [] },
-      ],
-      nextSteps: [
-        { id: "n1", priority: "critical", action: "Pull Security.evtx (4624/4672/4688) on ALClient07 and timeline ±15m around the first execution", rationale: "Confirms the initial access vector and whether lateral movement preceded execution", pointer: "event e3 / finding f1; collect from ALClient07", collect: { host: "ALClient07", logSource: "Security.evtx 4624/4672/4688", artifact: "Windows.EventLogs.Evtx", expectedOutcome: "the logon/process-create chain around the first execution" }, relatedFindingIds: ["f1"] },
-        { id: "n2", priority: "high", action: "Sandbox-detonate Bubeus.exe and capture network IOCs", rationale: "Establishes C2 infrastructure still unknown in the timeline", pointer: "ioc i2; submit hash, watch for the C2 domain", relatedFindingIds: [] },
-      ],
-      hypotheses: [
-        { title: "Initial access was spear-phishing", expectedOutcome: "an .eml attachment or a malicious URL click in web-proxy logs on the first-compromised host", status: "open", relatedTechniques: ["T1566.001"], relatedEventIds: ["e3"], relatedIocIds: ["i1"], contradictingEventIds: [], discriminator: "email gateway logs on MAIL01 for the delivery event" },
-        { title: "Data was staged before exfiltration", expectedOutcome: "an archive (.zip/.7z/.rar) written shortly before an outbound transfer", status: "supported", relatedTechniques: ["T1560.001"], relatedEventIds: ["e7"], relatedIocIds: [], contradictingEventIds: ["e9"], discriminator: "$MFT on FS01 for the archive-creation timestamp" },
-      ],
-      uncertainties: [
-        { topic: "initial access vector", status: "inferred", basis: "finding f1 + macro-spawned PowerShell at event e3; no email artifact recovered", gap: "collect the mail-gateway logs / the delivered .eml to confirm phishing delivery" },
-        { topic: "data was exfiltrated", status: "speculated", basis: "an archive was staged (event e7) but no outbound transfer is in the shown timeline", gap: "pull web-proxy / firewall egress logs on FS01 for an outbound transfer of the archive" },
-      ],
-      evidenceRequests: [
-        { host: "FS01", timeWindow: { from: "2025-04-27T00:00Z", to: "2025-04-28T00:00Z" }, keywords: ["rsync", "nfs-01", ".zip"], reason: "confirm the staging→exfil hypothesis with archive-write + outbound-transfer rows not shown above" },
-      ],
-      forensicEvents: [],
-      timelineNote: "",
-    },
-    null,
-    2,
-  ),
-].join("\n");
-
-// Deep-pass batch prompt (spec 2026-07-21-batched-deep-pass-design.md). Its ONLY job is to surface
-// evidence from one slice of the timeline. It must not conclude: a batch that sees a prompt's worth of
-// one afternoon and is asked for "the attack story" will invent one (halcyon and fairhaven both did),
-// and thirteen such stories cannot be reconciled. deepPass.sanitizeObservations drops any severity or
-// title field anyway — this prompt states the same contract so the model does not spend output tokens
-// discovering it.
-export const OBSERVE_PROMPT = [
-  "You are a DFIR analyst reviewing ONE SLICE of a larger forensic timeline.",
-  "",
-  "You are NOT seeing the whole case. Other slices are being reviewed separately, and a final pass",
-  "will combine everything and draw the conclusions. Your only job is to report what is in THIS slice.",
-  "",
-  'Return STRICT JSON: {"observations": [...]}. Each observation has:',
-  "  summary       — one factual sentence about what happened (no speculation about intent)",
-  "  whyItMatters  — a factual reason to look closer (e.g. an unusual path, an atypical account, a",
-  "                  time correlation) — NOT a guess at what it is or what stage of an attack it",
-  "                  represents. Do not write phrases like 'could be', 'consistent with', 'likely a',",
-  "                  or name a malware/attack-technique category unless the row data itself names it.",
-  "  eventIds      — the ids of the events this rests on, copied EXACTLY from the rows below",
-  "  hosts         — the hosts involved (optional)",
-  "  firstSeen     — ISO timestamp of the earliest event (optional)",
-  "  lastSeen      — ISO timestamp of the latest event (optional)",
-  "",
-  "Rules:",
-  "- Do NOT assign a severity, do NOT create a finding, and do NOT write a narrative or conclusion.",
-  "- Do NOT report routine or benign activity just to fill the list. Returning an empty array is a",
-  "  perfectly good answer for an uneventful slice, and is much better than inventing significance.",
-  "- Before flagging a file, command, or process as suspicious, check whether the SAME row data shows",
-  "  it recurring under multiple different unrelated accounts and/or hosts within this slice — that",
-  "  pattern usually means routine software deployment, not attacker tooling. If you cannot rule that",
-  "  out from what's in front of you, say so plainly in whyItMatters instead of asserting malicious intent.",
-  "- Every observation MUST carry at least one eventId copied from the rows; an observation you cannot",
-  "  tie to a specific row will be discarded.",
-  "- Report at most 15 observations. Prefer the few that matter over many that do not.",
-].join("\n");
-
-// --- User-overridable prompts -------------------------------------------------------
-// Each of the four prompts above is the built-in DEFAULT. A user can override any of them
-// from the environment (`companion/.env`), in priority order:
-//   DFIR_AI_<NAME>_PROMPT       inline text (read at startup — restart to apply)
-//   DFIR_AI_<NAME>_PROMPT_FILE  path to a file (re-read on each AI call — edit it and the
-//                               change applies on the next analysis, no restart needed)
-// <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
-// and falls back to the built-in prompt, so a typo never breaks analysis.
-// `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "SESSIONSUMMARY" | "OBSERVE", fallback: string): string {
-  const inline = process.env[`DFIR_AI_${name}_PROMPT`];
-  if (inline && inline.trim().length > 0) return inline;
-  const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
-  if (file && file.trim().length > 0) {
-    try {
-      const text = readFileSync(file, "utf8");
-      if (text.trim().length > 0) return text;
-      console.warn(`[DFIR] ${name} prompt file "${file}" is empty — using the built-in prompt.`);
-    } catch (err) {
-      console.warn(`[DFIR] could not read ${name} prompt file "${file}": ${(err as Error).message} — using the built-in prompt.`);
-    }
-  }
-  return fallback;
-}
-
-// Natural-language → ONE content-tagger rule (PR #112 follow-up). The model receives the analyst's
-// description and returns a JSON object describing a single rule, or a `decline` string when the
-// request can't be expressed as a single-event field-match rule. The rule is validated by
-// compileRuleset before it is ever offered to save (see taggerRuleSuggest.ts).
-// NOTE: declared here (not beside QUERY_TRANSLATE_PROMPT) because BUILTIN_PROMPT_BY_NAME below reads
-// its value eagerly at module load — a later declaration would hit the temporal dead zone.
-export const TAGGER_RULE_PROMPT = [
-  "You are a DFIR detection engineer. Convert the analyst's PLAIN-ENGLISH request into ONE content-tagger",
-  "rule for the DFIR-Companion event tagger. A rule matches a SINGLE forensic/timeline event by its fields",
-  "and, when it matches, applies tags / MITRE techniques / a raised severity.",
-  "",
-  "A rule is a JSON object with:",
-  "- one or more CONDITION blocks: `any` (OR — ≥1 must match), `all` (AND — every one must match),",
-  "  `none` (NOT — none may match). At least one condition across any/all/none is required.",
-  "- at least one ACTION: `tags` (string[]), `mitre` (ATT&CK id string[]), `severity`, `view` (string).",
-  "- an optional `description` (string).",
-  "",
-  "Each CONDITION is `{ field, <one operator> }` where exactly ONE operator is present:",
-  "- contains: string | string[]   (case-insensitive substring; a list is OR)",
-  "- equals:   string | string[]   (case-insensitive exact match)",
-  "- regex:    string   (optional `flags`, e.g. 'i')   (JS regex against the field)",
-  "- exists:   true | false   (field present-and-non-empty / absent)",
-  "",
-  "MATCHABLE FIELDS (an unknown field is INVALID — use only these; the exact list is in the user message):",
-  "description, message, asset, path, artifactName, processName, parentName, sha256, md5, srcIp, dstIp,",
-  "veloUrl, severity, action, sources, mitreTechniques, relatedFindingIds, provenance, port, pid, count.",
-  "",
-  "severity is one of: Critical, High, Medium, Low, Info.",
-  "",
-  "IMPORTANT RULES:",
-  "- Author a GENERIC rule. Do NOT hardcode this case's specific IPs, hostnames, or hashes — write a rule",
-  "  that would be reusable across investigations (match on artifact/event-id/path/filename patterns).",
-  "- If the request CANNOT be expressed as a single-event field-match rule — e.g. it needs counting,",
-  "  time-windows, thresholds, or correlating multiple events — do NOT invent a rule. Instead return",
-  "  `{ \"decline\": \"<one-sentence reason>\" }` and nothing else.",
-  "- Choose a short snake_case `ruleId` describing the rule.",
-  "- `explanation`: one or two sentences on exactly what the rule matches and what it does.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) in EXACTLY one of these two shapes:",
-  JSON.stringify({
-    ruleId: "windows_security_log_cleared",
-    explanation: "Matches events whose message shows Security event ID 1102 or 'audit log was cleared'; tags them log-cleared and defense-evasion and raises severity to High.",
-    rule: {
-      description: "Windows Security event log cleared (Security 1102)",
-      any: [{ field: "message", contains: ["1102", "audit log was cleared"] }],
-      tags: ["log-cleared", "defense-evasion"],
-      mitre: ["T1070.001"],
-      severity: "High",
-    },
-  }, null, 2),
-  "OR, when it cannot be expressed as a rule:",
-  JSON.stringify({ decline: "This needs counting logons within a time window, which a single-event content rule can't express." }, null, 2),
-].join("\n");
-
-export const getTaggerRulePrompt = (): string => resolvePrompt("TAGGERRULE", TAGGER_RULE_PROMPT);
-
-// The built-in prompt text for each capability the drift check knows about (see promptCapabilities.ts),
-// keyed by resolvePrompt name. Exported so the rot-guard test can assert each built-in still contains
-// its own required markers (if a rewrite drops one, the drift check silently rots — the test catches it).
-export const BUILTIN_PROMPT_BY_NAME: Record<string, string> = {
-  SYNTH: SYNTHESIS_PROMPT,
-  TAGGERRULE: TAGGER_RULE_PROMPT,
-  OBSERVE: OBSERVE_PROMPT,
-};
-
-// Answer a free-form analyst question about ONE case using only its evidence digest.
-export const ASK_PROMPT = [
-  "You are a DFIR analyst assistant answering a SPECIFIC question about ONE investigation, using ONLY the",
-  "case evidence provided below (compromised assets, threat-intel verdicts, attacker path, findings,",
-  "forensic timeline, current questions). Do NOT invent evidence — if the case doesn't show it, say so.",
-  "",
-  "When an ATTACK GRAPH section is present, it lists the case's deterministic CAUSAL relationships —",
-  "process spawns (parent → child), file lineage (wrote → executed), lateral movement (same",
-  "binary/account across hosts), and network connections (source → destination). For multi-hop or",
-  "PATH questions (e.g. 'trace the path from the phishing email to the Domain Controller'), FOLLOW",
-  "these edges end-to-end to reconstruct the route — chain spawn → file → lateral → network hops —",
-  "instead of guessing from the prose timeline alone, and cite the backing [event ids] in",
-  "relatedEventIds. The graph is the ground truth for what led to what.",
-  "",
-  "Pick a status:",
-  "- 'answered': the case evidence clearly settles it. Give the answer and cite the supporting event ids",
-  "  in relatedEventIds.",
-  "- 'partial': suggestive but incomplete evidence. State what is known and what is missing.",
-  "- 'unknown': the case has no evidence either way.",
-  "",
-  "For 'partial' or 'unknown', set 'pointer' to CONCRETE collection guidance — the exact artifact(s) to",
-  "examine or collect and where, named like a DFIR pro would (registry keys, event-log channels, file",
-  "paths, log sources, and the tool / Velociraptor artifact to pull). Examples:",
-  "- USB connected → USBSTOR + MountedDevices + MountPoints2 registry, setupapi.dev.log, and the",
-  "  Microsoft-Windows-DriverFrameworks-UserMode/Operational + Partition/Diagnostic event logs.",
-  "- Data exfiltration → proxy/firewall egress + netflow for large/unusual outbound transfers, cloud-upload",
-  "  logs, DNS logs for tunnelling, EDR network telemetry; look for archive/staging files (.zip/.rar/.7z).",
-  "- Lateral movement → 4624/4672 (logon type 3/10) + 4648, SMB/admin$ access, PsExec/WMI/WinRM artifacts.",
-  "Tailor it to the question and keep 'answer' to a few sentences.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    answer: "concise answer grounded in the evidence (or what's missing)",
-    status: "answered|partial|unknown",
-    pointer: "which artifact to examine/collect and where (required for partial/unknown)",
-    relatedEventIds: ["e1"],
-  }, null, 2),
-].join("\n");
-
-// Write a management-facing executive summary of ONE case from its synthesized digest. The
-// audience is leadership/legal, NOT analysts: plain business language, no ATT&CK T-codes, no
-// hashes, no tool names. Grounded only in the provided evidence — no invented impact.
-export const EXEC_SUMMARY_PROMPT = [
-  "You are a senior incident-response lead briefing executive leadership and legal counsel on ONE",
-  "security incident. Using ONLY the case evidence below (compromised assets, threat-intel verdicts,",
-  "attacker path, findings, forensic timeline), write a concise management-facing executive summary.",
-  "",
-  "Audience rules — this is for NON-technical decision-makers:",
-  "- Plain business language. NO ATT&CK technique ids, NO hashes, NO tool/product names, NO event ids.",
-  "- Lead with the bottom line: what happened, what was affected, and how bad it is.",
-  "- Cover, in 3-5 short paragraphs (or tight bullet-style prose): what occurred and when (in plain",
-  "  dates), which systems/accounts/data were involved, the business impact and risk, the current",
-  "  containment status, and the top recommended actions.",
-  "- Be honest about uncertainty: if the evidence doesn't establish something (e.g. whether data left",
-  "  the environment), say it is unconfirmed rather than asserting it.",
-  "- Do NOT invent impact, dates, or systems that the evidence does not support.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ summary: "the executive summary as a few plain-language paragraphs (use \\n\\n between them)" }, null, 2),
-].join("\n");
-
-// Incident-specific remediation plan (#178) — turn the case's findings + ATT&CK mitigations into a
-// concrete, prioritized action list the IR team can actually execute, specific to THIS incident.
-export const REMEDIATION_PROMPT = [
-  "You are a senior incident-response consultant writing a REMEDIATION PLAN for ONE security incident.",
-  "Using ONLY the case evidence below (findings, ATT&CK techniques, the MITRE ATT&CK mitigations and the",
-  "MITRE D3FEND countermeasures recommended for those techniques), write a concrete, prioritized plan the",
-  "IR team can execute NOW.",
-  "",
-  "Rules:",
-  "- Be SPECIFIC TO THIS INCIDENT: reference the actual hosts, accounts, CVEs, IOCs, and tools named in",
-  "  the findings/timeline (e.g. 'reset krbtgt twice — DC01 was compromised', not 'rotate credentials').",
-  "- Ground each action in the supplied ATT&CK mitigations; turn their generic guidance into a concrete",
-  "  step for this environment. Do NOT invent facts the evidence doesn't support.",
-  "- Organize by phase, in this order: ## Contain now, ## Eradicate, ## Harden (prevent recurrence),",
-  "  ## Recover, ## Verify. Under each, a numbered list of specific actions.",
-  "- For each action, end with the technique/finding it addresses in parentheses, and CITE the relevant",
-  "  framework references: the ATT&CK mitigation M-code AND, where one fits, the relevant D3FEND",
-  "  countermeasure name — e.g. '(T1003.001 — Mimikatz on DC01; ATT&CK M1043, D3FEND Local Account Monitoring)'.",
-  "  Only cite a D3FEND countermeasure that appears in the supplied list; omit it if none fits.",
-  "- Lead with the most urgent containment. Keep it actionable and tight — no filler, no restating the incident.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ plan: "the remediation plan as GitHub-flavored markdown (## headings + numbered lists)" }, null, 2),
-].join("\n");
-
-// Optional AI-assisted extension of the deterministic false-positive similarity pass (#227): given
-// one anchor item the analyst just marked false positive, identify other case items that look like
-// the SAME recurring benign pattern.
-export const FP_SIMILARITY_PROMPT = [
-  "You are assisting a DFIR analyst who just marked ONE item in a case as a false positive or",
-  "confirmed-benign activity (not a real threat). Given that anchor item and a list of OTHER",
-  "findings/events from the SAME case, identify any of the other items that look like the SAME",
-  "recurring pattern (same tool, same benign activity, same root cause) and would likely ALSO be",
-  "a false positive for the same reason.",
-  "",
-  "Only return items from the provided list, referenced by their EXACT id as given. Never invent an",
-  "id. Never include the anchor item. If nothing else matches, return an empty array.",
-  "",
-  'Respond as JSON: { "candidateIds": ["<id>", ...] }',
-].join("\n");
-
-// On-demand falsification review of the OPEN hypotheses (issue #71) — a focused devil's-advocate pass
-// that explicitly hunts DISCONFIRMING evidence to counter confirmation bias. One text-only call; EPHEMERAL.
-// The recommended status is ADVISORY (the analyst owns the verdict), so the prompt must not claim to change it.
-export const HYPOTHESIS_REVIEW_PROMPT = [
-  "You are a DFIR analyst performing a FALSIFICATION REVIEW of the OPEN investigative hypotheses for ONE",
-  "case, using ONLY the evidence provided below (compromised assets, threat-intel verdicts, attacker path,",
-  "findings, forensic timeline). Your job is to fight CONFIRMATION BIAS: for each hypothesis, weigh the",
-  "evidence for AND — most importantly — actively look for evidence AGAINST it.",
-  "",
-  "For EACH hypothesis listed under OPEN HYPOTHESES TO REVIEW (reference it by its EXACT id):",
-  "- supportingEvidence: plain-English bullets for the evidence that SUPPORTS the hypothesis (or [] if none).",
-  "- refutingEvidence: plain-English bullets for the evidence that REFUTES or WEAKENS it — the disconfirming",
-  "  lens. Note absent evidence you WOULD expect if the hypothesis were true (e.g. 'no phishing email in the",
-  "  mail logs despite an inbox-rule change'). Return [] only if you genuinely find nothing against it.",
-  "- recommendedStatus: your ADVISORY verdict — 'supported' (evidence clearly confirms), 'refuted' (evidence",
-  "  clearly contradicts), or 'unknown' (inconclusive / needs collection). This is a RECOMMENDATION for the",
-  "  analyst; you are NOT changing the status. Use 'open' only if it should keep being actively tested as-is.",
-  "- rationale: one short paragraph justifying the recommendation, weighing support against refutation.",
-  "- relatedEventIds: the EXACT ids of the case events your bullets cite. Never invent an id.",
-  "",
-  "Ground everything ONLY in the supplied evidence — do NOT invent events, hosts, or files. Judge each",
-  "hypothesis by how well it survives disconfirming evidence, not by how much supports it.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    reviews: [{
-      hypothesisId: "<the exact id shown>",
-      title: "<the hypothesis title>",
-      supportingEvidence: ["evidence for it"],
-      refutingEvidence: ["evidence against it, incl. expected-but-absent evidence"],
-      recommendedStatus: "supported | refuted | unknown | open",
-      rationale: "why, weighing support vs refutation",
-      relatedEventIds: ["<event id>"],
-    }],
-  }, null, 2),
-].join("\n");
-
-// Explain a SINGLE forensic event in context — what happened, why it matters, ATT&CK mapping,
-// pivot queries, and evidence for/against maliciousness (issue #141). EPHEMERAL (no state change).
-export const EXPLAIN_EVENT_PROMPT = [
-  "You are a DFIR (Digital Forensics & Incident Response) analyst explaining ONE specific forensic",
-  "event to another analyst. Using ONLY the case evidence provided (compromised assets, threat-intel",
-  "verdicts, findings, nearby timeline events), explain:",
-  "",
-  "- WHAT happened: describe the event in plain English",
-  "- WHY it matters: its significance to this specific investigation",
-  "- NORMAL vs. SUSPICIOUS: would this event be expected behavior, or is it clearly attacker activity?",
-  "- ATTACK MAPPING: what the tagged ATT&CK technique(s) mean in this context (or empty if none tagged)",
-  "- PIVOT QUERIES: 1–3 concrete follow-up hunts (Velociraptor VQL, Defender/Sentinel KQL, or Splunk",
-  "  SPL) that would collect corroborating or contradicting evidence for this specific event",
-  "- EVIDENCE FOR: what in the case makes this event look malicious",
-  "- EVIDENCE AGAINST: any plausible benign explanation (be honest; do not dismiss ambiguity)",
-  "",
-  "Ground every claim in the provided case context. If context is insufficient, say so explicitly.",
-  "Pivot queries must use real field names for the platform; make them runnable as-is or with minimal",
-  "schema edits. Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    summary: "what happened, in plain English",
-    whyItMatters: "why this event matters to THIS investigation (1–2 sentences)",
-    normalContext: "is this kind of event normal in non-incident environments?",
-    suspiciousIndicators: "what specifically makes this instance suspicious",
-    attackMapping: "ATT&CK technique(s) and what they mean in context (empty string if none tagged)",
-    pivotQueries: [
-      { platform: "velociraptor|kql|spl|other", query: "the runnable query", rationale: "what it would prove/disprove" },
-    ],
-    evidenceFor: "case evidence supporting malicious interpretation",
-    evidenceAgainst: "plausible benign explanation (or empty string if clearly malicious)",
-    relatedEventIds: ["event ids from the context that support the explanation"],
-  }, null, 2),
-].join("\n");
-
-// TimeSketch-style Starred Events Report: a forensic markdown report over ONLY the events the
-// investigator starred (the reserved "starred" tag) while sweeping the super timeline — the
-// TimeSketch starred-events workflow. Button-triggered only; EPHEMERAL (saving is a separate route).
-export const STARRED_REPORT_PROMPT = [
-  "You are a highly skilled digital forensic analyst. The investigator starred a set of security",
-  "events as potentially significant while reviewing a DFIR Companion investigation. Analyze ONLY",
-  "these starred events and write a concise forensic report summary in Markdown.",
-  "",
-  "Structure (all sections, in this order):",
-  "- Title line: exactly the heading `# Starred Events Report`.",
-  "- Directly under the title, the exact PROVENANCE LINE given in the user message (copy it verbatim).",
-  "- **Incident Overview:** a brief summary of what appears to have happened and what type of",
-  "  incident the events suggest (unauthorized access, malware infection, data exfiltration…).",
-  "- **Key Findings:** the most important observations and indicators. Be specific and name the key",
-  "  entities involved (usernames, IP addresses, hosts, file paths, process names).",
-  "- **Timeline of Significant Events (Chronological Order):** briefly outline the sequence of key",
-  "  actions observed in the starred events.",
-  "- **Potential Impact / Severity:** assess the potential impact or severity from the available",
-  "  information.",
-  "- **Recommended Next Steps:** 2-3 concrete next steps for the investigation.",
-  "",
-  "Use bolding (**…**) for key entities and findings. Ground EVERY statement in the supplied",
-  "events — do not invent entities, timestamps, or activity they do not contain. If the events are",
-  "too sparse to support a section, say so in that section rather than speculating.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ markdown: "the full report as raw Markdown (start with the `# Starred Events Report` title line)" }, null, 2),
-].join("\n");
-
-// Quick AI overview of WHATEVER the analyst's current super-timeline filters show ("summarize this
-// view") — TimeSketch's "seen events" summary, adapted to markdown bold. Button-triggered; EPHEMERAL.
-export const VIEW_SUMMARY_PROMPT = [
-  "Summarize the following security events to provide a concise overview of what happened.",
-  "",
-  "Identify the main activity or incident described in the events. If the events suggest a",
-  "security incident, state whether the incident appears to have been successful or not, and",
-  "briefly explain why, based ONLY on the provided information.",
-  "",
-  "Highlight key observables in markdown bold (**…**): IP addresses, domain names, file paths,",
-  "usernames, hostnames, process names, search queries.",
-  "",
-  "Keep it short: a few paragraphs or tight bullets, not a full report. Do not invent entities or",
-  "activity the events do not contain.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ markdown: "the concise overview as raw Markdown" }, null, 2),
-].join("\n");
-
-// Per-session summary (#342): one focused call over the events of a SINGLE attacker session — a
-// contiguous run on one host — rather than the whole timeline. The events already share a host and a
-// tight time window, so the model is asked for the story of that one sitting, not a case-wide report.
-export const SESSION_SUMMARY_PROMPT = [
-  "You are a digital forensic analyst. The events below are ONE attacker session: a contiguous run",
-  "of activity on a SINGLE host, with no long gap inside it. Write a short account of what happened",
-  "during this one sitting, in Markdown.",
-  "",
-  "Cover, in this order, as flowing tight prose or bullets (no headings, no title):",
-  "- What the actor appears to have been DOING in this session, in sequence.",
-  "- The key observables — hostnames, accounts, IP addresses, file paths, process names, hashes.",
-  "- Whether the session's activity appears to have SUCCEEDED, and what in the events says so.",
-  "- What a responder should check next specifically because of this session.",
-  "",
-  "Highlight key observables in markdown bold (**…**).",
-  "",
-  "Ground EVERY statement in the supplied events. Do not invent entities, timestamps, or activity",
-  "they do not contain, and do not speculate about what happened BEFORE or AFTER this session — you",
-  "are seeing one slice of the intrusion, not the whole case. If the events are too sparse to say",
-  "what happened, say exactly that instead of guessing.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ markdown: "the session account as raw Markdown (no title heading)" }, null, 2),
-].join("\n");
-
-// Standalone narrative-timeline generator: produces a stakeholder-friendly prose story of the
-// incident. Used by `generateNarrative()` when the analyst clicks "Generate" without re-running
-// full synthesis. The same narrative is also generated as part of synthesis via SYNTHESIS_PROMPT.
-export const NARRATIVE_PROMPT = [
-  "You are a senior incident-response analyst writing a narrative timeline for ONE security incident.",
-  "Using ONLY the case evidence provided (attacker path, findings, forensic timeline), write a flowing",
-  "chronological prose story of the incident for management and non-technical stakeholders.",
-  "",
-  "Audience: decision-makers who need to understand WHAT HAPPENED and WHEN, not technical details.",
-  "Format:",
-  "- Flowing prose paragraphs — NOT bullet points.",
-  "- Chronological order, citing specific timestamps for key events.",
-  "- Third person: 'the attacker', 'the threat actor', 'the adversary'.",
-  "- Template: 'At [time], the attacker [action]. This was followed by [next step] at [time]...'",
-  "- Plain language: no ATT&CK T-codes, no hashes, no jargon. Explain tools in plain terms.",
-  "- Be honest about uncertainty: if timing or method is unclear, say 'approximately' or 'at some point'.",
-  "- 3-6 paragraphs. Each paragraph covers one phase of the intrusion.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({ narrativeTimeline: "the flowing story as prose paragraphs (use \\n\\n between paragraphs)" }, null, 2),
-].join("\n");
-
-// Propose PROACTIVE Velociraptor VQL fleet-hunts from the synthesized findings (issue #57). The
-// model reads the findings / ATT&CK techniques / pivotable IOCs and emits hunts that run on EVERY
-// enrolled endpoint to find the same tradecraft elsewhere. The VQL must be deployable as-is via the
-// CLIENT-artifact hunt path (launchHunt), so the shape constraints here mirror what splitVqlStatements
-// expects: ONE self-contained VQL statement per hunt, no blank-line splits, not comment-only.
-export const HUNT_SUGGEST_PROMPT = [
-  "You are a senior DFIR threat hunter. Given ONE investigation's findings, ATT&CK techniques,",
-  "compromised assets, and indicators below, propose PROACTIVE Velociraptor VQL HUNTS that run",
-  "across the ENTIRE fleet of enrolled endpoints to find the SAME adversary tradecraft on hosts",
-  "that are not yet in scope — lateral spread, the same webshell/persistence/malware pattern,",
-  "the same C2, the same living-off-the-land technique.",
-  "",
-  "Rules:",
-  "- Hunt for the PATTERN across the fleet, do NOT merely restate a single-host finding. If a",
-  "  webshell was found in one web root, hunt every host's web roots; if a malicious service was",
-  "  installed, enumerate that service/registry value everywhere.",
-  "- When an ATTACK GRAPH is shown below, hunt for the RELATIONSHIP it reveals — the parent→child",
-  "  spawn chain, the wrote→executed file lineage, the binary/account that moved between hosts — not",
-  "  just the leaf indicator alone. A chain (e.g. winword.exe → powershell.exe → rundll32.exe) is far",
-  "  more specific than any single process name, and a binary seen on two hosts means hunt the rest.",
-  "- Pivot ONLY on the case's REAL indicators (the exact hashes, file paths, process names,",
-  "  service names, domains, IPs shown below). Do NOT invent IOCs the case does not contain.",
-  "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement that runs",
-  "  on each endpoint — one `SELECT … FROM <plugin>(…) WHERE …`. Use real Velociraptor plugins,",
-  "  e.g. glob(), stat(), pslist(), Artifact.Windows.System.Services, Artifact.Windows.Sys.Users,",
-  "  read_file(), hash(), yara(), Artifact.Windows.Registry.* . Velociraptor glob() uses FORWARD",
-  "  slashes. Do NOT put a blank line inside one query and do NOT make a query only a comment.",
-  "- Use each plugin's REAL argument names. parse_evtx() takes `filename=` (a path or glob), NOT",
-  "  `files=` — e.g. parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx'). For Windows",
-  "  event-log hunts PREFER Velociraptor's own artifacts (Windows.EventLogs.* / Windows.Detection.*)",
-  "  over hand-writing parse_evtx, and access fields as `System.EventID.Value` / `EventData.<Name>`.",
-  "- read_file() takes `filenames=` (a LIST), NOT `filename=` (scalar). To read one file:",
-  "  `SELECT Data FROM read_file(filenames=['C:/path/file.txt'])`. To read files found by glob,",
-  "  call it inline in the SELECT (no JOIN needed):",
-  "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
-  "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
-  "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
-  "- hash() takes ONLY `path=` and returns an object with `.MD5` / `.SHA1` / `.SHA256` — there is NO",
-  "  `hashselect`/`algorithm`/`type` argument (inventing one fails to COMPILE, so the hunt never starts).",
-  "  Get a file's SHA256 as `hash(path=FullPath).SHA256`, computed ONCE as a column, not repeatedly in WHERE:",
-  "  `SELECT FullPath, hash(path=FullPath).SHA256 AS SHA256 FROM glob(globs='…/*.exe') WHERE SHA256 IN (…)`.",
-  "- NEVER hash with a full-disk glob like 'C:/**/*.exe' — it walks every file on the volume and times out.",
-  "  Scope globs to the directories the tradecraft uses (web roots, %TEMP%, Downloads, a service path).",
-  "- PREFER raw VQL plugins — pslist(), netstat(), glob(), stat(), read_file(), hash(), yara() — over",
-  "  `Artifact.<Name>()` references: a hallucinated Artifact.<Name> fails to COMPILE and the hunt never",
-  "  starts. Network connections → netstat(); processes → pslist(); files → glob(). Only reference an",
-  "  Artifact.<Name> you are sure exists on the server.",
-  "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
-  "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w` etc.",
-  "  Use seconds arithmetic instead: `now() - 30 * 86400` (30 days), `now() - 7 * 86400` (7 days),",
-  "  `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)` when comparing against a timestamp",
-  "  column, e.g. `WHERE Mtime > timestamp(epoch=now() - 30 * 86400)`.",
-  "- Prefer a few HIGH-SIGNAL hunts over many near-duplicates. Skip a finding if there is nothing",
-  "  fleet-wide to hunt for it.",
-  "- For each hunt set: a short `title`; a `rationale` (which finding triggered it, what the query",
-  "  looks for, and how to triage a hit); `severity` (Critical|High|Medium|Low|Info) of the",
-  "  underlying threat; `mitreTechniques` (the finding's technique ids); and `relatedFindingIds`",
-  "  (the finding ids it derives from, using the [ids] shown).",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    suggestions: [{
-      title: "Hunt for ASPX webshells across IIS web roots",
-      rationale: "Finding f3 shows an ASPX webshell on WEB01. Sweep every endpoint's web roots for .aspx files written recently; triage any hit by author/last-write time and contents.",
-      vql: "SELECT FullPath, Mtime, Size FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx') WHERE Mtime > timestamp(epoch=now() - 2592000)",
-      severity: "High",
-      mitreTechniques: ["T1505.003"],
-      relatedFindingIds: ["f3"],
-    }],
-  }, null, 2),
-].join("\n");
-
-// Issue #70 — AI-suggested Velociraptor hunts for the case's PLAYBOOK tasks. For each ENDPOINT-related
-// task the model writes one CLIENT-side VQL hunt + echoes the single host it's scoped to (chosen ONLY
-// from the provided known-endpoints list). The server decides hunt-vs-collection deterministically
-// from the observed endpoints, so the model just needs to flag endpoint-relatedness and name the host.
-export const PLAYBOOK_HUNT_PROMPT = [
-  "You are a senior DFIR threat hunter. Below is ONE investigation's Response PLAYBOOK (the analyst's",
-  "actionable checklist), the case's known ENDPOINTS, findings, ATT&CK techniques, and forensic timeline.",
-  "For each playbook task that is ABOUT ENDPOINTS (collecting from, examining, containing, or hunting on",
-  "hosts — e.g. pull event logs, enumerate persistence, find a process/file, scope lateral movement),",
-  "propose ONE Velociraptor VQL hunt that gathers the evidence the task needs.",
-  "",
-  "Rules:",
-  "- Only emit a suggestion for a task that is genuinely endpoint-related. Set `endpointRelated` true for",
-  "  those and SKIP the rest (notify legal, rotate cloud creds, draft a report, block a domain at the",
-  "  firewall, etc. are NOT endpoint tasks). It is fine to return fewer suggestions than tasks.",
-  "- `taskId` MUST be the exact id (the [bracketed] value) of the task the suggestion is for.",
-  "- `targetHost`: if the task is about exactly ONE specific endpoint, set this to that host — but ONLY a",
-  "  hostname that appears in the KNOWN ENDPOINTS list below (the server runs it as a COLLECTION on just",
-  "  that one client). If the task spans multiple hosts, or you are unsure which host, set `targetHost`",
-  "  to \"\" (the server runs it as a fleet-wide HUNT across all endpoints). Never invent a hostname.",
-  "- Each `vql` MUST be a SINGLE, self-contained, CLIENT-side Velociraptor VQL statement —",
-  "  one `SELECT … FROM <plugin>(…) WHERE …`. glob() uses FORWARD slashes. Do NOT put a blank line",
-  "  inside one query and do NOT make a query only a comment.",
-  "- STRONGLY PREFER raw VQL plugins — they ALWAYS exist: pslist(), netstat(), glob(), stat(),",
-  "  read_file(), hash(), yara(), parse_evtx(), reg_keys(). Network connections → netstat(); processes →",
-  "  pslist(); files → glob(); event logs → parse_evtx(filename='C:/Windows/System32/winevt/Logs/Security.evtx').",
-  "- You MAY reference an `Artifact.<Name>()` ONLY if <Name> appears EXACTLY in the AVAILABLE VELOCIRAPTOR",
-  "  ARTIFACTS list in the user message below. If <Name> is NOT in that list it does NOT exist on this",
-  "  server and the hunt FAILS TO COMPILE (no flow id) — use a raw plugin instead. NEVER invent an",
-  "  artifact name (e.g. Windows.EventLogs.Sysmon / .SecurityLog are NOT universal — check the list).",
-  "- Use each plugin's REAL argument names: parse_evtx() takes `filename=` (a path/glob), NOT `files=`;",
-  "  handles() takes `pid=`, NOT `process=`; read_file() takes `filenames=` (a LIST), NOT `filename=`.",
-  "  Access EVTX fields as `System.EventID.Value` / `EventData.<Name>`. To read one file:",
-  "  `SELECT Data FROM read_file(filenames=['C:/path/file.txt'])`. To read files found by glob,",
-  "  call it inline in the SELECT (no JOIN needed):",
-  "  `SELECT FullPath, read_file(filenames=[FullPath])[0].Data AS Content FROM glob(globs='...')`.",
-  "- VQL has NO SQL `JOIN`. Use inline function calls (e.g. read_file above) or",
-  "  `foreach(row={SELECT … FROM a()}, query={SELECT … FROM b()})` to correlate two plugins.",
-  "- hash() takes ONLY `path=` and returns an object with `.MD5` / `.SHA1` / `.SHA256` — there is NO",
-  "  `hashselect`/`algorithm`/`type` argument (inventing one fails to COMPILE, so the hunt never starts).",
-  "  Get a file's SHA256 as `hash(path=FullPath).SHA256`, computed ONCE as a column, not repeatedly in WHERE:",
-  "  `SELECT FullPath, hash(path=FullPath).SHA256 AS SHA256 FROM glob(globs='…/*.exe') WHERE SHA256 IN (…)`.",
-  "- NEVER hash with a full-disk glob like 'C:/**/*.exe' — it walks every file on the volume and times out.",
-  "  Scope globs to the directories the tradecraft uses (web roots, %TEMP%, Downloads, a service path).",
-  "- For an ABSOLUTE time use timestamp(string='2025-03-14T22:00:00Z'); epoch= takes unix SECONDS (a number).",
-  "- Velociraptor VQL has NO duration-suffix literals. Do NOT write `30d`, `7h`, `2w`. Use seconds",
-  "  arithmetic: `now() - 30 * 86400` (30 days), `now() - 3600` (1 hour). Wrap in `timestamp(epoch=...)`",
-  "  when comparing a timestamp column, e.g. `WHERE Mtime > timestamp(epoch=now() - 30 * 86400)`.",
-  "- Pivot on the case's REAL indicators (the exact hashes, file paths, process/service names, domains,",
-  "  IPs shown) — do NOT invent IOCs the case does not contain.",
-  "- For each: a short `title`; a `rationale` (which task it serves, what the query looks for, how to",
-  "  triage a hit); `severity` (Critical|High|Medium|Low|Info) of the underlying threat; and",
-  "  `mitreTechniques` (relevant technique ids).",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    suggestions: [{
-      taskId: "finding:f3",
-      endpointRelated: true,
-      title: "Enumerate the malicious service on WEB01",
-      rationale: "Task asks to investigate the service-persistence finding on WEB01. Collect the host's services and flag the one whose ImagePath matches the dropped binary; triage by start type and account.",
-      vql: "SELECT Name, DisplayName, PathName, StartMode FROM Artifact.Windows.System.Services() WHERE PathName =~ 'evil\\\\.exe'",
-      targetHost: "WEB01",
-      severity: "High",
-      mitreTechniques: ["T1543.003"],
-    }],
-  }, null, 2),
-].join("\n");
-
-// Hypothesise attacker actions for TIMELINE GAPS (issue #96). The deterministic gap detector has
-// already flagged suspiciously silent periods; the model reads each gap's bounding context — the
-// events just BEFORE the silence and just AFTER — and infers what the attacker most likely did during
-// the hole (e.g. cleared the log to hide credential dumping, disabled EDR before lateral movement).
-// It is grounded ONLY in the surrounding events; it does NOT invent activity. It also names which
-// SHADOW ARTIFACTS (from the catalog ids in the user message) would best reconstruct each window —
-// the deterministic catalog supplies the actual collection VQL, so the model only ranks relevance.
-export const GAP_HYPOTHESIS_PROMPT = [
-  "You are a senior DFIR analyst reasoning about COVERAGE GAPS in ONE investigation's forensic timeline.",
-  "Each gap below is a stretch where logging went silent — a COMPLETE gap (every source dark) is the",
-  "classic signature of cleared Windows Event Logs, a stopped collector/auditd, or disabled EDR. For",
-  "EACH gap, hypothesise what the attacker most likely did DURING the silence, reasoning from the events",
-  "immediately BEFORE the gap (what they were doing) and immediately AFTER (the state when logging",
-  "resumed).",
-  "",
-  "Rules:",
-  "- Ground every hypothesis ONLY in the surrounding events shown. Do NOT invent specific hosts, files,",
-  "  or accounts the context does not mention. If the surrounding events are too sparse to say anything,",
-  "  give a low confidence and say the gap is unexplained.",
-  "- Prefer the explanation that fits the tradecraft: a complete silence right after initial access often",
-  "  hides discovery/credential-access/defense-evasion (clearing logs to cover the next step); a gap",
-  "  bracketed by a logon and later persistence often hides lateral movement or staging.",
-  "- `gapId` MUST be the exact [gap-N] id shown for the gap the hypothesis is about. Emit at most one",
-  "  hypothesis per gap. It is fine to skip a gap that is plainly benign (e.g. an expected overnight quiet).",
-  "- `hypothesis`: 2-4 sentences naming the most probable attacker activity and WHY it fits the context.",
-  "- `attackerActions`: a few concrete candidate actions that would produce this exact gap.",
-  "- `confidence`: 0-100, honest — sparse context or an equally-likely benign explanation means LOW.",
-  "- `severity`: Critical|High|Medium|Low|Info — how serious the hypothesised activity would be.",
-  "- `mitreTechniques`: ATT&CK ids for the hypothesised actions (e.g. T1070.001 for cleared event logs).",
-  "- `recommendedArtifactIds`: from the SHADOW ARTIFACTS list in the user message, the ids whose data",
-  "  would best confirm THIS hypothesis (e.g. prefetch/amcache/shimcache/bam for execution, usn-journal/",
-  "  mft/lnk-files for file activity, srum for exfiltration). Use ONLY ids from that list.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    hypotheses: [{
-      gapId: "gap-1",
-      hypothesis: "The Security log was cleared immediately after the initial RDP logon and before the service-install seen on resume, consistent with the attacker wiping logs to hide credential access and staging during the silence.",
-      attackerActions: ["Cleared the Windows Security event log (wevtutil cl / EventLog API)", "Dumped LSASS or ran a discovery tool while logging was off"],
-      confidence: 55,
-      severity: "High",
-      mitreTechniques: ["T1070.001", "T1003.001"],
-      recommendedArtifactIds: ["prefetch", "amcache", "usn-journal", "srum"],
-    }],
-  }, null, 2),
-].join("\n");
-
-// Memory-forensics "Next-Step" agent (issue #101). The case already has Volatility 3 / Rekall output
-// imported as forensic events (the process tree, network connections, malfind injected code, command
-// lines, services, modules). Read that memory evidence, identify the ANOMALIES, and propose the EXACT
-// next Volatility 3 command the analyst should run to dig deeper. The agent CONSUMES the enumeration
-// (it does not re-implement Volatility) — it reasons over the rows and recommends the next plugin.
-export const MEMORY_NEXTSTEP_PROMPT = [
-  "You are a senior memory-forensics analyst guiding an ITERATIVE Volatility 3 investigation. Below is",
-  "the memory evidence ALREADY imported from a RAM image (Volatility 3 / Rekall output): the process",
-  "tree (process name, PID, PPID, parent name, start time, command line), network connections, malfind",
-  "(executable/injected private memory), command lines, services, and loaded modules. Identify the",
-  "ANOMALIES and, for each, propose the EXACT next Volatility 3 command the analyst should run to dig in.",
-  "",
-  "What counts as an anomaly (reason from the evidence shown, do NOT invent processes/PIDs):",
-  "- Process-tree masquerading / wrong parentage: svchost.exe NOT parented by services.exe; lsass.exe,",
-  "  csrss.exe, services.exe, wininit.exe with the wrong/absent parent; an unparented process; a system",
-  "  binary running from a non-system path; a user app spawning cmd.exe/powershell.exe.",
-  "- Injected/executable private memory (malfind hits) → confirm whether it is real injection or benign.",
-  "- Suspicious or external network connections owned by an unexpected process (possible C2/beacon).",
-  "- LOLBin / encoded-PowerShell / unusual command lines.",
-  "- A persistence-looking service or an unsigned/odd module.",
-  "",
-  "APPLY FALSE-POSITIVE AWARENESS (this is the most important part — every malfind hit is ingested as",
-  "High, but many RWX/executable-private-memory regions are BENIGN). Before proposing a dig-in step, ask",
-  "whether the hit is expected for that process:",
-  "- Security/AV engines legitimately use RWX: MsMpEng.exe (Microsoft Defender), MpDefenderCoreService,",
-  "  and third-party AV/EDR. These are the #1 malfind false positive.",
-  "- .NET/CLR and other JIT compilers emit RWX: powershell.exe, processes hosting the CLR, and",
-  "  JavaScript/Java/Lua JITs (browsers — chrome/msedge/firefox, node, java). RWX here is normal JIT.",
-  "- Some legitimate packers/installers and SearchHost.exe/Search/UI shell processes also show RWX.",
-  "When the malfind hit is on such a process AND nothing else about it is anomalous (correct image path,",
-  "correct parent, no suspicious cmdline/connection), SAY SO in the `anomaly`/`rationale`, set `severity`",
-  "to Low or Info, and make the next step a quick LEGITIMACY CONFIRMATION — `windows.cmdline` /",
-  "`windows.dlllist` to verify the image path, signer, and loaded modules — rather than dumping every",
-  "region. Reserve High/Critical and a real dig-in for genuinely unexpected processes, wrong parentage,",
-  "bad paths, or malfind correlated with a suspicious connection/command line.",
-  "",
-  "Rules:",
-  "- Each `command` MUST be a single, real, copy-pasteable Volatility 3 command. Use `vol -f <image>`",
-  "  as the prefix (the analyst substitutes their image path for <image>) followed by a REAL Volatility 3",
-  "  plugin and its REAL options, e.g.:",
-  "    vol -f <image> windows.malfind --pid 1234",
-  "    vol -f <image> windows.dlllist --pid 1234",
-  "    vol -f <image> windows.cmdline --pid 1234",
-  "    vol -f <image> windows.handles --pid 1234",
-  "    vol -f <image> windows.netscan",
-  "    vol -f <image> windows.pstree",
-  "    vol -f <image> windows.getsids --pid 1234",
-  "    vol -f <image> windows.svcscan",
-  "  Use Linux/Mac plugin names (linux.* / mac.*) instead if the evidence is clearly from that OS.",
-  "  Use the REAL plugin/option names — do NOT invent plugins or flags, and do NOT use Volatility 2",
-  "  syntax (no `--profile`, no `vol.py -f mem.raw pslist`-style v2 plugin names).",
-  "- STRONGLY PREFER commands that produce a TABLE the analyst can paste/import straight back into this",
-  "  tool (malfind, cmdline, handles, dlllist, netscan, pstree, svcscan, getsids, privileges, …). Do NOT",
-  "  add `--dump` and do NOT suggest a plain `windows.dumpfiles`/`windows.procdump` as the step UNLESS",
-  "  dumping is genuinely the right next move — a dump writes a RAW BINARY .dmp/.exe to disk, which is",
-  "  NOT something this tool can ingest. When you DO recommend a dump, the `rationale` MUST say the .dmp",
-  "  is for OFFLINE analysis (YARA/`capa`/`strings`/upload to a malware sandbox) and that the analyst",
-  "  imports THOSE results back (this tool ingests sandbox reports) — the .dmp itself is not re-imported.",
-  "- PREFER suggesting plugins that have NOT been run yet (the user message lists the already-imported",
-  "  plugins) when they would advance the investigation — the point is the NEXT step, not re-running",
-  "  what is already on the timeline. Pivot on a SPECIFIC PID/process from the evidence wherever the",
-  "  plugin takes `--pid`; set `pid` to that PID.",
-  "- Prefer a few HIGH-SIGNAL next steps over many near-duplicates. If nothing in the evidence looks",
-  "  anomalous, it is fine to return fewer (or no) suggestions.",
-  "- For each: a short `anomaly` (the observation that triggered it, naming the real process/PID); the",
-  "  `command`; the `plugin` it runs (e.g. windows.malfind); a `rationale` (why run it + how to triage",
-  "  what it returns); `severity` (Critical|High|Medium|Low|Info) of the underlying anomaly;",
-  "  `pid` (the targeted PID, or \"\"); and `mitreTechniques` (relevant ATT&CK ids, e.g. T1055 for injection).",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    suggestions: [{
-      anomaly: "svchost.exe (PID 1234) is parented by explorer.exe (PID 4500), not services.exe — classic masquerading.",
-      command: "vol -f <image> windows.malfind --pid 1234",
-      plugin: "windows.malfind",
-      rationale: "A mis-parented svchost is a strong injection/masquerade signal. malfind dumps executable private memory in the process; triage any MZ/shellcode region by yara-scanning the dump and pivot on its imports.",
-      severity: "High",
-      pid: "1234",
-      mitreTechniques: ["T1055", "T1036.005"],
-    }],
-  }, null, 2),
-].join("\n");
-
-// Translate a free-text analyst request into a runnable hunting query per platform (issue #100).
-// The analyst describes the activity in plain English; the model maps that intent onto each requested
-// platform's REAL schema (the per-platform reference is supplied in the user message). EPHEMERAL like
-// ask()/suggestHunts(): no state change. The Velociraptor query is deployable as-is via launchHunt, so
-// the VQL shape constraints mirror what splitVqlStatements expects (one self-contained statement).
-export const QUERY_TRANSLATE_PROMPT = [
-  "You are a senior DFIR detection engineer. An analyst will give you a request in PLAIN ENGLISH describing",
-  "the activity they want to find in their logs (e.g. \"PowerShell downloading a file and then executing it\",",
-  "\"outbound RDP from this host\", \"new local administrator accounts\"). Translate that intent into a runnable",
-  "hunting query for EACH target platform listed in the user message, grounded in that platform's REAL schema",
-  "(the tables / plugins / field names given for it).",
-  "",
-  "Rules:",
-  "- Emit one entry per TARGET PLATFORM key shown in the user message — use the exact key (velociraptor,",
-  "  defender, elastic, splunk, sigma, yara, suricata). Do NOT invent platforms or emit one not requested.",
-  "- Ground every query in the platform's REAL schema shown for it — its actual tables/plugins/field names.",
-  "  Do NOT invent table or field names; prefer the canonical fields listed.",
-  "- Capture the analyst's FULL intent, including sequencing/relationships where the platform allows it (e.g.",
-  "  a parent→child process relationship, \"download THEN execute\"). When a platform can't express a relation,",
-  "  approximate with the closest field filters and note the limitation in `caveats`.",
-  "- If the request references a specific case entity (\"this host\", \"that IP/hash\"), use the matching value",
-  "  from the PIVOTABLE INDICATORS list — do NOT invent indicators the case does not contain.",
-  "- Velociraptor `query` MUST be a SINGLE, self-contained, CLIENT-side VQL statement — one",
-  "  `SELECT … FROM <plugin>(…) WHERE …`. glob() uses FORWARD slashes; VQL has NO SQL JOIN (use foreach() or",
-  "  inline calls) and NO duration literals (use now() - N * 86400). Do NOT put a blank line inside one query.",
-  "- KQL / ES|QL / SPL queries must be directly runnable (piped where idiomatic). Sigma is a YAML detection",
-  "  rule; Suricata is `alert … (msg:…; …; sid:9000001; rev:1;)`; YARA targets FILE CONTENT.",
-  "- If a platform genuinely cannot express the request (e.g. YARA or Suricata for a pure process-behavior",
-  "  request with no file/network indicator), set `notApplicable` true, leave `query` empty, and explain why",
-  "  in `caveats` — do NOT force a meaningless query.",
-  "- For each entry: a short `label`; the `query`; an `explanation` (how it captures the request + what a hit",
-  "  looks like); optional `caveats` (assumptions, field-mapping notes, what to verify before trusting hits).",
-  "- Also return a one-sentence `interpretation` of how you understood the request, so the analyst can confirm",
-  "  intent before running anything.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    interpretation: "Find PowerShell processes that download a file and then execute it.",
-    queries: [{
-      platform: "velociraptor",
-      label: "PowerShell download-and-execute (live processes)",
-      query: "SELECT Pid, Ppid, Name, CommandLine, Exe FROM pslist() WHERE Name =~ '(?i)powershell' AND CommandLine =~ '(?i)(DownloadString|DownloadFile|Invoke-WebRequest|iwr|curl|wget)' AND CommandLine =~ '(?i)(Invoke-Expression|iex|Start-Process|-enc)'",
-      explanation: "Lists running PowerShell processes whose command line shows BOTH a download primitive and an execution primitive; a hit is one process doing both.",
-      caveats: "Live process list only — pair with EID 4104 script-block logs / Sysmon 1 for historical coverage.",
-      notApplicable: false,
-    }, {
-      platform: "defender",
-      label: "PowerShell download then execute",
-      query: "DeviceProcessEvents\n| where FileName =~ \"powershell.exe\"\n| where ProcessCommandLine has_any (\"DownloadString\",\"DownloadFile\",\"Invoke-WebRequest\",\"iwr\",\"curl\",\"wget\")\n| where ProcessCommandLine has_any (\"Invoke-Expression\",\"iex\",\"Start-Process\",\"-enc\")",
-      explanation: "Returns PowerShell process events whose command line contains both a download and an execution primitive.",
-      caveats: "Tune the keyword lists; join DeviceNetworkEvents to confirm the download egress.",
-      notApplicable: false,
-    }],
-  }, null, 2),
-].join("\n");
-
-export const getSystemPrompt = (): string => resolvePrompt("SYSTEM", SYSTEM_PROMPT);
-export const getCsvPrompt = (): string => resolvePrompt("CSV", CSV_SYSTEM_PROMPT);
-export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT);
-export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
-export const getObservePrompt = (): string => resolvePrompt("OBSERVE", OBSERVE_PROMPT);
-
 /** What one deep-pass run did, for the analyst and the route response. */
 export interface DeepPassResult {
   aborted: boolean;
@@ -1457,59 +233,6 @@ export interface DeepPassResult {
   batchesFailed: number;  // batches whose response never parsed — that slice went unread
   observations: number;   // observations that survived sanitising
 }
-
-export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
-export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
-export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
-export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
-export const getPlaybookHuntPrompt = (): string => resolvePrompt("PBHUNTS", PLAYBOOK_HUNT_PROMPT);
-export const getGapHypothesisPrompt = (): string => resolvePrompt("GAPHYP", GAP_HYPOTHESIS_PROMPT);
-export const getMemoryNextStepPrompt = (): string => resolvePrompt("MEMNEXT", MEMORY_NEXTSTEP_PROMPT);
-export const getQueryTranslatePrompt = (): string => resolvePrompt("QUERYXLATE", QUERY_TRANSLATE_PROMPT);
-export const getReconcilePrompt = (): string => resolvePrompt("RECONCILE", RECONCILE_PROMPT);
-export const getExplainEventPrompt = (): string => resolvePrompt("EXPLAIN", EXPLAIN_EVENT_PROMPT);
-export const getRemediationPrompt = (): string => resolvePrompt("REMEDIATION", REMEDIATION_PROMPT);
-export const getFpSimilarityPrompt = (): string => resolvePrompt("FPSIMILARITY", FP_SIMILARITY_PROMPT);
-export const getHypothesisReviewPrompt = (): string => resolvePrompt("HYPREVIEW", HYPOTHESIS_REVIEW_PROMPT);
-export const getStarredReportPrompt = (): string => resolvePrompt("STARREDREPORT", STARRED_REPORT_PROMPT);
-export const getViewSummaryPrompt = (): string => resolvePrompt("VIEWSUMMARY", VIEW_SUMMARY_PROMPT);
-export const getSessionSummaryPrompt = (): string => resolvePrompt("SESSIONSUMMARY", SESSION_SUMMARY_PROMPT);
-
-export const IMPORTER_PROMPT = [
-  "You are writing a DECLARATIVE IMPORTER DEFINITION for the DFIR Companion. Output ONLY a single",
-  "JSON object conforming to the schema below — no prose, no markdown fences.",
-  "",
-  "The importer tells the Companion how to (1) RECOGNIZE a file by its shape, and (2) MAP each row",
-  "into a forensic event + IOCs. It is pure data; no code runs.",
-  "",
-  "SCHEMA (all fields):",
-  "- id: kebab-case unique id (not a built-in name). label: human name. version: 1.",
-  "- match: how to detect the file. format: csv|json|ndjson|auto. For CSV use requireHeaders (all",
-  "  present) / anyHeaders (>=1 present). For JSON use requireKeys / anyKeys / keyEquals {key: regex}.",
-  "  Optional filenamePattern (regex). priority: lower = tried earlier (default 100).",
-  "  Every regex is ReDoS-checked and REJECTED if it can backtrack catastrophically: no quantifier",
-  "  inside a repeated group ((a+)+, (\\d{1,3})+), no repeated group whose alternatives can start",
-  "  with the same character ((a|ab)+), no adjacent open-ended repeats (.*.*). Keep them simple.",
-  "- map: timestamp {from:[cols], format:auto|iso|epoch_s|epoch_ms} (REQUIRED); description: a",
-  "  template string with {{ColumnName}} placeholders (REQUIRED); severity: a fixed level OR",
-  "  {from:[col], map:{value:Level}, default:Level}; asset (host), user (account), processName,",
-  "  parentName, sha256, md5, path, srcIp, dstIp, port: each {from:[cols], transform?}; mitre:",
-  "  {from:[col]} (parses Txxxx) or {fixed:[...]}; iocs: list of {type,from:[cols]} or",
-  "  {autoExtract:[cols]}. Levels: Critical|High|Medium|Low|Info. transforms: trim|lowercase|",
-  "  basename|cleanIp|defang|refang.",
-  "- options: { aggregate:true, minSeverity?, maxEvents?, maxIocs? }.",
-  "",
-  "WORKED EXAMPLE (a valid importer):",
-  JSON.stringify(EXAMPLE_IMPORTER_SPEC, null, 2),
-  "",
-  "Now write an importer for THIS file. Paste a representative sample of your exported file below,",
-  "then I will return one JSON importer definition that maps it for the DFIR Companion.",
-  "",
-  "FILE SAMPLE:",
-  "<<< paste a few representative rows/records of your export here >>>",
-].join("\n");
-
-export const getImporterPrompt = (): string => resolvePrompt("IMPORTGEN", IMPORTER_PROMPT);
 
 // Result of the two view-scoped AI summaries (starred report / view summary). `eventCount` is the
 // full deduplicated match; `usedEvents` what actually fit the AI input budget.
@@ -1598,6 +321,7 @@ export interface PipelineOptions {
   // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).
   aiCostStore?: AiCostStore;
+  operationalMetrics?: OperationalMetricsStore;
   correlationProfileStore?: CorrelationProfileStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
@@ -1700,13 +424,54 @@ async function withRetry<T>(
   }
 }
 
+/**
+ * How many raw super-timeline rows viewSummary may read in one call (#384).
+ *
+ * Was 10,000. That is more than a model can usefully summarise and far more than the analyst can
+ * check, and it made the one sanctioned exception to the forensic/super-timeline rule the widest
+ * path into the raw record in the codebase. A few hundred rows is enough for "what am I looking
+ * at?" and small enough that the answer stays reviewable.
+ */
+export const VIEW_SUMMARY_MAX_ROWS = 500;
+
 export class AnalysisPipeline {
   private readonly log: Logger;
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
   private kevCatalogCache: KevCatalog | undefined;
 
+  /**
+   * The ONLY thing src/analysis/ingest/ ever receives (#384).
+   *
+   * The first cut of the ingest extraction passed `this` and let AnalysisPipeline satisfy
+   * ImportContext structurally, which meant `opts` and four methods had to become public. That
+   * bought the importers a narrow interface at the cost of handing every OTHER consumer of the
+   * pipeline the entire options bag -- the AI providers, every store, every tuning knob. A boundary
+   * that has to widen the class to exist is not much of a boundary.
+   *
+   * This adapter closes over the five permitted operations instead, so the class members stay
+   * private and the importers still see nothing beyond what ImportContext declares. `opts` is
+   * exposed through getters rather than a snapshot because the settings-reload path rebuilds live
+   * options in place; a copy taken at construction would go stale the first time an operator saved
+   * a setting.
+   */
+  private readonly importCtx: ImportContext;
+
   constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+    this.importCtx = {
+      opts: {
+        get stateStore() {
+          return opts.stateStore;
+        },
+        get onState() {
+          return opts.onState;
+        },
+      },
+      withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),
+      mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),
+      noteEmptyImport: (caseId, o, kind, total) => this.noteEmptyImport(caseId, o, kind, total),
+      persistPlasoParsed: (caseId, parsed, o) => this.persistPlasoParsed(caseId, parsed, o),
+    };
   }
 
   // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
@@ -1746,7 +511,29 @@ export class AnalysisPipeline {
         `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
         { caseId },
       );
+      if (willRetry) void this.opts.operationalMetrics?.record({ type: "ai_retry", phase: safeAiPhase(label), errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other") });
     });
+  }
+
+  private async analyzeProvider(provider: AIProvider, req: AnalyzeRequest, label: string): Promise<AnalyzeResult> {
+    const startedAt = Date.now();
+    try {
+      const result = await provider.analyze(req);
+      const usage = result.usage;
+      void this.opts.operationalMetrics?.record({
+        type: "ai", phase: safeAiPhase(label), durationMs: Date.now() - startedAt,
+        success: true, inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0,
+        costUsd: usage?.costUSD ?? 0, errorKind: "none",
+      });
+      return result;
+    } catch (error) {
+      void this.opts.operationalMetrics?.record({
+        type: "ai", phase: safeAiPhase(label), durationMs: Date.now() - startedAt,
+        success: false, inputTokens: 0, outputTokens: 0, costUsd: 0,
+        errorKind: safeAiErrorKind(error instanceof ProviderError ? error.kind : "other"),
+      });
+      throw error;
+    }
   }
 
   /**
@@ -1834,7 +621,7 @@ export class AnalysisPipeline {
       { caseId },
     );
     if (!policy.enabled) {
-      const result = await provider.analyze(req);
+      const result = await this.analyzeProvider(provider, req, label);
       this.logAiUsage(caseId, label, provider, result);
       await this.recordAiCost(caseId, label, provider, result);
       return parseJsonLoose(result.rawText);
@@ -1925,21 +712,13 @@ export class AnalysisPipeline {
     // re-approve) the same import one chunk at a time.
     if (!skipPresidioGate) await this.presidioGate(caseId, maskedPrompt, known);
 
-    const result = await provider.analyze({ ...req, userPrompt: maskedPrompt, images });
+    const result = await this.analyzeProvider(provider, { ...req, userPrompt: maskedPrompt, images }, label);
     this.logAiUsage(caseId, label, provider, result);
     await this.recordAiCost(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
   }
 
-  /**
-   * Scan already-masked text with Presidio and stop the call if it surfaces a value this case has
-   * not seen before. Approved values live in the discovered list, so on the retry they are already
-   * in `known.custom` and anon.apply() masks them — no second pass is needed here.
-   *
-   * Fails CLOSED. An analyst who enabled Presidio believes names are being masked; silently
-   * proceeding when the container is down or answers with garbage would leave that belief wrong
-   * and unfalsifiable.
-   */
+  /** Scan already-masked text with Presidio; fail closed on a scan error or unapproved value. */
   private async presidioGate(caseId: string, maskedText: string, known: KnownEntities): Promise<void> {
     const presidio = this.opts.presidio;
     if (!presidio) return;
@@ -1992,30 +771,7 @@ export class AnalysisPipeline {
   private static readonly PRESIDIO_SCAN_CHUNK_CHARS = 50_000;
   private static readonly PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
 
-  /**
-   * Scan an entire import prompt once, up front, instead of letting the chunk loop hit
-   * presidioGate repeatedly. analyzeCsv/analyzeLog call this before their batch loop starts, then
-   * pass skipPresidioGate=true into every analyzeRestored() call in that loop — so an import
-   * produces exactly ONE approval round trip, no matter how many chunks it is batched into.
-   *
-   * Callers pass BOTH halves of what a batch prompt carries — the state summary and the payload —
-   * not just the payload. Scanning the payload alone was a fail-open: the summary (finding titles
-   * and descriptions, open threads, recent forensic events and known IOC values, all RESTORED to
-   * real values) is prepended to every batch prompt and every batch skips the gate, so it went to
-   * the provider unscanned.
-   *
-   * KNOWN, DELIBERATE RESIDUAL GAP: `state` mutates as batches merge, so batch N's prompt carries
-   * a summary REVISED by batches 1..N-1 — text that did not exist when this ran. One up-front
-   * scan cannot cover those revisions, and re-gating per batch is exactly the stall-approve-restart
-   * loop this method exists to avoid. The revisions are model output derived from payload text
-   * that WAS scanned, and the next non-import AI call (ask/synthesis/explain/screenshot) gates on
-   * its own prompt, which includes the then-current summary — so anything genuinely new surfaces
-   * there instead. Widening this would mean gating per batch; that is a product decision, not an
-   * oversight here.
-   *
-   * Fails CLOSED, same as presidioGate: an unreachable container throws rather than letting the
-   * import proceed unscanned.
-   */
+  /** Scan one complete masked import up front so batched CSV/log analysis needs one approval round. */
   private async presidioPreScan(caseId: string, text: string, known: KnownEntities, anon: Anonymizer): Promise<void> {
     const presidio = this.opts.presidio;
     if (!presidio) return;
@@ -2437,49 +1193,8 @@ export class AnalysisPipeline {
   // finding maps straight to a forensic event + IOCs with NO AI extraction call.
   // Scan-lifecycle/info noise (module init, "Info" level) is dropped by default.
   // Findings/attacker-path still come from a later synthesize().
-  async importThor(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "t3") so ids never collide
-      importedAt: string;
-      thor?: ThorImportOptions;  // filtering overrides (dropInfo, dropLifecycleModules…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseThorReport(jsonText, opts.thor);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "THOR", parsed.total);
-
-    // Assign stable, collision-free ids and validate the delta against the schema
-    // (fills defaults like relatedFindingIds). No model call — purely structural.
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({ ...e, id: `${opts.idPrefix}e${i + 1}` })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `THOR import: ${parsed.kept} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importThor(...args: ImporterArgs<typeof ingest.importThor>): Promise<InvestigationState> {
+    return ingest.importThor(this.importCtx, ...args);
   }
 
   // Import a SIEM / EDR JSON export (Elastic/Kibana, Splunk, an EDR console, a raw
@@ -2487,209 +1202,29 @@ export class AnalysisPipeline {
   // container is unwrapped, Windows/Sysmon events get a per-EID mapping, other records
   // fall back to field auto-detection, and repetitive events are aggregated. The
   // detected tool name (from the filename / source) tags each event's `sources`.
-  async importSiem(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
-      importedAt: string;
-      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSiemExport(jsonText, opts.siem);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "SIEM", parsed.total);
-
-    const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [source] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSiem(...args: ImporterArgs<typeof ingest.importSiem>): Promise<InvestigationState> {
+    return ingest.importSiem(this.importCtx, ...args);
   }
 
   // Import Windows Event XML through the shared deterministic SIEM/EVTX mapping.
-  async importEvtxXml(
-    caseId: string,
-    xmlText: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "s3") so ids never collide
-      importedAt: string;
-      siem?: SiemImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void | Promise<void>; onParseProgress?: (done: number, total: number, detail?: string) => void | Promise<void>; signal?: AbortSignal; startBatch?: number;
-    },
-  ): Promise<InvestigationState> {
-    if ((opts.startBatch ?? 0) >= 1) { await opts.onProgress?.(1, 1); return this.opts.stateStore.load(caseId); }
-    let parseTotal = 0;
-    const parsedRaw = await parseEvtxXmlProgress(xmlText, opts.siem, (done, total) => { parseTotal = total; return opts.onParseProgress?.(done, total * 2, "reading Windows events"); }, (done, total) => opts.onParseProgress?.(parseTotal + done, parseTotal + total, "processing Windows events"), opts.signal);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Windows Event Log (XML)", parsed.total);
-
-    const source = detectTool(opts.label) ?? "Windows Event Log";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [source],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Windows Event Log (XML) import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      if (opts.signal?.aborted) throw Object.assign(new Error("import processing cancelled; stored evidence retained"), { name: "AbortError" });
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      await opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEvtxXml(...args: ImporterArgs<typeof ingest.importEvtxXml>): Promise<InvestigationState> {
+    return ingest.importEvtxXml(this.importCtx, ...args);
   }
 
   // Import a Linux/Unix shell history file (.bash_history / .zsh_history / …). Deterministic
   // host-triage: one forensic event per command at the artifact's own time (bash HISTTIMEFORMAT
   // `#<epoch>` / zsh extended history), Info by default with a conservative tradecraft bump. The
   // account is derived from the filename and shown in each event.
-  async importBashHistory(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "b3") so ids never collide
-      importedAt: string;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const user = userFromHistoryFilename(opts.label);
-    const parsedRaw = parseShellHistoryFile(text, { user });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Shell history", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Shell history"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Shell history import${user ? ` (${user})` : ""}: ${parsed.kept} command(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importBashHistory(...args: ImporterArgs<typeof ingest.importBashHistory>): Promise<InvestigationState> {
+    return ingest.importBashHistory(this.importCtx, ...args);
   }
 
   // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
   // deterministic wrappers exactly: parse -> severity floor -> standard delta (findings/MITRE empty,
   // MITRE rides inside each event) -> mergeDelta -> save -> notify. Does NOT depend on any shared-runner
   // refactor of the built-ins.
-  async importDeclarative(
-    caseId: string,
-    text: string,
-    opts: {
-      importer: ExternalImporter;
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-      // Per-importer health (#84): fired with the raw parse stats (total/kept/dropped/format) right
-      // after parsing, BEFORE the zero-events early return, so a run that legitimately produced
-      // nothing still counts as a completed (not failed) run in the diagnostics table.
-      onParsed?: (result: SiemParseResult) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = opts.importer.parse(text, { minSeverity: opts.minSeverity });
-    opts.onParsed?.(parsedRaw);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, opts.importer.label, parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [opts.importer.label],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `${opts.importer.label} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [opts.label] });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importDeclarative(...args: ImporterArgs<typeof ingest.importDeclarative>): Promise<InvestigationState> {
+    return ingest.importDeclarative(this.importCtx, ...args);
   }
 
   // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
@@ -2697,38 +1232,8 @@ export class AnalysisPipeline {
   // routed there exclusively) that is never synthesized; this is how the analyst pulls the events that
   // matter into the analyzed timeline. Reuses mergeDelta (dedups forensic events by id) — a stored super
   // event keeps its id, so a double-promote is a no-op. No AI here; the caller re-synthesizes.
-  async promoteSuperTimeline(
-    caseId: string,
-    events: ForensicEvent[],
-    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
-  ): Promise<InvestigationState> {
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      if (!events.length) return state;
-      const delta = deltaSchema.parse({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: opts.note ?? `Promoted ${events.length} event(s) from the super-timeline`, summary: "",
-        forensicEvents: events.map((e) => ({ ...e })),
-      });
-      state = await this.mergeWithAliases(state, delta, { windowSequence: -1, timestamp: opts.importedAt, sourceScreenshots: [] });
-      // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
-      // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
-      // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-      if (opts.tagById) {
-        const tagged = new Set(Object.keys(opts.tagById));
-        state = {
-          ...state,
-          forensicTimeline: state.forensicTimeline.map((e) =>
-            tagged.has(e.id)
-              ? { ...e, provenance: [...new Set([...(e.provenance ?? []), ...opts.tagById![e.id]])] }
-              : e,
-          ),
-        };
-      }
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      return state;
-    });
+  promoteSuperTimeline(...args: ImporterArgs<typeof ingest.promoteSuperTimeline>): Promise<InvestigationState> {
+    return ingest.promoteSuperTimeline(this.importCtx, ...args);
   }
 
   // Import Chainsaw (WithSecure) hunt output or a raw EVTX-as-JSON dump. Like THOR/SIEM
@@ -2736,174 +1241,24 @@ export class AnalysisPipeline {
   // per-EID Windows mapping as the SIEM import, and — for Chainsaw — the matched Sigma
   // rule's level drives severity while its `attack.tXXXX` tags become MITRE techniques.
   // Each event is tagged Chainsaw / EVTX as its source for cross-source correlation.
-  async importChainsaw(
-    caseId: string,
-    jsonText: string,
-    opts: {
-      label: string;
-      idPrefix: string;               // unique per import (e.g. "c3") so ids never collide
-      importedAt: string;
-      chainsaw?: ChainsawImportOptions; // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Chainsaw", parsed.total);
-
-    const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [fallback],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importChainsaw(...args: ImporterArgs<typeof ingest.importChainsaw>): Promise<InvestigationState> {
+    return ingest.importChainsaw(this.importCtx, ...args);
   }
 
   // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
   // other deterministic paths there is no AI call: the matched Sigma rule's level drives
   // severity, its title leads the description, its tactics/tags become MITRE, and IOCs /
   // asset / process-chain come from the rendered detail fields. Tagged Hayabusa as source.
-  async importHayabusa(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                  // unique per import (e.g. "h3") so ids never collide
-      importedAt: string;
-      hayabusa?: HayabusaImportOptions;  // filtering overrides (aggregate, minSeverity, maxEvents…)
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Hayabusa", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Hayabusa"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importHayabusa(...args: ImporterArgs<typeof ingest.importHayabusa>): Promise<InvestigationState> {
+    return ingest.importHayabusa(this.importCtx, ...args);
   }
 
   // Import Velociraptor native JSON output (collection results / hunt export). Like the
   // other deterministic paths there is no AI call: each row is classified (Sigma / YARA /
   // EventLog / generic) and mapped — detection rows are verdict-driven, the rest auto-detect
   // the artifact's own time + IOCs. Every event is tagged Velociraptor as its source.
-  async importVelociraptor(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                       // unique per import (e.g. "v3") so ids never collide
-      importedAt: string;
-      velociraptor?: VelociraptorImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      veloUrl?: string;          // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
-    // label so generic/detection events show their source — e.g. "DetectRaptor.Windows.Detection.NamedPipes".
-    const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-    let artifact = rawArtifact;
-    try { artifact = decodeURIComponent(rawArtifact); } catch { /* malformed %xx — keep the raw label */ }
-    // Chunked async parse: reports (rowsDone, rowsTotal) as it goes (→ the import job's progress bar
-    // and the "importing X/Y" status) and yields to the event loop between chunks, so a huge MFT/USN
-    // import streams live progress instead of freezing the server on one synchronous pass.
-    const parsedRaw = await parseVelociraptorJsonProgress(text, { artifact, ...opts.velociraptor }, opts.onProgress);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Velociraptor", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return {
-        ...rest, id, sources: rest.sources?.length ? rest.sources : ["Velociraptor"],
-        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
-      };
-    });
-
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importVelociraptor(...args: ImporterArgs<typeof ingest.importVelociraptor>): Promise<InvestigationState> {
+    return ingest.importVelociraptor(this.importCtx, ...args);
   }
 
   // Import ECAR — EDR Common Activity Record telemetry (NDJSON of (object, action) endpoint events).
@@ -2911,425 +1266,60 @@ export class AnalysisPipeline {
   // reads `timestamp_ms`, scrapes PUBLIC IPs as IOCs, and keeps severity conservative (Info evidence,
   // bumped only on real tradecraft) so high-volume raw telemetry doesn't flood the timeline. See
   // ecarImport.ts for the mapping (and the lsass-access false-positive rationale).
-  async importEcar(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import so ids never collide
-      importedAt: string;
-      ecar?: EcarImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseEcarJson(text, { ...opts.ecar });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "ECAR", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [ECAR_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEcar(...args: ImporterArgs<typeof ingest.importEcar>): Promise<InvestigationState> {
+    return ingest.importEcar(this.importCtx, ...args);
   }
 
   // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
   // (no AI): raw web/proxy telemetry, Info by default with a conservative bump only for an
   // access-denied response; git smart-HTTP clone/push tagged T1213. See combinedLogImport.ts.
-  async importCombinedLog(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      combinedLog?: CombinedLogImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Web/proxy access-log", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : [COMBINED_LOG_SOURCE] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCombinedLog(...args: ImporterArgs<typeof ingest.importCombinedLog>): Promise<InvestigationState> {
+    return ingest.importCombinedLog(this.importCtx, ...args);
   }
 
   // Import a Cisco ASA firewall syslog export. Deterministic (no AI): Built/Teardown telemetry
   // stays Info, an explicit Deny bumps to Low, dynamic-NAT-translation noise is dropped,
   // year-less timestamps are re-anchored by the mergeDelta year-clamp. See ciscoAsaImport.ts.
-  async importCiscoAsa(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      ciscoAsa?: CiscoAsaImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.ciscoAsa?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseCiscoAsaLog(text, { ...opts.ciscoAsa, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cisco ASA", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [CISCO_ASA_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cisco ASA import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCiscoAsa(...args: ImporterArgs<typeof ingest.importCiscoAsa>): Promise<InvestigationState> {
+    return ingest.importCiscoAsa(this.importCtx, ...args);
   }
 
   // Import a Snort / Suricata "fast" alert log — a real IDS verdict feed. Deterministic (no AI):
   // severity is the rule's Priority verdict, public src/dst IPs become IOCs, year-less timestamps are
   // re-anchored by the mergeDelta year-clamp. See snortImport.ts.
-  async importSnort(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      snort?: SnortImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.snort?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseSnortLog(text, { ...opts.snort, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Snort", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SNORT_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSnort(...args: ImporterArgs<typeof ingest.importSnort>): Promise<InvestigationState> {
+    return ingest.importSnort(this.importCtx, ...args);
   }
 
   // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
   // match becomes a file-match event (default Medium, bumped only on an explicit rule-meta signal),
   // matched file + hash meta become IOCs. YARA output is undated, so mergeDelta stamps events at import
   // time. Used by the external-tools run path (#211). See yaraImport.ts.
-  async importYara(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      yara?: YaraImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseYaraOutput(text, { ...opts.yara });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "YARA", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [YARA_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `YARA import: ${parsed.kept} match event(s) from ${parsed.total} match(es)` +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importYara(...args: ImporterArgs<typeof ingest.importYara>): Promise<InvestigationState> {
+    return ingest.importYara(this.importCtx, ...args);
   }
 
   // Import a plain Linux/Unix syslog export (RFC 5424 / RFC 3164). Deterministic (no AI): host
   // telemetry stays Info, an auth-failure or crit/alert/emerg PRI bumps to Low, the host is carried
   // as the event's asset, RFC-3164 year-less timestamps are re-anchored by the mergeDelta year-clamp.
   // See syslogImport.ts.
-  async importSyslog(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      syslog?: SyslogImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Year-less BSD-style timestamps default to the CURRENT calendar year unless the case already has
-    // an established dominant year to anchor onto — see pickImportYear (a big year-less import can
-    // outweigh clampOutlierYears' post-hoc ≥90% minority-outlier guard).
-    const priorState = await this.opts.stateStore.load(caseId).catch(() => null);
-    const assumeYear = opts.syslog?.assumeYear ?? pickImportYear(priorState?.forensicTimeline ?? []);
-    const parsedRaw = parseSyslog(text, { ...opts.syslog, ...(assumeYear !== undefined ? { assumeYear } : {}) });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Syslog", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [SYSLOG_SOURCE],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Syslog import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSyslog(...args: ImporterArgs<typeof ingest.importSyslog>): Promise<InvestigationState> {
+    return ingest.importSyslog(this.importCtx, ...args);
   }
 
   // Import network-monitor logs — Suricata `eve.json` and Zeek JSON (Security Onion's
   // network side). Deterministic (no AI call): the timeline is built from the detections
   // (Suricata alerts + Zeek notices); surrounding telemetry (dns/http/tls/files/conn)
   // contributes IOCs only. Events are tagged Suricata / Zeek.
-  async importNetwork(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "n3") so ids never collide
-      importedAt: string;
-      network?: NetworkImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    // Pass the import filename so per-stream Zeek JSON (conn.json / dns.json / … with no `_path`)
-    // routes to the right stream (#197).
-    const parsedRaw = parseNetworkLogs(text, { ...opts.network, filename: opts.network?.filename ?? opts.label });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Network", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Suricata"] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
-        (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importNetwork(...args: ImporterArgs<typeof ingest.importNetwork>): Promise<InvestigationState> {
+    return ingest.importNetwork(this.importCtx, ...args);
   }
 
   // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
   // Sigma log detections — as the browser extension pushes them (or a raw export). Deterministic
   // (no AI). Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
-  async importSocrates(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "s4") so ids never collide
-      importedAt: string;
-      socrates?: SocratesImportOptions;
-      minSeverity?: Severity;          // gate-aware import floor (unified Import button)
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSocrates(text, opts.socrates);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "SO-CRATES", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["SO-CRATES"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `SO-CRATES import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
-        ` — ${parsed.alerts} Suricata alert(s), ${parsed.yara} YARA, ${parsed.sigma} Sigma, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSocrates(...args: ImporterArgs<typeof ingest.importSocrates>): Promise<InvestigationState> {
+    return ingest.importSocrates(this.importCtx, ...args);
   }
 
   // Import Security Onion Console (SOC) events — the Alerts / Hunt views the browser extension
@@ -3337,107 +1327,16 @@ export class AnalysisPipeline {
   // event's own `event.severity_label` drives severity, `rule.name` leads the description, ECS
   // threat fields become MITRE, and source/destination IPs + app-layer fields become IOCs.
   // Events are tagged "Security Onion".
-  async importSecurityOnion(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                // unique per import (e.g. "so3") so ids never collide
-      importedAt: string;
-      securityOnion?: SecurityOnionImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Security Onion", parsed.total);
-
-    const eventIdByAggKey = new Map<string, string>();
-    const forensicEvents = parsed.events.map((e, i) => {
-      const { aggKey, ...rest } = e;
-      const id = `${opts.idPrefix}e${i + 1}`;
-      if (aggKey) eventIdByAggKey.set(aggKey, id);
-      return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["Security Onion"] };
-    });
-    const raw = {
-      findings: [],
-      iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
-        id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value,
-        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
-      })),
-      mitreTechniques: [],
-      forensicEvents,
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSecurityOnion(...args: ImporterArgs<typeof ingest.importSecurityOnion>): Promise<InvestigationState> {
+    return ingest.importSecurityOnion(this.importCtx, ...args);
   }
 
   // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
   // UsnJrnl, MFT, SRUM, Recycle Bin, Shellbags). Deterministic (no AI call): the EZ tool is
   // detected from the CSV header, then each row maps to a forensic event reading the
   // artifact's own time + file/hash/process IOCs. Events are tagged by artifact name.
-  async importKape(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;             // unique per import (e.g. "k3") so ids never collide
-      importedAt: string;
-      kape?: KapeImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseKapeCsv(text, opts.kape);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [parsed.artifact],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importKape(...args: ImporterArgs<typeof ingest.importKape>): Promise<InvestigationState> {
+    return ingest.importKape(this.importCtx, ...args);
   }
 
   // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Deterministic (no AI call):
@@ -3445,318 +1344,52 @@ export class AnalysisPipeline {
   // unscored process/task rows become Info evidence, the bulk File super-timeline is dropped
   // (unless `fileTelemetry`), and Active-Connection remote IPs become IOCs. Events tagged
   // "Cyber Triage".
-  async importCybertriage(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;                  // unique per import (e.g. "ct3") so ids never collide
-      importedAt: string;
-      cybertriage?: CybertriageImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCybertriage(text, opts.cybertriage);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Cyber Triage", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Cyber Triage"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cyber Triage import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
-        (parsed.notable > 0 ? `, ${parsed.notable} scored item(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
+    return ingest.importCybertriage(this.importCtx, ...args);
   }
 
   // Import Microsoft 365 Unified Audit Log + Entra ID (sign-in / directory audit) data.
   // Deterministic (no AI call): each record is classified (UAL / sign-in / audit) and mapped,
   // severity derived from the operation (BEC tradecraft) or Entra's own risk verdict; the
   // source IP becomes an IOC and the UPN is surfaced for the asset graph.
-  async importM365(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "m3") so ids never collide
-      importedAt: string;
-      m365?: M365ImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseM365Audit(text, opts.m365);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Microsoft 365", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Microsoft 365"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
+    return ingest.importM365(this.importCtx, ...args);
   }
 
   // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
   // severity derived from the action (IAM persistence, logging/detection tampering, S3
   // exposure, secrets access) + denied/root/console-failure bumps; the caller IP → IOC.
-  async importAws(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "a3") so ids never collide
-      importedAt: string;
-      aws?: AwsImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCloudTrail(text, opts.aws);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "AWS CloudTrail", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `AWS CloudTrail import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
+    return ingest.importAws(this.importCtx, ...args);
   }
 
   // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
   // is routed (GCP / Azure) and mapped, severity derived from the action (+ denied bump); the
   // caller IP → IOC and the principal email is surfaced for the asset graph.
-  async importCloudActivity(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "g3") so ids never collide
-      importedAt: string;
-      cloud?: CloudActivityImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseCloudActivity(text, opts.cloud);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Cloud activity", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Cloud Audit"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Cloud activity import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importCloudActivity(...args: ImporterArgs<typeof ingest.importCloudActivity>): Promise<InvestigationState> {
+    return ingest.importCloudActivity(this.importCtx, ...args);
   }
 
   // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit
   // Event → a forensic event whose severity is derived from the (verb, resource, subresource) tuple
   // (pod exec/attach, secret access, RBAC change, privileged-pod create, anonymous access), Info by
   // default. Source IP → IOC. Tagged Kubernetes Audit.
-  async importK8sAudit(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "k3") so ids never collide
-      importedAt: string;
-      k8s?: K8sAuditImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseK8sAudit(text, opts.k8s);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Kubernetes audit", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Kubernetes Audit"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Kubernetes audit import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
+    return ingest.importK8sAudit(this.importCtx, ...args);
   }
 
   // Import osquery scheduled-query result logs (differential `columns` rows + `snapshot` sets).
   // Deterministic (no AI call): Info-by-default endpoint telemetry, with a conservative tradecraft
   // bump on a command-line column; columns → IOCs (path/hash/ip/process). Tagged osquery.
-  async importOsquery(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;          // unique per import (e.g. "o3") so ids never collide
-      importedAt: string;
-      osquery?: OsqueryImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseOsqueryLog(text, opts.osquery);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "osquery", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["osquery"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `osquery import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importOsquery(...args: ImporterArgs<typeof ingest.importOsquery>): Promise<InvestigationState> {
+    return ingest.importOsquery(this.importCtx, ...args);
   }
 
   // Import a Plaso / log2timeline super-timeline (psort CSV — dynamic or l2tcsv). Deterministic
   // (no AI call): each row is an Info evidence event read at its own time, with IOCs scraped
   // from the message (hashes/URLs/IPs) and the source file path. Tagged Plaso.
-  async importPlaso(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "p3") so ids never collide
-      importedAt: string;
-      plaso?: PlasoImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parsePlasoCsv(text, opts.plaso);
-    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  importPlaso(...args: ImporterArgs<typeof ingest.importPlaso>): Promise<InvestigationState> {
+    return ingest.importPlaso(this.importCtx, ...args);
   }
 
   // Streaming-from-disk Plaso import: for super-timelines too large to hold as one JS string (a
@@ -3764,29 +1397,8 @@ export class AnalysisPipeline {
   // length"). Reads the file line-by-line via node:readline and feeds parsePlasoFromLines, which
   // keeps memory bounded by the distinct-key set, not the row count. Same downstream merge as
   // importPlaso. The route persists the evidence file separately (by copy, not as a string).
-  async importPlasoFile(
-    caseId: string,
-    filePath: string,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      plaso?: PlasoImportOptions;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8", highWaterMark: 1 << 20 }),
-      crlfDelay: Infinity,
-    });
-    let parsedRaw: PlasoParseResult;
-    try {
-      parsedRaw = await parsePlasoFromLines(rl, opts.plaso);
-    } finally {
-      rl.close();
-    }
-    return this.persistPlasoParsed(caseId, parsedRaw, opts);
+  importPlasoFile(...args: ImporterArgs<typeof ingest.importPlasoFile>): Promise<InvestigationState> {
+    return ingest.importPlasoFile(this.importCtx, ...args);
   }
 
   // Shared tail of both Plaso entry points: apply the severity floor, build the delta and merge it
@@ -3834,254 +1446,39 @@ export class AnalysisPipeline {
   // Deterministic (no AI call): records sharing a serial collapse into one logical event, mapped
   // to severity/MITRE by record type (logins, account/group mgmt, sudo, SELinux denials, audit-config
   // tampering), bumped on a failed auth or a suspicious command. Read at the audit() epoch. Tagged auditd.
-  async importAuditd(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "ad3") so ids never collide
-      importedAt: string;
-      auditd?: AuditdImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseAuditdLog(text, opts.auditd);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "auditd", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["auditd"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `auditd import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importAuditd(...args: ImporterArgs<typeof ingest.importAuditd>): Promise<InvestigationState> {
+    return ingest.importAuditd(this.importCtx, ...args);
   }
 
   // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Deterministic
   // (no AI call): each entry is read at its own time (_SOURCE/__REALTIME µs epoch), severity derived
   // from PRIORITY then bumped from the message (sshd auth, sudo, useradd, kernel), with IOCs scraped
   // from _EXE/_COMM and the MESSAGE. Tagged journald.
-  async importJournald(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "jd3") so ids never collide
-      importedAt: string;
-      journald?: JournaldImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseJournald(text, opts.journald);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "journald", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["journald"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `journald import: ${parsed.kept} event(s) from ${parsed.total} entr(y/ies)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importJournald(...args: ImporterArgs<typeof ingest.importJournald>): Promise<InvestigationState> {
+    return ingest.importJournald(this.importCtx, ...args);
   }
 
   // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Deterministic
   // (no AI call): Falco rule hits are the DETECTIONS (verdict-first: priority → severity, tags →
   // MITRE) and surface on the timeline; raw sysdig syscall events are telemetry → Info evidence;
   // both contribute proc/file/network IOCs. Tagged Falco / sysdig.
-  async importSysdig(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "sd3") so ids never collide
-      importedAt: string;
-      sysdig?: SysdigImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSysdig(text, opts.sysdig);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "sysdig/Falco", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["sysdig"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `sysdig/Falco import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.alerts > 0 ? `, ${parsed.alerts} Falco alert(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSysdig(...args: ImporterArgs<typeof ingest.importSysdig>): Promise<InvestigationState> {
+    return ingest.importSysdig(this.importCtx, ...args);
   }
 
   // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export). Deterministic
   // (no AI call): rule.level drives severity (≥13 Critical, ≥10 High, ≥7 Medium, else Info),
   // rule.mitre.technique → MITRE, agent.name → asset, data.srcip/dstip/md5/sha256/url → IOCs.
-  async importWazuh(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "w3") so ids never collide
-      importedAt: string;
-      wazuh?: WazuhImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Wazuh", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Wazuh"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Wazuh import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)` +
-        (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importWazuh(...args: ImporterArgs<typeof ingest.importWazuh>): Promise<InvestigationState> {
+    return ingest.importWazuh(this.importCtx, ...args);
   }
 
   // Import a malware-sandbox detonation report (CAPEv2 or CrowdStrike Falcon Sandbox).
   // Deterministic (no AI call): the sample verdict + each behavioural signature map to events
   // (severity from the report's own score/verdict, MITRE from its ATT&CK), and every
   // dropped/extracted file hash + network host/domain/URL is harvested as an IOC.
-  async importSandbox(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "sb3") so ids never collide
-      importedAt: string;
-      sandbox?: SandboxImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseSandboxReport(text, opts.sandbox);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0) return this.noteEmptyImport(caseId, opts, "Sandbox", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Sandbox"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Sandbox import (${parsed.format}): ${parsed.kept} event(s)` +
-        (parsed.signatures > 0 ? `, ${parsed.signatures} signature(s)` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importSandbox(...args: ImporterArgs<typeof ingest.importSandbox>): Promise<InvestigationState> {
+    return ingest.importSandbox(this.importCtx, ...args);
   }
 
   // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -4090,202 +1487,31 @@ export class AnalysisPipeline {
   // port IOCs), malfind → High injected-code events (ATT&CK T1055), cmdline → command-line events
   // (bumped on LOLBin/encoded tradecraft), svcscan/modules → service/driver evidence. Tagged
   // "Volatility" / "Rekall" for cross-source correlation; reads the artifact's own time.
-  async importMemory(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "mem3") so ids never collide
-      importedAt: string;
-      memory?: MemoryImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Memory", parsed.total);
-
-    const tool = parsed.tool || "Volatility";
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : [tool],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
-        (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
-        (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
-        (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importMemory(...args: ImporterArgs<typeof ingest.importMemory>): Promise<InvestigationState> {
+    return ingest.importMemory(this.importCtx, ...args);
   }
 
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
   // ONE forensic event dated at the message's own Date: header, severity DERIVED from the email's
   // SPF/DKIM/DMARC verdict + sender heuristics; URLs, sender/reply-to domains, originating IP and
   // attachment names/hashes become IOCs. Covers ATT&CK T1566 (Phishing). Tagged "Email".
-  async importEmail(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "em3") so ids never collide
-      importedAt: string;
-      email?: EmailImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseEmail(text, opts.email);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "Email", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["Email"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `Email import (${parsed.format}): ${parsed.kept} event(s)` +
-        (parsed.subject ? ` — "${parsed.subject.slice(0, 80)}"` : "") +
-        `, ${parsed.iocs.length} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importEmail(...args: ImporterArgs<typeof ingest.importEmail>): Promise<InvestigationState> {
+    return ingest.importEmail(this.importCtx, ...args);
   }
 
   // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
   // case/alert records → forensic events (severity from TheHive's own 1–4 scale, MITRE from
   // ATT&CK-tagged tags, TLP/PAP labels prepended); observable records → IOCs by dataType.
-  async importTheHive(
-    caseId: string,
-    text: string,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "th3") so ids never collide
-      importedAt: string;
-      thehive?: TheHiveImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseTheHive(text, opts.thehive);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "TheHive", parsed.total);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["TheHive"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `TheHive import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
-        (parsed.observables > 0 ? `, ${parsed.observables} observable(s)` : "") +
-        `, ${parsed.iocCount} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importTheHive(...args: ImporterArgs<typeof ingest.importTheHive>): Promise<InvestigationState> {
+    return ingest.importTheHive(this.importCtx, ...args);
   }
 
   // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
   // case rows already fetched from the IRIS API (analysis/irisImport.ts parses them deterministically,
   // NO AI call): timeline → forensic events, IOCs → IOCs, assets → evidence events. All feed the
   // same forensic timeline via mergeDelta, exactly like the other importers.
-  async importIris(
-    caseId: string,
-    data: IrisCaseData,
-    opts: {
-      label: string;
-      idPrefix: string;            // unique per import (e.g. "iris3") so ids never collide
-      importedAt: string;
-      iris?: IrisImportOptions;
-      minSeverity?: Severity;    // gate-aware import floor (unified Import button) — see applySeverityFloor
-      onProgress?: (done: number, total: number) => void;
-    },
-  ): Promise<InvestigationState> {
-    const parsedRaw = parseIrisCase(data, opts.iris);
-    const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-    if (parsed.events.length === 0 && parsed.iocs.length === 0) return this.noteEmptyImport(caseId, opts, "DFIR-IRIS", parsed.timelineCount);
-
-    const raw = {
-      findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
-      mitreTechniques: [],
-      forensicEvents: parsed.events.map((e, i) => ({
-        ...e, id: `${opts.idPrefix}e${i + 1}`, sources: e.sources?.length ? e.sources : ["DFIR-IRIS"],
-      })),
-      threadsOpened: [],
-      threadsClosed: [],
-      timelineNote: `DFIR-IRIS import (${parsed.caseName ?? `case #${parsed.irisCaseId ?? "?"}`}): ` +
-        `${parsed.kept} event(s) from ${parsed.timelineCount} timeline + ${parsed.assetCount} asset(s)` +
-        `, ${parsed.iocCount} IOC(s)`,
-      summary: "",
-    };
-    const delta = deltaSchema.parse(raw);
-
-    return this.withStateLock(caseId, async () => {
-      let state = await this.opts.stateStore.load(caseId);
-      state = await this.mergeWithAliases(state, delta, {
-        windowSequence: -1,
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await this.opts.stateStore.save(state);
-      this.opts.onState?.(state);
-      opts.onProgress?.(1, 1);
-      return state;
-    });
+  importIris(...args: ImporterArgs<typeof ingest.importIris>): Promise<InvestigationState> {
+    return ingest.importIris(this.importCtx, ...args);
   }
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE
@@ -4334,24 +1560,34 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
-  // Explain a single forensic event in context (issue #141). Single text-only AI call; EPHEMERAL —
-  // no state change. Returns structured analysis: what happened, why it matters, ATT&CK mapping,
-  // normal vs suspicious context, pivot queries, and evidence for/against maliciousness.
+  // Explain a single forensic event in context (issue #141). Single text-only AI call.
+  //
+  // NO LONGER EPHEMERAL, and that is the point. Asking about a raw super-timeline event PROMOTES it
+  // into the forensic timeline first, so the model still only ever reads the forensic record — the
+  // invariant forensicGate.ts states. Promotion is the same seam runSecondLook uses, and it is
+  // honest: clicking "explain this" is the analyst declaring the event interesting, which is
+  // precisely what the forensic timeline means. One event, recorded with a note saying why.
   async explainEvent(caseId: string, eventId: string): Promise<ExplainEventResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("event explanation");
-    const loaded = await this.opts.stateStore.load(caseId);
+    let loaded = await this.opts.stateStore.load(caseId);
 
-    // Resolve the focal event + the universe of events to build context from. Normally the forensic
-    // timeline, but a raw super-timeline event (imported into the super-timeline and never promoted) is
-    // NOT in InvestigationState — fall back to the super-timeline store so it can still be explained.
     let event = loaded.forensicTimeline.find((e) => e.id === eventId);
-    let universe = loaded.forensicTimeline;
     if (!event && this.opts.superTimelineStore) {
-      const superEvents = (await this.opts.superTimelineStore.query(caseId, {})).events;
-      event = superEvents.find((e) => e.id === eventId);
-      if (event) universe = superEvents;
+      // TARGETED lookup, not a paged scan (#406). The previous `query(caseId, {})` returned only the
+      // first DEFAULT_SUPER_QUERY_LIMIT (500) rows and searched those, so explaining an event past
+      // row 500 threw "event not found" for an event that plainly existed.
+      const raw = await this.opts.superTimelineStore.get(caseId, eventId);
+      if (raw) {
+        loaded = await this.promoteSuperTimeline(caseId, [raw], {
+          importedAt: new Date().toISOString(),
+          note: `Promoted 1 raw event for "explain this event"`,
+        });
+        event = loaded.forensicTimeline.find((e) => e.id === eventId);
+      }
     }
     if (!event) throw new Error(`event not found: ${eventId}`);
+    // The universe is the forensic timeline, always — including the event just promoted into it.
+    const universe = loaded.forensicTimeline;
 
     // Context: events adjacent in time + events on the same asset (up to 15 total).
     const sorted = [...universe].sort((a, b) =>
@@ -4896,16 +2132,34 @@ export class AnalysisPipeline {
   // positive filtering: the analyst hand-picked these events. EPHEMERAL — no state change.
   async starredReport(caseId: string, starredIds: string[]): Promise<StarredSummaryResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("starred report");
-    const loaded = await this.opts.stateStore.load(caseId);
+    let loaded = await this.opts.stateStore.load(caseId);
     const wanted = new Set(starredIds);
-    // FORENSIC copies win the union: imports dual-write the same event ids to both stores, but all
-    // later severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
+    // FORENSIC copies win: imports dual-write the same event ids to both stores, but all later
+    // severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
     // only — the super copy is frozen at import time, so it must not shadow the re-graded one.
-    // Super-only events (raw host triage never promoted) still resolve via the fill-the-gaps pass.
     const byId = new Map<string, ForensicEvent>();
     for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+
+    // Anything the analyst starred that lives only in the raw record is PROMOTED before the model
+    // sees it, so the report is still built from the forensic timeline alone. Starring an event is
+    // the analyst saying it matters; promotion is that judgement written down.
+    //
+    // Fetched by id rather than with `.all(caseId)`, which materialised the ENTIRE super-timeline —
+    // tens of thousands of rows — to resolve a handful of starred ones.
     if (this.opts.superTimelineStore) {
-      for (const e of await this.opts.superTimelineStore.all(caseId)) if (wanted.has(e.id) && !byId.has(e.id)) byId.set(e.id, e);
+      const missing = starredIds.filter((id) => !byId.has(id));
+      const promotable: ForensicEvent[] = [];
+      for (const id of missing) {
+        const raw = await this.opts.superTimelineStore.get(caseId, id);
+        if (raw) promotable.push(raw);
+      }
+      if (promotable.length) {
+        loaded = await this.promoteSuperTimeline(caseId, promotable, {
+          importedAt: new Date().toISOString(),
+          note: `Promoted ${promotable.length} starred raw event(s) for the starred report`,
+        });
+        for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+      }
     }
     const all = sortByEventTime([...byId.values()]);
     if (!all.length) throw new Error("no starred events");
@@ -4982,21 +2236,41 @@ export class AnalysisPipeline {
     };
   }
 
-  // Summarize the analyst's CURRENT super-timeline view: the route passes the exact filter set the
-  // dashboard has applied plus the tag label map (tags live outside the pipeline). EPHEMERAL.
+  /**
+   * Summarize the analyst's CURRENT super-timeline view.
+   *
+   * THIS IS THE ONE SANCTIONED EXCEPTION to the rule that the model reads only the forensic
+   * timeline, and it is written down here so nobody has to infer it from the code.
+   *
+   * The other two raw-record paths — explainEvent and starredReport — promote before asking, so the
+   * invariant holds literally for them. This one cannot: it summarises whatever the analyst has
+   * filtered to, which can be thousands of rows. Promoting them would write thousands of Info-graded
+   * events into the forensic timeline permanently, drowning the record the rule exists to protect.
+   * Obeying the rule that way would cause exactly the harm the rule prevents.
+   *
+   * So it reads the raw record directly, under three constraints that keep it safe:
+   *   1. It only ever runs when the analyst presses the button. Nothing automatic reaches this.
+   *   2. It is EPHEMERAL — no promotion, no state change. Nothing it reads enters the case.
+   *   3. It is capped at VIEW_SUMMARY_MAX_ROWS, far below the old 10,000, and it tells the analyst
+   *      when the cap truncated their view rather than silently summarising a slice.
+   */
   async viewSummary(caseId: string, filters: SuperQuery, labelMap?: SuperLabelMap): Promise<StarredSummaryResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("view summary");
     if (!this.opts.superTimelineStore) throw new Error("super-timeline not configured");
     const loaded = await this.opts.stateStore.load(caseId);
-    const { events: matched } = await this.opts.superTimelineStore.query(
-      caseId, { ...filters, offset: 0, limit: 10_000 }, labelMap);
+    const { events: matched, total } = await this.opts.superTimelineStore.query(
+      caseId, { ...filters, offset: 0, limit: VIEW_SUMMARY_MAX_ROWS }, labelMap);
     if (!matched.length) throw new Error("no events match the current filters");
 
     const prompt = getViewSummaryPrompt();
     const { events, render } = this.fitViewEvents(matched, estimateTokens(prompt) + 300);
 
+    // `total` is what MATCHED the filters; `matched.length` is what the cap let through. Reporting
+    // both means an analyst looking at a 40,000-row filter is told the summary covers a slice,
+    // rather than being left to assume it covered everything.
+    const capped = total > matched.length;
     const userPrompt =
-      `EVENTS (${events.length} of ${matched.length} matching the analyst's current filters, chronological):\n` +
+      `EVENTS (${events.length} of ${matched.length}${capped ? ` read from ${total} matching (capped at ${VIEW_SUMMARY_MAX_ROWS})` : " matching the analyst's current filters"}, chronological):\n` +
       events.map(render).join("\n") +
       `\n\nWrite the overview as JSON.`;
 

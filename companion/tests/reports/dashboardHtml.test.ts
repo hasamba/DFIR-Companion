@@ -132,6 +132,22 @@ describe("dashboard.html", () => {
     expect(html).toContain("/report/report.md?download=1");
   });
 
+  it("controls review, approval, immutable release, supersession and frozen report packs", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).toContain("Self-review &amp; approve");
+    expect(html).toContain("Submit");
+    expect(html).toContain("Request changes");
+    expect(html).toContain("Release frozen snapshot");
+    expect(html).toContain("Released-report chain intact");
+    expect(html).toContain("explicitly supersedes");
+    for (const pack of ["technical", "executive", "legal", "ioc"]) {
+      expect(html).toContain(`/packs/${pack}`);
+    }
+    expect(html).toContain('id="rtRequireIndependentReview"');
+    expect(html).toContain('id="rtRequireEvidenceLinks"');
+    expect(html).toContain("requiredSections: [...rtRequiredSections]");
+  });
+
   it("offers a PDF export (print-to-PDF) via the Export menu", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain('value="report-pdf"');
@@ -480,11 +496,15 @@ describe("dashboard.html", () => {
 
   it("shows a per-case AI cost breakdown card in Settings → Diagnostics, fetched alongside /diagnostics", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    // Helper functions for formatting cost/tokens and rendering the card.
-    expect(html).toContain("function diagFmtCost(");
-    expect(html).toContain("function diagAiCostBucketRow(");
-    expect(html).toContain("function renderAiCostCard(");
-    expect(html).toContain('diagCard("AI cost — this case", rows)');
+    // The renderers moved to public/js/diagnostics-panel.js (#384) and are covered directly by
+    // tests/reports/diagnosticsPanel.test.ts, which asserts far more than their presence. What
+    // still belongs HERE is the wiring: the page must load that module and call into it.
+    const panel = await readFile(new URL("../../../public/js/diagnostics-panel.js", import.meta.url), "utf8");
+    expect(panel).toContain("function diagFmtCost(");
+    expect(panel).toContain("function diagAiCostBucketRow(");
+    expect(panel).toContain("function renderAiCostCard(");
+    expect(panel).toContain('diagCard("AI cost — this case", rows)');
+    expect(html).toContain('<script type="module" src="/js/diagnostics-panel.js">');
     // loadDiagnostics fetches /cases/:id/ai-cost in parallel with /diagnostics, scoped to the
     // currently-connected case, and passes it into renderDiagnostics for placement.
     expect(html).toMatch(/function loadDiagnostics\(\)[\s\S]{0,600}\/cases\/\$\{encodeURIComponent\(caseId\)\}\/ai-cost/);
@@ -493,7 +513,15 @@ describe("dashboard.html", () => {
     // Empty caseId must not attempt a fetch to a malformed URL — costFetch resolves to null instead.
     expect(html).toMatch(/const costFetch = caseId\s*\n\s*\? fetch/);
     // The card renders directly after "AI connectivity & config", not at the end of the panel.
-    expect(html).toMatch(/function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ renderAiCostCard\(cost\) \+ importers/);
+    expect(html).toMatch(
+      /function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ window\.DfirDiagnostics\.renderAiCostCard\(cost\) \+ importers/,
+    );
+  });
+
+  it("keeps the support preview and download actions the same width", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html.match(/class="diag-support-action"/g)).toHaveLength(2);
+    expect(html).toMatch(/\.diag-support-action\s*\{\s*min-width:\s*220px;/);
   });
 
   it("the bundle run form offers a time scope and a mapping preview", async () => {

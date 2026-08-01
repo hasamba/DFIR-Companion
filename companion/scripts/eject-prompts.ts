@@ -8,7 +8,7 @@ import {
   SYSTEM_PROMPT, CSV_SYSTEM_PROMPT, LOG_SYSTEM_PROMPT, SYNTHESIS_PROMPT, ASK_PROMPT, EXEC_SUMMARY_PROMPT,
   HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, GAP_HYPOTHESIS_PROMPT, MEMORY_NEXTSTEP_PROMPT, QUERY_TRANSLATE_PROMPT,
   TAGGER_RULE_PROMPT, STARRED_REPORT_PROMPT, VIEW_SUMMARY_PROMPT,
-} from "../src/analysis/pipeline.js";
+} from "../src/analysis/ai/prompts/index.js";
 import { RECONCILE_PROMPT } from "../src/analysis/secondOpinion.js";
 
 const dir = resolve(process.argv[2] || "./prompts");

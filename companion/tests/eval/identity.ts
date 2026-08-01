@@ -8,7 +8,7 @@ import {
 } from "../../src/analysis/pipeline.js";
 import type { AIProvider } from "../../src/providers/provider.js";
 import type { EvaluationIdentity } from "./baseline.js";
-import { evaluationSourceHash } from "./changeGate.js";
+import { collectPromptSource, evaluationSourceHash } from "./changeGate.js";
 
 export function evaluationPromptHash(): string {
   return hashManifestValue({
@@ -20,11 +20,12 @@ export function evaluationPromptHash(): string {
 }
 
 export async function currentEvaluationSourceHash(): Promise<string> {
-  const [pipelineSource, envExample] = await Promise.all([
-    readFile(new URL("../../src/analysis/pipeline.ts", import.meta.url), "utf8"),
+  const repoRoot = new URL("../../../", import.meta.url);
+  const [promptSource, envExample] = await Promise.all([
+    collectPromptSource((path) => readFile(new URL(path, repoRoot), "utf8")),
     readFile(new URL("../../.env.example", import.meta.url), "utf8"),
   ]);
-  return evaluationSourceHash(pipelineSource, envExample);
+  return evaluationSourceHash(promptSource, envExample);
 }
 
 export async function evaluationIdentity(

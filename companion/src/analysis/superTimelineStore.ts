@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { EntityPage, EntityQuery } from "./stateStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
@@ -15,6 +16,7 @@ import {
 } from "./superTimeline.js";
 import { eventMatchesExclude, eventMatchesSearch } from "./searchFilter.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.js";
 
 // The super-timeline remains logically separate from the forensic timeline: it has a distinct
 // entity kind, query API, labels, cap, and no path into synthesis. Sharing the case database is a
@@ -45,7 +47,18 @@ export class SuperTimelineStore {
   constructor(
     private readonly cases: CaseStore,
     private readonly max: number = DEFAULT_SUPER_MAX,
+    private readonly operationalMetrics?: OperationalMetricsStore,
   ) {}
+
+  private recordQuery(index: QueryIndex, startedAt: number, rows: number): void {
+    void this.operationalMetrics?.record({
+      type: "query",
+      operation: "super_timeline",
+      index,
+      durationMs: Math.max(0, performance.now() - startedAt),
+      rows: Math.max(0, Math.floor(rows)),
+    });
+  }
 
   private databasePath(caseId: string): string {
     return join(this.cases.stateDir(caseId), INVESTIGATION_DB_FILENAME);
@@ -86,6 +99,7 @@ export class SuperTimelineStore {
    * event array is created just to return one dashboard page.
    */
   async query(caseId: string, q: SuperQuery = {}, labelMap?: SuperLabelMap): Promise<SuperQueryResult> {
+    const startedAt = performance.now();
     await this.ensureMigrated(caseId);
     const originSet = q.origins?.length ? new Set(q.origins) : null;
     const excludeSet = q.exclude?.length ? new Set(q.exclude) : null;
@@ -122,13 +136,15 @@ export class SuperTimelineStore {
       total++;
     }
 
-    return {
+    const result = {
       events,
       total,
       origins: [...origins].sort(),
       hosts: [...hosts].sort(),
       labelsAvailable: [...labelsAvailable].sort(),
     };
+    this.recordQuery(q.from || q.to ? "timestamp" : "ordinal", startedAt, events.length);
+    return result;
   }
 
   async get(caseId: string, id: string): Promise<ForensicEvent | null> {
@@ -146,6 +162,7 @@ export class SuperTimelineStore {
    * but keeps the dataset kind explicit so a caller can never accidentally cross the synthesis seam.
    */
   async queryIndexed(caseId: string, query: EntityQuery = {}): Promise<EntityPage<ForensicEvent>> {
+    const startedAt = performance.now();
     await this.ensureMigrated(caseId);
     const indexName = query.ioc ? "ioc" : query.technique ? "technique" : undefined;
     const page = await caseSqliteWorker.request<{
@@ -170,10 +187,27 @@ export class SuperTimelineStore {
         includeTotal: query.includeTotal,
       },
     });
-    return {
+    const result = {
       ...page,
       entities: page.entities.map(upgradeForensicEvent),
     };
+    const index: QueryIndex = query.ioc
+      ? "ioc"
+      : query.technique
+        ? "technique"
+        : query.entityId
+          ? "entity"
+          : query.host
+            ? "host"
+            : query.source
+              ? "source"
+              : query.severity
+                ? "severity"
+                : query.from || query.to
+                  ? "timestamp"
+                  : "ordinal";
+    this.recordQuery(index, startedAt, result.entities.length);
+    return result;
   }
 
   // Compatibility method for the tagger and targeted AI lookup. New large-case consumers should

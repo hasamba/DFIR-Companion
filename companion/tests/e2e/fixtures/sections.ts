@@ -14,17 +14,23 @@ import type { Page } from "@playwright/test";
  * view system REAPPLIES `style.display = "none"` on every render and would undo a direct
  * assignment before the assertion runs.
  *
+ * Delivered as a CONSTRUCTED stylesheet, not page.addStyleTag(). The dashboard serves a
+ * nonce-based CSP whose style-src has no 'unsafe-inline', so injecting a <style> element is
+ * blocked — correctly, and the test harness is not a reason to weaken it. adoptedStyleSheets goes
+ * through CSSOM, which CSP does not police, so the same rules apply with the policy left intact.
+ *
  * @param page  the page under test
  * @param ids   section ids, e.g. "sec-timeline"
  */
 export async function revealSections(page: Page, ...ids: string[]): Promise<void> {
-  const selector = ids.map((id) => `#${id}`).join(", ");
-  await page.addStyleTag({
-    content: `${selector} { display: block !important; } ${ids
-      .map((id) => `#${id}.collapsed > *`)
-      .join(", ")} { display: revert !important; }`,
-  });
   await page.evaluate((sectionIds) => {
+    const selector = sectionIds.map((id) => `#${id}`).join(", ");
+    const collapsed = sectionIds.map((id) => `#${id}.collapsed > *`).join(", ");
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(
+      `${selector} { display: block !important; } ${collapsed} { display: revert !important; }`,
+    );
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
     for (const id of sectionIds) document.getElementById(id)?.classList.remove("collapsed");
   }, ids);
 }

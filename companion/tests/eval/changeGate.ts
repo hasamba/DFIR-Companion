@@ -8,6 +8,33 @@ const PROMPT_CONSTANTS = [
   "SYNTHESIS_PROMPT",
 ] as const;
 
+/**
+ * Where the four hashed prompts live, relative to the repository root (#384).
+ *
+ * They moved out of pipeline.ts into src/analysis/ai/prompts/. The text is byte-identical, so the
+ * hash this file computes is unchanged by the move -- which is the point: a refactor that does not
+ * touch a prompt must not demand a fresh no-regression attestation.
+ *
+ * The legacy path is still consulted, because baseSourceHash() reads the MERGE BASE, and on any
+ * revision from before the move the prompts are still in pipeline.ts. Without the fallback the gate
+ * would compare a new-layout hash against nothing and report a spurious prompt change on every PR
+ * until the move lands on master.
+ */
+export const PROMPT_SOURCE_FILES = [
+  "companion/src/analysis/ai/prompts/extraction.ts",
+  "companion/src/analysis/ai/prompts/synthesis.ts",
+];
+export const LEGACY_PROMPT_SOURCE_FILE = "companion/src/analysis/pipeline.ts";
+
+/** Assemble the prompt source from whichever layout `read` can satisfy. */
+export async function collectPromptSource(read: (path: string) => Promise<string>): Promise<string> {
+  try {
+    return (await Promise.all(PROMPT_SOURCE_FILES.map((f) => read(f)))).join("\n");
+  } catch {
+    return read(LEGACY_PROMPT_SOURCE_FILE);
+  }
+}
+
 const ACTIVE_MODEL_LINE = /^(DFIR_(?:VISION_(?:PROVIDER|MODEL)|AI_SYNTH_(?:PROVIDER|MODEL)))=(.*)$/;
 
 export interface NoRegressionAttestation {
@@ -58,11 +85,9 @@ function activeModelDefaults(envExample: string): string[] {
     .sort();
 }
 
-export function evaluationSourceHash(pipelineSource: string, envExample: string): string {
+export function evaluationSourceHash(promptSource: string, envExample: string): string {
   const evaluatedSource = {
-    prompts: Object.fromEntries(
-      PROMPT_CONSTANTS.map((name) => [name, extractConstant(pipelineSource, name)]),
-    ),
+    prompts: Object.fromEntries(PROMPT_CONSTANTS.map((name) => [name, extractConstant(promptSource, name)])),
     models: activeModelDefaults(envExample),
   };
   return createHash("sha256").update(JSON.stringify(evaluatedSource)).digest("hex");

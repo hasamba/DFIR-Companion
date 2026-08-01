@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
 import { unlockCookieName, verifyUnlockToken, parseCookieHeader } from "./casePassword.js";
+import { CSP_NONCE_PLACEHOLDER, withNonce } from "../http/securityHeaders.js";
 
 // Routes that must stay reachable on a locked case:
 //  - lock-status / unlock / lock: how a client checks/clears/re-locks in the first place.
@@ -22,8 +23,9 @@ function pathOnly(url: string): string {
 function lockPromptHtml(caseId: string): string {
   const safeCaseId = encodeURIComponent(caseId);
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Case locked</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:420px;margin:80px auto;text-align:center;">
+<html><head><meta charset="utf-8"><title>Case locked</title>
+<style nonce="${CSP_NONCE_PLACEHOLDER}">body{font-family:system-ui,sans-serif;max-width:420px;margin:80px auto;text-align:center}</style>
+</head><body>
 <h2>&#128274; This case is password-protected</h2>
 <p>Open <a href="/dashboard?caseId=${safeCaseId}">the dashboard</a> and enter the password to view it.</p>
 </body></html>`;
@@ -70,7 +72,10 @@ export function createCaseLockGate(store: CaseStore, secret: Buffer) {
     }
 
     if (path === `/cases/${caseId}/present`) {
-      res.status(401).type("html").send(lockPromptHtml(caseId));
+      res
+        .status(401)
+        .type("html")
+        .send(withNonce(lockPromptHtml(caseId), String(res.locals.cspNonce ?? "")));
       return;
     }
     res.status(401).json({ error: "locked", caseId });

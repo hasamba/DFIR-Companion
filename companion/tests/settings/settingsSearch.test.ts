@@ -206,6 +206,24 @@ describe("dashboard.html search wiring", () => {
     expect(seen.size).toBeGreaterThan(entry.length);
   });
 
+  // Stylesheets go through the same allowlist and fail even more quietly than modules: the page
+  // renders normally, so a 404 on /css/a11y.css costs the focus ring, the skip link and
+  // reduced-motion support with nothing visibly broken to prompt anyone to look.
+  it("whitelists every /css/ stylesheet the dashboard links", async () => {
+    const [h, server] = await Promise.all([
+      dashboard(),
+      readFile(new URL("../../src/http/staticAssets.ts", import.meta.url), "utf8"),
+    ]);
+    const linked = [...h.matchAll(/<link[^>]+href="(\/css\/[^"]+)"/g)].map((m) => m[1]);
+    expect(linked, "the dashboard links no stylesheet; this check would pass vacuously").not.toHaveLength(0);
+    for (const path of linked) {
+      expect(
+        server,
+        `${path} is linked by dashboard.html but not in STATIC_ASSETS (src/http/staticAssets.ts)`,
+      ).toContain(`"${path}": "text/css; charset=utf-8"`);
+    }
+  });
+
   it("publishes the config the module reads, and resets the box on open", async () => {
     const h = await dashboard();
     // Live references, not snapshots: the module calls applyMode() on clear so a tab Essential
