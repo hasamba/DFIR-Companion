@@ -424,6 +424,16 @@ async function withRetry<T>(
   }
 }
 
+/**
+ * How many raw super-timeline rows viewSummary may read in one call (#384).
+ *
+ * Was 10,000. That is more than a model can usefully summarise and far more than the analyst can
+ * check, and it made the one sanctioned exception to the forensic/super-timeline rule the widest
+ * path into the raw record in the codebase. A few hundred rows is enough for "what am I looking
+ * at?" and small enough that the answer stays reviewable.
+ */
+export const VIEW_SUMMARY_MAX_ROWS = 500;
+
 export class AnalysisPipeline {
   private readonly log: Logger;
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
@@ -1550,24 +1560,34 @@ export class AnalysisPipeline {
     }, this.opts.retries ?? 3, this.opts.backoffMs ?? 500);
   }
 
-  // Explain a single forensic event in context (issue #141). Single text-only AI call; EPHEMERAL —
-  // no state change. Returns structured analysis: what happened, why it matters, ATT&CK mapping,
-  // normal vs suspicious context, pivot queries, and evidence for/against maliciousness.
+  // Explain a single forensic event in context (issue #141). Single text-only AI call.
+  //
+  // NO LONGER EPHEMERAL, and that is the point. Asking about a raw super-timeline event PROMOTES it
+  // into the forensic timeline first, so the model still only ever reads the forensic record — the
+  // invariant forensicGate.ts states. Promotion is the same seam runSecondLook uses, and it is
+  // honest: clicking "explain this" is the analyst declaring the event interesting, which is
+  // precisely what the forensic timeline means. One event, recorded with a note saying why.
   async explainEvent(caseId: string, eventId: string): Promise<ExplainEventResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("event explanation");
-    const loaded = await this.opts.stateStore.load(caseId);
+    let loaded = await this.opts.stateStore.load(caseId);
 
-    // Resolve the focal event + the universe of events to build context from. Normally the forensic
-    // timeline, but a raw super-timeline event (imported into the super-timeline and never promoted) is
-    // NOT in InvestigationState — fall back to the super-timeline store so it can still be explained.
     let event = loaded.forensicTimeline.find((e) => e.id === eventId);
-    let universe = loaded.forensicTimeline;
     if (!event && this.opts.superTimelineStore) {
-      const superEvents = (await this.opts.superTimelineStore.query(caseId, {})).events;
-      event = superEvents.find((e) => e.id === eventId);
-      if (event) universe = superEvents;
+      // TARGETED lookup, not a paged scan (#406). The previous `query(caseId, {})` returned only the
+      // first DEFAULT_SUPER_QUERY_LIMIT (500) rows and searched those, so explaining an event past
+      // row 500 threw "event not found" for an event that plainly existed.
+      const raw = await this.opts.superTimelineStore.get(caseId, eventId);
+      if (raw) {
+        loaded = await this.promoteSuperTimeline(caseId, [raw], {
+          importedAt: new Date().toISOString(),
+          note: `Promoted 1 raw event for "explain this event"`,
+        });
+        event = loaded.forensicTimeline.find((e) => e.id === eventId);
+      }
     }
     if (!event) throw new Error(`event not found: ${eventId}`);
+    // The universe is the forensic timeline, always — including the event just promoted into it.
+    const universe = loaded.forensicTimeline;
 
     // Context: events adjacent in time + events on the same asset (up to 15 total).
     const sorted = [...universe].sort((a, b) =>
@@ -2112,16 +2132,34 @@ export class AnalysisPipeline {
   // positive filtering: the analyst hand-picked these events. EPHEMERAL — no state change.
   async starredReport(caseId: string, starredIds: string[]): Promise<StarredSummaryResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("starred report");
-    const loaded = await this.opts.stateStore.load(caseId);
+    let loaded = await this.opts.stateStore.load(caseId);
     const wanted = new Set(starredIds);
-    // FORENSIC copies win the union: imports dual-write the same event ids to both stores, but all
-    // later severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
+    // FORENSIC copies win: imports dual-write the same event ids to both stores, but all later
+    // severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
     // only — the super copy is frozen at import time, so it must not shadow the re-graded one.
-    // Super-only events (raw host triage never promoted) still resolve via the fill-the-gaps pass.
     const byId = new Map<string, ForensicEvent>();
     for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+
+    // Anything the analyst starred that lives only in the raw record is PROMOTED before the model
+    // sees it, so the report is still built from the forensic timeline alone. Starring an event is
+    // the analyst saying it matters; promotion is that judgement written down.
+    //
+    // Fetched by id rather than with `.all(caseId)`, which materialised the ENTIRE super-timeline —
+    // tens of thousands of rows — to resolve a handful of starred ones.
     if (this.opts.superTimelineStore) {
-      for (const e of await this.opts.superTimelineStore.all(caseId)) if (wanted.has(e.id) && !byId.has(e.id)) byId.set(e.id, e);
+      const missing = starredIds.filter((id) => !byId.has(id));
+      const promotable: ForensicEvent[] = [];
+      for (const id of missing) {
+        const raw = await this.opts.superTimelineStore.get(caseId, id);
+        if (raw) promotable.push(raw);
+      }
+      if (promotable.length) {
+        loaded = await this.promoteSuperTimeline(caseId, promotable, {
+          importedAt: new Date().toISOString(),
+          note: `Promoted ${promotable.length} starred raw event(s) for the starred report`,
+        });
+        for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+      }
     }
     const all = sortByEventTime([...byId.values()]);
     if (!all.length) throw new Error("no starred events");
@@ -2198,21 +2236,41 @@ export class AnalysisPipeline {
     };
   }
 
-  // Summarize the analyst's CURRENT super-timeline view: the route passes the exact filter set the
-  // dashboard has applied plus the tag label map (tags live outside the pipeline). EPHEMERAL.
+  /**
+   * Summarize the analyst's CURRENT super-timeline view.
+   *
+   * THIS IS THE ONE SANCTIONED EXCEPTION to the rule that the model reads only the forensic
+   * timeline, and it is written down here so nobody has to infer it from the code.
+   *
+   * The other two raw-record paths — explainEvent and starredReport — promote before asking, so the
+   * invariant holds literally for them. This one cannot: it summarises whatever the analyst has
+   * filtered to, which can be thousands of rows. Promoting them would write thousands of Info-graded
+   * events into the forensic timeline permanently, drowning the record the rule exists to protect.
+   * Obeying the rule that way would cause exactly the harm the rule prevents.
+   *
+   * So it reads the raw record directly, under three constraints that keep it safe:
+   *   1. It only ever runs when the analyst presses the button. Nothing automatic reaches this.
+   *   2. It is EPHEMERAL — no promotion, no state change. Nothing it reads enters the case.
+   *   3. It is capped at VIEW_SUMMARY_MAX_ROWS, far below the old 10,000, and it tells the analyst
+   *      when the cap truncated their view rather than silently summarising a slice.
+   */
   async viewSummary(caseId: string, filters: SuperQuery, labelMap?: SuperLabelMap): Promise<StarredSummaryResult> {
     const provider = this.opts.synthesisProvider ?? this.requireProvider("view summary");
     if (!this.opts.superTimelineStore) throw new Error("super-timeline not configured");
     const loaded = await this.opts.stateStore.load(caseId);
-    const { events: matched } = await this.opts.superTimelineStore.query(
-      caseId, { ...filters, offset: 0, limit: 10_000 }, labelMap);
+    const { events: matched, total } = await this.opts.superTimelineStore.query(
+      caseId, { ...filters, offset: 0, limit: VIEW_SUMMARY_MAX_ROWS }, labelMap);
     if (!matched.length) throw new Error("no events match the current filters");
 
     const prompt = getViewSummaryPrompt();
     const { events, render } = this.fitViewEvents(matched, estimateTokens(prompt) + 300);
 
+    // `total` is what MATCHED the filters; `matched.length` is what the cap let through. Reporting
+    // both means an analyst looking at a 40,000-row filter is told the summary covers a slice,
+    // rather than being left to assume it covered everything.
+    const capped = total > matched.length;
     const userPrompt =
-      `EVENTS (${events.length} of ${matched.length} matching the analyst's current filters, chronological):\n` +
+      `EVENTS (${events.length} of ${matched.length}${capped ? ` read from ${total} matching (capped at ${VIEW_SUMMARY_MAX_ROWS})` : " matching the analyst's current filters"}, chronological):\n` +
       events.map(render).join("\n") +
       `\n\nWrite the overview as JSON.`;
 

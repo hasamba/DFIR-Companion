@@ -93,7 +93,7 @@ describe("explainEvent()", () => {
     expect(prompt).toContain("ctx2");
   });
 
-  it("resolves an event present ONLY in the super-timeline store (never promoted to forensic)", async () => {
+  it("PROMOTES a super-only event, then explains it from the forensic timeline (#384)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-explain-super-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -118,7 +118,47 @@ describe("explainEvent()", () => {
     expect(prompt).toContain("FOCAL EVENT");
     expect(prompt).toContain("super1");
     expect(prompt).toContain("EVIL.EXE");
-    expect(prompt).toContain("super2");   // same-asset context event pulled from the super store
+
+    // The asked-about event is now IN the forensic timeline -- that is what makes showing it to the
+    // model legal under forensicGate.ts's rule. Asking is the analyst declaring it interesting.
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id)).toEqual(["super1"]);
+
+    // And super2 must NOT be there. It used to be: the old code handed the model the raw record as
+    // context, so explaining one Info event dragged its raw neighbours in with it. That is the
+    // behaviour the rule forbids, and this assertion is inverted from what it used to be.
+    expect(prompt).not.toContain("super2");
+    expect(after.forensicTimeline.map((e) => e.id)).not.toContain("super2");
+  });
+
+  it("resolves a super-only event past the store's default page size (#406)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-explain-paging-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    await stateStore.save(emptyState("c1"));
+    const superTimelineStore = new SuperTimelineStore(cases);
+
+    // 600 rows: past DEFAULT_SUPER_QUERY_LIMIT (500). The old lookup called query(caseId, {}), which
+    // returns only the first page, and searched THAT for the id -- so anything beyond row 500 threw
+    // "event not found" for an event that plainly existed. The failure scaled with case size: the
+    // bigger the import, the more of it became unexplainable.
+    const many = Array.from({ length: 600 }, (_, i) =>
+      ev({ id: `bulk${i}`, description: `row ${i}`, severity: "Info", asset: "TRIAGE-HOST" }),
+    );
+    await superTimelineStore.append("c1", many);
+
+    const provider = new CapturingProvider(VALID_RESPONSE);
+    const pipeline = new AnalysisPipeline({
+      provider, stateStore, superTimelineStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+
+    const result = await pipeline.explainEvent("c1", "bulk599");
+    expect(result.summary).toBeTruthy();
+    expect(provider.lastReq!.userPrompt).toContain("bulk599");
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id)).toEqual(["bulk599"]);
   });
 
   it("throws when the event id does not exist", async () => {

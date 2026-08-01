@@ -1,7 +1,7 @@
 {
   "analysis/caseSqliteWorker.ts": 812,
   "analysis/memoryImport.ts": 1265,
-  "analysis/pipeline.ts": 3353,
+  "analysis/pipeline.ts": 3411,
   "analysis/seedDemoCase.ts": 822,
   "analysis/siemImport.ts": 1346,
   "analysis/velociraptorImport.ts": 1503,
