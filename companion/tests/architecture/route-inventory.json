@@ -5,6 +5,7 @@
     "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
     "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
     "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
+    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
     "USE /^\\/?(?=\\/|$)/i jsonParser/3",
     "USE /^\\/?(?=\\/|$)/i textParser/3",
     "USE /^\\/?(?=\\/|$)/i <anonymous>/4",

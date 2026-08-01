@@ -80,11 +80,20 @@ describe("route registration contract", () => {
   const expected = JSON.parse(readFileSync(INVENTORY, "utf8")) as Inventory;
 
   it("registers exactly the recorded layers, in the recorded order", () => {
-    // The set difference is what a reviewer wants to read first; the ordered comparison then
-    // catches a pure reordering that leaves the set identical.
-    const missing = expected.stack.filter((r) => !actual.stack.includes(r));
-    const added = actual.stack.filter((r) => !expected.stack.includes(r));
-    expect({ missing, added }).toEqual({ missing: [], added: [] });
+    // COUNTS, NOT SETS. Entries are not unique — the app mounts several anonymous root middleware
+    // that render identically as `USE /^\/?(?=\/|$)/i <anonymous>/3`. A set difference reports
+    // NOTHING when one of those is added or removed, which is exactly what happened when #389
+    // added its HTTP-metrics middleware: the sets matched, the lengths did not, and this assertion
+    // said everything was fine while the ordered one below did the real work.
+    const tally = (entries: string[]) =>
+      entries.reduce<Record<string, number>>((acc, e) => ({ ...acc, [e]: (acc[e] ?? 0) + 1 }), {});
+    const before = tally(expected.stack);
+    const after = tally(actual.stack);
+    const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter((k) => (before[k] ?? 0) !== (after[k] ?? 0))
+      .map((k) => `${k}: ${before[k] ?? 0} -> ${after[k] ?? 0}`);
+    expect(changed).toEqual([]);
+    // Then the ordered comparison, which catches a pure reordering that leaves the counts identical.
     expect(actual.stack).toEqual(expected.stack);
   });
 
