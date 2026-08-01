@@ -22,7 +22,7 @@ export function exportFormatForPath(path: string): ExportFormat | null {
 
 /** Observe export responses using only a fixed format label; request paths never enter metrics. */
 export function createOperationalHttpMetrics(metrics: OperationalMetricsStore | undefined): RequestHandler {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return function operationalHttpMetrics(req: Request, res: Response, next: NextFunction): void {
     const format = exportFormatForPath(req.path);
     if (!metrics?.enabled || !format) return next();
     const startedAt = Date.now();

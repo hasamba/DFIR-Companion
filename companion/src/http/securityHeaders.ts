@@ -87,7 +87,7 @@ export function withNonce(html: string, nonce: string): string {
  * embed that value in the payload they inject into the next.
  */
 export function createSecurityHeaders(): RequestHandler {
-  return (_req: Request, res: Response, next: NextFunction): void => {
+  return function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
     const nonce = randomBytes(16).toString("base64");
     res.locals.cspNonce = nonce;
     res.setHeader("Content-Security-Policy", cspWithNonce(nonce));

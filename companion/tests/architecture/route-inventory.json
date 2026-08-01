@@ -2,17 +2,17 @@
   "stack": [
     "USE /^\\/?(?=\\/|$)/i query/3",
     "USE /^\\/?(?=\\/|$)/i expressInit/3",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
+    "USE /^\\/?(?=\\/|$)/i originGuard/3",
+    "USE /^\\/?(?=\\/|$)/i securityHeaders/3",
+    "USE /^\\/?(?=\\/|$)/i requestLogger/3",
+    "USE /^\\/?(?=\\/|$)/i operationalHttpMetrics/3",
     "USE /^\\/?(?=\\/|$)/i jsonParser/3",
     "USE /^\\/?(?=\\/|$)/i textParser/3",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/4",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/3",
+    "USE /^\\/?(?=\\/|$)/i bodyParserErrorHandler/4",
+    "USE /^\\/?(?=\\/|$)/i errorPathRedactor/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseIdGate/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseLockGate/3",
-    "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i <anonymous>/3",
+    "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i abandonedCaseReadGate/3",
     "ROUTE GET /health",
     "ROUTE GET /update-check",
     "ROUTE POST /update-check/settings",
@@ -91,7 +91,7 @@
     "ROUTE POST /cases/:id/mcp/agent-upload",
     "ROUTE POST /mcp/servers/:id/tools",
     "ROUTE POST /mcp/reconnect",
-    "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i <anonymous>/3",
+    "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i aiRateLimitGate/3",
     "ROUTE POST /cases/:id/import,/cases/:id/import-file,/cases/:id/import-csv,/cases/:id/import-log,/cases/:id/import-thor,/cases/:id/import-siem,/cases/:id/import-chainsaw,/cases/:id/import-hayabusa,/cases/:id/import-velociraptor,/cases/:id/import-network,/cases/:id/import-kape,/cases/:id/import-cybertriage,/cases/:id/import-m365,/cases/:id/import-aws,/cases/:id/import-cloud-activity,/cases/:id/import-plaso,/cases/:id/import-sandbox,/cases/:id/import-memory,/cases/:id/import-email,/cases/:id/import-thehive,/cases/:id/import-auditd,/cases/:id/import-journald,/cases/:id/import-sysdig,/cases/:id/import-wazuh",
     "ROUTE POST /cases/:id/drop/run-pending",
     "ROUTE POST /cases/:id/import",
@@ -468,6 +468,6 @@
     "ROUTE GET /js/settings-search.js",
     "ROUTE GET /js/case-load-progress.js",
     "ROUTE GET /js/hunt-workbench.js",
-    "USE /^\\/?(?=\\/|$)/i <anonymous>/4"
+    "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
 }
