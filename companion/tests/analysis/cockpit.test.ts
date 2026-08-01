@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { deriveCockpit, type CockpitDecisionState } from "../../src/analysis/cockpit.js";
+import type { ImportMeta } from "../../src/analysis/importMeta.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { Hypothesis } from "../../src/analysis/hypothesis.js";
 
 const NOW = "2026-07-30T12:00:00.000Z";
+const RECENT_IMPORT = {
+  lastImportedAt: "2026-07-30T11:45:00.000Z",
+  lastImportKind: "velociraptor",
+  lastImportFile: "Windows.Forensics.CertUtil.json",
+  addedCount: 0,
+  removedCount: 0,
+  lastDiff: { added: [], removed: [] },
+  iocsAddedCount: 0,
+  iocsRemovedCount: 0,
+  iocsDiff: { added: [], removed: [] },
+  linesIn: 17,
+  path: "deterministic",
+  fpPropagation: [],
+  truncation: null,
+} satisfies ImportMeta;
 
 function state(overrides: Partial<InvestigationState> = {}): InvestigationState {
   return {
@@ -263,6 +279,29 @@ describe("deriveCockpit — review and card decisions", () => {
     expect(result.sections.changes.map((card) => card.id)).toContain("change:finding:new");
     expect(result.sections.changes.map((card) => card.id)).not.toContain("change:finding:old");
     expect(result.newSinceReview).toBeGreaterThan(0);
+  });
+
+  it("reports forensic and super-timeline additions from the latest import", () => {
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: {
+        ...RECENT_IMPORT,
+        superTimelineAddedCount: 17,
+      },
+      investigator: "Alice",
+      now: NOW,
+    });
+
+    expect(result.sections.changes[0]).toMatchObject({
+      title: "Import added 0 forensic events · 17 super-timeline events",
+      severity: "Medium",
+      target: { panel: "super-timeline" },
+    });
+
+    const legacy = deriveCockpit({ state: state(), importMeta: RECENT_IMPORT, investigator: "Alice", now: NOW });
+    expect(legacy.sections.changes[0].title).toBe(
+      "Import added 0 forensic events · super-timeline count unavailable",
+    );
   });
 
   it("normalizes an unknown synthesis severity instead of destabilizing card ranking", () => {

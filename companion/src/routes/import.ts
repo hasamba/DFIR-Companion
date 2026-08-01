@@ -68,7 +68,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
       caseId, added,
     );
 
@@ -255,10 +255,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               // Dual-write the newly-imported events into the super-timeline FIRST (superset of everything
               // imported, Info telemetry included); resolve the FULL events from the imported (pre-demote)
               // state since the diff is lossy.
+              let superTimelineAddedCount = 0;
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
+                if (added.length) { try { superTimelineAddedCount = await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -281,7 +282,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
                 // method stashed (log path only; null otherwise) and stamp it onto import-meta.
                 const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, superTimelineAddedCount, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
                 options.onImportMeta?.(caseId);
               }
               void logActivity(options.activityLogStore, options.onActivity, caseId, {
@@ -439,10 +440,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               const imported = await options.stateStore.load(caseId);
               // Dual-write into the super-timeline FIRST (superset, Info telemetry included); resolve the
               // FULL events from the imported (pre-demote) state since the diff is lossy.
+              let superTimelineAddedCount = 0;
               if (options.superTimelineStore) {
                 const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
                 const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
+                if (added.length) { try { superTimelineAddedCount = await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
               }
               // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
               // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
@@ -465,7 +467,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 // Cap-hit truncation (#10 trigger b): consume the log-aggregation truncation the import
                 // method stashed (log path only; null otherwise) and stamp it onto import-meta.
                 const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
-                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
+                await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, superTimelineAddedCount, iocsDiff: iDiff, linesIn: text.split(/\r?\n/).length, path: aiDependent ? "ai" : "deterministic", fpPropagation, truncation });
                 options.onImportMeta?.(caseId);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {

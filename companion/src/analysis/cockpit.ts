@@ -372,15 +372,21 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
   }
   if (input.importMeta && isAfter(input.importMeta.lastImportedAt, lastReviewedAt)) {
     const meta = input.importMeta;
+    const forensicCount = meta.addedCount;
+    const hasSuperTimelineCount = meta.superTimelineAddedCount !== undefined;
+    const superTimelineCount = meta.superTimelineAddedCount ?? 0;
+    const importCountTitle = hasSuperTimelineCount
+      ? `${forensicCount} forensic event${forensicCount === 1 ? "" : "s"} · ${superTimelineCount} super-timeline event${superTimelineCount === 1 ? "" : "s"}`
+      : `${forensicCount} forensic event${forensicCount === 1 ? "" : "s"} · super-timeline count unavailable`;
     cards.push({
       id: `change:import:${meta.lastImportedAt}`,
       kind: "change",
-      title: `Import added ${meta.addedCount} event${meta.addedCount === 1 ? "" : "s"}`,
+      title: `Import added ${importCountTitle}`,
       summary: `${meta.lastImportKind || "Evidence"} · ${meta.lastImportFile || "latest import"}`,
-      severity: meta.addedCount > 0 ? "Medium" : "Low",
+      severity: forensicCount > 0 || superTimelineCount > 0 ? "Medium" : "Low",
       occurredAt: meta.lastImportedAt,
       evidenceIds: [],
-      target: { panel: "timeline" },
+      target: { panel: forensicCount > 0 ? "timeline" : superTimelineCount > 0 ? "super-timeline" : "timeline" },
     });
   }
   if (input.synthMeta && isAfter(input.synthMeta.lastSynthesizedAt, lastReviewedAt)) {

@@ -1,4 +1,4 @@
-export type TriggerType = "timer" | "navigation" | "tab_switch" | "click";
+export type TriggerType = "timer" | "navigation" | "tab_switch" | "click" | "manual";
 
 export interface CapturePayload {
   caseId: string;
@@ -137,4 +137,19 @@ export interface CaptureStatusResult {
   overrideAdapterId: string;  // mirrors the popup <select> value — see SetAdapterOverrideMessage
   activeLabel: string | null; // the adapter actually in effect (detected, unless overridden)
   rowCount: number;           // rows captured so far under the active adapter
+}
+
+export interface ActivateSiteMessage {
+  kind: "activate_site";
+  tabId: number;
+}
+
+export interface CaptureOnceMessage {
+  kind: "capture_once";
+}
+
+export interface SiteAccessChangedMessage {
+  kind: "site_access_changed";
+  origins: string[];
+  allowed: boolean;
 }

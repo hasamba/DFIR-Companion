@@ -7,9 +7,9 @@ import type { TimelineDiff } from "./timelineDiff.js";
 import type { IocsDiff } from "./iocsDiff.js";
 
 // Lightweight per-case record of the LAST import: when it ran, the detected kind/file, and what it
-// added to (or merged in) the forensic timeline. Kept in a side file (`state/import-meta.json`) so
-// the dashboard can show "last import 3 min ago - +N new events" and a what-was-added view above
-// the timeline. This is the timeline analog of synth-meta.json (the findings what-changed view).
+// added to (or merged in) the forensic timeline and how many rows actually reached the super-timeline.
+// Kept in a side file (`state/import-meta.json`) so the dashboard can show both destinations and a
+// what-was-added view above the timeline. This is the timeline analog of synth-meta.json.
 // NOT part of InvestigationState; written by the unified /import route after the importer completes.
 
 const diffEventSchema = z.object({
@@ -29,6 +29,9 @@ export const importMetaSchema = z.object({
   lastImportFile: z.string().catch(""),
   // Forensic-timeline diff (events the import added / correlation absorbed).
   addedCount: z.number().catch(0),     // true total added (the detail list may be capped)
+  // Actual rows appended to the super-timeline after its own id/content deduplication.
+  // Keep this optional: older metadata cannot truthfully reconstruct the historical count.
+  superTimelineAddedCount: z.number().optional().catch(undefined),
   removedCount: z.number().catch(0),   // true total absorbed/merged by correlation
   lastDiff: z.object({
     added: z.array(diffEventSchema).catch([]),
@@ -73,7 +76,7 @@ export type ImportMeta = z.infer<typeof importMetaSchema>;
 
 const EMPTY: ImportMeta = {
   lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-  addedCount: 0, removedCount: 0, lastDiff: null,
+  addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
   iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
   linesIn: 0, path: "", fpPropagation: [], truncation: null,
 };
@@ -87,6 +90,7 @@ export interface ImportRecord {
   kind: string;   // detected import kind: "thor" | "siem" | "chainsaw" | ...
   file: string;   // stored filename of the imported evidence
   diff: TimelineDiff;   // forensic-timeline diff
+  superTimelineAddedCount?: number; // rows actually appended to the super-timeline
   iocsDiff: IocsDiff;   // IOC diff
   linesIn?: number;                          // raw input lines/rows the import read (#10)
   path?: "deterministic" | "ai";             // which extraction path ran (#10)
@@ -117,6 +121,7 @@ export class ImportMetaStore {
       lastImportKind: rec.kind,
       lastImportFile: rec.file,
       addedCount: rec.diff.added.length,
+      superTimelineAddedCount: Math.max(0, Math.floor(rec.superTimelineAddedCount ?? 0)),
       removedCount: rec.diff.removed.length,
       lastDiff: {
         added: rec.diff.added.slice(0, MAX_LISTED),
