@@ -35,7 +35,7 @@ it may never go up.**
 **Type-only imports count.** `import type` is exempt from `check:imports`, because an erased import
 cannot form a runtime initialisation cycle — that reasoning is correct there and does not carry over
 here. A type import still means one domain knows another's shape, which is the coupling this map
-exists to control. It is not a rounding error either: **16 of the 48 recorded violations are
+exists to control. It is not a rounding error either: **15 of the 47 recorded violations are
 type-only**, so exempting them would have hidden a third of the problem on day one.
 
 | Layer | Contents | May import |
@@ -78,7 +78,7 @@ today, not invented — `ai` importing `ingest` 39 times is why `ai` is at the t
 | **1** | `intel/` | reference data and mapping: `attack*`, `d3fend*`, `kev*`, `nsrl*`, `adversary*`, `playbook*`, `compliance*`, `geoMap`, `incidentType*` | 33 | 5,261 |
 | **0** | `timeline/` | the event record itself: `superTimeline*`, `forensicGate`, `forensicSort`, `correlate`, `stateMerge`, `searchFilter`, `time*`, `clockSkew` | 16 | 2,773 |
 
-Four placements worth stating outright, because each one is a decision someone will otherwise
+Five placements worth stating outright, because each one is a decision someone will otherwise
 relitigate:
 
 - **`detect/` is separate from `ai/`.** The deterministic detectors are the thing that must keep
@@ -92,6 +92,12 @@ relitigate:
   properties of the record, not detections over it. Filing it with the detectors made three
   `superTimeline`/`clockSkew`/`stateMerge` imports look like violations when the misfiling was the
   problem; the map assigns it to `timeline/` and those entries are gone.
+- **`responseSchema.ts` is Shared too.** It defines `deltaSchema` — the shape of a *change* to
+  investigation state — and it was filed under `ai/` because the AI extraction path parses model
+  responses with it. That was wrong: it imports only `zod` and `canonicalEvent`, `stateMerge.ts` at
+  tier 0 already imported it as a recorded violation, and every deterministic importer validates its
+  constructed delta with it. A delta is vocabulary, not an AI concept. Moving it cleared six
+  violations the ingest extraction would otherwise have created, and retired the `stateMerge` one.
 - **`stateTypes.ts` and `canonicalEvent.ts` are Shared, not `timeline/`.** `stateTypes.ts` is
   imported by 189 files in every area of the tree — it is the application's event vocabulary in the
   same sense `types.ts` is, and their mutual type reference makes them one unit. Filing them in a
@@ -178,8 +184,8 @@ established, and it works the same way.
 - `scripts/module-map.json` assigns **every file** in `companion/src` to a domain, and declares the
   allowed edges. Files are listed by exact path, not by count, so deleting one file never creates
   room for a different one.
-- `scripts/boundary-violations.json` records the **48 violations** that break the map today, as
-  concrete `source-file → target-file [kind]` entries spanning 30 domain edges. Not domain pairs,
+- `scripts/boundary-violations.json` records the **47 violations** that break the map today, as
+  concrete `source-file → target-file [kind]` entries spanning 29 domain edges. Not domain pairs,
   and not counts: an already-recorded edge must not become a licence to add more imports along it.
   The `[kind]` suffix is `runtime` or `type`, and it is part of the key so that a grandfathered
   type-only edge turning into a runtime one reads as a **new** violation rather than passing
@@ -287,5 +293,5 @@ issue, and the umbrella closes when all of these hold:
 | `public/dashboard.html` inline CSS | 3,231 lines | ≤ 800 |
 | Files in `src/` over 800 lines | 13 | 0 |
 | Flat files in `src/analysis/` | 290 | 0 |
-| Boundary ledger | 48 violations | ≤ 10 |
+| Boundary ledger | 47 violations | ≤ 10 |
 | Forensic / super-timeline rule | unresolved | decided, enforced, tested |
