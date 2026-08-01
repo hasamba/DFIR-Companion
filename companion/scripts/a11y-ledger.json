@@ -1,12 +1,10 @@
 {
   "dashboard-empty": {
-    "color-contrast": 5,
-    "label": 1,
+    "color-contrast": 6,
     "select-name": 2
   },
   "dashboard-case": {
-    "color-contrast": 32,
-    "label": 1,
+    "color-contrast": 33,
     "select-name": 1
   },
   "modal-enrichOverlay": {

@@ -37,6 +37,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/a11y/announcer.js": "application/javascript; charset=utf-8",
   "/js/a11y/landmarks.js": "application/javascript; charset=utf-8",
   "/js/a11y/describe-as-table.js": "application/javascript; charset=utf-8",
+  "/js/a11y/tooltips.js": "application/javascript; charset=utf-8",
 };
 
 /**

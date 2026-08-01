@@ -111,6 +111,10 @@
   <!-- Table equivalent of the swimlane <canvas>, whose content is otherwise absent from the
        accessibility tree entirely (#386). -->
   <script type="module" src="/js/a11y/describe-as-table.js"></script>
+  <!-- Gives data-tip controls an accessible name. The custom tooltip attribute is invisible to
+       assistive tech, so 23 of the 24 controls using it announced as just "checkbox"/"button" (#386,
+       and #220 specifically). See js/a11y/tooltips.js. -->
+  <script type="module" src="/js/a11y/tooltips.js"></script>
   <script nonce="__CSP_NONCE__">
     /* Theme bootstrap (issue #53) — runs before paint so there is no flash. Effective theme =
        explicit localStorage choice, else the OS preference.
