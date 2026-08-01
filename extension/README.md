@@ -4,6 +4,10 @@ MV3 extension that captures the active tab (timer + events) and sends to the com
 one-click pushes structured artifacts straight from DFIR consoles (Splunk / Velociraptor / Elastic /
 CrowdStrike) into the case timeline.
 
+It installs with **zero website access**. Open a console, click the extension, and approve that
+exact origin before enabling ongoing capture or the in-page Push integration. **Capture this tab
+once** uses temporary `activeTab` access and does not retain site permission.
+
 ## Install — Chrome Web Store
 
 Listed publication is set up via CI (see [Publishing](#publishing-chrome-web-store)); once the
@@ -55,11 +59,28 @@ Verified end-to-end against the companion: live capture, offline queue/sync, das
 
 ## Keyboard shortcut
 
-`Ctrl+Shift+S` (macOS `Cmd+Shift+S`) toggles capture on/off without opening the popup — turning it on takes one capture immediately and the toolbar badge flashes `REC`/`off`. Rebind it at `chrome://extensions/shortcuts` (or via the **rebind** link in the popup). If the default key conflicts with another extension at install time, Chrome leaves it unset until you assign one there.
+`Ctrl+Shift+S` (macOS `Cmd+Shift+S`) toggles ongoing capture on/off. Ongoing capture fails closed on
+an origin that has not been approved: open the popup on that console once and choose **Allow this
+site**. Rebind the shortcut at `chrome://extensions/shortcuts` (or via the **rebind** link in the
+popup). If the default key conflicts with another extension at install time, Chrome leaves it unset
+until you assign one there.
+
+## Site access
+
+1. Open the Velociraptor, Splunk, Kibana, or other web console you want to use.
+2. Click the DFIR Companion extension icon.
+3. Click **Allow this site** and approve the browser's exact-origin prompt.
+4. Select a case. Use **Start** for ongoing capture, **Capture this tab once** for a temporary
+   screenshot, or the console's floating Push button for structured rows.
+
+The popup always says whether the current origin is connected. **Review permissions and audit log**
+lists every granted origin with a Revoke button and the latest 100 local grant/denial/revocation
+records. Revocation disables the integration immediately. Browser/private pages, `file:`/`data:`
+pages, and private browsing are refused.
 
 ## Automated artifact fetching (#102)
 
-On a recognized DFIR console the content script activates a **site adapter** and injects a floating
+On an approved, recognized DFIR console the content script activates a **site adapter** and injects a floating
 **📤 Push … → DFIR-Companion** button (bottom-right by default). It only sends when *you* click it —
 explicit analyst intent, nothing automatic. **Drag the button** anywhere if a site's own UI covers
 it; the position is remembered across pages/tabs and always kept on-screen.
@@ -85,7 +106,7 @@ On click the rows are POSTed to the companion's unified import route
 (`POST /cases/:id/import`) for the **case currently selected in the popup** — the same case used for
 screenshot capture. The server auto-detects the format and routes it into the timeline + IOCs. The
 button shows the result (`✓ Pushed N rows to "<case>"` or the error). On an unrecognized site the
-extension does nothing extra — plain screenshot capture is unaffected.
+extension does nothing extra. No content script is injected at all until the origin is approved.
 
 > Pick a case in the popup first (the artifact push uses it). The push reuses the localhost,
 > unauthenticated import path — no token needed (unlike the server's external `/push` webhook).
@@ -115,8 +136,17 @@ account can be created independently of merging:
 
 **One-time human steps** (CI can't do these): create the $5 Chrome developer account, do the first
 upload + fill the listing (name/description/icon/screenshots/privacy policy) + data-use disclosures,
-and submit for review. With `<all_urls>` host access, expect a manual review (days) on first
-submission. After that, tagged releases publish new versions automatically.
+and submit for review. Host access is optional and requested one origin at a time, so the install
+does not carry an all-sites warning. After that, tagged releases publish new versions automatically.
+
+### Managed enterprise origins (Chrome)
+
+Administrators can use Chrome's `ExtensionSettings` policy to force-install/pin the extension and
+set `runtime_blocked_hosts` to `*://*`, with only the organization's approved console origins in
+`runtime_allowed_hosts`. This browser policy is a hard ceiling: it does not let the extension work
+around an analyst denial, and no origin outside the managed allow-list can be granted. Use exact
+origins such as `https://velociraptor.example` rather than a broad wildcard. The Extension options
+page reflects the permissions the browser has actually granted.
 
 ## Publishing (Firefox / AMO)
 

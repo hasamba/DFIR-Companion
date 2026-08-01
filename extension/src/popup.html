@@ -11,11 +11,22 @@
     #status { margin-top: 10px; font-size: 12px; color: #555; }
     .on { color: #2d6cdf; } .off { color: #cc3333; }
     .hint { margin-top: 8px; font-size: 11px; color: #888; }
+    .access { margin-top: 10px; padding: 9px; border: 1px solid #ccc; border-radius: 7px; }
+    .access-title { font-size: 12px; font-weight: 650; }
+    #siteOrigin { margin-top: 3px; font: 11px ui-monospace, monospace; overflow-wrap: anywhere; }
+    #siteAccessAction { width: 100%; margin-top: 8px; }
   </style>
 </head>
 <body>
   <strong>DFIR Capture</strong>
   <label>Case <select id="caseId"></select></label>
+  <div id="siteAccessPanel" class="access">
+    <div class="access-title">Site access: <span id="siteAccessState">checking…</span></div>
+    <div id="siteOrigin"></div>
+    <div id="siteAccessHint" class="hint"></div>
+    <button id="siteAccessAction" type="button">Allow this site</button>
+    <div class="hint"><a href="#" id="manageSiteAccess">Review permissions and audit log</a></div>
+  </div>
   <div id="toolRow">
     <label>Detected tool <select id="toolOverride"></select></label>
     <div id="toolHint" class="hint"></div>
@@ -34,6 +45,9 @@
   <div class="row">
     <button id="start">Start</button>
     <button id="stop">Stop</button>
+  </div>
+  <div class="row">
+    <button id="captureOnce">Capture this tab once</button>
   </div>
   <div id="hotkey" style="margin-top:8px; font-size:11px; color:#888;">
     Shortcut: <kbd id="hotkeyKeys">Ctrl+Shift+S</kbd> toggles capture · <a href="#" id="rebind">rebind</a>
