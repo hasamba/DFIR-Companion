@@ -80,8 +80,12 @@ genuinely bad outcome. The refusal paths *are* covered.
 
 ## 8. Purely visual
 
-- **US-053** timeline source filter, **US-055** kill-chain expansion, **US-183** IOC pagination,
-  **US-221** timeline card layout. These are DOM interactions whose stories describe appearance
-  ("bordered cards consistent with Findings/IOCs"). They are testable in principle, but asserting
-  CSS classes pins styling rather than behaviour and breaks on every redesign — including the one
-  #384 will bring. Worth revisiting after that lands.
+- **US-221** forensic timeline card layout. The story is about appearance — "bordered cards
+  consistent with Findings/IOCs", controls "on stable readable lines". The only way to assert that
+  from a test is to pin CSS classes or measure boxes, which fixes the styling in place and breaks on
+  every redesign, including the one #384 will bring. Worth revisiting after that lands.
+
+US-053 (source filter), US-055 (kill-chain expansion) and US-183 (IOC pagination) were in this
+section and should not have been. A filter that filters, a disclosure that discloses and a pager
+that pages are behaviour, whatever the panel looks like — they are covered in
+`workflows/panelBrowsing.spec.ts`, with no appearance assertions.
