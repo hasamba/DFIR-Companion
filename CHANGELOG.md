@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Controlled report review and immutable release** — audited draft/peer-review/approval states, evidence and integrity release gates, identity-bound sign-off, explicit supersession, version diffs, and frozen executive/technical/legal/IOC packs (closes #383).
 - **Authenticated team investigations** — optional OIDC/local sign-in, case RBAC, scoped service identities, signed analyst attribution, secure sessions/CSRF, and single-writer concurrency protection while preserving zero-config localhost mode (closes #382).
 - **Restart-safe background jobs** — durable import and Deep Pass checkpoints, stable job IDs, deterministic cancellation/retry, fair per-case queueing, and reconnect-safe progress recovery (closes #380).
 - **Production AI quality and calibration gates** — a versioned synthetic corpus now grades exact claim-to-evidence grounding, recall, false conclusions, calibrated uncertainty, useful next steps, cost, and clean-case abstention, with protected pinned-model baselines and prompt-change no-regression reports (closes #378).

@@ -3396,12 +3396,13 @@
     <div class="comment-modal" data-safe-style="max-width:640px">
       <h3>Report versions</h3>
       <p data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 10px">
-        One snapshot per report regeneration (a re-generation with nothing changed doesn't add a new
-        entry). Diff two versions to see what changed in findings, IOCs and the timeline, or restore an
-        earlier version's editable report metadata (title page, distribution, BIA, glossary,
-        recommendations…) — restoring does not touch findings/IOCs/timeline and does not regenerate the
-        report; re-run <em>Generate report</em> afterward.</p>
-      <div id="rvList" data-safe-style="max-height:200px; overflow:auto; font-size:12px; margin-bottom:10px; border:1px solid var(--border-color); border-radius:4px; padding:6px;">loading…</div>
+        Generated versions begin as drafts. Review and approve one before release; a release freezes the
+        exact report, evidence, analysis runs and custody state so later case edits cannot alter what was
+        delivered. Solo mode records an honest self-review; team mode keeps investigator and reviewer
+        duties separate.</p>
+      <div id="rvList" data-safe-style="max-height:300px; overflow:auto; font-size:12px; margin-bottom:10px; border:1px solid var(--border-color); border-radius:4px; padding:6px;">loading…</div>
+      <div id="rvReleaseIntegrity" data-safe-style="font-size:12px; color:var(--text-muted); margin:8px 0 4px;">checking released-report integrity…</div>
+      <div id="rvReleases" data-safe-style="max-height:180px; overflow:auto; font-size:12px; margin-bottom:10px;"></div>
       <div data-safe-style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
         <label data-safe-style="font-size:12px;">From <select id="rvFrom" data-safe-style="margin-left:4px;"></select></label>
         <label data-safe-style="font-size:12px;">To <select id="rvTo" data-safe-style="margin-left:4px;"></select></label>
@@ -5004,8 +5005,17 @@
         </div>
 
         <div class="sfield">
-          <label>Sections <span class="sfield-hint" data-safe-style="display:inline">— check to include · ▲▼ to reorder</span></label>
+          <label>Sections <span class="sfield-hint" data-safe-style="display:inline">— include · require before release · ▲▼ to reorder</span></label>
           <div id="rtSections" data-safe-style="max-height:230px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:4px"></div>
+        </div>
+
+        <div class="sfield">
+          <label>Release requirements</label>
+          <div data-safe-style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px">
+            <label class="rm-check" data-safe-style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rtRequireIndependentReview" data-safe-style="width:auto" /> Require independent peer review</label>
+            <label class="rm-check" data-safe-style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rtRequireEvidenceLinks" data-safe-style="width:auto" /> Require evidence links for every finding</label>
+          </div>
+          <span class="sfield-hint">Critical and High findings always require valid evidence links. “Require” section boxes above block release if that section is disabled.</span>
         </div>
 
         <div data-safe-style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -19627,6 +19637,61 @@
     }
     function closeReportVersions() { document.getElementById("reportVersionsOverlay").classList.remove("open"); }
 
+    let rvReviewMode = "solo";
+    let rvReviewers = [];
+    let rvReleased = [];
+
+    function rvStatusLabel(workflow) {
+      const status = workflow?.status || "draft";
+      return status === "peer-review" ? "Peer review" : status[0].toUpperCase() + status.slice(1);
+    }
+
+    function rvAnnotationRows(workflow) {
+      const annotations = workflow?.annotations || [];
+      if (!annotations.length) return "";
+      return `<div data-safe-style="margin:5px 0 0 12px;color:var(--text-muted)">${annotations.map(a => {
+        const state = a.resolvedAt ? `resolved by ${esc(a.resolvedByDisplayName || "investigator")}` : "unresolved";
+        const resolve = a.resolvedAt ? "" : ` <button data-rv-resolve="${escAttr(a.id)}" data-version="${escAttr(workflow.versionId)}" data-safe-style="font-size:10px;padding:1px 5px">Resolve</button>`;
+        return `<div>↳ ${esc(a.category)} · ${esc(a.impact)} · ${esc(a.targetType)}:${esc(a.targetId)} — ${esc(a.message)} (${state})${resolve}</div>`;
+      }).join("")}</div>`;
+    }
+
+    function rvVersionActions(version) {
+      const workflow = version.workflow || { status: "draft", annotations: [] };
+      const restore = `<button data-restore="${escAttr(version.id)}" data-safe-style="font-size:11px">Restore meta</button>`;
+      if (workflow.status === "draft" && rvReviewMode === "solo") {
+        return `${restore}<button data-rv-self-approve="${escAttr(version.id)}" data-safe-style="font-size:11px">Self-review &amp; approve</button>`;
+      }
+      if (workflow.status === "draft") {
+        const choices = rvReviewers.map(r => `<option value="${escAttr(r.id)}">${esc(r.displayName)} (${esc(r.role)})</option>`).join("");
+        return choices
+          ? `${restore}<select data-rv-reviewer="${escAttr(version.id)}" data-safe-style="font-size:11px;max-width:170px">${choices}</select><button data-rv-submit="${escAttr(version.id)}" data-safe-style="font-size:11px">Submit</button>`
+          : `${restore}<span data-safe-style="color:var(--sev-medium)">No reviewer assigned to this case</span>`;
+      }
+      if (workflow.status === "peer-review") {
+        return `${restore}<button data-rv-note="${escAttr(version.id)}" data-safe-style="font-size:11px">Add review note</button><button data-rv-changes="${escAttr(version.id)}" data-safe-style="font-size:11px">Request changes</button><button data-rv-approve="${escAttr(version.id)}" data-safe-style="font-size:11px">Approve</button>`;
+      }
+      if (workflow.status === "approved") {
+        return `${restore}<button data-rv-release="${escAttr(version.id)}" data-safe-style="font-size:11px">Release frozen snapshot</button>`;
+      }
+      const releaseId = workflow.releaseId || "";
+      return releaseId
+        ? `<a href="/cases/${encodeURIComponent(document.getElementById("caseId").value.trim())}/report-releases/${encodeURIComponent(releaseId)}/packs/technical">Technical</a> · <a href="/cases/${encodeURIComponent(document.getElementById("caseId").value.trim())}/report-releases/${encodeURIComponent(releaseId)}/packs/executive">Executive</a> · <a href="/cases/${encodeURIComponent(document.getElementById("caseId").value.trim())}/report-releases/${encodeURIComponent(releaseId)}/packs/legal">Legal/insurance</a> · <a href="/cases/${encodeURIComponent(document.getElementById("caseId").value.trim())}/report-releases/${encodeURIComponent(releaseId)}/packs/ioc">IOCs</a>`
+        : restore;
+    }
+
+    function rvWireActions() {
+      const list = document.getElementById("rvList");
+      list.querySelectorAll("[data-restore]").forEach(btn => btn.onclick = () => doRestoreReportVersion(btn.dataset.restore));
+      list.querySelectorAll("[data-rv-self-approve]").forEach(btn => btn.onclick = () => rvSelfApprove(btn.dataset.rvSelfApprove));
+      list.querySelectorAll("[data-rv-submit]").forEach(btn => btn.onclick = () => rvSubmit(btn.dataset.rvSubmit));
+      list.querySelectorAll("[data-rv-note]").forEach(btn => btn.onclick = () => rvAddNote(btn.dataset.rvNote));
+      list.querySelectorAll("[data-rv-changes]").forEach(btn => btn.onclick = () => rvRequestChanges(btn.dataset.rvChanges));
+      list.querySelectorAll("[data-rv-approve]").forEach(btn => btn.onclick = () => rvApprove(btn.dataset.rvApprove));
+      list.querySelectorAll("[data-rv-release]").forEach(btn => btn.onclick = () => rvRelease(btn.dataset.rvRelease));
+      list.querySelectorAll("[data-rv-resolve]").forEach(btn => btn.onclick = () => rvResolve(btn.dataset.version, btn.dataset.rvResolve));
+    }
+
     async function loadReportVersions() {
       const caseId = document.getElementById("caseId").value.trim();
       const list = document.getElementById("rvList");
@@ -19635,22 +19700,45 @@
       if (!caseId) { list.textContent = "no case loaded"; return; }
       list.textContent = "loading…";
       try {
-        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/report-versions`);
-        const versions = await res.json();
+        const c = encodeURIComponent(caseId);
+        const [res, reviewersRes, releasesRes, integrityRes] = await Promise.all([
+          fetch(`/cases/${c}/report-versions`),
+          fetch(`/cases/${c}/report-reviewers`),
+          fetch(`/cases/${c}/report-releases`),
+          fetch(`/cases/${c}/report-releases/integrity`),
+        ]);
+        const [versions, reviewers, releases, integrity] = await Promise.all([
+          res.json(), reviewersRes.json(), releasesRes.json(), integrityRes.json(),
+        ]);
         if (!res.ok) throw new Error(versions.error || ("HTTP " + res.status));
+        if (!reviewersRes.ok) throw new Error(reviewers.error || ("HTTP " + reviewersRes.status));
+        if (!releasesRes.ok) throw new Error(releases.error || ("HTTP " + releasesRes.status));
+        rvReviewMode = reviewers.mode || "solo";
+        rvReviewers = Array.isArray(reviewers.reviewers) ? reviewers.reviewers : [];
+        rvReleased = Array.isArray(releases) ? releases : [];
+        const integrityEl = document.getElementById("rvReleaseIntegrity");
+        integrityEl.textContent = integrity.ok
+          ? `✓ Released-report chain intact — ${integrity.releases} release(s)`
+          : `⚠ Released-report integrity FAILED — ${(integrity.problems || []).join("; ")}`;
+        integrityEl.style.color = integrity.ok ? "var(--sev-low)" : "var(--badge-danger-text)";
+        const releasesEl = document.getElementById("rvReleases");
+        releasesEl.innerHTML = rvReleased.length ? rvReleased.map(r => {
+          const supersedes = r.supersedesReleaseId ? ` · supersedes ${esc(r.supersedesReleaseId)}` : "";
+          return `<div data-safe-style="padding:3px 0;border-bottom:1px solid var(--border-color)"><strong>${esc(r.id)}</strong> · ${esc(r.reportVersion)} · released ${esc(new Date(r.releasedAt).toLocaleString())} by ${esc(r.releasedBy.displayName)}${supersedes}<br><span data-safe-style="font-family:monospace;color:var(--text-muted)">SHA-256 ${esc(r.manifestHash)}</span></div>`;
+        }).join("") : `<span data-safe-style="color:var(--text-muted)">No formal releases yet.</span>`;
         if (!versions.length) {
           list.textContent = "no versions yet — generate a report to create one";
           fromSel.innerHTML = ""; toSel.innerHTML = "";
           return;
         }
         list.innerHTML = versions.map(v => `
-          <div data-safe-style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid var(--border-color);">
-            <span>${esc(v.version)}${v.manualVersion ? ` (rev ${esc(v.manualVersion)})` : ""} — ${esc(new Date(v.createdAt).toLocaleString())}
-              · ${v.findingsCount} finding(s), ${v.iocsCount} IOC(s), ${v.eventsCount} event(s)</span>
-            <button data-restore="${escAttr(v.id)}" data-safe-style="font-size:11px; flex:none;">Restore meta</button>
+          <div data-safe-style="padding:6px 0; border-bottom:1px solid var(--border-color);">
+            <div data-safe-style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><span><strong>${esc(v.version)}</strong>${v.manualVersion ? ` (rev ${esc(v.manualVersion)})` : ""} — ${esc(new Date(v.createdAt).toLocaleString())}
+              · ${v.findingsCount} finding(s), ${v.iocsCount} IOC(s), ${v.eventsCount} event(s)<br><span data-safe-style="color:var(--text-muted)">${esc(rvStatusLabel(v.workflow))}${v.workflow?.assignedReviewer ? ` · reviewer ${esc(v.workflow.assignedReviewer.displayName)}` : ""}${v.workflow?.approvals?.length ? ` · ${v.workflow.approvals.some(a => a.independent) ? "independently reviewed" : "self-reviewed"}` : ""}</span></span>
+              <span data-safe-style="display:flex;gap:5px;align-items:center;justify-content:flex-end;flex-wrap:wrap">${rvVersionActions(v)}</span></div>
+            ${rvAnnotationRows(v.workflow)}
           </div>`).join("");
-        list.querySelectorAll("[data-restore]").forEach(btn =>
-          btn.onclick = () => doRestoreReportVersion(btn.getAttribute("data-restore")));
+        rvWireActions();
         const opts = versions.map(v => `<option value="${escAttr(v.id)}">${esc(v.version)} — ${esc(new Date(v.createdAt).toLocaleString())}</option>`).join("");
         fromSel.innerHTML = opts;
         toSel.innerHTML = opts;
@@ -19659,6 +19747,73 @@
       } catch (err) {
         list.textContent = "failed to load: " + err.message;
       }
+    }
+
+    async function rvPost(versionId, suffix, body) {
+      const caseId = document.getElementById("caseId").value.trim();
+      const msg = document.getElementById("rvMsg");
+      msg.textContent = "saving…";
+      try {
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/report-versions/${encodeURIComponent(versionId)}/${suffix}`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(result.error || ("HTTP " + res.status));
+        msg.textContent = "saved ✓";
+        await loadReportVersions();
+        return result;
+      } catch (err) {
+        msg.textContent = err.message;
+        return null;
+      }
+    }
+
+    function rvSubmit(versionId) {
+      const select = document.querySelector(`[data-rv-reviewer="${CSS.escape(versionId)}"]`);
+      if (select?.value) rvPost(versionId, "workflow/submit", { reviewerId: select.value });
+    }
+
+    function rvSelfApprove(versionId) {
+      const note = prompt("Record what you checked during self-review. This will be labelled self-reviewed, not independently peer-reviewed.");
+      if (note?.trim()) rvPost(versionId, "workflow/self-approve", { note: note.trim() });
+    }
+
+    function rvAddNote(versionId) {
+      const ref = prompt("Attach the note to a finding/claim/evidence item (for example finding:f3 or evidence:e17):");
+      const match = /^(finding|claim|evidence):(.+)$/.exec((ref || "").trim());
+      if (!match) { document.getElementById("rvMsg").textContent = "Use finding:id, claim:id, or evidence:id."; return; }
+      const message = prompt("Review note:");
+      if (!message?.trim()) return;
+      const blocker = confirm("Is this a HIGH-impact unresolved uncertainty that must block approval?");
+      rvPost(versionId, "review/annotations", {
+        targetType: match[1], targetId: match[2].trim(),
+        category: blocker ? "uncertainty" : "comment", impact: blocker ? "high" : "medium",
+        message: message.trim(),
+      });
+    }
+
+    function rvResolve(versionId, annotationId) {
+      const resolution = prompt("How was this review note resolved?");
+      if (resolution?.trim()) rvPost(versionId, `workflow/annotations/${encodeURIComponent(annotationId)}/resolve`, { resolution: resolution.trim() });
+    }
+
+    function rvRequestChanges(versionId) {
+      const reason = prompt("What must the investigator change?");
+      if (reason?.trim()) rvPost(versionId, "review/request-changes", { reason: reason.trim() });
+    }
+
+    function rvApprove(versionId) {
+      const note = prompt("Approval note (what was checked and accepted):");
+      if (note?.trim()) rvPost(versionId, "review/approve", { note: note.trim() });
+    }
+
+    function rvRelease(versionId) {
+      const latest = rvReleased[0];
+      const warning = latest
+        ? `This creates a new immutable release that explicitly supersedes ${latest.id}. The prior release will remain preserved and linked.`
+        : "This freezes the exact report, evidence, analysis runs and custody state as the formal release.";
+      if (!confirm(warning + "\n\nContinue?")) return;
+      rvPost(versionId, "workflow/release", latest ? { supersedesReleaseId: latest.id } : {});
     }
 
     async function doReportVersionsDiff() {
@@ -23536,6 +23691,7 @@
     let rtTemplates = [];          // last fetched list of templates
     let rtCurrentId = "";          // id of the template being edited ("" = new/unsaved)
     let rtEditSections = [];       // [{ key, enabled }] for the editor, ordered
+    let rtRequiredSections = new Set();
 
     function loadReportTemplates(selectId) {
       return fetch("/report-templates").then(r => r.ok ? r.json() : []).then(list => {
@@ -23568,6 +23724,10 @@
       v("rtFooterText", t ? t.footerText : "");
       document.getElementById("rtShowLogo").checked = t ? t.showLogo !== false : true;
       document.getElementById("rtShowCompanyName").checked = t ? t.showCompanyName !== false : true;
+      const releaseReq = t?.releaseRequirements || {};
+      document.getElementById("rtRequireIndependentReview").checked = releaseReq.requireIndependentReview === true;
+      document.getElementById("rtRequireEvidenceLinks").checked = releaseReq.requireEvidenceLinks === true;
+      rtRequiredSections = new Set(Array.isArray(releaseReq.requiredSections) ? releaseReq.requiredSections : []);
       // Sections: start from the template's order (full coverage guaranteed server-side) or the default.
       const src = (t && Array.isArray(t.sections) && t.sections.length) ? t.sections : RT_SECTIONS.map(([key]) => ({ key, enabled: true }));
       rtEditSections = src.filter(s => RT_LABELS[s.key]).map(s => ({ key: s.key, enabled: s.enabled !== false }));
@@ -23587,12 +23747,22 @@
         `<div data-safe-style="display:flex;align-items:center;gap:8px;padding:3px 4px;border-bottom:1px solid #1a1f28;font-size:12px">`
         + `<input type="checkbox" class="rt-sec-en" data-i="${i}" ${s.enabled ? "checked" : ""} data-safe-style="width:auto;margin:0" />`
         + `<span data-safe-style="flex:1;${s.enabled ? "" : "color:#7e8aa0"}">${esc(RT_LABELS[s.key] || s.key)}</span>`
+        + `<label title="Block release unless this section is included" data-safe-style="display:flex;align-items:center;gap:3px;color:var(--text-muted)"><input type="checkbox" class="rt-sec-req" data-i="${i}" ${rtRequiredSections.has(s.key) ? "checked" : ""} data-safe-style="width:auto;margin:0" /> require</label>`
         + `<button type="button" class="rt-sec-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} data-safe-style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▲</button>`
         + `<button type="button" class="rt-sec-down" data-i="${i}" title="Move down" ${i === rtEditSections.length - 1 ? "disabled" : ""} data-safe-style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▼</button>`
         + `</div>`
       ).join("");
       el.querySelectorAll(".rt-sec-en").forEach(cb => cb.addEventListener("change", e => {
-        rtEditSections[+e.target.dataset.i].enabled = e.target.checked; rtRenderSections();
+        const section = rtEditSections[+e.target.dataset.i];
+        section.enabled = e.target.checked;
+        if (!section.enabled) rtRequiredSections.delete(section.key);
+        rtRenderSections();
+      }));
+      el.querySelectorAll(".rt-sec-req").forEach(cb => cb.addEventListener("change", e => {
+        const section = rtEditSections[+e.target.dataset.i];
+        if (e.target.checked) { rtRequiredSections.add(section.key); section.enabled = true; }
+        else rtRequiredSections.delete(section.key);
+        rtRenderSections();
       }));
       el.querySelectorAll(".rt-sec-up").forEach(b => b.addEventListener("click", e => rtMoveSection(+e.currentTarget.dataset.i, -1)));
       el.querySelectorAll(".rt-sec-down").forEach(b => b.addEventListener("click", e => rtMoveSection(+e.currentTarget.dataset.i, 1)));
@@ -23621,6 +23791,11 @@
         showLogo: document.getElementById("rtShowLogo").checked,
         showCompanyName: document.getElementById("rtShowCompanyName").checked,
         sections: rtEditSections,
+        releaseRequirements: {
+          requiredSections: [...rtRequiredSections],
+          requireIndependentReview: document.getElementById("rtRequireIndependentReview").checked,
+          requireEvidenceLinks: document.getElementById("rtRequireEvidenceLinks").checked,
+        },
       };
       msg.textContent = "saving…";
       fetch("/report-templates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
