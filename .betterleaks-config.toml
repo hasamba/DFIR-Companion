@@ -36,6 +36,12 @@ regexes = [
   # assertion. Both exist only in companion/tests/analysis/presidio*.test.ts.
   '''(?i)\bpresidio\.local\b''',
   '''(?i)\bDC01\.victim\.local\b''',
+  # `console.example.internal`, a fabricated capture URL in the E2E fixture for #386. The current
+  # tree uses example.com (RFC 2606) instead, but `betterleaks git .` scans every reachable commit
+  # and the original is in history. Narrow on purpose: `example.` is reserved, so this cannot
+  # collide with a real internal FQDN, and the rule stays live for anything that is not fake by
+  # construction.
+  '''(?i)\bexample\.internal\b''',
 ]
 
 # The token/key rules stay ON, but their only matches here are deliberate FAKE fixtures — a Stripe

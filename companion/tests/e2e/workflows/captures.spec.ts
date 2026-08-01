@@ -28,7 +28,10 @@ function capturePayload(caseId: string, overrides: Record<string, unknown> = {})
   return {
     caseId,
     timestamp: "2026-05-16T09:00:00.000Z",
-    url: "https://console.example.internal/alerts/8821",
+    // example.com, not a made-up .internal host: RFC 2606 reserves it for exactly this, and the
+    // secret scanner's internal-hostname rule is right to flag anything that looks like a real
+    // private FQDN in a commit.
+    url: "https://console.example.com/alerts/8821",
     tabTitle: "Alert 8821 — suspicious PowerShell",
     // One of timer | navigation | tab_switch | click — the enum the extension sends.
     triggerType: "click",
