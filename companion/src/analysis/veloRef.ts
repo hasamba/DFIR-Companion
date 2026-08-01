@@ -33,6 +33,16 @@ const NOTEBOOK_PATH = /\/notebooks?(?:[/?#]|$)/i;
 // entirely when the analyst pastes this specific tab's URL.
 const UPLOADS_PATH = /\/uploads(?:[/?#]|$)/i;
 
+// The "Velociraptor API not configured" refusal for POST /cases/:id/velociraptor/import-external.
+// It lives with the ref parser because the confusion it clears up is about what a REF is: the route
+// reads like an offline import (it "imports", and you POST it a body), but the body is a pointer to a
+// collection on the server, not the collection itself — so every path behind this gate makes an
+// outbound call and the gate is load-bearing. An analyst holding a colleague's export otherwise reads
+// it as a pointless requirement, so the message names what would be contacted and hands them
+// import-velociraptor, which parses pasted JSON and needs no server at all.
+export const EXTERNAL_IMPORT_NEEDS_SERVER =
+  "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG). This endpoint does not import an export you paste in — it takes a hunt/flow reference and fetches that collection's results from your Velociraptor server, so it needs a live connection to it. To import Velociraptor JSON you already have (a colleague's export, a saved collection), use POST /cases/:id/import-velociraptor instead, which is fully offline.";
+
 function tokens(s: string, re: RegExp): string[] {
   return [...s.matchAll(re)].map((m) => m[1]);
 }
