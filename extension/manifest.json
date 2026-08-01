@@ -9,8 +9,8 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["tabs", "activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": ["activeTab", "webNavigation", "storage", "alarms", "scripting", "contextMenus"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "background": { "service_worker": "serviceWorker.js", "type": "module" },
   "action": {
@@ -30,8 +30,5 @@
     "_execute_action": {
       "description": "Open the DFIR Companion popup"
     }
-  },
-  "content_scripts": [
-    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }
-  ]
+  }
 }

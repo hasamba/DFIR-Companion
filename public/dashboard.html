@@ -2696,6 +2696,7 @@
     .sfield-hint { display: block; font-size: 10px; color: var(--text-faint); margin-top: 2px; }
     .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
     .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+    .diag-support-action { min-width: 220px; }
     .settings-group-head { font-size: 11px; color: var(--accent); font-weight: 600; margin: 10px 0 4px; }
     .settings-hr { border: none; border-top: 1px solid var(--border-color); margin: 12px 0; }
     .srestart-note { font-size: 11px; color: var(--sev-medium); margin-bottom: 10px; }
@@ -5124,14 +5125,18 @@
           <div class="sfield"><label>Job history retention<span class="sfield-hint">DFIR_JOBS_MAX — max durable job rows kept before the oldest finished jobs are evicted (default 100)</span></label><input id="env-DFIR_JOBS_MAX" placeholder="100" /></div>
           <div class="sfield"><label>Job concurrency<span class="sfield-hint">DFIR_JOBS_CONCURRENCY — jobs running across all cases (default 4)</span></label><input id="env-DFIR_JOBS_CONCURRENCY" placeholder="4" /></div>
           <div class="sfield"><label>Jobs per case<span class="sfield-hint">DFIR_JOBS_PER_CASE — per-case running cap, preventing queue starvation (default 1)</span></label><input id="env-DFIR_JOBS_PER_CASE" placeholder="1" /></div>
+          <div class="sfield"><label>Local performance metrics<span class="sfield-hint">DFIR_LOCAL_TELEMETRY — bounded, evidence-free metrics stored only on this machine; set off to disable</span></label><select id="env-DFIR_LOCAL_TELEMETRY"><option value="">on (default)</option><option value="off">off</option></select></div>
         </div>
         <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <button id="diagRefreshBtn" type="button">↻ Refresh</button>
           <button id="diagCopyBtn" type="button">📋 Copy diagnostics</button>
+          <button id="diagSupportPreviewBtn" class="diag-support-action" type="button">👁 Preview support bundle</button>
+          <button id="diagSupportDownloadBtn" class="diag-support-action" type="button" disabled>⬇ Download previewed bundle</button>
           <button id="diagSizesBtn" type="button">📁 Compute case sizes</button>
           <span id="diagMsg" class="manual-msg"></span>
         </div>
         <div id="diagBody" data-safe-style="font-size:12.5px;color:var(--text-primary)">Loading…</div>
+        <pre id="diagSupportPreview" hidden data-safe-style="max-height:300px;overflow:auto;white-space:pre-wrap;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;padding:10px;font-size:11px"></pre>
         <div class="settings-group-head" data-safe-style="margin-top:14px">Automatic state backup configuration<span data-safe-style="color:var(--text-dim);font-weight:400"> — created before each synthesis + on an interval</span></div>
         <div class="sfield-row3">
           <div class="sfield"><label>Max backups kept per case<span class="sfield-hint">DFIR_STATE_BACKUP_RETAIN — oldest pruned once exceeded (default 24); 0 asks for no limit but is capped at 100</span></label><input id="env-DFIR_STATE_BACKUP_RETAIN" placeholder="24" /></div>
@@ -23551,6 +23556,8 @@
     document.getElementById("kevClearBtn").addEventListener("click", kevClear);
     document.getElementById("diagRefreshBtn").addEventListener("click", loadDiagnostics);
     document.getElementById("diagCopyBtn").addEventListener("click", diagCopy);
+    document.getElementById("diagSupportPreviewBtn").addEventListener("click", diagPreviewSupport);
+    document.getElementById("diagSupportDownloadBtn").addEventListener("click", diagDownloadSupport);
     document.getElementById("diagSizesBtn").addEventListener("click", diagComputeSizes);
     // Clock skew (#228). The override inputs are re-rendered on every refresh, so their handler is
     // delegated from the panel rather than bound per row.
@@ -24493,6 +24500,8 @@
 
     // --- Health / Diagnostics (#118) — operator system state, Settings → Diagnostics --------------
     let diagCopyText = "";
+    let diagSupportText = "";
+    let diagSupportFilename = "dfir-companion-support.json";
     function diagFmtBytes(b) {
       if (b == null || !isFinite(b) || b < 0) return "—";
       if (b < 1024) return Math.round(b) + " B";
@@ -24562,6 +24571,33 @@
       return `<div data-safe-style="display:flex;justify-content:space-between;gap:12px;padding:1px 0">
         <span data-safe-style="color:#9aa4b2">${esc(label)}</span>
         <span data-safe-style="text-align:right${color ? `;color:${color}` : ""}">${value}</span></div>`;
+    }
+    function renderOperationalDiagnostics(o) {
+      if (!o || !o.enabled) {
+        return diagCard("Local performance & capacity", diagRow("Status", "disabled — core behavior is unchanged", "#7e8aa0"));
+      }
+      const slow = o.slowest || {};
+      const cap = o.capacity || {};
+      const warningRows = (o.warnings || []).map(w =>
+        `<div data-safe-style="color:#ffb05a;margin-top:4px">⚠ ${esc(w)}</div>`).join("");
+      const hotspot = (label, item) => item
+        ? diagRow(label, `${esc(item.name)} · ${Math.round(item.durationMs).toLocaleString()} ms<div data-safe-style="font-size:11px;color:#7e8aa0">${esc(item.remediation)}</div>`)
+        : "";
+      return diagCard("Local performance & capacity", [
+        diagRow("Retention", `${o.sampleCount.toLocaleString()} sample(s) · ${Math.round(o.retentionDays)} days maximum`),
+        diagRow("Importer yield", `${o.imports.accepted.toLocaleString()} accepted · ${o.imports.rejected.toLocaleString()} rejected · ${o.imports.promoted.toLocaleString()} promoted`),
+        diagRow("Query latency", `p50 ${Math.round(o.queries.p50Ms)} ms · p95 ${Math.round(o.queries.p95Ms)} ms · ${o.queries.unindexed} unindexed`),
+        diagRow("Jobs", `${o.jobs.queued} queued · ${o.jobs.running} running · ${o.jobs.retries} retries · ${o.jobs.stalled} stalled`, o.jobs.stalled ? "#ffb05a" : ""),
+        diagRow("AI", `${o.ai.calls} call(s) · p95 ${Math.round(o.ai.p95Ms)} ms · ${o.ai.retries} retries · ${o.ai.rateLimits} rate limits`),
+        diagRow("Exports", `${o.exports.count} run(s) · p95 ${Math.round(o.exports.p95Ms)} ms · ${diagFmtBytes(o.exports.outputBytes)}`),
+        diagRow("Live connection", `${o.websocket.active} active · ${o.websocket.reconnects} reconnect · ${o.websocket.dropped} dropped · ${o.websocket.rejects} rejected`),
+        diagRow("Case databases", diagFmtBytes(cap.databaseBytes || 0)),
+        cap.growthBytesPerDay != null ? diagRow("Projected growth", `${diagFmtBytes(cap.growthBytesPerDay)}/day${cap.projectedDaysRemaining != null ? ` · ${cap.projectedDaysRemaining.toFixed(1)} days of free disk` : ""}`) : "",
+        hotspot("Slowest importer", slow.importer),
+        hotspot("Slowest query", slow.query),
+        hotspot("Slowest job", slow.job),
+        warningRows,
+      ].join(""));
     }
     // Per-importer health table (#84): one row per custom (declarative) importer — last-run age,
     // success/fail, rows parsed (kept/total, dropped), last error — plus malformed-spec load errors
@@ -24670,7 +24706,7 @@
         ].join(""));
       }
       const footer = `<div data-safe-style="font-size:11px;color:#7e8aa0;margin-top:4px">generated ${esc((report.generatedAt || "").replace("T", " ").slice(0, 19))} · uptime ${diagFmtAge(report.uptimeMs)}</div>`;
-      return disk + cases + queue + aiCard + renderAiCostCard(cost) + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
+      return disk + cases + queue + renderOperationalDiagnostics(report.operational) + aiCard + renderAiCostCard(cost) + importers + backupsCard + `<div id="diagSizes"></div>` + footer;
     }
     // Pre-flight status panel inside Settings → Diagnostics (#179).
     function renderPreflightStatus(report) {
@@ -24715,7 +24751,13 @@
         : Promise.resolve(null);
       Promise.all([diagFetch, costFetch]).then(([j, cost]) => {
         if (!j.report) throw new Error(j.error || "no report");
-        diagCopyText = j.text || "";
+        diagSupportText = j.supportPreview || "";
+        diagSupportFilename = j.supportFilename || "dfir-companion-support.json";
+        diagCopyText = diagSupportText || j.text || "";
+        const preview = document.getElementById("diagSupportPreview");
+        const download = document.getElementById("diagSupportDownloadBtn");
+        if (preview) { preview.hidden = true; preview.textContent = ""; }
+        if (download) download.disabled = true;
         body.innerHTML = renderDiagnostics(j.report, cost);
       }).catch(e => { body.textContent = "Could not load diagnostics: " + e.message + " — restart the companion server if this 404s."; });
     }
@@ -24896,6 +24938,12 @@
     }
     function diagCopy() {
       const msg = document.getElementById("diagMsg");
+      const preview = document.getElementById("diagSupportPreview");
+      if (diagSupportText && (!preview || preview.hidden)) {
+        diagPreviewSupport();
+        if (msg) msg.textContent = "review the support preview, then click Copy diagnostics again";
+        return;
+      }
       const text = diagCopyText || "(load diagnostics first)";
       const done = () => { if (msg) { msg.style.color = "#5ad17a"; msg.textContent = "copied to clipboard"; } };
       const fail = () => { if (msg) { msg.style.color = "#ff9f9f"; msg.textContent = "copy failed — select & copy manually"; } };
@@ -24904,6 +24952,28 @@
       } else {
         try { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); } catch { fail(); }
       }
+    }
+    function diagPreviewSupport() {
+      const preview = document.getElementById("diagSupportPreview");
+      const download = document.getElementById("diagSupportDownloadBtn");
+      const msg = document.getElementById("diagMsg");
+      if (!preview || !diagSupportText) {
+        if (msg) msg.textContent = "load diagnostics first";
+        return;
+      }
+      preview.textContent = diagSupportText;
+      preview.hidden = false;
+      if (download) download.disabled = false;
+      if (msg) msg.textContent = "preview contains aggregate metrics only; evidence and identifiers are excluded";
+    }
+    function diagDownloadSupport() {
+      const preview = document.getElementById("diagSupportPreview");
+      if (!diagSupportText || !preview || preview.hidden) return;
+      const blob = new Blob([diagSupportText], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = diagSupportFilename; a.click();
+      URL.revokeObjectURL(url);
     }
     // Case backup restore (#180) ---------------------------------------------------------------
     function loadCaseBackups() {

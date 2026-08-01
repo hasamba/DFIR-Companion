@@ -2,25 +2,49 @@
 
 ## How It Works
 
-The extension captures a screenshot of the current browser tab and POSTs it to `POST /captures` on the Companion server. The server saves the image to `cases/<id>/screenshots/` before doing anything else — evidence is always persisted first, before any AI analysis.
+The extension captures a screenshot of the current browser tab and sends it to the Companion. The
+server saves the image before doing anything else — evidence is always persisted first, before any
+AI analysis.
+
+A fresh installation has no access to websites. On the console you want to use, click the extension
+icon and **Allow this site**. The browser prompt names that exact origin. Access remains limited to
+that origin until you revoke it from the popup, the Extension options page, or the browser's own
+extension controls.
 
 ## Capture Modes
 
 | Method | How |
 |--------|-----|
-| **Hotkey** | `Ctrl+Shift+S` in any browser tab |
-| **Extension popup** | Click the extension icon → select case → click Capture |
-| **Floating push button** | Button injected into recognised DFIR consoles; single-click sends the current event/row |
+| **One-off screenshot** | Click the extension icon → select case → **Capture this tab once**. Uses temporary tab access; no site grant is retained. |
+| **Ongoing screenshots** | Approve the console origin → select case → **Start**. Timer/navigation/tab-switch capture is limited to approved origins. |
+| **Hotkey** | `Ctrl+Shift+S` toggles ongoing capture; an unapproved site fails closed and tells you to use the popup. |
+| **Floating push button** | Injected only into an approved, recognised DFIR console; a click sends the current rows. |
+
+Browser-internal pages, local files, data URLs, and private/incognito tabs cannot be captured.
 
 ## Recognised Consoles (One-Click Push)
 
-The extension automatically injects a push button into:
+After origin approval, the extension can inject a push button into:
 
 - **Security Onion** (Alerts, Hunt, Dashboards)
 - **SO-CRATES** (network/file events, Sigma detections)
 - **Elasticsearch/Kibana** (standard and modern async-search)
 
-For any other browser-based tool (Velociraptor, Splunk, a custom SIEM, etc.), use `Ctrl+Shift+S` to enable capture mode and click the floating Push chip.
+Velociraptor, Splunk, Kibana/Elastic, CrowdStrike, VolWeb, and other supported/self-hosted consoles
+are recognized by their URL or page signature. A custom origin still requires the same explicit
+**Allow this site** action.
+
+## What Page Data Is Used
+
+On an approved console, the extension reads the page URL/title, tool-identifying page markers, the
+visible table when you click Push, and API responses matching that console adapter. Matching rows
+stay in page memory and are transmitted only after you click Push. Screenshots are sent only when a
+capture action or enabled capture trigger fires. Nothing is sent to the extension authors or an
+analytics service.
+
+The options page shows approved origins and a local log of the latest 100 grants, denials, and
+revocations. Revoking an origin removes the Push button, disables the page hook, and blocks late
+messages from that page.
 
 ## Screenshot OCR Full-Text Search
 

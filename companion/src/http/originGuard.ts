@@ -244,7 +244,10 @@ export function createOriginGuard(cfg: GuardConfig = {}): RequestHandler {
       res.header("Access-Control-Allow-Origin", origin); // echo the caller, never "*"
       res.header("Vary", "Origin"); // the response varies by origin, so it must not be cached across them
       res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-      res.header("Access-Control-Allow-Headers", "Content-Type");
+      // Without a broad extension host permission, Companion requests use normal CORS. The
+      // optional team service token travels in Authorization, so trusted extension origins need
+      // that header in addition to the dashboard's Content-Type.
+      res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
       // Chromium Private Network Access: a request from an extension page to a private address
       // (127.0.0.1) is blocked unless the preflight allows it. Only ever granted to a trusted origin.
       res.header("Access-Control-Allow-Private-Network", "true");
