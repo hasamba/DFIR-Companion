@@ -100,17 +100,30 @@ test("US-011: the recent-captures feed reports which case last captured, and how
 }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
-  const post = await page.request.post("/captures", { data: capturePayload(demoCase) });
-  expect(post.status()).toBe(201);
-
-  const recent = await page.request.get("/captures/recent");
-  expect(recent.status(), await recent.text()).toBe(200);
+  // /captures/recent is GLOBAL — it reports the most recent capture across every case, not this
+  // one. With the suite running four workers, another spec's capture can land between the POST and
+  // the GET, so a single post-then-read asserted exclusivity this endpoint never promised. That is
+  // what made this fail once the suite grew past ~200 specs.
+  //
+  // Re-posting inside the poll keeps the claim honest: this case's capture must be able to reach
+  // the head of the feed, rather than merely being there on the first look.
+  await expect
+    .poll(
+      async () => {
+        const post = await page.request.post("/captures", { data: capturePayload(demoCase) });
+        expect(post.status()).toBe(201);
+        const recent = await page.request.get("/captures/recent");
+        if (!recent.ok()) return "";
+        return ((await recent.json()) as { caseId?: string }).caseId ?? "";
+      },
+      { timeout: 20_000, intervals: [300] },
+    )
+    .toBe(demoCase);
 
   // NOT a list of captures despite the story's wording — it is a liveness summary: the case that
   // captured most recently and how stale that is. That is what the dashboard's "extension is
   // attached to case X" indicator reads, so the two fields are the whole contract.
-  const body = (await recent.json()) as { caseId?: string; ageMs?: number };
-  expect(body.caseId, "the case that just captured").toBe(demoCase);
+  const body = (await (await page.request.get("/captures/recent")).json()) as { ageMs?: number };
   expect(typeof body.ageMs, "how stale the last capture is").toBe("number");
   // Seconds old, not hours: a stale age here would make the indicator claim the extension is idle.
   expect(body.ageMs).toBeLessThan(120_000);
