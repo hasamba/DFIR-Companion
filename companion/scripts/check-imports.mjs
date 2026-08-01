@@ -8,7 +8,8 @@
  * decomposing a large module (the whole point of #384) unsafe to reason about, because moving a
  * top-level `const` across the seam turns a latent cycle into a `TDZ`/`undefined` crash.
  *
- * There are 33 cycles today. This does NOT try to remove them: it records them, and fails on a
+ * There is 1 cycle today (33 when this gate was written). This does NOT try to remove them: it
+ * records them, and fails on a
  * cycle that is not on the list. The list can only shrink — `--update` rewrites it, so a PR that
  * removes a cycle shows the deletion in review, and a PR that adds one cannot pass without
  * explicitly writing the new cycle down.
@@ -30,14 +31,20 @@ import { fileURLToPath } from "node:url";
 
 const COMPANION = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(COMPANION, "src");
+// The dashboard's extracted feature modules. They import NOTHING from each other today, so this
+// root contributes zero cycles — which is exactly why it is wired in now. As #384 pulls features
+// out of dashboard.html's 19k lines of inline script, these modules start importing one another,
+// and the first cycle should fail a PR rather than be discovered later from a blank page.
+const PUBLIC_JS = resolve(COMPANION, "..", "public", "js");
 const BASELINE = join(COMPANION, "scripts", "import-cycles.json");
 
-function walk(dir) {
+function walk(dir, ext = ".ts") {
+  if (!existsSync(dir)) return [];
   const out = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else if (name.endsWith(".ts") && !name.endsWith(".d.ts")) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...walk(full, ext));
+    else if (name.endsWith(ext) && !name.endsWith(".d.ts")) out.push(full);
   }
   return out;
 }
@@ -71,16 +78,26 @@ function edges(file) {
 
   const out = [];
   for (const spec of specs) {
-    if (!spec.startsWith(".")) continue; // package import — cannot cycle back into src/
-    const target = resolve(dirname(file), spec.replace(/\.js$/, ".ts"));
-    if (existsSync(target)) out.push(target);
+    if (!spec.startsWith(".")) continue; // package import — cannot cycle back into our own trees
+    // src/ writes `./x.js` and means `./x.ts`; public/js/ writes `./x.js` and means it literally.
+    // Try the TypeScript rewrite first, then the specifier as written.
+    const asTs = resolve(dirname(file), spec.replace(/\.js$/, ".ts"));
+    const asIs = resolve(dirname(file), spec);
+    if (existsSync(asTs)) out.push(asTs);
+    else if (existsSync(asIs)) out.push(asIs);
   }
   return out;
 }
 
-const files = walk(SRC);
+const files = [...walk(SRC), ...walk(PUBLIC_JS, ".js")];
 const graph = new Map(files.map((f) => [f, edges(f)]));
-const label = (f) => relative(SRC, f).replace(/\\/g, "/");
+// src/ files keep their historical `analysis/x.ts` label so the recorded baseline stays valid;
+// dashboard modules are labelled `public/js/x.js`, which cannot collide with a src-relative path.
+const label = (f) =>
+  (f.startsWith(PUBLIC_JS) ? join("public/js", relative(PUBLIC_JS, f)) : relative(SRC, f)).replace(
+    /\\/g,
+    "/",
+  );
 
 // Tarjan-free: DFS with an explicit stack, reporting each elementary cycle once by its rotation
 // with the alphabetically smallest member first, so the recorded form is stable across runs.

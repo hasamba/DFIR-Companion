@@ -41,12 +41,13 @@ const LEDGER = join(COMPANION, "scripts", "file-size-ledger.json");
  */
 const SOFT_LIMIT = 800;
 
-function walk(dir) {
+function walk(dir, ext = ".ts") {
+  if (!existsSync(dir)) return [];
   const out = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else if (name.endsWith(".ts")) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...walk(full, ext));
+    else if (name.endsWith(ext) && !name.endsWith(".d.ts")) out.push(full);
   }
   return out;
 }
@@ -54,6 +55,46 @@ function walk(dir) {
 const sizes = new Map();
 for (const f of walk(SRC)) {
   sizes.set(relative(SRC, f).replace(/\\/g, "/"), readFileSync(f, "utf8").split("\n").length);
+}
+
+// ---------------------------------------------------------------------------------------------
+// public/ — the half of the codebase that had no ceiling at all (#384).
+//
+// dashboard.html is 25,571 lines, of which 19,256 are JavaScript inside <script> tags and 3,231
+// are CSS inside <style> tags. It is larger than pipeline.ts and server.ts combined and it lives
+// outside companion/, so until now neither this gate nor check-imports.mjs had ever seen it — and
+// it grew by 165 lines of script during the branch that added this paragraph.
+//
+// WHAT IS MEASURED IS THE CODE, NOT THE MARKUP. The ~3,000 lines of actual HTML in dashboard.html
+// are not the problem; a 19k-line program hiding inside a markup file is. Budgeting the inline
+// blocks separately also names the two extractions independently: script moves to public/js/
+// modules, style moves to a stylesheet, and each shows up in the ledger as it shrinks.
+// ---------------------------------------------------------------------------------------------
+const PUBLIC = resolve(COMPANION, "..", "public");
+const PUBLIC_JS = join(PUBLIC, "js");
+
+// Extracted dashboard feature modules. All six are already under the limit, so they are held there.
+for (const f of walk(PUBLIC_JS, ".js")) {
+  sizes.set(
+    `public/js/${relative(PUBLIC_JS, f).replace(/\\/g, "/")}`,
+    readFileSync(f, "utf8").split("\n").length,
+  );
+}
+
+// `<script>` without a src= is inline code; `<script src=…>` is a reference and is not counted.
+const INLINE_JS = /<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g;
+const INLINE_CSS = /<style[^>]*>([\s\S]*?)<\/style>/g;
+const countIn = (text, re) => {
+  let lines = 0;
+  for (const m of text.matchAll(re)) lines += m[1].split("\n").length;
+  return lines;
+};
+
+for (const name of existsSync(PUBLIC) ? readdirSync(PUBLIC) : []) {
+  if (!name.endsWith(".html")) continue;
+  const text = readFileSync(join(PUBLIC, name), "utf8");
+  sizes.set(`public/${name}#inline-js`, countIn(text, INLINE_JS));
+  sizes.set(`public/${name}#inline-css`, countIn(text, INLINE_CSS));
 }
 
 const ledger = existsSync(LEDGER) ? JSON.parse(readFileSync(LEDGER, "utf8")) : {};
