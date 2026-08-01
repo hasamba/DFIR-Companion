@@ -10,122 +10,180 @@
   "domains": {
     "shared": {
       "layer": "shared",
-      "paths": ["types.ts", "version.ts", "serverAssets.ts", "eventTypes/**"]
+      "paths": [
+        "types.ts",
+        "version.ts",
+        "serverAssets.ts",
+        "eventTypes/**"
+      ]
     },
     "storage": {
       "layer": "platform",
-      "paths": ["storage/**"]
+      "paths": [
+        "storage/**"
+      ]
     },
     "providers": {
       "layer": "platform",
-      "paths": ["providers/**"]
+      "paths": [
+        "providers/**"
+      ]
     },
     "auth": {
       "layer": "platform",
-      "paths": ["auth/**"]
+      "paths": [
+        "auth/**"
+      ]
     },
     "http": {
       "layer": "platform",
-      "paths": ["http/**"]
+      "paths": [
+        "http/**"
+      ]
     },
     "settings": {
       "layer": "platform",
-      "paths": ["settings/**"]
+      "paths": [
+        "settings/**"
+      ]
     },
     "logging": {
       "layer": "platform",
-      "paths": ["logging/**"]
+      "paths": [
+        "logging/**"
+      ]
     },
     "config": {
       "layer": "platform",
-      "paths": ["config/**"]
+      "paths": [
+        "config/**"
+      ]
     },
     "ingest": {
       "layer": "platform",
-      "paths": ["ingest/**"]
+      "paths": [
+        "ingest/**"
+      ]
     },
     "dedup": {
       "layer": "platform",
-      "paths": ["dedup/**"]
+      "paths": [
+        "dedup/**"
+      ]
     },
     "analysis/timeline": {
       "layer": "domain",
       "tier": 0,
-      "paths": ["analysis/timeline/**"]
+      "paths": [
+        "analysis/timeline/**"
+      ]
     },
     "analysis/case": {
       "layer": "domain",
       "tier": 1,
-      "paths": ["analysis/case/**"]
+      "paths": [
+        "analysis/case/**"
+      ]
     },
     "analysis/privacy": {
       "layer": "domain",
       "tier": 1,
-      "paths": ["analysis/privacy/**"]
+      "paths": [
+        "analysis/privacy/**"
+      ]
     },
     "analysis/intel": {
       "layer": "domain",
       "tier": 1,
-      "paths": ["analysis/intel/**"]
+      "paths": [
+        "analysis/intel/**"
+      ]
     },
     "analysis/findings": {
       "layer": "domain",
       "tier": 2,
-      "paths": ["analysis/findings/**"]
+      "paths": [
+        "analysis/findings/**"
+      ]
     },
     "analysis/detect": {
       "layer": "domain",
       "tier": 2,
-      "paths": ["analysis/detect/**"]
+      "paths": [
+        "analysis/detect/**"
+      ]
     },
     "analysis/hunt": {
       "layer": "domain",
       "tier": 2,
-      "paths": ["analysis/hunt/**"]
+      "paths": [
+        "analysis/hunt/**"
+      ]
     },
     "analysis/notify": {
       "layer": "domain",
       "tier": 2,
-      "paths": ["analysis/notify/**"]
+      "paths": [
+        "analysis/notify/**"
+      ]
     },
     "analysis/ingest": {
       "layer": "domain",
       "tier": 3,
-      "paths": ["analysis/ingest/**"]
+      "paths": [
+        "analysis/ingest/**"
+      ]
     },
     "analysis/workflow": {
       "layer": "domain",
       "tier": 4,
-      "paths": ["analysis/workflow/**"]
+      "paths": [
+        "analysis/workflow/**"
+      ]
     },
     "analysis/ai": {
       "layer": "domain",
       "tier": 5,
-      "paths": ["analysis/ai/**"]
+      "paths": [
+        "analysis/ai/**"
+      ]
     },
     "routes": {
       "layer": "delivery",
-      "paths": ["routes/**"]
+      "paths": [
+        "routes/**"
+      ]
     },
     "reports": {
       "layer": "delivery",
-      "paths": ["reports/**"]
+      "paths": [
+        "reports/**"
+      ]
     },
     "integrations": {
       "layer": "delivery",
-      "paths": ["integrations/**"]
+      "paths": [
+        "integrations/**"
+      ]
     },
     "enrichment": {
       "layer": "delivery",
-      "paths": ["enrichment/**"]
+      "paths": [
+        "enrichment/**"
+      ]
     },
     "live": {
       "layer": "delivery",
-      "paths": ["live/**"]
+      "paths": [
+        "live/**"
+      ]
     },
     "composition": {
       "layer": "composition",
-      "paths": ["server.ts", "composition/**"]
+      "paths": [
+        "server.ts",
+        "composition/**"
+      ]
     }
   },
   "flatAnalysisFiles": {
@@ -168,8 +226,8 @@
     "casePassword.ts": "analysis/case",
     "caseSqliteWorker.ts": "storage",
     "caseStats.ts": "analysis/case",
-    "chainsawImport.ts": "analysis/ingest",
     "chainSignature.ts": "analysis/detect",
+    "chainsawImport.ts": "analysis/ingest",
     "ciscoAsaImport.ts": "analysis/ingest",
     "clockSkew.ts": "analysis/timeline",
     "clockSkewStore.ts": "analysis/timeline",
@@ -179,9 +237,9 @@
     "cockpitStore.ts": "analysis/workflow",
     "collectDirective.ts": "analysis/workflow",
     "collectDirectiveResolve.ts": "analysis/workflow",
+    "collectSatisfaction.ts": "analysis/workflow",
     "collectionPlan.ts": "analysis/workflow",
     "collectionPlanStore.ts": "analysis/workflow",
-    "collectSatisfaction.ts": "analysis/workflow",
     "combinedLogImport.ts": "analysis/ingest",
     "comments.ts": "analysis/findings",
     "complianceControl.ts": "analysis/intel",
@@ -201,8 +259,8 @@
     "cybertriageImport.ts": "analysis/ingest",
     "d3fendData.ts": "analysis/intel",
     "d3fendMap.ts": "analysis/intel",
-    "dashboardViews.ts": "analysis/workflow",
     "dashboardViewStore.ts": "analysis/workflow",
+    "dashboardViews.ts": "analysis/workflow",
     "declarativeImporter.ts": "analysis/ingest",
     "deepPass.ts": "analysis/ai",
     "deepPassExecution.ts": "analysis/ai",
@@ -225,8 +283,8 @@
     "falsePositiveSimilarity.ts": "analysis/findings",
     "findingGrounding.ts": "analysis/findings",
     "findingRelevance.ts": "analysis/findings",
-    "findingsDiff.ts": "analysis/findings",
     "findingWorkflow.ts": "analysis/findings",
+    "findingsDiff.ts": "analysis/findings",
     "forensicGate.ts": "analysis/timeline",
     "forensicGateControl.ts": "analysis/timeline",
     "forensicSort.ts": "analysis/timeline",
@@ -239,8 +297,8 @@
     "hayabusaImport.ts": "analysis/ingest",
     "highSeverityFindings.ts": "analysis/findings",
     "hostRanking.ts": "analysis/detect",
-    "huntOutcomes.ts": "analysis/hunt",
     "huntOutcomeStore.ts": "analysis/hunt",
+    "huntOutcomes.ts": "analysis/hunt",
     "huntPlatforms.ts": "analysis/hunt",
     "huntQueryAggregation.ts": "analysis/hunt",
     "huntQueryCursor.ts": "analysis/hunt",
@@ -257,14 +315,14 @@
     "imageLoader.ts": "analysis/privacy",
     "imageRedact.ts": "analysis/privacy",
     "importDetect.ts": "analysis/ingest",
-    "importerSpec.ts": "analysis/ingest",
-    "importerStore.ts": "analysis/ingest",
     "importMeta.ts": "analysis/ingest",
     "importResume.ts": "analysis/ingest",
     "importUndo.ts": "analysis/ingest",
+    "importerSpec.ts": "analysis/ingest",
+    "importerStore.ts": "analysis/ingest",
+    "incidentTypeStore.ts": "analysis/intel",
     "incidentTypes.ts": "analysis/intel",
     "incidentTypesData.ts": "analysis/intel",
-    "incidentTypeStore.ts": "analysis/intel",
     "initialAccess.ts": "analysis/detect",
     "instanceSecret.ts": "analysis/privacy",
     "investigationStateFiles.ts": "storage",
@@ -278,10 +336,10 @@
     "iocProvenanceChain.ts": "analysis/findings",
     "iocRepair.ts": "analysis/findings",
     "iocRiskScore.ts": "analysis/findings",
-    "iocsDiff.ts": "analysis/findings",
     "iocValue.ts": "analysis/findings",
     "iocWhitelist.ts": "analysis/findings",
     "iocWhitelistStore.ts": "analysis/findings",
+    "iocsDiff.ts": "analysis/findings",
     "irisImport.ts": "analysis/ingest",
     "jobLedgerStore.ts": "analysis/case",
     "jobLedgerWorker.ts": "analysis/case",
@@ -295,8 +353,8 @@
     "knownPlaybooksData.ts": "analysis/intel",
     "knownUnknowns.ts": "analysis/workflow",
     "lateralPathDismiss.ts": "analysis/detect",
-    "learnedPatterns.ts": "analysis/intel",
     "learnedPatternStore.ts": "analysis/intel",
+    "learnedPatterns.ts": "analysis/intel",
     "logAggregate.ts": "analysis/ingest",
     "logImport.ts": "analysis/ingest",
     "loginGraph.ts": "analysis/detect",
@@ -308,13 +366,18 @@
     "mobileSummary.ts": "analysis/workflow",
     "networkImport.ts": "analysis/ingest",
     "notebookStore.ts": "analysis/workflow",
-    "notifications.ts": "analysis/notify",
     "notificationStore.ts": "analysis/notify",
+    "notifications.ts": "analysis/notify",
     "nsrl.ts": "analysis/intel",
     "nsrlDb.ts": "analysis/intel",
     "nsrlStore.ts": "analysis/intel",
     "ocrRedact.ts": "analysis/privacy",
     "ocrSearch.ts": "analysis/privacy",
+    "operationalCapacity.ts": "analysis/case",
+    "operationalDiagnostics.ts": "analysis/case",
+    "operationalHttpMetrics.ts": "analysis/case",
+    "operationalImport.ts": "analysis/case",
+    "operationalMetrics.ts": "storage",
     "osqueryImport.ts": "analysis/ingest",
     "pinnedFindings.ts": "analysis/findings",
     "pipeline.ts": "analysis/ai",
@@ -338,8 +401,8 @@
     "pushTokenStore.ts": "analysis/notify",
     "queryTranslate.ts": "analysis/ai",
     "reconTechniques.ts": "analysis/intel",
-    "redactedExport.ts": "analysis/privacy",
     "redactPaths.ts": "analysis/privacy",
+    "redactedExport.ts": "analysis/privacy",
     "regexSafety.ts": "analysis/privacy",
     "responseSchema.ts": "analysis/ai",
     "sandboxImport.ts": "analysis/ingest",
@@ -377,6 +440,7 @@
     "summary.ts": "analysis/workflow",
     "superTimeline.ts": "analysis/timeline",
     "superTimelineStore.ts": "analysis/timeline",
+    "supportBundle.ts": "analysis/case",
     "swimlane.ts": "analysis/detect",
     "synthEvidence.ts": "analysis/ai",
     "synthGroup.ts": "analysis/ai",
@@ -387,8 +451,8 @@
     "syslogImport.ts": "analysis/ingest",
     "tagger.ts": "analysis/findings",
     "taggerAuto.ts": "analysis/findings",
-    "taggerRules.ts": "analysis/findings",
     "taggerRuleSuggest.ts": "analysis/findings",
+    "taggerRules.ts": "analysis/findings",
     "taggerRun.ts": "analysis/findings",
     "taggerStore.ts": "analysis/findings",
     "tags.ts": "analysis/findings",
@@ -396,23 +460,23 @@
     "templateStore.ts": "analysis/workflow",
     "theHiveImport.ts": "analysis/ingest",
     "thorImport.ts": "analysis/ingest",
+    "timeUtc.ts": "analysis/timeline",
+    "timeYearClamp.ts": "analysis/timeline",
     "timelineAnomalies.ts": "analysis/detect",
     "timelineDiff.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
-    "timeUtc.ts": "analysis/timeline",
-    "timeYearClamp.ts": "analysis/timeline",
     "toolDetect.ts": "analysis/detect",
     "tradecraftRules.ts": "analysis/detect",
     "uncertainty.ts": "analysis/ai",
     "updateCheck.ts": "analysis/case",
     "updateCheckRun.ts": "analysis/case",
     "updateCheckStore.ts": "analysis/case",
-    "velociraptorClientStore.ts": "analysis/case",
-    "velociraptorImport.ts": "analysis/ingest",
     "veloHuntStore.ts": "analysis/case",
     "veloMonitorStore.ts": "analysis/case",
     "veloRef.ts": "analysis/case",
     "veloTimeScope.ts": "analysis/timeline",
+    "velociraptorClientStore.ts": "analysis/case",
+    "velociraptorImport.ts": "analysis/ingest",
     "wazuhImport.ts": "analysis/ingest",
     "workLogFilter.ts": "analysis/workflow",
     "yaraImport.ts": "analysis/ingest",
