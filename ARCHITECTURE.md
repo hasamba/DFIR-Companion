@@ -16,7 +16,14 @@ in the PR — not a new top-level directory.
 `scripts/module-map.json`. The rules are enforced from day one; they do not wait for files to move.
 The domain *directories* are the target — `src/analysis/` is 290 files in one flat directory right
 now, and files move into their directory as extraction PRs touch them (see [Migration](#migration)).
-Moving a file is then a no-op for the gate, because the map already knew where it belonged.
+
+**Moving a file is not free for the gate**, and it is worth knowing why before you try it. The map
+classifies by domain, but the violation ledger keys on the *physical path*. So relocating a file
+that appears in the ledger retires its old entries and creates new ones at the new path — the gate
+reports both, fails, and `--update` refuses to add the replacements because it only ever shrinks.
+That is deliberate rather than an oversight: a move is exactly when a boundary violation should be
+re-examined rather than carried along. Land the move with `--init` and say in the PR which entries
+are the same debt at a new address and which are genuinely new.
 
 ---
 
@@ -69,7 +76,7 @@ today, not invented — `ai` importing `ingest` 39 times is why `ai` is at the t
 | **1** | `case/` | `case*`, `custody*`, `analysisRun*`, `job*`, `updateCheck*`, `preflight`, `diagnostics` | 34 | 5,837 |
 | **1** | `privacy/` | `anonymize`, `anon*`, `presidio*`, `ocrRedact`, `redact*`, `imageRedact`, `secretSpillRules`, `deobfuscate` | 18 | 2,697 |
 | **1** | `intel/` | reference data and mapping: `attack*`, `d3fend*`, `kev*`, `nsrl*`, `adversary*`, `playbook*`, `compliance*`, `geoMap`, `incidentType*` | 33 | 5,261 |
-| **0** | `timeline/` | the event record itself: `superTimeline*`, `canonicalEvent`, `forensicGate`, `forensicSort`, `correlate`, `stateMerge`, `searchFilter`, `time*`, `clockSkew` | 16 | 2,773 |
+| **0** | `timeline/` | the event record itself: `superTimeline*`, `forensicGate`, `forensicSort`, `correlate`, `stateMerge`, `searchFilter`, `time*`, `clockSkew` | 16 | 2,773 |
 
 Four placements worth stating outright, because each one is a decision someone will otherwise
 relitigate:
@@ -172,8 +179,14 @@ established, and it works the same way.
   allowed edges. Files are listed by exact path, not by count, so deleting one file never creates
   room for a different one.
 - `scripts/boundary-violations.json` records the **48 violations** that break the map today, as
-  concrete `source-file → target-file` pairs spanning 30 domain edges. Not domain pairs, and not
-  counts: an already-recorded edge must not become a licence to add more imports along it.
+  concrete `source-file → target-file [kind]` entries spanning 30 domain edges. Not domain pairs,
+  and not counts: an already-recorded edge must not become a licence to add more imports along it.
+  The `[kind]` suffix is `runtime` or `type`, and it is part of the key so that a grandfathered
+  type-only edge turning into a runtime one reads as a **new** violation rather than passing
+  silently — the coupling got strictly worse without either file changing name.
+- The scanner sees `import … from`, bare `import "x"`, **`await import("x")`** and the
+  **`import("x").Type`** type query. The last two matter: a dynamic import is precisely how someone
+  routes around a boundary error, since the static form fails the gate and `await import()` did not.
 - The list only shrinks. `--update` refuses to add an entry, so removing a violation is a visible
   deletion in review and adding one requires an argument rather than a silent edit.
 - A test asserts the tables in this document match `module-map.json`. The JSON is what CI enforces,

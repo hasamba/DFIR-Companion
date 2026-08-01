@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 // ARCHITECTURE.md is what people read; scripts/module-map.json is what CI enforces. A document
@@ -84,6 +84,21 @@ describe("module map internals", () => {
         expect(def.layer, `${name} has a tier but is not in the domain layer`).toBe("domain");
       }
     }
+  });
+
+  it("classifies exactly the files still sitting flat in src/analysis/", async () => {
+    // Both directions, because each rots differently. A file with no entry is an unclassified
+    // module the gate cannot reason about; an entry with no file is a classification left behind by
+    // a move, which makes the map look current when it has drifted. check-boundaries.mjs enforces
+    // both too — this asserts it in the test job, where the failure names the file directly.
+    const map = await readMap();
+    const dir = new URL("companion/src/analysis/", ROOT);
+    const onDisk = (await readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isFile() && e.name.endsWith(".ts") && !e.name.endsWith(".d.ts"))
+      .map((e) => e.name)
+      .sort();
+
+    expect(Object.keys(map.flatAnalysisFiles).sort()).toEqual(onDisk);
   });
 
   it("points every flat-file assignment at a domain that exists", async () => {
