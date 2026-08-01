@@ -1,0 +1,124 @@
+name: Browser E2E
+
+# Playwright workflow + accessibility coverage (#386).
+#
+# NIGHTLY, NOT PER-PR, deliberately. The suite drives a real Chromium against a real server, so it
+# is the slowest thing in this repo by an order of magnitude and the most susceptible to load-
+# dependent flakes. Running it on every pull_request would put a browser run in front of every
+# change, including the many that cannot affect it.
+#
+# The cost of that choice is honest and worth stating: a regression is caught the night AFTER it
+# merges, not at review time, so the offending change is already on master and you bisect rather
+# than get told. If that trade stops paying, move the `companion-e2e` job back into ci.yml under
+# `pull_request` with a paths filter — it needs no other change.
+#
+# Scheduled workflows only ever run on the DEFAULT branch, so this file does nothing until it is on
+# master. Use the Actions tab's "Run workflow" button (workflow_dispatch) to run it on demand
+# against master, and `npm run test:e2e` in companion/ to run it locally on a branch.
+
+on:
+  schedule:
+    # 03:00 UTC daily. Deliberately not on the hour: GitHub's scheduler is busiest then and delays
+    # scheduled runs under load.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # only used by the failure notice below
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  companion-e2e:
+    name: Companion browser E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        working-directory: companion
+        run: npm ci
+
+      # The browser binaries live OUTSIDE node_modules (~/.cache/ms-playwright) and are ~150MB for
+      # Chromium alone, so they are cached separately and keyed on the resolved Playwright version.
+      # Keying on the version matters: a bump must miss the cache, or the run silently drives a
+      # browser that does not match the client.
+      - name: Resolve Playwright version
+        id: pw
+        working-directory: companion
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      # Runs even on a cache hit: it is a no-op when the browser is present, and --with-deps still
+      # installs the OS packages, which are not part of the cached path.
+      - name: Install Chromium
+        working-directory: companion
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E (Playwright, Chromium)
+        working-directory: companion
+        run: npm run test:e2e
+
+      # Compares the axe counts the run just produced against scripts/a11y-ledger.json. Its own
+      # step, so a red result says "accessibility regressed" rather than "a browser test failed" —
+      # different problems with different fixes.
+      #
+      # The ledger was seeded on a developer machine. If CI's Chromium renders text even slightly
+      # differently the color-contrast counts can differ, and the honest fix is one re-baseline
+      # (`npm run check:a11y -- --init`) with the new numbers justified — not loosening the check.
+      - name: Accessibility ratchet
+        working-directory: companion
+        run: npm run check:a11y
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: companion/playwright-report/
+          retention-days: 14
+
+      # A nightly nobody watches is a nightly that rots. GitHub emails the owner when a scheduled
+      # run fails, which is easy to miss among notifications, so a failure also opens an issue —
+      # but only if one is not already open, so a suite that stays broken for a week files one
+      # issue rather than seven.
+      - name: Open an issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --label e2e-nightly --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing is already open for a nightly failure; commenting instead."
+            gh issue comment "$existing" --body "Nightly browser E2E failed again: $RUN_URL"
+          else
+            gh issue create \
+              --title "Nightly browser E2E failed" \
+              --label e2e-nightly \
+              --body "The nightly Playwright + accessibility run failed on master.
+
+          Run: $RUN_URL
+
+          The Playwright HTML report is attached to that run as the \`playwright-report\` artifact.
+
+          If the failure is \`check:a11y\` reporting different violation counts rather than new ones,
+          that is most likely the ledger having been seeded on a different Chromium — re-baseline with
+          \`npm run check:a11y -- --init\` and justify the new numbers."
+          fi

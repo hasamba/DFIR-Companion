@@ -1,0 +1,77 @@
+/* Accessibility primitives (#386).
+ *
+ * Lives outside dashboard.html deliberately. The inline <style> is one of the blocks frozen by the
+ * file-size ratchet (#385/#384) — new code goes into its own module rather than growing it — and
+ * these rules are a coherent layer rather than page styling, so they read better together than
+ * scattered through 3,000 lines of panel CSS.
+ *
+ * Served through the STATIC_ASSETS allowlist in companion/src/http/staticAssets.ts. A stylesheet
+ * missing from that list 404s silently and every rule here vanishes with no error anywhere, which
+ * is what tests/settings/settingsSearch.test.ts pins.
+ *
+ * Loaded AFTER the inline <style>, but nothing here depends on that: every competing `outline:none`
+ * in dashboard.html is a class-plus-pseudo selector and beats these on specificity either way.
+ */
+
+/* Visible to assistive technology, not to sighted users. Deliberately NOT display:none — screen
+   readers skip display:none entirely, which would silence the live regions that
+   js/a11y/announcer.js appends here for job, error and AI state. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Off-screen until focused, then pinned top-left over the toolbar. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  color: var(--text-bright);
+  border: 1px solid var(--accent);
+  border-radius: 0 0 6px 0;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* Focus must be VISIBLE. :focus-visible rather than :focus, so a mouse click does not leave a ring
+   behind — that side effect is why these outlines get deleted in the first place. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Respect the OS "reduce motion" setting. Investigators work long shifts in this UI, and vestibular
+   triggers are not a stylistic preference. Near-zero rather than 0 so transitionend and
+   animationend listeners still fire — setting 0 silently strips those events and hangs any code
+   waiting on them. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* min-width:0 is load-bearing. A flex item defaults to min-width:auto, so this span refuses to
+   shrink below its own text; with the nowrap dismiss button beside it the banner then forces the
+   whole page wider than the viewport — 18px of horizontal scroll at 380px (#386). */
+#preflightBanner span {
+  flex: 1;
+  min-width: 0;
+}

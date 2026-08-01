@@ -59,6 +59,13 @@ dist-choco/
 *.tmp
 *.tmp.*
 
+# Playwright E2E output (HTML report, traces, failure screenshots) — regenerated every run.
+# The a11y LEDGER (companion/scripts/a11y-ledger.json) is committed; these are not.
+/companion/test-results/
+/companion/playwright-report/
+/companion/blob-report/
+/companion/a11y-results.json
+
 # Local planning / process scratch (not part of the shipped project)
 .planning/
 docs/superpowers/

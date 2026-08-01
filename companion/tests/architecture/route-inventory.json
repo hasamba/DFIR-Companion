@@ -469,6 +469,14 @@
     "ROUTE GET /js/case-load-progress.js",
     "ROUTE GET /js/hunt-workbench.js",
     "ROUTE GET /js/diagnostics-panel.js",
+    "ROUTE GET /js/a11y/modal-autowire.js",
+    "ROUTE GET /js/a11y/modal.js",
+    "ROUTE GET /js/a11y/focus-trap.js",
+    "ROUTE GET /js/a11y/announcer.js",
+    "ROUTE GET /js/a11y/landmarks.js",
+    "ROUTE GET /js/a11y/describe-as-table.js",
+    "ROUTE GET /js/a11y/tooltips.js",
+    "ROUTE GET /css/a11y.css",
     "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
 }
