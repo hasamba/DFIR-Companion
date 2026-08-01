@@ -6,7 +6,7 @@ import { emptyState, type Finding, type ForensicEvent, type InvestigationState }
 function meta(p: Partial<ImportMeta>): ImportMeta {
   return {
     lastImportedAt: "2026-05-20T00:00:00Z", lastImportKind: p.lastImportKind ?? "log", lastImportFile: p.lastImportFile ?? "proxy_access.log",
-    addedCount: p.addedCount ?? 0, removedCount: 0, lastDiff: null,
+    addedCount: p.addedCount ?? 0, superTimelineAddedCount: p.superTimelineAddedCount ?? 0, removedCount: 0, lastDiff: null,
     iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
     linesIn: p.linesIn ?? 0, path: p.path ?? "ai", fpPropagation: p.fpPropagation ?? [],
     ...(p.truncation !== undefined ? { truncation: p.truncation } : {}),

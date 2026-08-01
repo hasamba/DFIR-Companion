@@ -76,10 +76,11 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         const allArtifactEvents = imported.forensicTimeline.filter((event) =>
           event.sourceScreenshots.includes(parameters.storedName),
         );
+        let superTimelineAddedCount = 0;
         if (options.superTimelineStore) {
           if (allArtifactEvents.length) {
             try {
-              await options.superTimelineStore.append(job.caseId, allArtifactEvents);
+              superTimelineAddedCount = await options.superTimelineStore.append(job.caseId, allArtifactEvents);
               options.onSuperTimeline?.(job.caseId);
             } catch (error) {
               await warn("super-timeline copy failed", error);
@@ -114,6 +115,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
               kind: parameters.kind,
               file: parameters.storedName,
               diff: timelineDiff,
+              superTimelineAddedCount,
               iocsDiff: iocDiff,
               linesIn: text ? text.split(/\r?\n/).length : 0,
               path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
