@@ -10,180 +10,122 @@
   "domains": {
     "shared": {
       "layer": "shared",
-      "paths": [
-        "types.ts",
-        "version.ts",
-        "serverAssets.ts",
-        "eventTypes/**"
-      ]
+      "paths": ["types.ts", "version.ts", "serverAssets.ts", "eventTypes/**"]
     },
     "storage": {
       "layer": "platform",
-      "paths": [
-        "storage/**"
-      ]
+      "paths": ["storage/**"]
     },
     "providers": {
       "layer": "platform",
-      "paths": [
-        "providers/**"
-      ]
+      "paths": ["providers/**"]
     },
     "auth": {
       "layer": "platform",
-      "paths": [
-        "auth/**"
-      ]
+      "paths": ["auth/**"]
     },
     "http": {
       "layer": "platform",
-      "paths": [
-        "http/**"
-      ]
+      "paths": ["http/**"]
     },
     "settings": {
       "layer": "platform",
-      "paths": [
-        "settings/**"
-      ]
+      "paths": ["settings/**"]
     },
     "logging": {
       "layer": "platform",
-      "paths": [
-        "logging/**"
-      ]
+      "paths": ["logging/**"]
     },
     "config": {
       "layer": "platform",
-      "paths": [
-        "config/**"
-      ]
+      "paths": ["config/**"]
     },
     "ingest": {
       "layer": "platform",
-      "paths": [
-        "ingest/**"
-      ]
+      "paths": ["ingest/**"]
     },
     "dedup": {
       "layer": "platform",
-      "paths": [
-        "dedup/**"
-      ]
+      "paths": ["dedup/**"]
     },
     "analysis/timeline": {
       "layer": "domain",
       "tier": 0,
-      "paths": [
-        "analysis/timeline/**"
-      ]
+      "paths": ["analysis/timeline/**"]
     },
     "analysis/case": {
       "layer": "domain",
       "tier": 1,
-      "paths": [
-        "analysis/case/**"
-      ]
+      "paths": ["analysis/case/**"]
     },
     "analysis/privacy": {
       "layer": "domain",
       "tier": 1,
-      "paths": [
-        "analysis/privacy/**"
-      ]
+      "paths": ["analysis/privacy/**"]
     },
     "analysis/intel": {
       "layer": "domain",
       "tier": 1,
-      "paths": [
-        "analysis/intel/**"
-      ]
+      "paths": ["analysis/intel/**"]
     },
     "analysis/findings": {
       "layer": "domain",
       "tier": 2,
-      "paths": [
-        "analysis/findings/**"
-      ]
+      "paths": ["analysis/findings/**"]
     },
     "analysis/detect": {
       "layer": "domain",
       "tier": 2,
-      "paths": [
-        "analysis/detect/**"
-      ]
+      "paths": ["analysis/detect/**"]
     },
     "analysis/hunt": {
       "layer": "domain",
       "tier": 2,
-      "paths": [
-        "analysis/hunt/**"
-      ]
+      "paths": ["analysis/hunt/**"]
     },
     "analysis/notify": {
       "layer": "domain",
       "tier": 2,
-      "paths": [
-        "analysis/notify/**"
-      ]
+      "paths": ["analysis/notify/**"]
     },
     "analysis/ingest": {
       "layer": "domain",
       "tier": 3,
-      "paths": [
-        "analysis/ingest/**"
-      ]
+      "paths": ["analysis/ingest/**"]
     },
     "analysis/workflow": {
       "layer": "domain",
       "tier": 4,
-      "paths": [
-        "analysis/workflow/**"
-      ]
+      "paths": ["analysis/workflow/**"]
     },
     "analysis/ai": {
       "layer": "domain",
       "tier": 5,
-      "paths": [
-        "analysis/ai/**"
-      ]
+      "paths": ["analysis/ai/**"]
     },
     "routes": {
       "layer": "delivery",
-      "paths": [
-        "routes/**"
-      ]
+      "paths": ["routes/**"]
     },
     "reports": {
       "layer": "delivery",
-      "paths": [
-        "reports/**"
-      ]
+      "paths": ["reports/**"]
     },
     "integrations": {
       "layer": "delivery",
-      "paths": [
-        "integrations/**"
-      ]
+      "paths": ["integrations/**"]
     },
     "enrichment": {
       "layer": "delivery",
-      "paths": [
-        "enrichment/**"
-      ]
+      "paths": ["enrichment/**"]
     },
     "live": {
       "layer": "delivery",
-      "paths": [
-        "live/**"
-      ]
+      "paths": ["live/**"]
     },
     "composition": {
       "layer": "composition",
-      "paths": [
-        "server.ts",
-        "composition/**"
-      ]
+      "paths": ["server.ts", "composition/**"]
     }
   },
   "flatAnalysisFiles": {
