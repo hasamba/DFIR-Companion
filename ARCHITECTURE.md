@@ -110,71 +110,65 @@ relitigate:
 
 ## The forensic / super-timeline boundary
 
-This is the one rule here about forensic correctness rather than tidiness, and it is **unresolved**.
-What follows states the invariant, records the paths that break it, and hands the decision back to
-#384. It is deliberately not settled in this document — the resolution changes product behaviour,
-and that is not a call an architecture refactor gets to make quietly.
+This is the one rule here about forensic correctness rather than tidiness. It is **decided,
+enforced and tested**.
 
-### The invariant, as the code states it
+### The rule
 
-`forensicGate.ts:7` partitions imported events by severity — `Low` and above to the **forensic
-timeline**, `Info` telemetry to the **super-timeline** only — and states the consequence directly:
+`forensicGate.ts` partitions imported events by severity — `Low` and above into the **forensic
+timeline**, `Info` telemetry into the **super-timeline** only. Then:
 
-> anything graded Info never reaches the forensic timeline, so the AI cannot see it
+> **The model reads the forensic timeline. Nothing automatic reads the raw record.**
 
-`superTimeline.ts:1` says the same from the other side: the super-timeline is *"never synthesized by
-AI"*. Read together: **AI reasons over the forensic timeline; Info-graded telemetry is not AI input.**
+The reason is not tidiness. A real case carries tens of thousands of prefetch, amcache and shellbag
+rows. Feeding them to a model exhausts the token budget and drowns the signal that earned the
+forensic cut in the first place.
 
-The reason is not tidiness. The super-timeline is unbounded in a way the forensic timeline is not —
-a real case carries tens of thousands of prefetch, amcache and shellbag rows. Feeding them to a model
-exhausts the token budget and drowns the signal that earned the forensic cut in the first place.
+### Three analyst-initiated paths touch the raw record
 
-### Three paths currently break it
+None of them run on their own — each is a button the analyst presses. Two now satisfy the rule
+**literally**, by promoting before asking:
 
-| Path | What reaches the model |
+| Path | How it obeys |
 |---|---|
-| `explainEvent` (`pipeline.ts:4340`) | a raw super-timeline event plus its raw neighbours |
-| `starredReport` (`pipeline.ts:4892`) | super-timeline-only events the analyst starred |
-| `viewSummary` (`pipeline.ts:4985`) | up to 10,000 raw rows from the analyst's current filter |
+| `explainEvent` | promotes the one event, then explains it from the forensic timeline |
+| `starredReport` | promotes the starred raw events, then reports from the forensic timeline |
 
-These are debt, not policy. This document records them; it does not sanction them.
+Promotion is not a workaround, it is the honest record of what happened: clicking "explain this" or
+starring an event **is** the analyst declaring it interesting, and the forensic timeline is where
+interesting events live. Each promotion carries a note saying which action caused it, so it can be
+told apart from an import six months later. This is the seam `runSecondLook` already used —
+deterministic search, promote with provenance, then re-synthesize.
 
-Their bounds are also weaker than they look. `starredReport` calls `.all(caseId)` and materializes
-the entire super-timeline to resolve a handful of ids. `viewSummary` reads 10,000 rows.
-`explainEvent`'s paged lookup is outright broken — it searches only the first 500 rows and throws
-`event not found` for anything past them, filed as
-[#406](https://github.com/hasamba/DFIR-Companion/issues/406). Whatever the boundary decision, these
-need targeted store operations and hard volume caps.
+### `viewSummary` is the one sanctioned exception
 
-### `runSecondLook` is the compliant pattern
+It summarizes whatever the analyst has filtered the raw view down to, which can be thousands of
+rows. Promotion is not available to it: writing thousands of Info events into the forensic timeline
+would permanently drown the record — **obeying the rule that way would cause exactly the harm the
+rule prevents.**
 
-`runSecondLook` (`pipeline.ts:5932`) also touches the super-timeline and does **not** break the
-invariant, because it never hands the model a raw record:
+So it reads the raw record directly, under three constraints that keep it safe:
 
-1. deterministic search over the raw record, bounded by the incident window;
-2. matches promoted into the forensic timeline, tagged with provenance;
-3. re-synthesis reads the forensic timeline, as always.
+1. **Analyst-initiated only.** Nothing automatic reaches it.
+2. **Ephemeral.** No promotion, no state change; nothing it reads enters the case.
+3. **Capped** at `VIEW_SUMMARY_MAX_ROWS` (500, was 10,000), and it *tells the analyst* when the cap
+   truncated their view rather than silently summarizing a slice.
 
-Promotion is the seam. Anything that needs raw rows to influence AI output should converge on this
-shape, and the promotion step belongs **outside** `analysis/ai/` — it is a timeline operation, not an
-AI one.
+The old 10,000 was more than a model summarizes usefully and more than an analyst can check, which
+made the single exception the widest path into the raw record in the codebase.
 
-### What #384 has to decide
+### How it is enforced
 
-For `explainEvent` and `starredReport`, promotion-first is plausible: both operate on analyst-chosen
-ids, and the promoted set is small.
+`tests/analysis/forensicBoundary.test.ts` asserts each half: that `starredReport` promotes exactly
+the starred events and records why, that `viewSummary` promotes **nothing**, that the cap holds, and
+that truncation is disclosed. Each was mutation-tested — removing the promotion or restoring the
+10,000 cap fails.
 
-For `viewSummary` it is not. Promoting up to 10,000 Info events to make the summary "legal" would
-write that telemetry into the forensic timeline permanently, polluting the exact record the invariant
-protects and degrading every later automatic synthesis. `viewSummary` is inherently *"tell me about
-the raw telemetry I am looking at"*. The honest options are to keep it as a named exception with a
-hard row cap, or to drop the feature — not to launder it through promotion.
-
-So: **decide the rule first, then enforce it.** If the outcome is strict, the enforcement is that
-nothing under `analysis/ai/` may import `analysis/timeline/superTimelineStore.js` at all, and the
-promotion helper lives in `analysis/timeline/`. If the outcome carries exceptions, they are named
-modules on an explicit allowlist with their caps stated. Either way the rule is mechanical once
-`analysis/ai/` exists as a directory; it cannot be scoped before then.
+Fixing `explainEvent` also closed [#406](https://github.com/hasamba/DFIR-Companion/issues/406): its
+old paged lookup searched only the first 500 rows, so explaining an event past that threw
+`event not found` for an event that plainly existed, and the failure scaled with case size.
+`starredReport` likewise stopped calling `.all(caseId)`, which materialized the entire
+super-timeline to resolve a handful of ids.
 
 ## Enforcement
 
@@ -294,4 +288,4 @@ issue, and the umbrella closes when all of these hold:
 | Files in `src/` over 800 lines | 13 | 0 |
 | Flat files in `src/analysis/` | 290 | 0 |
 | Boundary ledger | 47 violations | ≤ 10 |
-| Forensic / super-timeline rule | unresolved | decided, enforced, tested |
+| Forensic / super-timeline rule | **decided, enforced, tested** | ✅ |
