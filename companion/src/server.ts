@@ -100,7 +100,6 @@ import { RdapProvider } from "./enrichment/rdap.js";
 import { GeoIpProvider } from "./enrichment/geoip.js";
 import { ShodanProvider } from "./enrichment/shodan.js";
 import { HashlookupProvider } from "./enrichment/hashlookup.js";
-import { buildTlsFetch } from "./enrichment/tlsFetch.js";
 import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
 import type { AnalysisPipeline } from "./analysis/pipeline.js";
 import type { InvestigationState, Severity, ForensicEvent } from "./analysis/stateTypes.js";
@@ -226,14 +225,14 @@ import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js"
 import { type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
 import { MispPushClient } from "./integrations/misp/mispPushClient.js";
 import { type MispPushOptions } from "./integrations/misp/mispPush.js";
-import { NotionClient, parseNotionPageId } from "./integrations/notion/notionClient.js";
+import { NotionClient } from "./integrations/notion/notionClient.js";
 import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
 import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
 import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
 import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
-import { JiraClient, type JiraClientLike } from "./integrations/jira/jiraClient.js";
+import { type JiraClientLike } from "./integrations/jira/jiraClient.js";
 import { JiraExportStore } from "./integrations/jira/jiraExportStore.js";
-import { ServiceNowClient, type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
+import { type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
 import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
 import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
@@ -255,20 +254,33 @@ import {
 } from "./integrations/customerExposureProviders.js";
 import {
   LoggerImpl,
-  createConsoleLogger,
   normalizeLogLevel,
   type Logger,
 } from "./logging/logger.js";
+import { logLine, warnLine, getServerLogger, setServerLogger } from "./logging/serverLogger.js";
+import { numEnv } from "./composition/env.js";
+import { tlsFetchFor } from "./composition/tlsFetch.js";
+import {
+  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
+  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
+  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
+} from "./composition/integrationClients.js";
 
-// Server logging. A single shared Logger tees every line to the console AND to log files
-// (a global session log + per-case logs); the helpers below delegate to it so the existing
-// call sites keep working. startServer() swaps in the file-backed logger and the dashboard's
-// Logging toggle changes its level live (no restart); tests/CLI get a console-only default.
-let serverLogger: Logger = createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
-export function setServerLogger(logger: Logger): void { serverLogger = logger; }
-export function getServerLogger(): Logger { return serverLogger; }
-function logLine(msg: string): void { serverLogger.info(msg); }
-function warnLine(msg: string): void { serverLogger.warn(msg); }
+// Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
+// tests keep importing them from `src/server.js` — the extraction moved the definitions, not the
+// public surface (#384).
+export { tlsFetchFor } from "./composition/tlsFetch.js";
+export {
+  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
+  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
+  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
+} from "./composition/integrationClients.js";
+
+// Server logging. A single shared Logger tees every line to the console AND to log files (a global
+// session log + per-case logs). The binding moved to logging/serverLogger.ts (#384) so that
+// src/composition/ can warn without importing server.ts — see that file for why. Re-exported here
+// because tests and the settings-reload path reach for these at `src/server.js`.
+export { setServerLogger, getServerLogger } from "./logging/serverLogger.js";
 
 // Delay before the first evidence-integrity sweep after boot. Long enough to stay out of the
 // startup path, short enough that Diagnostics reports a real answer rather than "not verified
@@ -780,7 +792,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
   // cannot create new cases, import evidence, trigger AI calls, or change global settings.
   if (options.demoMode) {
-    app.use((req: Request, res: Response, next: NextFunction) => {
+    app.use(function demoModeReadOnlyGate(req: Request, res: Response, next: NextFunction) {
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();
       return res.status(403).json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
@@ -788,7 +800,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   // Log each request and its final status (useful for a local single-user tool).
-  app.use((req: Request, res: Response, next: NextFunction) => {
+  app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
     res.on("finish", () => {
       logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
     });
@@ -810,7 +822,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
   // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
-  app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+  app.use(function bodyParserErrorHandler(err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) {
     if (err?.type === "entity.too.large") {
       return res.status(413).json({ error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files` });
     }
@@ -831,7 +843,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
   // the size report's per-file paths are case-relative, not absolute. Redacting those would break
   // features to no benefit. Request logging is untouched, so the console still shows real paths.
-  app.use((_req: Request, res: Response, next: NextFunction) => {
+  app.use(function errorPathRedactor(_req: Request, res: Response, next: NextFunction) {
     const sendJson = res.json.bind(res);
     res.json = ((body: unknown) => {
       if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
@@ -862,7 +874,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // something checks first. This is that check: skip the (often expensive) handler entirely once the
   // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
   // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function abandonedCaseReadGate(req: Request, res: Response, next: NextFunction) {
     if (req.method === "GET" && req.destroyed) return;
     next();
   });
@@ -901,7 +913,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const ctx: RouteContext = {
     store,
     options,
-    serverLogger,
+    serverLogger: getServerLogger(),
     recordImportFailure,
     recordAiError,
     readUnlockState,
@@ -1024,7 +1036,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/hypothesis-review", "/narrative",                          // narrative + hypothesis AI
     "/memory/next-steps",                                       // memory-forensics next-step AI
   ]);
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {
     if (req.method !== "POST") return next();
     // Strip the /cases/:id/ prefix to compare against the static set.
     const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
@@ -1123,7 +1135,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
             wordCount: text.length === 0 ? 0 : text.split(" ").length,
           });
         } catch (err) {
-          serverLogger.debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
+          getServerLogger().debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
         } finally {
           ocrActive--;
           pumpOcrQueue();
@@ -1135,7 +1147,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
     if (ocrQueue.length >= OCR_MAX_QUEUE) {
       // Runaway safety net only — recover anything dropped here with `npm run ocr-index`.
-      serverLogger.debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
+      getServerLogger().debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
       return;
     }
     ocrQueue.push(metadata);
@@ -3020,14 +3032,14 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
   // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
   // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
-  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  app.use(function terminalErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction) {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
     if (err instanceof CaseNotFoundError) {
       return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
     }
     const message = err instanceof Error ? err.message : String(err);
-    serverLogger.error(`unhandled error on ${req.method} ${req.path}: ${message}`);
+    getServerLogger().error(`unhandled error on ${req.method} ${req.path}: ${message}`);
     return res.status(500).json({ error: "internal server error" });
   });
 
@@ -3156,220 +3168,9 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
   });
 }
 
-// Build the threat-intel enrichment providers from env. Each is added only when its key
-// is present (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off.
-// Optional per-provider TLS trust for a self-hosted intel host with an internal-CA or
-// self-signed cert. Returns undefined (→ default, fully-verified global fetch) unless a
-// DFIR_<NAME>_CA bundle or DFIR_<NAME>_INSECURE flag is set. Scoped to that provider only.
-//
-// Resolves each integration's actual target host, so tlsFetchFor can pass hostUrl to
-// buildTlsFetch's loopback guard (#246) — WITHOUT it, insecureSkipVerify's guard defaults to
-// "treat as loopback" and never rejects anything, silently defeating the guard entirely (the
-// bug this map exists to close). MISP/YETI/OPENCTI/IRIS/TIMESKETCH/JIRA/SERVICENOW read their configurable
-// DFIR_<NAME>_URL. NOTION and CLICKUP have no such env var — they're fixed SaaS hosts — so their
-// entries are the literal constants those clients themselves use, which correctly makes the guard
-// treat them as non-loopback (there's no legitimate reason to skip TLS verification against the
-// real api.notion.com/api.clickup.com).
-const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>> = {
-  MISP: () => process.env.DFIR_MISP_URL,
-  YETI: () => process.env.DFIR_YETI_URL,
-  OPENCTI: () => process.env.DFIR_OPENCTI_URL,
-  IRIS: () => process.env.DFIR_IRIS_URL,
-  TIMESKETCH: () => process.env.DFIR_TIMESKETCH_URL,
-  JIRA: () => process.env.DFIR_JIRA_URL,
-  SERVICENOW: () => process.env.DFIR_SERVICENOW_URL,
-  NOTION: "https://api.notion.com",
-  CLICKUP: "https://api.clickup.com/api/v2",
-  // NOTIFY webhooks are arbitrary external URLs (hooks.slack.com, outlook.office.com, a self-
-  // hosted Mattermost) only known at send time from NotificationConfigStore — there's no single
-  // env var to read at boot. That is precisely why DFIR_NOTIFY_INSECURE=1 silently bypassed the
-  // non-loopback TLS-MITM guard for ALL of them: hostUrl was undefined and the guard defaults to
-  // "treat as loopback", i.e. allow. Since we can't know the host, assume the answer that fails
-  // closed — a sentinel that is definitively not loopback, so the guard fires and tlsFetchFor
-  // falls back to the verified global fetch unless the operator ALSO sets
-  // DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. hostUrl feeds nothing but isLoopbackUrl, so a reserved
-  // .invalid name (RFC 2606) is the honest spelling: it names no real host and can't be mistaken
-  // for one being verified. Only consulted when insecure is set — otherwise no custom fetch is
-  // built at all. Threading the real per-send URL through would let a loopback webhook keep
-  // using insecure on its own, which this deliberately no longer does.
-  NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://notify-webhook.invalid" : undefined),
-};
-export function tlsFetchFor(name: "MISP" | "YETI" | "OPENCTI" | "IRIS" | "TIMESKETCH" | "NOTION" | "CLICKUP" | "NOTIFY" | "JIRA" | "SERVICENOW") {
-  const hostSource = TLS_HOST_URL[name];
-  const hostUrl = typeof hostSource === "function" ? hostSource() : hostSource;
-  try {
-    return buildTlsFetch({
-      caCertPath: process.env[`DFIR_${name}_CA`],
-      insecureSkipVerify: isEnvFlag(process.env[`DFIR_${name}_INSECURE`]),
-      hostUrl,
-      onWarn: (m) => warnLine(`[DFIR] ${name}: ${m}`),
-    });
-  } catch (err) {
-    // buildTlsFetch throws when insecureSkipVerify targets a non-loopback host without the
-    // explicit DFIR_TLS_ALLOW_INSECURE_EXTERNAL override (#246). Every call site of tlsFetchFor
-    // sits inline in an options object built at server startup (and in the live /settings/reload
-    // path) with no surrounding try/catch — letting this propagate would crash the ENTIRE server
-    // over one optional integration's TLS misconfiguration. Disable custom TLS trust for just this
-    // provider instead (falls back to the default, fully-verified global fetch — a real self-signed
-    // cert then fails that provider's own connection attempts with a normal, contained TLS error,
-    // not a server-wide outage) and say why loudly so the operator can see it in the logs.
-    warnLine(`[DFIR] ${name}: ${(err as Error).message}`);
-    return undefined;
-  }
-}
-
-function isEnvFlag(value: string | undefined): boolean {
-  return /^(1|true|yes|on)$/i.test(value ?? "");
-}
-
-// Parse a numeric env var, honoring an explicit "0". `Number(x) || undefined` would discard 0
-// (falsy) and silently fall back to the hardcoded default — an operator who set
-// DFIR_ENRICH_RETRIES=0 to disable 429 retry still got 2 retries. Returns undefined for
-// unset/empty/non-finite so downstream `?? default` keeps working.
-function numEnv(key: string): number | undefined {
-  const v = process.env[key];
-  if (v === undefined || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-// Build the DFIR-IRIS push client from env (DFIR_IRIS_URL + DFIR_IRIS_KEY). Returns
-// undefined when not configured, which hides the dashboard's "Push to IRIS" button.
-// TLS trust for a self-hosted IRIS honors DFIR_IRIS_CA / DFIR_IRIS_INSECURE.
-export function buildIrisClient(): IrisClient | undefined {
-  const baseUrl = process.env.DFIR_IRIS_URL;
-  const apiKey = process.env.DFIR_IRIS_KEY;
-  if (!baseUrl || !apiKey) return undefined;
-  return new IrisClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("IRIS") });
-}
-
-export function irisPushOptions(): IrisPushOptions {
-  return {
-    baseUrl: process.env.DFIR_IRIS_URL,
-    customerId: Number(process.env.DFIR_IRIS_CUSTOMER_ID) || undefined,
-    classificationId: Number(process.env.DFIR_IRIS_CLASSIFICATION_ID) || undefined,
-  };
-}
-
-// Build the Timesketch push client from env (DFIR_TIMESKETCH_URL + USER + PASSWORD). Returns
-// undefined when not configured, which hides the dashboard's "Push to Timesketch" button. TLS
-// trust for a self-hosted Timesketch honors DFIR_TIMESKETCH_CA / DFIR_TIMESKETCH_INSECURE.
-export function buildTimesketchClient(): TimesketchClient | undefined {
-  const baseUrl = process.env.DFIR_TIMESKETCH_URL;
-  const username = process.env.DFIR_TIMESKETCH_USER;
-  const password = process.env.DFIR_TIMESKETCH_PASSWORD;
-  if (!baseUrl || !username || !password) return undefined;
-  return new TimesketchClient({ baseUrl, username, password, fetchFn: tlsFetchFor("TIMESKETCH") });
-}
-
-export function timesketchPushOptions(): TimesketchPushOptions {
-  return {
-    baseUrl: process.env.DFIR_TIMESKETCH_URL,
-    timelineName: process.env.DFIR_TIMESKETCH_TIMELINE || undefined,
-  };
-}
-
-// Build the MISP push client from env (DFIR_MISP_URL + DFIR_MISP_KEY). Returns undefined
-// when not configured, which hides the dashboard's "Push to MISP" button. TLS trust for a
-// self-hosted MISP honors DFIR_MISP_CA / DFIR_MISP_INSECURE (same env vars as enrichment).
-export function buildMispPushClient(): MispPushClient | undefined {
-  const baseUrl = process.env.DFIR_MISP_URL;
-  const apiKey = process.env.DFIR_MISP_KEY;
-  if (!baseUrl || !apiKey) return undefined;
-  return new MispPushClient({ baseUrl, apiKey, fetchFn: tlsFetchFor("MISP") });
-}
-
-export function mispPushOptions(): MispPushOptions {
-  return {
-    baseUrl: process.env.DFIR_MISP_URL,
-    distribution: process.env.DFIR_MISP_DISTRIBUTION || undefined,
-    analysis: process.env.DFIR_MISP_ANALYSIS || undefined,
-    // Cap on forensic-timeline events per push. The push costs one sequential round-trip per
-    // event, so an unbounded timeline can block the export route for hours; past the cap the
-    // most severe events are kept (Info noise is cut first) and truncation is warned about.
-    // Exposed here because the cap is a property of the operator's MISP instance and case sizes,
-    // not of the code — the warning text tells the analyst to raise it, so it must be raisable.
-    timelineLimit: positiveIntEnv(process.env.DFIR_MISP_TIMELINE_LIMIT),
-  };
-}
-
-// Parse a positive-integer env var, ignoring blank/garbage/non-positive values so a typo falls
-// back to the documented default rather than silently pushing nothing (a `0` cap would).
-function positiveIntEnv(raw: string | undefined): number | undefined {
-  const n = Number(String(raw ?? "").trim());
-  return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-// Build the Notion export client from env (DFIR_NOTION_TOKEN). Returns undefined when not
-// configured, which hides the dashboard's "Export to Notion" option. Notion is public SaaS, so
-// tlsFetchFor("NOTION") is a no-op unless DFIR_NOTION_CA / DFIR_NOTION_INSECURE are set.
-export function buildNotionClient(): NotionClient | undefined {
-  const token = process.env.DFIR_NOTION_TOKEN;
-  if (!token) return undefined;
-  return new NotionClient({ token, fetchFn: tlsFetchFor("NOTION") });
-}
-
-export function notionPushOptions(): NotionPushOptions {
-  return {
-    baseUrl: "https://www.notion.so",
-    // Same normalization the request-body page/parent/database fields go through
-    // (routes/caseLifecycle.ts parseNotionPageId calls) — an operator's .env value is commonly a
-    // full Notion URL, not a bare id, and the client-facing API rejects the unparsed URL.
-    parentPageId: parseNotionPageId(process.env.DFIR_NOTION_PARENT_PAGE_ID ?? "") ?? undefined,
-    databaseId: parseNotionPageId(process.env.DFIR_NOTION_DATABASE_ID ?? "") ?? undefined,
-    containerTitle: process.env.DFIR_NOTION_CONTAINER_TITLE || undefined,
-    maxTimelineRows: Number(process.env.DFIR_NOTION_MAX_TIMELINE) || undefined,
-  };
-}
-
-// Build the ClickUp client from env (DFIR_CLICKUP_TOKEN). Returns undefined when not configured,
-// which hides the dashboard's "Push to ClickUp" option. An optional DFIR_CLICKUP_LIST_ID is the
-// default target list (the analyst can still override it per push).
-export function buildClickUpClient(): ClickUpClient | undefined {
-  const token = process.env.DFIR_CLICKUP_TOKEN;
-  if (!token) return undefined;
-  return new ClickUpClient({ token, fetchFn: tlsFetchFor("CLICKUP") });
-}
-
-export function clickupOptions(): { defaultListId?: string } {
-  return { defaultListId: process.env.DFIR_CLICKUP_LIST_ID || undefined };
-}
-
-// Build the Jira export client from env (DFIR_JIRA_URL + DFIR_JIRA_USER + DFIR_JIRA_TOKEN + optional
-// DFIR_JIRA_PROJECT_KEY). Returns undefined when not configured, hiding the dashboard button.
-export function buildJiraClient(): JiraClient | undefined {
-  const baseUrl = process.env.DFIR_JIRA_URL;
-  const user = process.env.DFIR_JIRA_USER;
-  const token = process.env.DFIR_JIRA_TOKEN;
-  if (!baseUrl || !user || !token) return undefined;
-  return new JiraClient({ baseUrl, user, token, projectKey: process.env.DFIR_JIRA_PROJECT_KEY || "", fetchFn: tlsFetchFor("JIRA") });
-}
-
-export function jiraOptions(): { projectKey?: string; issueType?: string } {
-  return {
-    projectKey: process.env.DFIR_JIRA_PROJECT_KEY || undefined,
-    issueType: process.env.DFIR_JIRA_ISSUE_TYPE || undefined,
-  };
-}
-
-// Build the ServiceNow export client from env (DFIR_SERVICENOW_URL + DFIR_SERVICENOW_USER +
-// DFIR_SERVICENOW_PASSWORD). Returns undefined when not configured, hiding the dashboard button.
-export function buildServiceNowClient(): ServiceNowClient | undefined {
-  const baseUrl = process.env.DFIR_SERVICENOW_URL;
-  const user = process.env.DFIR_SERVICENOW_USER;
-  const password = process.env.DFIR_SERVICENOW_PASSWORD;
-  if (!baseUrl || !user || !password) return undefined;
-  return new ServiceNowClient({ baseUrl, user, password, fetchFn: tlsFetchFor("SERVICENOW") });
-}
-
-export function servicenowOptions(): { caller?: string; category?: string; subcategory?: string } {
-  return {
-    caller: process.env.DFIR_SERVICENOW_CALLER || undefined,
-    category: process.env.DFIR_SERVICENOW_CATEGORY || undefined,
-    subcategory: process.env.DFIR_SERVICENOW_SUBCATEGORY || undefined,
-  };
-}
-
+// Build the threat-intel enrichment providers from env. Each is added only when its key is present
+// (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off. Per-provider TLS
+// trust for a self-hosted intel host comes from composition/tlsFetch.ts.
 export function buildEnrichmentProviders(): EnrichmentProvider[] {
   const providers: EnrichmentProvider[] = [];
   if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));

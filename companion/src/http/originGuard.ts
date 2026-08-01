@@ -227,7 +227,7 @@ const HOST_CHECK_EXEMPT_PATHS = new Set(["/health"]);
 
 /** Express middleware enforcing {@link isRequestAllowed}, and emitting origin-scoped CORS headers. */
 export function createOriginGuard(cfg: GuardConfig = {}): RequestHandler {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return function originGuard(req: Request, res: Response, next: NextFunction): void {
     const origin = req.headers.origin;
     let decision = isRequestAllowed({ origin, host: req.headers.host }, cfg);
     if (!decision.ok && decision.kind === "host" && origin === undefined && HOST_CHECK_EXEMPT_PATHS.has(req.path)) {

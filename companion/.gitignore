@@ -12,7 +12,10 @@ logs/
 dist/
 *.timestamp-*.mjs
 .env
-prompts/
+# Ejected prompt overrides (`npm run prompts:eject`). ANCHORED so it matches companion/prompts/
+# (the ejected copies an operator edits) but NOT companion/src/analysis/ai/prompts/ (the built-in
+# prompt source). Unanchored, it silently swallowed the latter — same trap as /velociraptor/ above.
+/prompts/
 # Tesseract.js downloads the language model to the cwd on first OCR run
 eng.traineddata
 *.traineddata
