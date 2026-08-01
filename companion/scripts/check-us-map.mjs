@@ -11,8 +11,11 @@
 //   3. Every spec says something — a new spec file must either map itself or state that no story
 //      exists, so coverage is a decision rather than an oversight.
 //
-// It also WARNS (never fails) when a branch adds an HTTP route that no user story describes — see
-// warnUndocumentedRoutes below.
+// It also WARNS (never fails) about two things it cannot reasonably demand:
+//   - a branch adding an HTTP route that no user story describes (warnUndocumentedRoutes)
+//   - a story with neither a spec nor an entry in tests/e2e/COVERAGE.md (warnUnexplainedGaps),
+//     which is the only case where an empty browser_test cell means "nobody looked" rather than
+//     "we decided this belongs elsewhere"
 //
 //   node scripts/check-us-map.mjs            # verify
 //   node scripts/check-us-map.mjs --update   # rewrite the CSV column from the specs
@@ -155,6 +158,35 @@ function warnUndocumentedRoutes(csvText) {
   );
 }
 
+/**
+ * Warn about stories that are neither covered by a spec nor explained in COVERAGE.md.
+ *
+ * An empty `browser_test` cell is ambiguous — it reads the same whether someone decided the story
+ * belongs in a unit test, or simply never got to it. COVERAGE.md is where that decision is written
+ * down, so a story missing from BOTH is the only real gap, and this is what finds it. Advisory, like
+ * the route warning: a genuinely new story arriving without a test yet is normal, and a build that
+ * failed for it would just teach people to write a placeholder line.
+ */
+function warnUnexplainedGaps(known, declared) {
+  let doc;
+  try {
+    doc = readFileSync(join(E2E, "COVERAGE.md"), "utf8");
+  } catch {
+    return; // no document to check against — never fail for an environment reason
+  }
+  const gaps = [...known].filter((id) => !declared.has(id) && !doc.includes(id)).sort();
+  if (gaps.length === 0) return;
+
+  console.warn(`\n[us-map] WARNING — ${gaps.length} story(ies) with no browser test and no reason given:\n`);
+  for (const id of gaps) console.warn(`  ! ${id}`);
+  console.warn(
+    "\n[us-map] Either add a spec with a `// Covers:` banner naming it, or add it to\n" +
+      "[us-map] tests/e2e/COVERAGE.md saying why it is not browser-testable (extension code,\n" +
+      "[us-map] a derivation algorithm, needs a live third party, ...). Advisory — this does not\n" +
+      "[us-map] fail the build.\n",
+  );
+}
+
 const csvText = readFileSync(CSV, "utf8");
 warnUndocumentedRoutes(csvText);
 
@@ -206,6 +238,8 @@ for (const file of walk(E2E)) {
     declared.get(id).add(rel);
   }
 }
+
+warnUnexplainedGaps(known, declared);
 
 const update = process.argv.includes("--update");
 if (update) {
