@@ -159,11 +159,29 @@ export {
   DIAG_LEVEL_COLOR,
 };
 
-// The dashboard's inline renderDiagnostics() reaches these through the namespaced global, the same
+// The dashboard's inline diagnostics functions reach these through the namespaced global, the same
 // contract graph-view.js and settings-search.js already use.
+//
+// EVERY function this module defines is exposed, not just the top-level renderers. The first cut of
+// this file published only the four renderers, on the assumption that the helpers had moved with
+// their only callers. They had not: renderDiagnostics, diagComputeSizes, loadCaseStats and
+// loadCaseBackups still make 46 bare calls to diagRow/diagCard/diagFmtBytes/diagFmtAge. An ES
+// module's declarations are NOT globals, so every one of those was a ReferenceError and the whole
+// Diagnostics panel threw at runtime -- while all 29 unit tests passed, because they exercise this
+// module directly and never load the page.
+//
+// The rule this encodes: if the inline script still calls it, the namespace must publish it.
+// tests/reports/diagnosticsPanel.test.ts now asserts exactly that, in both directions.
 if (typeof window !== "undefined") {
   window.DfirDiagnostics = {
+    esc,
+    diagFmtBytes,
+    diagFmtAge,
+    diagFmtCost,
+    diagAiCostBucketRow,
     renderAiCostCard,
+    diagCard,
+    diagRow,
     renderOperationalDiagnostics,
     renderPerImporterHealth,
     DIAG_LEVEL_COLOR,

@@ -24504,6 +24504,10 @@
     let diagSupportText = "";
     let diagSupportFilename = "dfir-companion-support.json";
     function renderDiagnostics(report, cost) {
+      // Bound from the module namespace at CALL time, not parse time: this file is plain inline
+      // script and cannot import, and the module that defines these is deferred. Every caller
+      // below runs on a data load, so the namespace is always populated by then.
+      const { diagRow, diagCard, diagFmtBytes, diagFmtAge } = window.DfirDiagnostics;
       const d = report.disk;
       const lvlColor = window.DfirDiagnostics.DIAG_LEVEL_COLOR[d.level] || "#cbd3df";
       const disk = diagCard("Disk", [
@@ -24652,6 +24656,7 @@
         </div>`;
     }
     function loadCaseStats() {
+      const { diagRow, diagCard, diagFmtBytes, diagFmtAge } = window.DfirDiagnostics; // see renderDiagnostics
       const el = document.getElementById("caseStatsPanel");
       if (!el) return;
       const caseId = document.getElementById("caseId").value.trim();
@@ -24786,6 +24791,7 @@
         .finally(() => { if (btn) btn.disabled = false; });
     }
     function diagComputeSizes() {
+      const { diagRow, diagCard, diagFmtBytes, diagFmtAge } = window.DfirDiagnostics; // see renderDiagnostics
       const btn = document.getElementById("diagSizesBtn");
       const target = document.getElementById("diagSizes");
       if (!target) { loadDiagnostics(); return; }
@@ -24849,6 +24855,7 @@
     }
     // Case backup restore (#180) ---------------------------------------------------------------
     function loadCaseBackups() {
+      const { diagRow, diagCard, diagFmtBytes, diagFmtAge } = window.DfirDiagnostics; // see renderDiagnostics
       const caseId = document.getElementById("caseId").value.trim();
       const list = document.getElementById("diagBackupsList");
       const msg = document.getElementById("diagBackupMsg");

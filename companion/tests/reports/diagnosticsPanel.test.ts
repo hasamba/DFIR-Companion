@@ -237,3 +237,70 @@ describe("DIAG_LEVEL_COLOR", () => {
     expect(Object.keys(DIAG_LEVEL_COLOR).sort()).toEqual(["critical", "danger", "none", "warning"]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// THE WIRING, which the tests above cannot see.
+//
+// Every test in this file imports the module directly, so all 29 passed while the page was broken:
+// the first cut published only the four top-level renderers on window.DfirDiagnostics, but
+// renderDiagnostics, diagComputeSizes, loadCaseStats and loadCaseBackups still made 46 BARE calls
+// to diagRow/diagCard/diagFmtBytes/diagFmtAge. An ES module's declarations are not globals, so
+// every one was a ReferenceError and the Diagnostics panel threw the moment it rendered.
+//
+// Unit tests over an extracted module are structurally incapable of catching that. These two are
+// the join between the module and the page, and they are the shape every future dashboard
+// extraction needs.
+// ---------------------------------------------------------------------------------------------
+describe("dashboard wiring", () => {
+  const readDashboard = (): Promise<string> =>
+    readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const readModule = (): Promise<string> =>
+    readFile(new URL("../../../public/js/diagnostics-panel.js", import.meta.url), "utf8");
+
+  it("publishes every function the module defines", async () => {
+    const source = await readModule();
+    const defined = [...source.matchAll(/^function ([A-Za-z0-9_]+)/gm)].map((m) => m[1]);
+    const published = /window\.DfirDiagnostics = \{([\s\S]*?)\};/.exec(source)?.[1] ?? "";
+
+    // Publishing everything is deliberate rather than tidy: a helper that stays unpublished is
+    // invisible until the page calls it, and the page is what no unit test loads.
+    const missing = defined.filter((name) => !new RegExp(`\\b${name},`).test(published));
+    expect(missing).toEqual([]);
+  });
+
+  it("binds the namespace in every inline function that calls into the module", async () => {
+    const [page, source] = await Promise.all([readDashboard(), readModule()]);
+    // Names the module defines AND the inline script does not. `esc` is deliberately defined in
+    // both -- 661 inline call sites, and a module cannot read the inline scope -- so an inline
+    // `esc(...)` resolves locally and is correct. Only names that exist ONLY in the module can
+    // produce the ReferenceError this test exists to catch.
+    const inlineDefined = new Set(
+      [...page.matchAll(/^ {4}(?:async )?function ([A-Za-z0-9_]+)/gm)].map((m) => m[1]),
+    );
+    const defined = [...source.matchAll(/^function ([A-Za-z0-9_]+)/gm)]
+      .map((m) => m[1])
+      .filter((name) => !inlineDefined.has(name));
+
+    // Walk the page's top-level inline functions, and for each one collect the module names it
+    // calls WITHOUT qualifying, then require that the function bound them from the namespace.
+    const lines = page.split("\n");
+    const offenders: string[] = [];
+    let current = "";
+    let bound = new Set<string>();
+    for (const line of lines) {
+      const decl = /^ {4}(?:async )?function ([A-Za-z0-9_]+)/.exec(line);
+      if (decl) {
+        current = decl[1];
+        bound = new Set();
+      }
+      const binding = /const \{([^}]*)\} = window\.DfirDiagnostics;/.exec(line);
+      if (binding) for (const n of binding[1].split(",")) bound.add(n.trim());
+      for (const name of defined) {
+        if (!new RegExp(`(?<![.\\w])${name}\\(`).test(line)) continue;
+        if (bound.has(name)) continue;
+        offenders.push(`${current} calls ${name}() without binding it from window.DfirDiagnostics`);
+      }
+    }
+    expect([...new Set(offenders)]).toEqual([]);
+  });
+});
