@@ -29,6 +29,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/settings-search.js": "application/javascript; charset=utf-8",
   "/js/case-load-progress.js": "application/javascript; charset=utf-8",
   "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
+  "/js/diagnostics-panel.js": "application/javascript; charset=utf-8",
 };
 
 /**
