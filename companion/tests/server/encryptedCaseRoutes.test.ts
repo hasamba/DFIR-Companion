@@ -80,6 +80,43 @@ describe("POST /cases/:id/export/encrypted", () => {
       .send({ password: PASSWORD });
     expect(res.status).toBe(400);
   });
+
+  // A case name is free text an analyst typed, so it routinely holds characters outside Latin-1 —
+  // an em dash, an accent, a non-Latin script. Node rejects those outright in a header VALUE, so
+  // interpolating the name straight into Content-Disposition threw and the route turned it into a
+  // bare 500 with no hint of what was wrong. The demo case ships one ("GlobalTech Industries —
+  // BEC & Ransomware Precursor"), which made every seeded demo un-exportable.
+  it("exports a case whose name contains non-Latin-1 characters", async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    await store.updateCaseMeta("INC-1", { name: "GlobalTech — BEC & Ransomware" });
+
+    const res = await bufferRequest(
+      request(app).post("/cases/INC-1/export/encrypted").send({ password: PASSWORD }),
+    );
+
+    expect(res.status).toBe(200);
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+    // RFC 6266: the exact name travels in filename*, so a modern client saves the em dash intact,
+    // while filename= keeps an ASCII rendering for clients that ignore filename*.
+    expect(res.headers["content-disposition"]).toBe(
+      'attachment; filename="INC-1 - GlobalTech _ BEC & Ransomware.dfircase"; ' +
+        "filename*=UTF-8''INC-1%20-%20GlobalTech%20%E2%80%94%20BEC%20%26%20Ransomware.dfircase",
+    );
+  });
+
+  it("exports a case seeded by POST /cases/seed-demo", async () => {
+    const { app } = await harness();
+    const seeded = await request(app).post("/cases/seed-demo").send({ caseId: "demo", force: true });
+    expect(seeded.status).toBe(201);
+
+    const res = await bufferRequest(
+      request(app).post("/cases/demo/export/encrypted").send({ password: PASSWORD }),
+    );
+
+    expect(res.status).toBe(200);
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+  });
 });
 
 describe("POST /cases/import/encrypted", () => {

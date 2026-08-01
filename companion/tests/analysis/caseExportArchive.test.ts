@@ -8,6 +8,7 @@ import {
   importEncryptedCase,
   CaseImportConflictError,
   dfircaseFilename,
+  attachmentContentDisposition,
 } from "../../src/analysis/caseExportArchive.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
 import { encryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
@@ -276,5 +277,50 @@ describe("dfircaseFilename", () => {
     expect(dfircaseFilename("INC-1", 'Acme: "Ransomware" / Attack <2026>')).toBe(
       "INC-1 - Acme_ _Ransomware_ _ Attack _2026_.dfircase",
     );
+  });
+
+  // Non-ASCII is legal in a filename on every platform this ships to, so the name keeps its own
+  // characters here — carrying them safely is attachmentContentDisposition's job, not this one's.
+  it("keeps non-ASCII characters in the name", () => {
+    expect(dfircaseFilename("INC-1", "GlobalTech — BEC")).toBe("INC-1 - GlobalTech — BEC.dfircase");
+  });
+});
+
+describe("attachmentContentDisposition", () => {
+  it("sends a plain ASCII filename as-is", () => {
+    expect(attachmentContentDisposition("INC-1 - Case One.dfircase")).toBe(
+      'attachment; filename="INC-1 - Case One.dfircase"',
+    );
+  });
+
+  // Node throws ERR_INVALID_CHAR on any header value holding a character above U+00FF, and clients
+  // misread the Latin-1 range, so a name with either has to travel percent-encoded in filename*
+  // (RFC 6266/5987) with an ASCII-only filename= left behind for clients that ignore filename*.
+  it("adds a percent-encoded filename* when the name is not ASCII", () => {
+    const header = attachmentContentDisposition("INC-1 - GlobalTech — BEC.dfircase");
+    expect(header).toBe(
+      'attachment; filename="INC-1 - GlobalTech _ BEC.dfircase"; ' +
+        "filename*=UTF-8''INC-1%20-%20GlobalTech%20%E2%80%94%20BEC.dfircase",
+    );
+  });
+
+  it("emits only header-safe bytes for any name", () => {
+    for (const name of ["ñ.dfircase", "案件.dfircase", "Ω — α.dfircase", "tab\there.dfircase"]) {
+      expect(attachmentContentDisposition(name)).toMatch(/^[\x20-\x7e]*$/);
+    }
+  });
+
+  // encodeURIComponent leaves ' ( ) * unescaped, but RFC 5987's attr-char set excludes them — a
+  // quote in particular would end the quoted string early in a client that parses filename* loosely.
+  it("percent-encodes the characters encodeURIComponent leaves behind", () => {
+    expect(attachmentContentDisposition("a'b(c)d*e—.dfircase")).toContain(
+      "filename*=UTF-8''a%27b%28c%29d%2Ae%E2%80%94.dfircase",
+    );
+  });
+
+  // A quote or backslash surviving into filename= would let a crafted case name inject extra
+  // header parameters; both are already stripped upstream, and the header builder re-checks.
+  it("never lets a quote or backslash into the ASCII filename", () => {
+    expect(attachmentContentDisposition('a"b\\c.dfircase')).toContain('filename="a_b_c.dfircase"');
   });
 });
