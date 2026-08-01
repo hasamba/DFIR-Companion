@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   assessNoRegressionGate,
+  collectPromptSource,
   evaluationSourceHash,
   noRegressionAttestationSchema,
   type NoRegressionAttestation,
@@ -34,19 +35,19 @@ async function baseFile(revision: string, path: string): Promise<string> {
 }
 
 async function currentSourceHash(): Promise<string> {
-  const [pipeline, envExample] = await Promise.all([
-    readFile(`${REPOSITORY_ROOT}/companion/src/analysis/pipeline.ts`, "utf8"),
+  const [prompts, envExample] = await Promise.all([
+    collectPromptSource((path) => readFile(`${REPOSITORY_ROOT}/${path}`, "utf8")),
     readFile(`${REPOSITORY_ROOT}/companion/.env.example`, "utf8"),
   ]);
-  return evaluationSourceHash(pipeline, envExample);
+  return evaluationSourceHash(prompts, envExample);
 }
 
 async function baseSourceHash(revision: string): Promise<string> {
-  const [pipeline, envExample] = await Promise.all([
-    baseFile(revision, "companion/src/analysis/pipeline.ts"),
+  const [prompts, envExample] = await Promise.all([
+    collectPromptSource((path) => baseFile(revision, path)),
     baseFile(revision, "companion/.env.example"),
   ]);
-  return evaluationSourceHash(pipeline, envExample);
+  return evaluationSourceHash(prompts, envExample);
 }
 
 async function readAttestation(): Promise<NoRegressionAttestation | undefined> {
