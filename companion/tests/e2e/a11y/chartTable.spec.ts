@@ -49,24 +49,30 @@ async function revealSwimlane(page: Page): Promise<void> {
  * Swimlane data arrives progressively, and each arrival redraws the canvas and regenerates the
  * table — which replaces the <summary> element. Focusing before that settles means the element
  * holding focus is torn out from under the assertion. describe-as-table.js records the rendered
- * data in data-table-signature precisely so "has it changed?" is observable; poll it for two
+ * data in data-table-signature precisely so "has it changed?" is observable; poll it for a run of
  * identical readings rather than guessing at a sleep.
  */
 async function waitForStableTable(page: Page): Promise<void> {
   const read = () =>
     page.locator("#swimlaneTableAlt").evaluate((el) => (el as HTMLElement).dataset.tableSignature ?? "");
-  let previous = await read();
+
+  // THREE consecutive identical readings, not two. Swimlane data arrives progressively, so under a
+  // loaded server a pause mid-arrival looks identical to "finished" — two matching samples were
+  // enough to pass, and then the table rebuilt immediately after focus() and destroyed the element
+  // the assertion was about. This failed only in the full suite and never in isolation.
+  let previous = "";
+  let streak = 0;
   await expect
     .poll(
       async () => {
         const current = await read();
-        const stable = current !== "" && current === previous;
+        streak = current !== "" && current === previous ? streak + 1 : 0;
         previous = current;
-        return stable;
+        return streak;
       },
-      { timeout: 30_000, intervals: [500] },
+      { timeout: 30_000, intervals: [400] },
     )
-    .toBe(true);
+    .toBeGreaterThanOrEqual(2);
 }
 
 test("the swimlane canvas has a populated table equivalent", async ({ page, demoCase }) => {
@@ -90,8 +96,15 @@ test("the table is reachable by keyboard and announces its size", async ({ page,
 
   // <summary> is focusable and Enter-activatable natively; this confirms the table is genuinely
   // reachable rather than hidden behind a mouse-only affordance.
-  await summary.focus();
-  await expect(summary).toBeFocused();
+  await expect
+    .poll(
+      async () => {
+        await summary.focus().catch(() => {});
+        return summary.evaluate((el) => el === document.activeElement).catch(() => false);
+      },
+      { timeout: 15_000, intervals: [300] },
+    )
+    .toBe(true);
   await page.keyboard.press("Enter");
   await expect(page.locator("#swimlaneTableAlt table")).toBeVisible();
 });
