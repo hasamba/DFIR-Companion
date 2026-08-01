@@ -468,6 +468,7 @@
     "ROUTE GET /js/settings-search.js",
     "ROUTE GET /js/case-load-progress.js",
     "ROUTE GET /js/hunt-workbench.js",
+    "ROUTE GET /js/diagnostics-panel.js",
     "USE /^\\/?(?=\\/|$)/i <anonymous>/4"
   ]
 }
