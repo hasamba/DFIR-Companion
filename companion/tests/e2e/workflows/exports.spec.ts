@@ -119,7 +119,10 @@ test("US-128: the encrypted export demands a real password", async ({ page, demo
   expect(await weak.text()).toMatch(/8 characters/);
 });
 
-test("US-128: a password-protected export produces a non-empty encrypted file", async ({ page, demoCase }) => {
+test("US-128: a password-protected export produces a non-empty encrypted file", async ({
+  page,
+  demoCase,
+}) => {
   const caseId = demoCase;
   await page.goto(`/dashboard?caseId=${encodeURIComponent(caseId)}`);
 
@@ -132,8 +135,9 @@ test("US-128: a password-protected export produces a non-empty encrypted file", 
 
   // The seeded case name carries an em dash, which is what broke this endpoint (see the note at the
   // top of the file). A 200 alone would not catch a regression that mangles the name instead.
-  expect(res.headers()["content-disposition"], "the analyst's case name must survive the download")
-    .toContain("filename*=UTF-8''");
+  expect(res.headers()["content-disposition"], "the analyst's case name must survive the download").toContain(
+    "filename*=UTF-8''",
+  );
 
   const body = await res.body();
   expect(body.byteLength, "an encrypted case export with no bytes").toBeGreaterThan(0);
