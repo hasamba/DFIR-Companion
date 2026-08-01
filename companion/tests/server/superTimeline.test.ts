@@ -7,6 +7,8 @@ import { join as pathJoin, dirname } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import { ImporterStore } from "../../src/analysis/importerStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { TagsStore } from "../../src/analysis/tags.js";
@@ -15,6 +17,7 @@ import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { pollFor } from "../helpers/poll.js";
 
 // Fills the three array fields every ForensicEvent carries but no super-timeline assertion in
 // this file reads, so each literal below stays about the fields the route actually filters on.
@@ -36,12 +39,14 @@ async function harness(opts: { withStore?: boolean } = {}) {
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const superStore = opts.withStore === false ? undefined : new SuperTimelineStore(store);
+  const importMetaStore = new ImportMetaStore(store);
   const app = createApp(store, {
-    pipeline, stateStore, importerStore, tagsStore: new TagsStore(store),
+    pipeline, stateStore, importerStore, importMetaStore, tagsStore: new TagsStore(store),
+    forensicGateControlStore: new ForensicGateControlStore(store),
     ...(superStore ? { superTimelineStore: superStore } : {}),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, superStore };
+  return { app, superStore, stateStore, importMetaStore };
 }
 
 const MDE_CSV =
@@ -54,30 +59,36 @@ describe("super-timeline dual-write", () => {
     expect((await request(app).get("/cases/c1/super-timeline")).status).toBe(501);
   });
 
-  it("a normal import's added events also appear in the super-timeline", async () => {
-    const { app } = await harness();
+  it("a normal import records events added only to the super-timeline", async () => {
+    const { app, stateStore, importMetaStore } = await harness();
     await request(app).post("/importers").send({ spec: EXAMPLE_IMPORTER_SPEC });
+    expect((await request(app).put("/cases/c1/forensic-gate").send({ minSeverity: "Critical" })).status).toBe(200);
 
     const imp = await request(app).post("/cases/c1/import").send({ text: MDE_CSV, filename: "advanced-hunting.csv" });
     expect(imp.status).toBe(202);
     expect(imp.body.kind).toBe("mde-advanced-hunting");
 
-    // The import runs async (persist → dispatch → diff → super-timeline append). Poll the super-timeline
-    // until the dual-written events land — the load-bearing assertion of this task.
-    let total = 0;
-    let res = await request(app).get("/cases/c1/super-timeline");
-    for (let i = 0; i < 60 && total === 0; i++) {
-      res = await request(app).get("/cases/c1/super-timeline");
-      total = res.body.total ?? 0;
-      if (total === 0) await new Promise((r) => setTimeout(r, 25));
-    }
+    // The import runs async (persist → dispatch → diff → super-timeline append). Wait until the
+    // dual-written events land — the load-bearing assertion of this task.
+    const res = await pollFor("the imported event to reach the super-timeline", async () => {
+      const response = await request(app).get("/cases/c1/super-timeline");
+      return response.body.total > 0 ? response : undefined;
+    }, { timeoutMs: 3_000, intervalMs: 25 });
     expect(res.status).toBe(200);
     expect(res.body.total).toBeGreaterThan(0);
     // The basic read route returns the querySuper shape (facets included).
     expect(Array.isArray(res.body.events)).toBe(true);
     expect(Array.isArray(res.body.origins)).toBe(true);
     expect(Array.isArray(res.body.labelsAvailable)).toBe(true);
-  });
+
+    const meta = await pollFor("the import summary to be recorded", async () => {
+      const current = await importMetaStore.load("c1");
+      return current.lastImportedAt ? current : undefined;
+    }, { timeoutMs: 3_000, intervalMs: 25 });
+    expect((await stateStore.load("c1")).forensicTimeline).toHaveLength(0);
+    expect(meta.addedCount).toBe(0);
+    expect(meta.superTimelineAddedCount).toBe(res.body.total);
+  }, 8_000);
 });
 
 // ── superTimelineOnly bundle routing (Task 5) ───────────────────────────────────────────────────

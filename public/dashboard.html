@@ -18720,12 +18720,14 @@
       const panelIds = {
         findings: "sec-findings", hypotheses: "sec-hypotheses", questions: "sec-questions",
         uncertainties: "sec-uncertainties", timeline: "sec-timeline", playbook: "sec-playbook",
+        "super-timeline": "sec-super-timeline",
         summary: "sec-exec", "attack-path": "sec-attack-path", report: "sec-case-details",
       };
       const sectionId = panelIds[target.panel];
       const panelViews = {
         findings: "lead", hypotheses: "deep-dive", questions: "lead",
         uncertainties: "deep-dive", timeline: "triage", playbook: "hunt-prep",
+        "super-timeline": "deep-dive",
         summary: "lead", "attack-path": "lead", report: "report",
       };
       const view = DASHBOARD_VIEWS.find(item => item.id === panelViews[target.panel]);

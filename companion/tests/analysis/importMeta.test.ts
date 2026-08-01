@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { importMetaSchema, ImportMetaStore } from "../../src/analysis/importMeta.js";
 import type { TimelineDiff } from "../../src/analysis/timelineDiff.js";
 import type { IocsDiff } from "../../src/analysis/iocsDiff.js";
 
@@ -33,20 +33,31 @@ describe("ImportMetaStore", () => {
   it("returns an empty meta when none exists", async () => {
     expect(await store.load("c1")).toEqual({
       lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-      addedCount: 0, removedCount: 0, lastDiff: null,
+      addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
       iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
       linesIn: 0, path: "", fpPropagation: [], truncation: null,
     });
   });
 
+  it("keeps the super-timeline count unknown when loading legacy metadata", () => {
+    expect(importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineAddedCount).toBeUndefined();
+  });
+
   it("records an import (time + kind/file + timeline & IOC diff) and loads it back", async () => {
     const at = "2026-06-06T12:00:00.000Z";
-    await store.record("c1", { kind: "thor", file: "0003_thor.json", diff: DIFF, iocsDiff: IOCS }, at);
+    await store.record("c1", {
+      kind: "thor",
+      file: "0003_thor.json",
+      diff: DIFF,
+      iocsDiff: IOCS,
+      superTimelineAddedCount: 7,
+    }, at);
     const meta = await store.load("c1");
     expect(meta.lastImportedAt).toBe(at);
     expect(meta.lastImportKind).toBe("thor");
     expect(meta.lastImportFile).toBe("0003_thor.json");
     expect(meta.addedCount).toBe(2);
+    expect(meta.superTimelineAddedCount).toBe(7);
     expect(meta.removedCount).toBe(1);
     expect(meta.lastDiff).toEqual(DIFF);
     expect(meta.iocsAddedCount).toBe(2);
@@ -72,7 +83,7 @@ describe("ImportMetaStore", () => {
     await store.clear("c1");
     expect(await store.load("c1")).toEqual({
       lastImportedAt: "", lastImportKind: "", lastImportFile: "",
-      addedCount: 0, removedCount: 0, lastDiff: null,
+      addedCount: 0, superTimelineAddedCount: 0, removedCount: 0, lastDiff: null,
       iocsAddedCount: 0, iocsRemovedCount: 0, iocsDiff: null,
       linesIn: 0, path: "", fpPropagation: [], truncation: null,
     });
