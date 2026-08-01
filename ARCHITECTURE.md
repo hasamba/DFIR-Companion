@@ -3,10 +3,12 @@
 The target structure for `companion/src`, and the dependency rules that hold it in place.
 
 This exists because of [#384](https://github.com/hasamba/DFIR-Companion/issues/384): `analysis/pipeline.ts`
-is 6,136 lines and `server.ts` is 4,275, and they got that way because there was never a written answer
+was 6,136 lines and `server.ts` 4,275, and they got that way because there was never a written answer
 to "where does this code go?" Decomposing them without that answer just produces smaller files in
-arbitrary places, and the tangle regrows. So the map comes first, the extractions follow it, and
+arbitrary places, and the tangle regrows. So the map came first, the extractions follow it, and
 `npm run check:boundaries` stops the next tangle forming.
+
+#384 is closed. See [Who owns what](#who-owns-what) for where the remaining size targets live.
 
 **How to use it:** before adding a module, find its domain below. Before adding an import, check the
 edge is allowed. If the code you want to write does not fit any domain, that is worth a conversation
@@ -14,7 +16,7 @@ in the PR — not a new top-level directory.
 
 **Status:** every file in `companion/src` is assigned to a domain **today**, in
 `scripts/module-map.json`. The rules are enforced from day one; they do not wait for files to move.
-The domain *directories* are the target — `src/analysis/` is 290 files in one flat directory right
+The domain *directories* are the target — `src/analysis/` is 296 files in one flat directory right
 now, and files move into their directory as extraction PRs touch them (see [Migration](#migration)).
 
 **Moving a file is not free for the gate**, and it is worth knowing why before you try it. The map
@@ -274,18 +276,29 @@ The order, by ascending risk:
 9. `createApp`'s middleware (~2,350 lines in one function), then dashboard features as small vertical
    slices.
 
-### What closes #384
+### Who owns what
 
-Progress needs a finish line, not just a direction. #384 is an umbrella; each slice above is a child
-issue, and the umbrella closes when all of these hold:
+#384 established the map and the gates, and took the two extractions that could be made provably
+safe. It is closed. The size targets it defined did not disappear with it — each one now sits with
+the issue that owns the work, so no number is a blocker without an assignee:
 
-| Condition | Today | Target |
-|---|---|---|
-| `analysis/pipeline.ts` | 6,136 lines | ≤ 800 |
-| `server.ts` | 4,275 lines | ≤ 800 |
-| `public/dashboard.html` inline JS | 19,256 lines | ≤ 2,000 |
-| `public/dashboard.html` inline CSS | 3,231 lines | ≤ 800 |
-| Files in `src/` over 800 lines | 13 | 0 |
-| Flat files in `src/analysis/` | 290 | 0 |
-| Boundary ledger | 47 violations | ≤ 10 |
-| Forensic / super-timeline rule | **decided, enforced, tested** | ✅ |
+| Target | ≤ | Today | Owner |
+|---|---|---|---|
+| `analysis/pipeline.ts` | 800 | 3,410 | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
+| `server.ts` | 800 | 4,077 | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
+| `public/dashboard.html` inline JS | 2,000 | 19,201 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline CSS | 800 | 3,232 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| Files in `src/` over 800 lines | 0 | 13 | #416, #418, and the ledger below |
+| Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
+| Boundary ledger | 10 | 47 | shrinks as the above land |
+
+**The ratchets hold every one of these flat in the meantime.** `check:size` freezes each file at its
+recorded length, `check:imports` at one known cycle, `check:boundaries` at the recorded violations.
+Nothing on this list can get worse while nobody is working on it — which is the whole reason the
+gates were built before the extractions rather than after.
+
+Two of these numbers moved the *wrong* way during #384, from ordinary parallel work: the dashboard's
+inline script grew by 110 lines and `src/analysis/` gained six files. That is not a failure of the
+gates — they froze the new numbers as soon as they landed — but it is the argument for #415 and #416
+having owners rather than waiting.
+
