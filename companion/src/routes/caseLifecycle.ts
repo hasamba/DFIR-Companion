@@ -14,7 +14,7 @@ import {
   importEncryptedCase,
   CaseImportConflictError,
   MIN_PASSWORD_LENGTH,
-  dfircaseFilename,
+  dfircaseFilename, attachmentContentDisposition,
 } from "../analysis/caseExportArchive.js";
 import { DecryptionError } from "../analysis/caseEncryption.js";
 import { getImportLimiter } from "../http/rateLimiter.js";
@@ -333,7 +333,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         const filename = dfircaseFilename(id, meta.name);
         const { deleted } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
         res.type("application/octet-stream");
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Disposition", attachmentContentDisposition(filename));
         res.setHeader("Cache-Control", "private, no-cache");
         res.setHeader("X-Case-Deleted", String(deleted));
         return res.send(archive);
@@ -498,7 +498,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         removedFromList = outcome.removed;
       }
       res.type("application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Disposition", attachmentContentDisposition(filename));
       res.setHeader("Cache-Control", "private, no-cache");
       res.setHeader("X-Case-Removed-From-List", String(removedFromList));
       return res.send(archive);

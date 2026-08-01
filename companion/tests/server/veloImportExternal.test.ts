@@ -92,7 +92,37 @@ async function makeApp(
   return { app, stateStore, getRowsFetchCalls: () => rowsFetchCalls };
 }
 
+// The same app with NO Velociraptor client — the "API not configured" gate. Every branch of this route
+// fetches from the server (getHuntArtifacts/huntResultsByArtifact/getFlowInfo/collectionResults/*Uploads),
+// so the gate is load-bearing, not incidental.
+async function makeUnconfiguredApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-velo-ext-off-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const superTimelineStore = new SuperTimelineStore(store);
+  const pipeline = buildRuntimePipeline({
+    provider: undefined, synthesisProvider: undefined, stateStore, store,
+    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+  });
+  const app = createApp(store, { pipeline, stateStore, superTimelineStore });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return app;
+}
+
 describe("POST /cases/:id/velociraptor/import-external", () => {
+  // This route LOOKS like an offline import ("import" + a body you POST), but the body is a hunt/flow
+  // REFERENCE, not an export — the rows are fetched from the server. An analyst holding a colleague's
+  // export reads a bare "not configured" as a pointless gate, so the 501 must name what it would contact
+  // and hand them the genuinely offline route (POST /cases/:id/import-velociraptor).
+  it("501s naming the server it would contact, and points at the offline import route", async () => {
+    const app = await makeUnconfiguredApp();
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(501);
+    expect(res.body.error).toMatch(/DFIR_VELOCIRAPTOR_API_CONFIG/);
+    expect(res.body.error).toMatch(/fetches/i);              // says it makes an outbound call
+    expect(res.body.error).toMatch(/import-velociraptor/);   // names the offline alternative
+  });
+
   it("400s on an unparseable ref", async () => {
     const { app } = await makeApp();
     const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "junk" });

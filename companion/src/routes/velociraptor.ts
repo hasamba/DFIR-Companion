@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
-import { parseVeloRef } from "../analysis/veloRef.js";
+import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.js";
 import { buildVelociraptorClient, matchClient, ALL_CLIENTS, normalizeHuntExpirySeconds, type HuntTarget, type VeloArtifactInfo } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloMonitor } from "../analysis/veloMonitorStore.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
@@ -499,7 +499,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Paste a hunt id / flow / GUI URL; discover what it collected (for a flow, resolve the host) and
   // import via the SAME chain as every other Velociraptor import — optionally to the super-timeline only.
   app.post("/cases/:id/velociraptor/import-external", async (req: Request, res: Response) => {
-    if (!options.velociraptorClient) return res.status(501).json({ error: "Velociraptor API not configured (set DFIR_VELOCIRAPTOR_API_CONFIG)" });
+    if (!options.velociraptorClient) return res.status(501).json({ error: EXTERNAL_IMPORT_NEEDS_SERVER });
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
     const ref = parseVeloRef(String(req.body?.ref ?? ""));

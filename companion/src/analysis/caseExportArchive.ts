@@ -46,6 +46,37 @@ export function dfircaseFilename(caseId: string, name: string | null | undefined
   return `${caseId} - ${trimmed.replace(UNSAFE_FILENAME_CHARS, "_")}.dfircase`;
 }
 
+/**
+ * Build the `Content-Disposition` value for downloading `filename` as an attachment.
+ *
+ * A filename here carries the case NAME, which is free text an analyst typed — routinely an em
+ * dash, an accent, a non-Latin script. Interpolating that straight into the header made Node throw
+ * ERR_INVALID_CHAR (it rejects any header value holding a character above U+00FF) and the export
+ * route turned the throw into a bare 500, so every case whose name was not pure Latin-1 — the
+ * seeded demo case among them — was simply un-exportable. Sanitizing the name harder is the wrong
+ * cure: it silently mangles the filename for every analyst not working in English.
+ *
+ * RFC 6266 covers exactly this with two parameters: an ASCII-only `filename=` for clients that
+ * don't implement `filename*`, and a percent-encoded `filename*=UTF-8''…` (RFC 5987) carrying the
+ * real name for those that do. `filename*` is appended only when it can say something `filename=`
+ * cannot, so an ASCII download keeps the byte-identical header it has always sent.
+ */
+export function attachmentContentDisposition(filename: string): string {
+  // Everything outside printable ASCII collapses to "_" — the same placeholder the case name
+  // already uses for filesystem-unsafe characters. The quote and backslash go too: both are
+  // stripped upstream, but a quote reaching this string would close it early and let a crafted
+  // case name append header parameters of its own.
+  const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const header = `attachment; filename="${ascii}"`;
+  if (ascii === filename) return header;
+  // RFC 5987's attr-char set excludes ' ( ) * , which encodeURIComponent leaves unescaped.
+  const encoded = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${header}; filename*=UTF-8''${encoded}`;
+}
+
 async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   const out: string[] = [];
   let entries;
