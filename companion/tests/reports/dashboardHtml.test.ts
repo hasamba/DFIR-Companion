@@ -512,6 +512,12 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ renderAiCostCard\(cost\) \+ importers/);
   });
 
+  it("keeps the support preview and download actions the same width", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html.match(/class="diag-support-action"/g)).toHaveLength(2);
+    expect(html).toMatch(/\.diag-support-action\s*\{\s*min-width:\s*220px;/);
+  });
+
   it("the bundle run form offers a time scope and a mapping preview", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     expect(html).toContain("velo-timescope");

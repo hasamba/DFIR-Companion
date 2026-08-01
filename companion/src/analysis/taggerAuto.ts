@@ -16,12 +16,14 @@ import type { StateStore } from "./stateStore.js";
 import { runAndApplyTagger, readTaggerSettings } from "./taggerRun.js";
 import type { AnalysisRunStore } from "./analysisRunStore.js";
 import { hashManifestValue } from "./analysisRunHash.js";
+import type { OperationalMetricsStore } from "./operationalMetrics.js";
 
 export interface AutoTagDeps {
   taggerStore?: TaggerStore;
   tagsStore?: TagsStore;
   stateStore?: StateStore;
   analysisRunStore?: AnalysisRunStore;
+  operationalMetrics?: OperationalMetricsStore;
   onTags?: (caseId: string) => void;
   onState?: (state: InvestigationState) => void;
   logLine?: (msg: string) => void;
@@ -53,6 +55,9 @@ export async function autoTagNewEvents(deps: AutoTagDeps, caseId: string, added:
       tagsStore,
       mutateForensic,
     });
+    const byId = new Map(applied.forensicTimeline.map((event) => [event.id, event]));
+    const promoted = added.filter((event) => event.severity === "Info" && byId.get(event.id)?.severity !== "Info").length;
+    if (promoted > 0) await deps.operationalMetrics?.record({ type: "import_promotion", promoted });
 
     if (state && applied.mutatedCount > 0) {
       const next: InvestigationState = { ...state, forensicTimeline: applied.forensicTimeline, updatedAt: new Date().toISOString() };

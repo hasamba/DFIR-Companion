@@ -68,7 +68,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine: (m) => ctx.serverLogger.info(m) },
       caseId, added,
     );
 
