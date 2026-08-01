@@ -36,14 +36,17 @@ describe("the generated Firefox manifest", () => {
     expect(firefoxManifest.background.scripts).toContain("serviceWorker.js");
   });
 
-  it("requests host access via host_permissions, not permissions", () => {
-    // MV3 splits the two keys: match patterns in `permissions` are not valid MV3 and Firefox
-    // drops them with a manifest warning, leaving the add-on with no host access at all.
-    expect(firefoxManifest.host_permissions).toContain("<all_urls>");
+  it("keeps host access optional and out of permissions", () => {
+    expect(firefoxManifest.host_permissions ?? []).toEqual([]);
+    expect(firefoxManifest.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
     const matchPatterns = (firefoxManifest.permissions as string[]).filter(
       (p) => p.includes("://") || p === "<all_urls>",
     );
     expect(matchPatterns).toEqual([]);
+  });
+
+  it("cannot be enabled in Firefox private browsing", () => {
+    expect(firefoxManifest.incognito).toBe("not_allowed");
   });
 
   it("keeps the same capture shortcut", () => {

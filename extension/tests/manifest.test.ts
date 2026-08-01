@@ -22,4 +22,18 @@ describe("manifest.json permissions", () => {
   it("requests contextMenus for the right-click send feature", () => {
     expect(manifest.permissions).toContain("contextMenus");
   });
+
+  it("installs without persistent access to websites", () => {
+    expect(manifest.host_permissions ?? []).toEqual([]);
+    expect(manifest.content_scripts ?? []).toEqual([]);
+    expect(manifest.permissions).not.toContain("tabs");
+  });
+
+  it("declares web origins as runtime-only permissions", () => {
+    expect(manifest.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+  });
+
+  it("does not request private browsing access at install", () => {
+    expect(manifest.incognito).toBeUndefined();
+  });
 });

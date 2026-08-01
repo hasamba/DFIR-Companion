@@ -76,6 +76,9 @@ import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.j
 import { resolveHuntPlatforms, type HuntPlatform } from "./analysis/huntPlatforms.js";
 import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
 import { detectImportWithCustom } from "./analysis/importDetect.js";
+import { observeImport } from "./analysis/operationalImport.js";
+import { createOperationalHttpMetrics } from "./analysis/operationalHttpMetrics.js";
+import { startOperationalCapacityMonitor } from "./analysis/operationalCapacity.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import { applySeverityFloor } from "./analysis/severityFloor.js";
@@ -143,6 +146,7 @@ import { LateralPathDismissStore } from "./analysis/lateralPathDismiss.js";
 import { IocAliasStore } from "./analysis/iocAlias.js";
 import { SynthMetaStore } from "./analysis/synthMeta.js";
 import { AiCostStore } from "./analysis/aiCost.js";
+import { OperationalMetricsStore } from "./analysis/operationalMetrics.js";
 import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "./analysis/importMeta.js";
 import { AnalysisRunStore } from "./analysis/analysisRunStore.js";
@@ -310,11 +314,11 @@ export interface AppOptions {
   // (manual adds vs background enrichment/synthesis) cannot clobber each other.
   stateLock?: StateLock;
   aiConfigured?: boolean;
+  operationalMetrics?: OperationalMetricsStore;
+  liveConnectionCount?: () => number;
   windowSize?: number;
-  // Safety-net flush interval. A `timer`/`click` capture buffers until `windowSize`
-  // accumulates (only a `navigation`/`tab_switch` flushes early), so a lone screenshot could
-  // sit unanalyzed indefinitely. A background sweep drains any non-empty buffer on this
-  // interval so even a single capture is analyzed. Default 5 min; set 0 to disable.
+  // Safety-net interval that drains capture buffers even when a window never fills.
+  // Default 5 min; set 0 to disable.
   flushIntervalMs?: number;
   stateStore?: StateStore;
   reportWriter?: ReportWriter;
@@ -679,10 +683,7 @@ export interface AppOptions {
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
   dashboardBaseUrl?: string;
-  // Diagnostics (#118): builds an AI provider from the CURRENT config so the diagnostics
-  // page's "Test AI connectivity" button can make a lightweight live request (validating
-  // auth + timeout). Defaults to the env-based buildProvider in startServer; tests inject a
-  // fake (no network). Absent / returns undefined → the test route reports "not configured".
+  // Diagnostics live probe; tests can inject a no-network provider.
   aiTestProvider?: () => AnalyzeProvider | undefined;
   // Opt-in "newer release available" notice (issue #127). All optional → a bare createApp (tests)
   // gets the feature OFF and never touches the network or a timer.
@@ -702,14 +703,9 @@ export interface AppOptions {
   // startServer stores the function and fires it after app.listen() so the probes run when
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
-  // Extra browser origins allowed to call the API, beyond the always-trusted set (the capture
-  // extension and loopback). From DFIR_ALLOWED_ORIGINS — see src/http/originGuard.ts.
-  // Absent → only the built-in trusted origins.
+  // Additional browser origins beyond the always-trusted extension and loopback origins.
   allowedOrigins?: string[];
-  // Extra Host header values this companion answers to, beyond loopback and bare IP addresses.
-  // From DFIR_ALLOWED_HOSTS / DFIR_ALLOWED_HOST_SUFFIXES. Needed only when the dashboard is reached
-  // through a NAME rather than an address (reverse proxy, PaaS) — an unrecognised name is how a
-  // DNS-rebinding attack announces itself, so it cannot be inferred. See src/http/originGuard.ts.
+  // Named hosts/suffixes explicitly trusted by the DNS-rebinding guard.
   allowedHosts?: string[];
   allowedHostSuffixes?: string[];
 }
@@ -731,14 +727,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, onTags: options.onTags, onState: options.onState, logLine },
+      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine },
       caseId, added,
     );
 
   // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
-  // In-memory, best-effort rings powering the Health/Diagnostics page. They reset on restart
-  // (like the capture-recency marker in routes/captures.ts) — durable history lives in the
-  // per-case audit logs. Capped so a long-running server can't grow them unbounded.
+  // In-memory, capped error rings powering the Health/Diagnostics page.
   const appStartedAt = Date.now();
   const DIAG_RING = 50;
   const recentImportFailures: ImporterFailure[] = [];
@@ -812,7 +806,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     });
     next();
   });
-
+  app.use(createOperationalHttpMetrics(options.operationalMetrics));
   // JSON body limit. Bulk evidence imports (CSV / log / THOR / SIEM-EDR JSON exports) wrap the
   // whole file in the request body, and SIEM/EDR exports in particular are routinely tens to
   // hundreds of MB — so the cap is generous and configurable via DFIR_MAX_BODY_MB (default
@@ -1380,11 +1374,13 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   function dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown> {
     const pipeline = options.pipeline;
     if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
+    const startedAt = Date.now();
+    const observe = <T>(work: Promise<T>): Promise<T> => observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work);
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = importerRegistry.importers.get(kind);
     if (custom) {
       let parsed: { total: number; kept: number; dropped: number } | null = null;
-      return pipeline.importDeclarative(caseId, text, {
+      return observe(pipeline.importDeclarative(caseId, text, {
         importer: custom, ...base,
         onParsed: (r) => {
           parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
@@ -1393,43 +1389,43 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
       }).catch((err) => {
         recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: redactErr(err) });
         throw err;
-      });
+      }));
     }
     switch (kind) {
-      case "thor": return pipeline.importThor(caseId, text, base);
-      case "siem": return pipeline.importSiem(caseId, text, base);
-      case "evtxxml": return pipeline.importEvtxXml(caseId, text, base);
-      case "chainsaw": return pipeline.importChainsaw(caseId, text, base);
-      case "hayabusa": return pipeline.importHayabusa(caseId, text, base);
-      case "velociraptor": return pipeline.importVelociraptor(caseId, text, base);
-      case "securityonion": return pipeline.importSecurityOnion(caseId, text, base);
-      case "socrates": return pipeline.importSocrates(caseId, text, base);
-      case "network": return pipeline.importNetwork(caseId, text, base);
-      case "kape": return pipeline.importKape(caseId, text, base);
-      case "cybertriage": return pipeline.importCybertriage(caseId, text, base);
-      case "m365": return pipeline.importM365(caseId, text, base);
-      case "aws": return pipeline.importAws(caseId, text, base);
-      case "cloud": return pipeline.importCloudActivity(caseId, text, base);
-      case "k8s": return pipeline.importK8sAudit(caseId, text, base);
-      case "osquery": return pipeline.importOsquery(caseId, text, base);
-      case "plaso": return pipeline.importPlaso(caseId, text, base);
-      case "sandbox": return pipeline.importSandbox(caseId, text, base);
-      case "memory": return pipeline.importMemory(caseId, text, base);
-      case "email": return pipeline.importEmail(caseId, text, base);
-      case "thehive": return pipeline.importTheHive(caseId, text, base);
-      case "auditd": return pipeline.importAuditd(caseId, text, base);
-      case "journald": return pipeline.importJournald(caseId, text, base);
-      case "sysdig": return pipeline.importSysdig(caseId, text, base);
-      case "wazuh": return pipeline.importWazuh(caseId, text, base);
-      case "bashhistory": return pipeline.importBashHistory(caseId, text, base);
-      case "ecar": return pipeline.importEcar(caseId, text, base);
-      case "snort": return pipeline.importSnort(caseId, text, base);
-      case "yara": return pipeline.importYara(caseId, text, base);
-      case "combinedlog": return pipeline.importCombinedLog(caseId, text, base);
-      case "asa": return pipeline.importCiscoAsa(caseId, text, base);
-      case "syslog": return pipeline.importSyslog(caseId, text, base);
-      case "csv": return pipeline.analyzeCsv(caseId, text, base);
-      case "log": return pipeline.analyzeLog(caseId, text, base);
+      case "thor": return observe(pipeline.importThor(caseId, text, base));
+      case "siem": return observe(pipeline.importSiem(caseId, text, base));
+      case "evtxxml": return observe(pipeline.importEvtxXml(caseId, text, base));
+      case "chainsaw": return observe(pipeline.importChainsaw(caseId, text, base));
+      case "hayabusa": return observe(pipeline.importHayabusa(caseId, text, base));
+      case "velociraptor": return observe(pipeline.importVelociraptor(caseId, text, base));
+      case "securityonion": return observe(pipeline.importSecurityOnion(caseId, text, base));
+      case "socrates": return observe(pipeline.importSocrates(caseId, text, base));
+      case "network": return observe(pipeline.importNetwork(caseId, text, base));
+      case "kape": return observe(pipeline.importKape(caseId, text, base));
+      case "cybertriage": return observe(pipeline.importCybertriage(caseId, text, base));
+      case "m365": return observe(pipeline.importM365(caseId, text, base));
+      case "aws": return observe(pipeline.importAws(caseId, text, base));
+      case "cloud": return observe(pipeline.importCloudActivity(caseId, text, base));
+      case "k8s": return observe(pipeline.importK8sAudit(caseId, text, base));
+      case "osquery": return observe(pipeline.importOsquery(caseId, text, base));
+      case "plaso": return observe(pipeline.importPlaso(caseId, text, base));
+      case "sandbox": return observe(pipeline.importSandbox(caseId, text, base));
+      case "memory": return observe(pipeline.importMemory(caseId, text, base));
+      case "email": return observe(pipeline.importEmail(caseId, text, base));
+      case "thehive": return observe(pipeline.importTheHive(caseId, text, base));
+      case "auditd": return observe(pipeline.importAuditd(caseId, text, base));
+      case "journald": return observe(pipeline.importJournald(caseId, text, base));
+      case "sysdig": return observe(pipeline.importSysdig(caseId, text, base));
+      case "wazuh": return observe(pipeline.importWazuh(caseId, text, base));
+      case "bashhistory": return observe(pipeline.importBashHistory(caseId, text, base));
+      case "ecar": return observe(pipeline.importEcar(caseId, text, base));
+      case "snort": return observe(pipeline.importSnort(caseId, text, base));
+      case "yara": return observe(pipeline.importYara(caseId, text, base));
+      case "combinedlog": return observe(pipeline.importCombinedLog(caseId, text, base));
+      case "asa": return observe(pipeline.importCiscoAsa(caseId, text, base));
+      case "syslog": return observe(pipeline.importSyslog(caseId, text, base));
+      case "csv": return observe(pipeline.analyzeCsv(caseId, text, base));
+      case "log": return observe(pipeline.analyzeLog(caseId, text, base));
       default: return Promise.reject(new Error(`unhandled import kind: ${kind}`));
     }
   }
@@ -3313,6 +3309,7 @@ export interface RuntimePipelineParams {
   secondOpinionModelLabel?: string;
   stateLock?: StateLock;
   analysisRunStore?: AnalysisRunStore;
+  operationalMetrics?: OperationalMetricsStore;
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -3336,6 +3333,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
     analysisRunStore: params.analysisRunStore,
+    operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
@@ -3348,7 +3346,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
-    superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined),  // explainEvent falls back here for raw super-only events
+    superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, params.operationalMetrics),  // explainEvent falls back here for raw super-only events
     ocrRunner: params.ocrRunner,
     presidio: params.presidio,
     presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),
@@ -3364,14 +3362,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const store = new CaseStore(casesRoot);
   const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
   if (writerGuard) process.once("exit", () => writerGuard.release());
-  // File-backed logging: a fresh global SESSION log per server run (session-<ts>.log) PLUS a
-  // per-CASE log (cases/<id>/logs/session-<ts>.log) — the investigation audit trail that travels
-  // with the case. The global log dir defaults to logs/ beside the cases root but is overridable
-  // with DFIR_LOG_DIR (resolved by the caller). Per-case logs always live inside the case dir so
-  // the audit trail stays with the case. Colons/dots are stripped from the timestamp so the
-  // filename is valid on Windows; a logs/ subdir is always creatable (even when DFIR_CASES_ROOT
-  // is a drive-root child like C:\cases). The Settings → Logging toggle changes the level live;
-  // DFIR_LOG_LEVEL sets the default.
+  // File-backed global and per-case session logs retain the investigation audit trail.
+  // Timestamp punctuation is stripped for Windows-compatible filenames.
   const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
   const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
   const logger = new LoggerImpl({
@@ -3382,7 +3374,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   setServerLogger(logger);
   logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
   const stateLock = new StateLock();
-  const stateStore = new StateStoreImpl(store);
+  const operationalMetrics = new OperationalMetricsStore(
+    join(dirname(casesRoot), "diagnostics", "operational-metrics.json"),
+    { enabled: !/^(?:0|false|off)$/i.test(process.env.DFIR_LOCAL_TELEMETRY ?? ""), onError: (error) => logLine(`[metrics] ${error.message}`) },
+  );
+  const stateStore = new StateStoreImpl(store, undefined, { operationalMetrics });
+  startOperationalCapacityMonitor(store, stateStore, operationalMetrics, (error) => logLine(`[capacity] ${error.message}`));
   const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
   // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
   // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
@@ -3511,7 +3508,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const sourceTrustStore = new SourceTrustStore(store);
   const dwellWindowStore = new DwellWindowStore(store);
   const clockSkewStore = new ClockSkewStore(store);   // #228 per-host clock offsets + alignment toggle
-  const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined);
+  const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, operationalMetrics);
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
@@ -3668,6 +3665,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const wiredPipeline = buildRuntimePipeline({
     provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore, incidentTypeStore,
     analysisRunStore,
+    operationalMetrics,
     presidio, presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
@@ -3705,6 +3703,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     aiConfigured: Boolean(provider),
     flushIntervalMs,
     stateStore,
+    operationalMetrics,
+    liveConnectionCount: () => hub.connectionCount(),
     stateLock,
     reportWriter,
     // The redacted-export route needs OCR even when the vision model is local (the pipeline's
@@ -4005,6 +4005,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   attachLiveSocket(server, hub, {
     store,
     teamAuth,
+    operationalMetrics,
     secret: loadOrCreateInstanceSecret(store.casesRoot),
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),

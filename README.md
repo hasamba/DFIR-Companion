@@ -230,7 +230,7 @@ list of known compromised hosts and users.
 - **Setup wizard** — guided multi-step dashboard overlay (auto-shown first-run; also in Settings → General / AI) to configure AI (extraction **and** synthesis model, separately), the integrations (Velociraptor, DFIR-IRIS, Timesketch, Notion, ClickUp), threat-intel enrichment + customer-exposure providers, push ingest, NSRL, and a notification webhook (Slack/Teams/Mattermost/Discord) — each with Save → apply-live → connection/status test, and a ✓/○ progress rail. Everything is optional and dismissible
 
 ### Capture & ingest
-- **MV3 browser extension** — timer + event-driven capture (navigation/tab/click), `Ctrl+Shift+S` hotkey, offline queue + auto-sync, per-case Start/Stop
+- **Least-privilege MV3 browser extension** — zero site access at install, exact-origin console approval/revocation, one-off active-tab capture, timer + event-driven capture, local permission audit, offline queue + auto-sync
 - **One-click artifact push** — Splunk/Velociraptor/Kibana/Security Onion/SO-CRATES/CrowdStrike/VolWeb injects **Push to DFIR-Companion** button; intercepts API JSON or scrapes table; the popup shows the auto-detected console with a dropdown to force a different adapter (or none) per tab
 - **Right-click "Send to DFIR-Companion"** — send a page's selected text, a nearby table, or a link's URL straight to the connected case from any page, not just recognized consoles
 - **Case management** — **+ New case** in dashboard (templates auto-load incident questions + import hints); captures to unknown case rejected

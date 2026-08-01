@@ -26,6 +26,7 @@ import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/br
 import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult, CaptureStatusResult } from "./types.js";
 import { browserApi } from "./browser.js";
+import { isExtensionContextInvalidated, runBestEffortExtensionCall } from "./extensionContext.js";
 
 const BTN_ID = "dfir-companion-push-btn";
 // storage.local key holding the analyst's dragged button position (null = default corner).
@@ -43,6 +44,7 @@ let currentCaseId = "";
 let buttonPos: ButtonPos | null = null;
 // Set briefly after a drag so the trailing click does not fire a push.
 let suppressClick = false;
+let disabled = false;
 
 export async function initArtifactCapture(): Promise<void> {
   detectedAdapterId = adapterForPage(location.href, document)?.id ?? null;
@@ -87,6 +89,19 @@ export async function initArtifactCapture(): Promise<void> {
   });
 }
 
+export function setArtifactCaptureEnabled(enabled: boolean): void {
+  disabled = !enabled;
+  latest = null;
+  if (!enabled) {
+    activeAdapter = null;
+    document.getElementById(BTN_ID)?.remove();
+    window.postMessage({ source: DFIR_CONFIG_MSG, patterns: [] }, "*");
+    return;
+  }
+  detectedAdapterId = adapterForPage(location.href, document)?.id ?? null;
+  applyAdapter();
+}
+
 // (Re)compute which adapter is active from detection + override, reset captured state, and — when
 // an adapter is now active — (re)request the MAIN-world hook with its API patterns. Called once at
 // init, and again whenever the popup changes the override for this tab. Unlike before manual
@@ -94,6 +109,11 @@ export async function initArtifactCapture(): Promise<void> {
 // adapterForPage doesn't recognize — cheaply, since applyAdapter() itself no-ops until an adapter
 // is actually active — so a later popup override can still activate capture on that page.
 function applyAdapter(): void {
+  if (disabled) {
+    activeAdapter = null;
+    document.getElementById(BTN_ID)?.remove();
+    return;
+  }
   const id = resolveActiveAdapter(detectedAdapterId, overrideAdapterId);
   if (id !== (activeAdapter?.id ?? null)) {
     activeAdapter = id ? adapterById(id) : null;
@@ -129,6 +149,10 @@ function onExtensionMessage(
     return true;
   }
   if (m.kind === "set_adapter_override") {
+    if (disabled) {
+      sendResponse(captureStatus());
+      return true;
+    }
     overrideAdapterId = typeof m.overrideAdapterId === "string" ? m.overrideAdapterId : "";
     applyAdapter();
     sendResponse(captureStatus());
@@ -155,7 +179,10 @@ function captureStatus(): CaptureStatusResult {
 // prior navigation in this tab (it's idempotent).
 function requestHookInjection(): void {
   const msg: EnsureHookMessage = { kind: "ensure_hook" };
-  try { void browserApi.runtime.sendMessage(msg); } catch { /* SW asleep / page CSP — scrape still works */ }
+  runBestEffortExtensionCall(
+    () => browserApi.runtime.sendMessage(msg),
+    () => setArtifactCaptureEnabled(false),
+  );
 }
 
 function sendConfig(): void {
@@ -350,7 +377,10 @@ function attachDrag(btn: HTMLButtonElement): void {
     window.setTimeout(() => { suppressClick = false; }, 0);
     const rect = btn.getBoundingClientRect();
     buttonPos = { left: rect.left, top: rect.top };
-    try { void browserApi.storage.local.set({ [POS_KEY]: buttonPos }); } catch { /* storage unavailable */ }
+    runBestEffortExtensionCall(
+      () => browserApi.storage.local.set({ [POS_KEY]: buttonPos }),
+      () => setArtifactCaptureEnabled(false),
+    );
   };
   btn.addEventListener("pointerup", end);
   btn.addEventListener("pointercancel", end);
@@ -394,7 +424,10 @@ async function onClick(): Promise<void> {
       flash(`✗ ${res?.error ?? "Push failed"}`, "#b42318");
     }
   } catch (err) {
-    flash(`✗ ${(err as Error).message}`, "#b42318");
+    const message = isExtensionContextInvalidated(err)
+      ? "Extension updated — refresh this page"
+      : (err as Error).message;
+    flash(`✗ ${message}`, "#b42318");
   } finally {
     busy = false;
   }

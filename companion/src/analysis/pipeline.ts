@@ -71,6 +71,7 @@ import {
   getViewSummaryPrompt,
 } from "./ai/prompts/index.js";
 export * from "./ai/prompts/index.js";
+import { safeAiErrorKind, safeAiPhase, type OperationalMetricsStore } from "./operationalMetrics.js";
 import { CorrelationProfileStore } from "./correlationProfile.js";
 import type { SecondOpinionStore } from "./secondOpinionStore.js";
 import {
@@ -345,6 +346,7 @@ export interface PipelineOptions {
   // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).
   aiCostStore?: AiCostStore;
+  operationalMetrics?: OperationalMetricsStore;
   correlationProfileStore?: CorrelationProfileStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
@@ -493,7 +495,29 @@ export class AnalysisPipeline {
         `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
         { caseId },
       );
+      if (willRetry) void this.opts.operationalMetrics?.record({ type: "ai_retry", phase: safeAiPhase(label), errorKind: safeAiErrorKind(err instanceof ProviderError ? err.kind : "other") });
     });
+  }
+
+  private async analyzeProvider(provider: AIProvider, req: AnalyzeRequest, label: string): Promise<AnalyzeResult> {
+    const startedAt = Date.now();
+    try {
+      const result = await provider.analyze(req);
+      const usage = result.usage;
+      void this.opts.operationalMetrics?.record({
+        type: "ai", phase: safeAiPhase(label), durationMs: Date.now() - startedAt,
+        success: true, inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0,
+        costUsd: usage?.costUSD ?? 0, errorKind: "none",
+      });
+      return result;
+    } catch (error) {
+      void this.opts.operationalMetrics?.record({
+        type: "ai", phase: safeAiPhase(label), durationMs: Date.now() - startedAt,
+        success: false, inputTokens: 0, outputTokens: 0, costUsd: 0,
+        errorKind: safeAiErrorKind(error instanceof ProviderError ? error.kind : "other"),
+      });
+      throw error;
+    }
   }
 
   /**
@@ -581,7 +605,7 @@ export class AnalysisPipeline {
       { caseId },
     );
     if (!policy.enabled) {
-      const result = await provider.analyze(req);
+      const result = await this.analyzeProvider(provider, req, label);
       this.logAiUsage(caseId, label, provider, result);
       await this.recordAiCost(caseId, label, provider, result);
       return parseJsonLoose(result.rawText);
@@ -672,21 +696,13 @@ export class AnalysisPipeline {
     // re-approve) the same import one chunk at a time.
     if (!skipPresidioGate) await this.presidioGate(caseId, maskedPrompt, known);
 
-    const result = await provider.analyze({ ...req, userPrompt: maskedPrompt, images });
+    const result = await this.analyzeProvider(provider, { ...req, userPrompt: maskedPrompt, images }, label);
     this.logAiUsage(caseId, label, provider, result);
     await this.recordAiCost(caseId, label, provider, result);
     return anon.restoreDeep(parseJsonLoose(result.rawText));
   }
 
-  /**
-   * Scan already-masked text with Presidio and stop the call if it surfaces a value this case has
-   * not seen before. Approved values live in the discovered list, so on the retry they are already
-   * in `known.custom` and anon.apply() masks them — no second pass is needed here.
-   *
-   * Fails CLOSED. An analyst who enabled Presidio believes names are being masked; silently
-   * proceeding when the container is down or answers with garbage would leave that belief wrong
-   * and unfalsifiable.
-   */
+  /** Scan already-masked text with Presidio; fail closed on a scan error or unapproved value. */
   private async presidioGate(caseId: string, maskedText: string, known: KnownEntities): Promise<void> {
     const presidio = this.opts.presidio;
     if (!presidio) return;
@@ -739,30 +755,7 @@ export class AnalysisPipeline {
   private static readonly PRESIDIO_SCAN_CHUNK_CHARS = 50_000;
   private static readonly PRESIDIO_SCAN_MAX_CHARS = 5_000_000;
 
-  /**
-   * Scan an entire import prompt once, up front, instead of letting the chunk loop hit
-   * presidioGate repeatedly. analyzeCsv/analyzeLog call this before their batch loop starts, then
-   * pass skipPresidioGate=true into every analyzeRestored() call in that loop — so an import
-   * produces exactly ONE approval round trip, no matter how many chunks it is batched into.
-   *
-   * Callers pass BOTH halves of what a batch prompt carries — the state summary and the payload —
-   * not just the payload. Scanning the payload alone was a fail-open: the summary (finding titles
-   * and descriptions, open threads, recent forensic events and known IOC values, all RESTORED to
-   * real values) is prepended to every batch prompt and every batch skips the gate, so it went to
-   * the provider unscanned.
-   *
-   * KNOWN, DELIBERATE RESIDUAL GAP: `state` mutates as batches merge, so batch N's prompt carries
-   * a summary REVISED by batches 1..N-1 — text that did not exist when this ran. One up-front
-   * scan cannot cover those revisions, and re-gating per batch is exactly the stall-approve-restart
-   * loop this method exists to avoid. The revisions are model output derived from payload text
-   * that WAS scanned, and the next non-import AI call (ask/synthesis/explain/screenshot) gates on
-   * its own prompt, which includes the then-current summary — so anything genuinely new surfaces
-   * there instead. Widening this would mean gating per batch; that is a product decision, not an
-   * oversight here.
-   *
-   * Fails CLOSED, same as presidioGate: an unreachable container throws rather than letting the
-   * import proceed unscanned.
-   */
+  /** Scan one complete masked import up front so batched CSV/log analysis needs one approval round. */
   private async presidioPreScan(caseId: string, text: string, known: KnownEntities, anon: Anonymizer): Promise<void> {
     const presidio = this.opts.presidio;
     if (!presidio) return;

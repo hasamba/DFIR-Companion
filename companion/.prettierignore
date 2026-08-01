@@ -23,7 +23,16 @@ dist-choco/
 # Lockfile — npm owns its formatting.
 package-lock.json
 
-# Machine-written ratchet ledgers. `check-file-size.mjs --update` / `check-imports.mjs --update`
-# own their layout; formatting them here would make every --update produce a spurious diff.
+# Machine-written ratchet ledgers. `check-file-size.mjs --update` / `check-imports.mjs --update` /
+# `check-boundaries.mjs --update` own their layout; formatting them here would make every --update
+# produce a spurious diff.
 scripts/file-size-ledger.json
 scripts/import-cycles.json
+scripts/boundary-violations.json
+
+# Built-in AI prompt sources (#384). tests/eval/changeGate.ts HASHES THE SOURCE TEXT of these
+# constants and demands a real-model no-regression attestation whenever the hash moves (#378).
+# Prettier reflowing an array literal changes no string the model ever sees, but it does change
+# those bytes — so a formatting pass would report a prompt change that did not happen, and cost a
+# full evaluation run to clear. Same reasoning as examples/ above: the byte layout is load-bearing.
+src/analysis/ai/prompts/
