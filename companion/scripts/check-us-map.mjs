@@ -11,10 +11,14 @@
 //   3. Every spec says something — a new spec file must either map itself or state that no story
 //      exists, so coverage is a decision rather than an oversight.
 //
+// It also WARNS (never fails) when a branch adds an HTTP route that no user story describes — see
+// warnUndocumentedRoutes below.
+//
 //   node scripts/check-us-map.mjs            # verify
 //   node scripts/check-us-map.mjs --update   # rewrite the CSV column from the specs
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,7 +73,92 @@ function toCsv(rows) {
   return rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
 }
 
-const rows = parseCsv(readFileSync(CSV, "utf8"));
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// New-feature warning (advisory only).
+//
+// feature-user-stories.csv is maintained by hand, so it drifts: a route ships, nobody adds a row,
+// and the inventory quietly stops describing the product. This compares the routes on this branch
+// against the routes at the merge base and names any that no story mentions.
+//
+// DELIBERATELY A WARNING, NOT A FAILURE. "What counts as a new feature" is a judgement call — a
+// refactor that splits one route into two adds routes without adding features, and an internal
+// endpoint may not deserve a story at all. Failing on a guess would block unrelated work and teach
+// people to route around the check, which is worse than the drift it is trying to prevent. If it
+// proves accurate over a few months, promoting it to an error is a one-line change.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Route paths declared under src/routes, e.g. /cases/:id/import-csv. */
+function routesIn(text) {
+  return new Set(
+    [...text.matchAll(/app\.(?:get|post|put|patch|delete)\("(\/[A-Za-z0-9/:._-]+)"/g)].map((m) => m[1]),
+  );
+}
+
+function gitShow(ref, file) {
+  try {
+    return execFileSync("git", ["show", `${ref}:${file}`], {
+      cwd: COMPANION,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return ""; // file did not exist at that ref — every route in it is new
+  }
+}
+
+function warnUndocumentedRoutes(csvText) {
+  let base;
+  try {
+    // The merge base with master is what "this branch added" means. A shallow clone has none, in
+    // which case the check simply does not run — it must never fail for an environment reason.
+    base = execFileSync("git", ["merge-base", "origin/master", "HEAD"], {
+      cwd: COMPANION,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return;
+  }
+  if (!base) return;
+
+  const dir = join(COMPANION, "src", "routes");
+  let files;
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  } catch {
+    return;
+  }
+
+  const added = new Set();
+  for (const file of files) {
+    // Repo-relative, not companion-relative: `git show <ref>:<path>` resolves from the repo root,
+    // and a wrong prefix makes every file look absent at the base — which reported every existing
+    // route as newly added.
+    const rel = `companion/src/routes/${file}`;
+    const now = routesIn(readFileSync(join(dir, file), "utf8"));
+    const before = routesIn(gitShow(base, rel));
+    for (const route of now) if (!before.has(route)) added.add(route);
+  }
+  if (added.size === 0) return;
+
+  // A story "describes" a route when it names it. The CSV already writes routes into
+  // expected_behaviour ("POST /cases/:id/import-csv parses CSV, ..."), so this needs no new field.
+  const undocumented = [...added].filter((route) => !csvText.includes(route)).sort();
+  if (undocumented.length === 0) return;
+
+  console.warn(`\n[us-map] WARNING — ${undocumented.length} new route(s) that no user story mentions:\n`);
+  for (const route of undocumented) console.warn(`  ! ${route}`);
+  console.warn(
+    "\n[us-map] If these are features, add a row to feature-user-stories.csv describing each one,\n" +
+      "[us-map] so the inventory keeps matching the product. If they are internal or a refactor,\n" +
+      "[us-map] ignore this — it is advisory and does not fail the build.\n",
+  );
+}
+
+const csvText = readFileSync(CSV, "utf8");
+warnUndocumentedRoutes(csvText);
+
+const rows = parseCsv(csvText);
 const header = rows[0];
 const idCol = header.indexOf("id");
 const btCol = header.indexOf("browser_test");
