@@ -80,7 +80,10 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         if (options.superTimelineStore) {
           if (allArtifactEvents.length) {
             try {
-              superTimelineAddedCount = await options.superTimelineStore.append(job.caseId, allArtifactEvents);
+              superTimelineAddedCount = await options.superTimelineStore.append(
+                job.caseId,
+                allArtifactEvents,
+              );
               options.onSuperTimeline?.(job.caseId);
             } catch (error) {
               await warn("super-timeline copy failed", error);
