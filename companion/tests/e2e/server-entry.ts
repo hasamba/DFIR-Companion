@@ -47,6 +47,18 @@ async function main(): Promise<void> {
   //
   // For a forensics tool this is not a tidiness issue. Case evidence is in those prompts, so an
   // unset family means a test run can ship real case content to a third party.
+  // Pin the .env the server may read to one inside the throwaway root — which does not exist, so
+  // it reads nothing.
+  //
+  // resolveEnvFilePath() falls back to resolve(process.cwd(), ".env") in dev, and POST
+  // /settings/ai-reload calls reloadEnvPrefix("DFIR_VISION_"/"DFIR_AI_"), which OVERWRITES
+  // process.env from that file. This worktree has no companion/.env, so the stub pinning below
+  // survived by accident; the main checkout has a real one. Running the suite from there would
+  // have loaded real API keys over the stub mid-run and sent case data to a live provider.
+  //
+  // DFIR_ENV_FILE is the explicit override and wins over both the SEA and cwd branches, so this
+  // holds no matter which directory the suite is started from.
+  process.env.DFIR_ENV_FILE = join(TEMP_ROOT, "e2e.env");
   process.env.DFIR_AI_PROVIDER = "openai";
   process.env.DFIR_AI_SYNTH_BASE_URL = `${stub.url}/v1`;
   process.env.DFIR_AI_SYNTH_KEY = "stub-key";

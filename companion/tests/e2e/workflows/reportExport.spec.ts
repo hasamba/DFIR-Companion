@@ -25,7 +25,11 @@ test("report metadata is retrievable", async ({ page, demoCase }) => {
 test("report versions are listed", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   const res = await page.request.get(`/cases/${demoCase}/report-versions`);
-  expect(res.status()).toBeLessThan(500);
+  // The body is in the message because this failed once under full-suite load while passing every
+  // time in isolation — and it failed against a bar as low as "not a server error", so whatever
+  // happened was a genuine 5xx rather than a strict assertion being picky. Left strict and
+  // reporting, not widened: the point of the assertion is that listing versions never errors.
+  expect(res.status(), await res.text()).toBeLessThan(500);
 });
 
 test("the report section is exposed as a named region", async ({ page, demoCase }) => {
