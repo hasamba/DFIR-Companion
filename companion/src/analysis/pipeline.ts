@@ -429,18 +429,45 @@ export class AnalysisPipeline {
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
   private kevCatalogCache: KevCatalog | undefined;
 
-  // `opts` and the four collaborators below are public because src/analysis/ingest/ takes an
-  // ImportContext, and AnalysisPipeline satisfies that interface structurally (#384). They are the
-  // pipeline's internal surface for the importers, not an invitation for routes to reach in --
-  // ImportContext is deliberately the smallest type that lets an importer do its job.
-  constructor(public readonly opts: PipelineOptions) {
+  /**
+   * The ONLY thing src/analysis/ingest/ ever receives (#384).
+   *
+   * The first cut of the ingest extraction passed `this` and let AnalysisPipeline satisfy
+   * ImportContext structurally, which meant `opts` and four methods had to become public. That
+   * bought the importers a narrow interface at the cost of handing every OTHER consumer of the
+   * pipeline the entire options bag -- the AI providers, every store, every tuning knob. A boundary
+   * that has to widen the class to exist is not much of a boundary.
+   *
+   * This adapter closes over the five permitted operations instead, so the class members stay
+   * private and the importers still see nothing beyond what ImportContext declares. `opts` is
+   * exposed through getters rather than a snapshot because the settings-reload path rebuilds live
+   * options in place; a copy taken at construction would go stale the first time an operator saved
+   * a setting.
+   */
+  private readonly importCtx: ImportContext;
+
+  constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
+    this.importCtx = {
+      opts: {
+        get stateStore() {
+          return opts.stateStore;
+        },
+        get onState() {
+          return opts.onState;
+        },
+      },
+      withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),
+      mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),
+      noteEmptyImport: (caseId, o, kind, total) => this.noteEmptyImport(caseId, o, kind, total),
+      persistPlasoParsed: (caseId, parsed, o) => this.persistPlasoParsed(caseId, parsed, o),
+    };
   }
 
   // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
   // Every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged
   // duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
-  async mergeWithAliases(
+  private async mergeWithAliases(
     state: InvestigationState,
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
@@ -456,7 +483,7 @@ export class AnalysisPipeline {
   // immediately when no lock is configured (e.g. some script/test call sites).
   // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
   // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
-  withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
+  private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
 
@@ -1125,7 +1152,7 @@ export class AnalysisPipeline {
   // `total` is the importer's own parsed-record count, so the note says how much was READ, not just
   // that nothing came out — "0 events from 0 records" (wrong format) and "0 events from 75,951
   // records" (understood but uninteresting) are very different problems.
-  async noteEmptyImport(
+  private async noteEmptyImport(
     caseId: string,
     opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
     kind: string,
@@ -1157,7 +1184,7 @@ export class AnalysisPipeline {
   // Scan-lifecycle/info noise (module init, "Info" level) is dropped by default.
   // Findings/attacker-path still come from a later synthesize().
   importThor(...args: ImporterArgs<typeof ingest.importThor>): Promise<InvestigationState> {
-    return ingest.importThor(this, ...args);
+    return ingest.importThor(this.importCtx, ...args);
   }
 
   // Import a SIEM / EDR JSON export (Elastic/Kibana, Splunk, an EDR console, a raw
@@ -1166,12 +1193,12 @@ export class AnalysisPipeline {
   // fall back to field auto-detection, and repetitive events are aggregated. The
   // detected tool name (from the filename / source) tags each event's `sources`.
   importSiem(...args: ImporterArgs<typeof ingest.importSiem>): Promise<InvestigationState> {
-    return ingest.importSiem(this, ...args);
+    return ingest.importSiem(this.importCtx, ...args);
   }
 
   // Import Windows Event XML through the shared deterministic SIEM/EVTX mapping.
   importEvtxXml(...args: ImporterArgs<typeof ingest.importEvtxXml>): Promise<InvestigationState> {
-    return ingest.importEvtxXml(this, ...args);
+    return ingest.importEvtxXml(this.importCtx, ...args);
   }
 
   // Import a Linux/Unix shell history file (.bash_history / .zsh_history / …). Deterministic
@@ -1179,7 +1206,7 @@ export class AnalysisPipeline {
   // `#<epoch>` / zsh extended history), Info by default with a conservative tradecraft bump. The
   // account is derived from the filename and shown in each event.
   importBashHistory(...args: ImporterArgs<typeof ingest.importBashHistory>): Promise<InvestigationState> {
-    return ingest.importBashHistory(this, ...args);
+    return ingest.importBashHistory(this.importCtx, ...args);
   }
 
   // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
@@ -1187,7 +1214,7 @@ export class AnalysisPipeline {
   // MITRE rides inside each event) -> mergeDelta -> save -> notify. Does NOT depend on any shared-runner
   // refactor of the built-ins.
   importDeclarative(...args: ImporterArgs<typeof ingest.importDeclarative>): Promise<InvestigationState> {
-    return ingest.importDeclarative(this, ...args);
+    return ingest.importDeclarative(this.importCtx, ...args);
   }
 
   // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
@@ -1196,7 +1223,7 @@ export class AnalysisPipeline {
   // matter into the analyzed timeline. Reuses mergeDelta (dedups forensic events by id) — a stored super
   // event keeps its id, so a double-promote is a no-op. No AI here; the caller re-synthesizes.
   promoteSuperTimeline(...args: ImporterArgs<typeof ingest.promoteSuperTimeline>): Promise<InvestigationState> {
-    return ingest.promoteSuperTimeline(this, ...args);
+    return ingest.promoteSuperTimeline(this.importCtx, ...args);
   }
 
   // Import Chainsaw (WithSecure) hunt output or a raw EVTX-as-JSON dump. Like THOR/SIEM
@@ -1205,7 +1232,7 @@ export class AnalysisPipeline {
   // rule's level drives severity while its `attack.tXXXX` tags become MITRE techniques.
   // Each event is tagged Chainsaw / EVTX as its source for cross-source correlation.
   importChainsaw(...args: ImporterArgs<typeof ingest.importChainsaw>): Promise<InvestigationState> {
-    return ingest.importChainsaw(this, ...args);
+    return ingest.importChainsaw(this.importCtx, ...args);
   }
 
   // Import a Hayabusa (Yamato Security) detection timeline — JSON/JSONL or CSV. Like the
@@ -1213,7 +1240,7 @@ export class AnalysisPipeline {
   // severity, its title leads the description, its tactics/tags become MITRE, and IOCs /
   // asset / process-chain come from the rendered detail fields. Tagged Hayabusa as source.
   importHayabusa(...args: ImporterArgs<typeof ingest.importHayabusa>): Promise<InvestigationState> {
-    return ingest.importHayabusa(this, ...args);
+    return ingest.importHayabusa(this.importCtx, ...args);
   }
 
   // Import Velociraptor native JSON output (collection results / hunt export). Like the
@@ -1221,7 +1248,7 @@ export class AnalysisPipeline {
   // EventLog / generic) and mapped — detection rows are verdict-driven, the rest auto-detect
   // the artifact's own time + IOCs. Every event is tagged Velociraptor as its source.
   importVelociraptor(...args: ImporterArgs<typeof ingest.importVelociraptor>): Promise<InvestigationState> {
-    return ingest.importVelociraptor(this, ...args);
+    return ingest.importVelociraptor(this.importCtx, ...args);
   }
 
   // Import ECAR — EDR Common Activity Record telemetry (NDJSON of (object, action) endpoint events).
@@ -1230,28 +1257,28 @@ export class AnalysisPipeline {
   // bumped only on real tradecraft) so high-volume raw telemetry doesn't flood the timeline. See
   // ecarImport.ts for the mapping (and the lsass-access false-positive rationale).
   importEcar(...args: ImporterArgs<typeof ingest.importEcar>): Promise<InvestigationState> {
-    return ingest.importEcar(this, ...args);
+    return ingest.importEcar(this.importCtx, ...args);
   }
 
   // Import an Apache/Nginx/Squid combined access log (web server or forward-proxy). Deterministic
   // (no AI): raw web/proxy telemetry, Info by default with a conservative bump only for an
   // access-denied response; git smart-HTTP clone/push tagged T1213. See combinedLogImport.ts.
   importCombinedLog(...args: ImporterArgs<typeof ingest.importCombinedLog>): Promise<InvestigationState> {
-    return ingest.importCombinedLog(this, ...args);
+    return ingest.importCombinedLog(this.importCtx, ...args);
   }
 
   // Import a Cisco ASA firewall syslog export. Deterministic (no AI): Built/Teardown telemetry
   // stays Info, an explicit Deny bumps to Low, dynamic-NAT-translation noise is dropped,
   // year-less timestamps are re-anchored by the mergeDelta year-clamp. See ciscoAsaImport.ts.
   importCiscoAsa(...args: ImporterArgs<typeof ingest.importCiscoAsa>): Promise<InvestigationState> {
-    return ingest.importCiscoAsa(this, ...args);
+    return ingest.importCiscoAsa(this.importCtx, ...args);
   }
 
   // Import a Snort / Suricata "fast" alert log — a real IDS verdict feed. Deterministic (no AI):
   // severity is the rule's Priority verdict, public src/dst IPs become IOCs, year-less timestamps are
   // re-anchored by the mergeDelta year-clamp. See snortImport.ts.
   importSnort(...args: ImporterArgs<typeof ingest.importSnort>): Promise<InvestigationState> {
-    return ingest.importSnort(this, ...args);
+    return ingest.importSnort(this.importCtx, ...args);
   }
 
   // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
@@ -1259,7 +1286,7 @@ export class AnalysisPipeline {
   // matched file + hash meta become IOCs. YARA output is undated, so mergeDelta stamps events at import
   // time. Used by the external-tools run path (#211). See yaraImport.ts.
   importYara(...args: ImporterArgs<typeof ingest.importYara>): Promise<InvestigationState> {
-    return ingest.importYara(this, ...args);
+    return ingest.importYara(this.importCtx, ...args);
   }
 
   // Import a plain Linux/Unix syslog export (RFC 5424 / RFC 3164). Deterministic (no AI): host
@@ -1267,7 +1294,7 @@ export class AnalysisPipeline {
   // as the event's asset, RFC-3164 year-less timestamps are re-anchored by the mergeDelta year-clamp.
   // See syslogImport.ts.
   importSyslog(...args: ImporterArgs<typeof ingest.importSyslog>): Promise<InvestigationState> {
-    return ingest.importSyslog(this, ...args);
+    return ingest.importSyslog(this.importCtx, ...args);
   }
 
   // Import network-monitor logs — Suricata `eve.json` and Zeek JSON (Security Onion's
@@ -1275,14 +1302,14 @@ export class AnalysisPipeline {
   // (Suricata alerts + Zeek notices); surrounding telemetry (dns/http/tls/files/conn)
   // contributes IOCs only. Events are tagged Suricata / Zeek.
   importNetwork(...args: ImporterArgs<typeof ingest.importNetwork>): Promise<InvestigationState> {
-    return ingest.importNetwork(this, ...args);
+    return ingest.importNetwork(this.importCtx, ...args);
   }
 
   // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
   // Sigma log detections — as the browser extension pushes them (or a raw export). Deterministic
   // (no AI). Events are tagged "SO-CRATES" (+ the underlying engine) for cross-source correlation.
   importSocrates(...args: ImporterArgs<typeof ingest.importSocrates>): Promise<InvestigationState> {
-    return ingest.importSocrates(this, ...args);
+    return ingest.importSocrates(this.importCtx, ...args);
   }
 
   // Import Security Onion Console (SOC) events — the Alerts / Hunt views the browser extension
@@ -1291,7 +1318,7 @@ export class AnalysisPipeline {
   // threat fields become MITRE, and source/destination IPs + app-layer fields become IOCs.
   // Events are tagged "Security Onion".
   importSecurityOnion(...args: ImporterArgs<typeof ingest.importSecurityOnion>): Promise<InvestigationState> {
-    return ingest.importSecurityOnion(this, ...args);
+    return ingest.importSecurityOnion(this.importCtx, ...args);
   }
 
   // Import a KAPE / Eric Zimmerman Tools CSV (Prefetch, Amcache, ShimCache, LNK, JumpLists,
@@ -1299,7 +1326,7 @@ export class AnalysisPipeline {
   // detected from the CSV header, then each row maps to a forensic event reading the
   // artifact's own time + file/hash/process IOCs. Events are tagged by artifact name.
   importKape(...args: ImporterArgs<typeof ingest.importKape>): Promise<InvestigationState> {
-    return ingest.importKape(this, ...args);
+    return ingest.importKape(this.importCtx, ...args);
   }
 
   // Import a Cyber Triage timeline export (JSONL / JSON array / CSV). Deterministic (no AI call):
@@ -1308,7 +1335,7 @@ export class AnalysisPipeline {
   // (unless `fileTelemetry`), and Active-Connection remote IPs become IOCs. Events tagged
   // "Cyber Triage".
   importCybertriage(...args: ImporterArgs<typeof ingest.importCybertriage>): Promise<InvestigationState> {
-    return ingest.importCybertriage(this, ...args);
+    return ingest.importCybertriage(this.importCtx, ...args);
   }
 
   // Import Microsoft 365 Unified Audit Log + Entra ID (sign-in / directory audit) data.
@@ -1316,21 +1343,21 @@ export class AnalysisPipeline {
   // severity derived from the operation (BEC tradecraft) or Entra's own risk verdict; the
   // source IP becomes an IOC and the UPN is surfaced for the asset graph.
   importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
-    return ingest.importM365(this, ...args);
+    return ingest.importM365(this.importCtx, ...args);
   }
 
   // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
   // severity derived from the action (IAM persistence, logging/detection tampering, S3
   // exposure, secrets access) + denied/root/console-failure bumps; the caller IP → IOC.
   importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
-    return ingest.importAws(this, ...args);
+    return ingest.importAws(this.importCtx, ...args);
   }
 
   // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
   // is routed (GCP / Azure) and mapped, severity derived from the action (+ denied bump); the
   // caller IP → IOC and the principal email is surfaced for the asset graph.
   importCloudActivity(...args: ImporterArgs<typeof ingest.importCloudActivity>): Promise<InvestigationState> {
-    return ingest.importCloudActivity(this, ...args);
+    return ingest.importCloudActivity(this.importCtx, ...args);
   }
 
   // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit
@@ -1338,21 +1365,21 @@ export class AnalysisPipeline {
   // (pod exec/attach, secret access, RBAC change, privileged-pod create, anonymous access), Info by
   // default. Source IP → IOC. Tagged Kubernetes Audit.
   importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
-    return ingest.importK8sAudit(this, ...args);
+    return ingest.importK8sAudit(this.importCtx, ...args);
   }
 
   // Import osquery scheduled-query result logs (differential `columns` rows + `snapshot` sets).
   // Deterministic (no AI call): Info-by-default endpoint telemetry, with a conservative tradecraft
   // bump on a command-line column; columns → IOCs (path/hash/ip/process). Tagged osquery.
   importOsquery(...args: ImporterArgs<typeof ingest.importOsquery>): Promise<InvestigationState> {
-    return ingest.importOsquery(this, ...args);
+    return ingest.importOsquery(this.importCtx, ...args);
   }
 
   // Import a Plaso / log2timeline super-timeline (psort CSV — dynamic or l2tcsv). Deterministic
   // (no AI call): each row is an Info evidence event read at its own time, with IOCs scraped
   // from the message (hashes/URLs/IPs) and the source file path. Tagged Plaso.
   importPlaso(...args: ImporterArgs<typeof ingest.importPlaso>): Promise<InvestigationState> {
-    return ingest.importPlaso(this, ...args);
+    return ingest.importPlaso(this.importCtx, ...args);
   }
 
   // Streaming-from-disk Plaso import: for super-timelines too large to hold as one JS string (a
@@ -1361,13 +1388,13 @@ export class AnalysisPipeline {
   // keeps memory bounded by the distinct-key set, not the row count. Same downstream merge as
   // importPlaso. The route persists the evidence file separately (by copy, not as a string).
   importPlasoFile(...args: ImporterArgs<typeof ingest.importPlasoFile>): Promise<InvestigationState> {
-    return ingest.importPlasoFile(this, ...args);
+    return ingest.importPlasoFile(this.importCtx, ...args);
   }
 
   // Shared tail of both Plaso entry points: apply the severity floor, build the delta and merge it
   // into the case state. (Keeping this in one place means the in-memory and streaming importers
   // produce identical timeline rows / IOCs / notes.)
-  async persistPlasoParsed(
+  private async persistPlasoParsed(
     caseId: string,
     parsedRaw: PlasoParseResult,
     opts: { label: string; idPrefix: string; importedAt: string; minSeverity?: Severity; onProgress?: (done: number, total: number) => void },
@@ -1410,7 +1437,7 @@ export class AnalysisPipeline {
   // to severity/MITRE by record type (logins, account/group mgmt, sudo, SELinux denials, audit-config
   // tampering), bumped on a failed auth or a suspicious command. Read at the audit() epoch. Tagged auditd.
   importAuditd(...args: ImporterArgs<typeof ingest.importAuditd>): Promise<InvestigationState> {
-    return ingest.importAuditd(this, ...args);
+    return ingest.importAuditd(this.importCtx, ...args);
   }
 
   // Import a systemd-journald structured log (`journalctl -o json` / `-o json-pretty`). Deterministic
@@ -1418,7 +1445,7 @@ export class AnalysisPipeline {
   // from PRIORITY then bumped from the message (sshd auth, sudo, useradd, kernel), with IOCs scraped
   // from _EXE/_COMM and the MESSAGE. Tagged journald.
   importJournald(...args: ImporterArgs<typeof ingest.importJournald>): Promise<InvestigationState> {
-    return ingest.importJournald(this, ...args);
+    return ingest.importJournald(this.importCtx, ...args);
   }
 
   // Import a sysdig / Falco export (Falco alert JSON and/or sysdig `-j` event JSON). Deterministic
@@ -1426,14 +1453,14 @@ export class AnalysisPipeline {
   // MITRE) and surface on the timeline; raw sysdig syscall events are telemetry → Info evidence;
   // both contribute proc/file/network IOCs. Tagged Falco / sysdig.
   importSysdig(...args: ImporterArgs<typeof ingest.importSysdig>): Promise<InvestigationState> {
-    return ingest.importSysdig(this, ...args);
+    return ingest.importSysdig(this.importCtx, ...args);
   }
 
   // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export). Deterministic
   // (no AI call): rule.level drives severity (≥13 Critical, ≥10 High, ≥7 Medium, else Info),
   // rule.mitre.technique → MITRE, agent.name → asset, data.srcip/dstip/md5/sha256/url → IOCs.
   importWazuh(...args: ImporterArgs<typeof ingest.importWazuh>): Promise<InvestigationState> {
-    return ingest.importWazuh(this, ...args);
+    return ingest.importWazuh(this.importCtx, ...args);
   }
 
   // Import a malware-sandbox detonation report (CAPEv2 or CrowdStrike Falcon Sandbox).
@@ -1441,7 +1468,7 @@ export class AnalysisPipeline {
   // (severity from the report's own score/verdict, MITRE from its ATT&CK), and every
   // dropped/extracted file hash + network host/domain/URL is harvested as an IOC.
   importSandbox(...args: ImporterArgs<typeof ingest.importSandbox>): Promise<InvestigationState> {
-    return ingest.importSandbox(this, ...args);
+    return ingest.importSandbox(this.importCtx, ...args);
   }
 
   // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -1451,7 +1478,7 @@ export class AnalysisPipeline {
   // (bumped on LOLBin/encoded tradecraft), svcscan/modules → service/driver evidence. Tagged
   // "Volatility" / "Rekall" for cross-source correlation; reads the artifact's own time.
   importMemory(...args: ImporterArgs<typeof ingest.importMemory>): Promise<InvestigationState> {
-    return ingest.importMemory(this, ...args);
+    return ingest.importMemory(this.importCtx, ...args);
   }
 
   // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
@@ -1459,14 +1486,14 @@ export class AnalysisPipeline {
   // SPF/DKIM/DMARC verdict + sender heuristics; URLs, sender/reply-to domains, originating IP and
   // attachment names/hashes become IOCs. Covers ATT&CK T1566 (Phishing). Tagged "Email".
   importEmail(...args: ImporterArgs<typeof ingest.importEmail>): Promise<InvestigationState> {
-    return ingest.importEmail(this, ...args);
+    return ingest.importEmail(this.importCtx, ...args);
   }
 
   // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
   // case/alert records → forensic events (severity from TheHive's own 1–4 scale, MITRE from
   // ATT&CK-tagged tags, TLP/PAP labels prepended); observable records → IOCs by dataType.
   importTheHive(...args: ImporterArgs<typeof ingest.importTheHive>): Promise<InvestigationState> {
-    return ingest.importTheHive(this, ...args);
+    return ingest.importTheHive(this.importCtx, ...args);
   }
 
   // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
@@ -1474,7 +1501,7 @@ export class AnalysisPipeline {
   // NO AI call): timeline → forensic events, IOCs → IOCs, assets → evidence events. All feed the
   // same forensic timeline via mergeDelta, exactly like the other importers.
   importIris(...args: ImporterArgs<typeof ingest.importIris>): Promise<InvestigationState> {
-    return ingest.importIris(this, ...args);
+    return ingest.importIris(this.importCtx, ...args);
   }
 
   // Holistic pass: read the whole forensic timeline and produce findings, MITRE

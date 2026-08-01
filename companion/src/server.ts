@@ -792,7 +792,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
   // cannot create new cases, import evidence, trigger AI calls, or change global settings.
   if (options.demoMode) {
-    app.use((req: Request, res: Response, next: NextFunction) => {
+    app.use(function demoModeReadOnlyGate(req: Request, res: Response, next: NextFunction) {
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();
       return res.status(403).json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
@@ -800,7 +800,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   }
 
   // Log each request and its final status (useful for a local single-user tool).
-  app.use((req: Request, res: Response, next: NextFunction) => {
+  app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
     res.on("finish", () => {
       logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
     });
@@ -822,7 +822,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
   // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
   // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
-  app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+  app.use(function bodyParserErrorHandler(err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) {
     if (err?.type === "entity.too.large") {
       return res.status(413).json({ error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files` });
     }
@@ -843,7 +843,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
   // the size report's per-file paths are case-relative, not absolute. Redacting those would break
   // features to no benefit. Request logging is untouched, so the console still shows real paths.
-  app.use((_req: Request, res: Response, next: NextFunction) => {
+  app.use(function errorPathRedactor(_req: Request, res: Response, next: NextFunction) {
     const sendJson = res.json.bind(res);
     res.json = ((body: unknown) => {
       if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
@@ -874,7 +874,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // something checks first. This is that check: skip the (often expensive) handler entirely once the
   // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
   // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function abandonedCaseReadGate(req: Request, res: Response, next: NextFunction) {
     if (req.method === "GET" && req.destroyed) return;
     next();
   });
@@ -1036,7 +1036,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     "/hypothesis-review", "/narrative",                          // narrative + hypothesis AI
     "/memory/next-steps",                                       // memory-forensics next-step AI
   ]);
-  app.use("/cases/:id", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {
     if (req.method !== "POST") return next();
     // Strip the /cases/:id/ prefix to compare against the static set.
     const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
@@ -3032,7 +3032,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
   // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
   // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
-  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  app.use(function terminalErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction) {
     if (res.headersSent) return next(err);
     if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
     if (err instanceof CaseNotFoundError) {
