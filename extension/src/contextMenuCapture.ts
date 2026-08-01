@@ -1,6 +1,7 @@
-// Context-menu send (right-click → "Send … to DFIR-Companion"). Runs on every page (content.js
-// already matches <all_urls>) so it works even where no adapter is registered — unlike the
-// adapter-driven floating push button in artifactCapture.ts.
+// Context-menu send (right-click → "Send … to DFIR-Companion"). Runs on every approved origin,
+// including pages where no adapter is registered — unlike the adapter-driven floating push button
+// in artifactCapture.ts. Selection/link sends need no page script and remain available as one-off
+// context-menu actions; table targeting requires this approved-page listener.
 //
 // Chrome's contextMenus API gives no reference to the element under the cursor, so table
 // targeting uses the standard workaround: remember the element from the native "contextmenu"
@@ -19,7 +20,7 @@ const TOAST_ID = "dfir-companion-toast";
 let toastTimer: number | undefined;
 let lastRightClickTarget: Element | null = null;
 
-export function initContextMenuCapture(): void {
+export function initContextMenuCapture(isEnabled: () => boolean = () => true): void {
   // Capture phase so this fires even if a page's own contextmenu handler stops propagation.
   document.addEventListener("contextmenu", (e) => {
     lastRightClickTarget = e.target instanceof Element ? e.target : null;
@@ -28,10 +29,11 @@ export function initContextMenuCapture(): void {
   browserApi.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const kind = (msg as { kind?: string })?.kind;
     if (kind === "get_context_table") {
-      sendResponse(findContextTable() satisfies ContextTableResult);
+      sendResponse((isEnabled() ? findContextTable() : { rows: null }) satisfies ContextTableResult);
       return; // synchronous response — no need to keep the channel open
     }
     if (kind === "context_push_result") {
+      if (!isEnabled()) return;
       const { ok, message } = msg as ContextPushResultMessage;
       showToast(message, ok ? "#1a7f37" : "#b42318");
       return;
