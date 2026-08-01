@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **Strict browser rendering policy** — dashboard views and HTML exports now sanitize untrusted content under nonce-based CSP and Trusted Types, blocking script, URL, and CSS injection (closes #387).
+- **Least-privilege capture extension** — installs with zero host access, asks for one console origin at a time, supports revocation and one-off active-tab capture, refuses restricted/private pages, and records permission changes locally (closes #388).
 
 ## [0.34.0] - 2026-07-31
 

@@ -11,16 +11,18 @@
 // and a thrown clone/read never disturbs the page. The data stays in-page until the analyst clicks
 // the push button — nothing leaves the browser here.
 //
-// Standalone bundle: these message-source strings MUST match src/adapters/bridge.ts.
-const DFIR_READY_MSG = "dfir-companion-hook-ready";
-const DFIR_CONFIG_MSG = "dfir-companion-hook-config";
-const DFIR_CAPTURE_MSG = "dfir-companion-hook-capture";
-
-// Don't forward absurdly large bodies across the postMessage bridge (the companion can still ingest
-// big files via the dashboard; this just keeps the in-page channel sane). ~8 MB of response text.
-const MAX_BODY = 8_000_000;
-
 (function installDfirHook(): void {
+  // Keep every declaration inside the function. executeScript may evaluate this classic script
+  // repeatedly in the same MAIN world; top-level const declarations would collide before the
+  // installed guard can run. These message-source strings MUST match src/adapters/bridge.ts.
+  const DFIR_READY_MSG = "dfir-companion-hook-ready";
+  const DFIR_CONFIG_MSG = "dfir-companion-hook-config";
+  const DFIR_CAPTURE_MSG = "dfir-companion-hook-capture";
+
+  // Don't forward absurdly large bodies across the postMessage bridge (the companion can still
+  // ingest big files via the dashboard; this just keeps the in-page channel sane). ~8 MB of text.
+  const MAX_BODY = 8_000_000;
+
   const w = window as unknown as { __dfirHookInstalled?: boolean };
   if (w.__dfirHookInstalled) return; // idempotent — survive double injection (SPA re-navigations)
   w.__dfirHookInstalled = true;
