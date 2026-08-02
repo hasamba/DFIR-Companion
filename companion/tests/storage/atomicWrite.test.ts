@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { atomicWrite, atomicWriteRetries } from "../../src/storage/atomicWrite.js";
+import { atomicWrite, atomicWriteRetries, isAtomicWriteTempPath } from "../../src/storage/atomicWrite.js";
 
 function eperm(): NodeJS.ErrnoException {
   const e = new Error("EPERM: operation not permitted, rename") as NodeJS.ErrnoException;
@@ -21,44 +21,66 @@ describe("atomicWrite", () => {
   it("retries the rename through a transient EPERM lock and succeeds", async () => {
     const writeFile = vi.fn(async () => {});
     let calls = 0;
-    const rename = vi.fn(async () => { if (++calls < 3) throw eperm(); });   // fails twice, then OK
+    const rename = vi.fn(async () => {
+      if (++calls < 3) throw eperm();
+    }); // fails twice, then OK
     const sleep = vi.fn(async () => {});
 
     await atomicWrite("/case/investigation.json", "{}", { writeFile, rename, sleep });
 
-    expect(rename).toHaveBeenCalledTimes(3);   // retried until it worked
-    expect(sleep).toHaveBeenCalledTimes(2);    // backed off between the failures
+    expect(rename).toHaveBeenCalledTimes(3); // retried until it worked
+    expect(sleep).toHaveBeenCalledTimes(2); // backed off between the failures
   });
 
   it("reports the retry count via onRetry only when a retry was needed", async () => {
     let calls = 0;
-    const rename = vi.fn(async () => { if (++calls < 3) throw eperm(); });   // fails twice, then OK
+    const rename = vi.fn(async () => {
+      if (++calls < 3) throw eperm();
+    }); // fails twice, then OK
     const onRetry = vi.fn();
 
-    await atomicWrite("/case/investigation.json", "{}", { writeFile: async () => {}, rename, sleep: async () => {}, onRetry });
+    await atomicWrite("/case/investigation.json", "{}", {
+      writeFile: async () => {},
+      rename,
+      sleep: async () => {},
+      onRetry,
+    });
 
     expect(onRetry).toHaveBeenCalledTimes(1);
-    expect(onRetry).toHaveBeenCalledWith(2);   // succeeded on the 3rd attempt → 2 retries
+    expect(onRetry).toHaveBeenCalledWith(2); // succeeded on the 3rd attempt → 2 retries
   });
 
   it("does not call onRetry on a clean first-try success", async () => {
     const onRetry = vi.fn();
-    await atomicWrite("/x", "{}", { writeFile: async () => {}, rename: async () => {}, sleep: async () => {}, onRetry });
+    await atomicWrite("/x", "{}", {
+      writeFile: async () => {},
+      rename: async () => {},
+      sleep: async () => {},
+      onRetry,
+    });
     expect(onRetry).not.toHaveBeenCalled();
   });
 
   it("rethrows a non-transient error immediately (no retries)", async () => {
-    const rename = vi.fn(async () => { const e = new Error("ENOSPC") as NodeJS.ErrnoException; e.code = "ENOSPC"; throw e; });
-    await expect(atomicWrite("/x", "{}", { writeFile: async () => {}, rename, sleep: async () => {} }))
-      .rejects.toThrow("ENOSPC");
+    const rename = vi.fn(async () => {
+      const e = new Error("ENOSPC") as NodeJS.ErrnoException;
+      e.code = "ENOSPC";
+      throw e;
+    });
+    await expect(
+      atomicWrite("/x", "{}", { writeFile: async () => {}, rename, sleep: async () => {} }),
+    ).rejects.toThrow("ENOSPC");
     expect(rename).toHaveBeenCalledTimes(1);
   });
 
   it("gives up and rethrows when the lock never clears", async () => {
-    const rename = vi.fn(async () => { throw eperm(); });
-    await expect(atomicWrite("/x", "{}", { writeFile: async () => {}, rename, sleep: async () => {}, retries: 3 }))
-      .rejects.toThrow("EPERM");
-    expect(rename).toHaveBeenCalledTimes(4);   // initial + 3 retries
+    const rename = vi.fn(async () => {
+      throw eperm();
+    });
+    await expect(
+      atomicWrite("/x", "{}", { writeFile: async () => {}, rename, sleep: async () => {}, retries: 3 }),
+    ).rejects.toThrow("EPERM");
+    expect(rename).toHaveBeenCalledTimes(4); // initial + 3 retries
   });
 });
 
@@ -88,6 +110,38 @@ describe("atomicWriteRetries", () => {
     for (const v of ["0", "-5", "lots"]) {
       process.env.DFIR_ATOMIC_WRITE_RETRIES = v;
       expect(atomicWriteRetries()).toBe(20);
+    }
+  });
+});
+
+describe("isAtomicWriteTempPath", () => {
+  it("recognizes the temp file atomicWrite actually writes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-aw-name-"));
+    const target = join(dir, "notebook.json");
+    let seen = "";
+    await atomicWrite(target, "{}", {
+      writeFile: async (p) => {
+        seen = String(p);
+      },
+      rename: async () => {},
+    });
+    expect(seen).not.toBe("");
+    expect(isAtomicWriteTempPath(seen), `${seen} must be recognized as atomicWrite's own temp`).toBe(true);
+  });
+
+  // The case directory holds evidence an analyst imported, and a malware sample named
+  // "payload.tmp" is entirely ordinary. Matching on the extension alone would drop it from the
+  // export — silently, which is the one outcome a forensic archive must never produce. Only the
+  // uuid-suffixed shape atomicWrite generates counts.
+  it("leaves an analyst's own .tmp evidence alone", () => {
+    for (const name of [
+      "payload.tmp",
+      "state/notebook.json",
+      "imports/capture.tmp",
+      "screenshots/shot.tmp.webp",
+      "notebook.json.not-a-uuid.tmp",
+    ]) {
+      expect(isAtomicWriteTempPath(name), `${name} is not an atomicWrite temp`).toBe(false);
     }
   });
 });

@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile, mkdir, lstat } from "node:fs/promises";
 import { join, dirname, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
+import { isTransientCasePath } from "./caseTransientPaths.js";
 import type { CaseMeta } from "../types.js";
 import { createZip, readZip, type ZipEntry } from "./zipArchive.js";
 import { encryptBuffer, decryptBuffer } from "./caseEncryption.js";
@@ -77,6 +78,27 @@ export function attachmentContentDisposition(filename: string): string {
   return `${header}; filename*=UTF-8''${encoded}`;
 }
 
+/**
+ * Turn an ENOENT on a path the walk had just listed into something an analyst can act on.
+ *
+ * A file vanishing mid-export is not the same as one that was never there: it means the case was
+ * being written while it was being packaged. The export still refuses to continue — an archive that
+ * quietly omits a case file while presenting itself as complete is the one outcome a forensic
+ * export must never produce — but it now names the file and says what to do, instead of surfacing a
+ * bare "ENOENT ... lstat" that reads as a server fault. Any other error is rethrown untouched.
+ */
+function rethrowVanished(rel: string): (err: unknown) => never {
+  return (err: unknown) => {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        `"${rel}" disappeared while the case was being packaged — something is still writing to ` +
+          `this case. Let it finish (or close the case) and export again.`,
+      );
+    }
+    throw err;
+  };
+}
+
 async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   const out: string[] = [];
   let entries;
@@ -88,13 +110,22 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   }
   for (const entry of entries) {
     const rel = baseRel ? `${baseRel}/${entry.name}` : entry.name;
+    // A write in progress, not case content — the app keeps writing to a case while it is being
+    // packaged, and readdir routinely lists a temp file that is renamed away before the lstat below
+    // reaches it, which used to take the whole export down with a raw ENOENT 500. Skipping these by
+    // name fixes it at the source: the archive never wanted them, and they would make the manifest
+    // differ run to run. What counts as transient (and what deliberately does not) is
+    // caseTransientPaths.ts — a path that vanishes without matching there still fails loudly.
+    if (isTransientCasePath(entry.name)) continue;
     // A one-shot export should FAIL LOUDLY on a symlink/hardlink, not silently drop it: this is a
     // security-sensitive export the analyst explicitly requested, and a planted link pointing
     // outside the case directory (e.g. screenshots/loot -> /etc/shadow) is itself a signal worth
     // surfacing, not something to quietly paper over into an incomplete-but-unannounced archive.
     // Matches the throw-hard posture of the TOCTOU re-check below, which catches the read-time race.
     if (entry.isSymbolicLink()) {
-      throw new Error(`symlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+      throw new Error(
+        `symlink detected in case directory at "${rel}" — refusing to include in export (security)`,
+      );
     }
     if (entry.isDirectory()) {
       out.push(...(await walkDir(join(dir, entry.name), rel)));
@@ -107,9 +138,11 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
       // nlink === 1, so a multiply-linked path here means some OTHER directory entry — anywhere
       // on the same filesystem, e.g. /etc/shadow — aliases this exact inode. Same exfiltration
       // vector as a symlink, just via a different mechanism.
-      const st = await lstat(join(dir, entry.name));
+      const st = await lstat(join(dir, entry.name)).catch(rethrowVanished(rel));
       if (st.nlink > 1) {
-        throw new Error(`hardlink detected in case directory at "${rel}" — refusing to include in export (security)`);
+        throw new Error(
+          `hardlink detected in case directory at "${rel}" — refusing to include in export (security)`,
+        );
       }
       out.push(rel);
     }
@@ -142,19 +175,33 @@ export async function exportEncryptedCase(
     const fullPath = join(caseDir, rel);
     // TOCTOU guard: re-check that the path is not a symlink (or hardlink — see walkDir) before
     // reading. The file could have been replaced/swapped between the walk and the read.
-    const lst = await lstat(fullPath);
-    if (lst.isSymbolicLink()) throw new Error(`symlink detected in case directory at "${rel}" — refusing to include in export (security)`);
-    if (lst.nlink > 1) throw new Error(`hardlink detected in case directory at "${rel}" — refusing to include in export (security)`);
-    const data = await readFile(fullPath);
+    const lst = await lstat(fullPath).catch(rethrowVanished(rel));
+    if (lst.isSymbolicLink())
+      throw new Error(
+        `symlink detected in case directory at "${rel}" — refusing to include in export (security)`,
+      );
+    if (lst.nlink > 1)
+      throw new Error(
+        `hardlink detected in case directory at "${rel}" — refusing to include in export (security)`,
+      );
+    const data = await readFile(fullPath).catch(rethrowVanished(rel));
     entries.push({ path: rel, data });
-    manifestFiles.push({ path: rel, sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length });
+    manifestFiles.push({
+      path: rel,
+      sha256: createHash("sha256").update(data).digest("hex"),
+      bytes: data.length,
+    });
     totalBytes += data.length;
   }
   // Listed in archive-manifest.json alongside the case's own files, so a recipient checking the
   // archive's checksums sees the generated entries too.
   for (const entry of extraEntries) {
     entries.push(entry);
-    manifestFiles.push({ path: entry.path, sha256: createHash("sha256").update(entry.data).digest("hex"), bytes: entry.data.length });
+    manifestFiles.push({
+      path: entry.path,
+      sha256: createHash("sha256").update(entry.data).digest("hex"),
+      bytes: entry.data.length,
+    });
     totalBytes += entry.data.length;
   }
   const counts = countsFromEntries(entries);
@@ -177,7 +224,10 @@ export async function exportEncryptedCase(
     totalFiles: manifestFiles.length,
     totalBytes,
   };
-  entries.push({ path: "archive-manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8") });
+  entries.push({
+    path: "archive-manifest.json",
+    data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"),
+  });
 
   return encryptBuffer(createZip(entries), password);
 }
@@ -199,7 +249,10 @@ function rewriteCaseIdInJson(data: Buffer, targetCaseId: string, indent: number 
 }
 
 function rewriteCaseIdInJsonl(data: Buffer, targetCaseId: string): Buffer {
-  const lines = data.toString("utf8").split("\n").filter((l) => l.trim().length > 0);
+  const lines = data
+    .toString("utf8")
+    .split("\n")
+    .filter((l) => l.trim().length > 0);
   const rewritten = lines.map((line) => {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     return JSON.stringify({ ...parsed, caseId: targetCaseId });
@@ -219,7 +272,10 @@ const CASE_ID_JSONL_PATHS = new Set(["metadata/captures.jsonl", "metadata/import
 
 function countLines(data: Buffer | undefined): number {
   if (!data) return 0;
-  return data.toString("utf8").split("\n").filter((l) => l.trim().length > 0).length;
+  return data
+    .toString("utf8")
+    .split("\n")
+    .filter((l) => l.trim().length > 0).length;
 }
 
 function countsFromEntries(entries: ZipEntry[]): CaseImportCounts {
@@ -252,9 +308,7 @@ function countsFromManifest(entry: ZipEntry | undefined): CaseImportCounts | nul
     const counts = (JSON.parse(entry.data.toString("utf8")) as { counts?: unknown }).counts;
     if (!counts || typeof counts !== "object" || Array.isArray(counts)) return null;
     const record = counts as Record<string, unknown>;
-    const keys: Array<keyof CaseImportCounts> = [
-      "forensicEvents", "findings", "iocs", "captures", "imports",
-    ];
+    const keys: Array<keyof CaseImportCounts> = ["forensicEvents", "findings", "iocs", "captures", "imports"];
     if (!keys.every((key) => Number.isSafeInteger(record[key]) && Number(record[key]) >= 0)) {
       return null;
     }

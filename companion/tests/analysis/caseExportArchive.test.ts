@@ -10,8 +10,9 @@ import {
   dfircaseFilename,
   attachmentContentDisposition,
 } from "../../src/analysis/caseExportArchive.js";
-import { createZip } from "../../src/analysis/zipArchive.js";
-import { encryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
+import { createZip, readZip } from "../../src/analysis/zipArchive.js";
+import { encryptBuffer, decryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
+import { atomicWrite } from "../../src/storage/atomicWrite.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -24,18 +25,35 @@ async function seedCase(store: CaseStore, caseId: string) {
   await store.createCase({ caseId, name: "Case One", investigator: "alice", aiProvider: "anthropic" });
   await store.saveScreenshot(caseId, "shot-001.webp", Buffer.from([0x52, 0x49, 0x46, 0x46, 1, 2, 3]));
   await store.appendCapture(caseId, {
-    caseId, sequenceNumber: 1, timestamp: "2026-01-01T00:00:00Z", url: "https://example.com",
-    tabTitle: "t", triggerType: "navigation", contentHash: "abc", isDuplicate: false, screenshotFile: "shot-001.webp",
+    caseId,
+    sequenceNumber: 1,
+    timestamp: "2026-01-01T00:00:00Z",
+    url: "https://example.com",
+    tabTitle: "t",
+    triggerType: "navigation",
+    contentHash: "abc",
+    isDuplicate: false,
+    screenshotFile: "shot-001.webp",
   });
   await store.saveImport(caseId, "thor-001.json", JSON.stringify({ hits: [] }));
   await store.appendImport(caseId, {
-    caseId, sequenceNumber: 1, importedAt: "2026-01-01T00:00:00Z", filename: "thor-001.json",
-    originalName: "thor.json", rows: 0, bytes: 12,
+    caseId,
+    sequenceNumber: 1,
+    importedAt: "2026-01-01T00:00:00Z",
+    filename: "thor-001.json",
+    originalName: "thor.json",
+    rows: 0,
+    bytes: 12,
   });
   await mkdir(store.stateDir(caseId), { recursive: true });
   await writeFile(
     join(store.stateDir(caseId), "investigation.json"),
-    JSON.stringify({ caseId, findings: [{ id: "f1" }], iocs: [{ id: "i1" }], forensicTimeline: [{ id: "e1" }, { id: "e2" }] }),
+    JSON.stringify({
+      caseId,
+      findings: [{ id: "f1" }],
+      iocs: [{ id: "i1" }],
+      forensicTimeline: [{ id: "e1" }, { id: "e2" }],
+    }),
     "utf8",
   );
 }
@@ -115,11 +133,19 @@ describe("importEncryptedCase", () => {
     expect(restoredImport.equals(originalImport)).toBe(true);
 
     // caseId-bearing files were rewritten to the new id
-    const invRestored = JSON.parse(await readFile(join(store.stateDir("INC-2"), "investigation.json"), "utf8"));
+    const invRestored = JSON.parse(
+      await readFile(join(store.stateDir("INC-2"), "investigation.json"), "utf8"),
+    );
     expect(invRestored.caseId).toBe("INC-2");
-    const capturesRestored = (await readFile(store.capturesLogPath("INC-2"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    const capturesRestored = (await readFile(store.capturesLogPath("INC-2"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
     expect(capturesRestored[0].caseId).toBe("INC-2");
-    const importsRestored = (await readFile(store.importsLogPath("INC-2"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    const importsRestored = (await readFile(store.importsLogPath("INC-2"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
     expect(importsRestored[0].caseId).toBe("INC-2");
   });
 
@@ -164,8 +190,9 @@ describe("importEncryptedCase", () => {
     const store = await harness();
     await seedCase(store, "INC-1");
     const archive = await exportEncryptedCase(store, "INC-1", PASSWORD);
-    await expect(importEncryptedCase(store, archive, "totally-wrong-password", { targetCaseId: "INC-2" }))
-      .rejects.toThrow(DecryptionError);
+    await expect(
+      importEncryptedCase(store, archive, "totally-wrong-password", { targetCaseId: "INC-2" }),
+    ).rejects.toThrow(DecryptionError);
   });
 
   it("rejects an archive with an unsafe (path-traversal) entry and writes nothing", async () => {
@@ -178,14 +205,18 @@ describe("importEncryptedCase", () => {
     ]);
     const archive = encryptBuffer(malicious, PASSWORD);
 
-    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-EVIL" }))
-      .rejects.toThrow(/unsafe entry path/);
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-EVIL" })).rejects.toThrow(
+      /unsafe entry path/,
+    );
     expect(await store.caseExists("INC-EVIL")).toBe(false);
   });
 
   it("throws on an archive missing case.json", async () => {
     const store = await harness();
-    const archive = encryptBuffer(createZip([{ path: "state/investigation.json", data: Buffer.from("{}") }]), PASSWORD);
+    const archive = encryptBuffer(
+      createZip([{ path: "state/investigation.json", data: Buffer.from("{}") }]),
+      PASSWORD,
+    );
     await expect(importEncryptedCase(store, archive, PASSWORD)).rejects.toThrow(/missing case\.json/);
   });
 
@@ -199,8 +230,9 @@ describe("importEncryptedCase", () => {
     ]);
     const archive = encryptBuffer(malicious, PASSWORD);
 
-    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-ADS" }))
-      .rejects.toThrow(/unsafe entry path/);
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-ADS" })).rejects.toThrow(
+      /unsafe entry path/,
+    );
     expect(await store.caseExists("INC-ADS")).toBe(false);
   });
 
@@ -214,8 +246,9 @@ describe("importEncryptedCase", () => {
     ]);
     const archive = encryptBuffer(malicious, PASSWORD);
 
-    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-CORRUPT" }))
-      .rejects.toThrow(/corrupt state\/investigation\.json/);
+    await expect(
+      importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-CORRUPT" }),
+    ).rejects.toThrow(/corrupt state\/investigation\.json/);
     expect(await store.caseExists("INC-CORRUPT")).toBe(false);
 
     // a corrected re-import (retry) must succeed — no orphaned partial directory blocking it
@@ -224,15 +257,21 @@ describe("importEncryptedCase", () => {
       { path: "state/investigation.json", data: Buffer.from("{}") },
     ]);
     const fixedArchive = encryptBuffer(fixed, PASSWORD);
-    const { meta } = await importEncryptedCase(store, fixedArchive, PASSWORD, { targetCaseId: "INC-CORRUPT" });
+    const { meta } = await importEncryptedCase(store, fixedArchive, PASSWORD, {
+      targetCaseId: "INC-CORRUPT",
+    });
     expect(meta.caseId).toBe("INC-CORRUPT");
   });
 
   it("throws a clean Error when case.json parses but has no caseId field", async () => {
     const store = await harness();
-    const archive = encryptBuffer(createZip([{ path: "case.json", data: Buffer.from(JSON.stringify({ name: "no id" })) }]), PASSWORD);
-    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-NOID" }))
-      .rejects.toThrow(/case\.json missing caseId/);
+    const archive = encryptBuffer(
+      createZip([{ path: "case.json", data: Buffer.from(JSON.stringify({ name: "no id" })) }]),
+      PASSWORD,
+    );
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-NOID" })).rejects.toThrow(
+      /case\.json missing caseId/,
+    );
     expect(await store.caseExists("INC-NOID")).toBe(false);
   });
 
@@ -247,9 +286,82 @@ describe("importEncryptedCase", () => {
     ]);
     const archive = encryptBuffer(malicious, PASSWORD);
 
-    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-DUP" }))
-      .rejects.toThrow(/duplicate entry path/);
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-DUP" })).rejects.toThrow(
+      /duplicate entry path/,
+    );
     expect(await store.caseExists("INC-DUP")).toBe(false);
+  });
+});
+
+// The export walks the case directory while the rest of the app is still writing to it. Every JSON
+// sidecar is saved through atomicWrite, which writes "<target>.<uuid>.tmp" and then renames it over
+// the target — so readdir routinely lists a temp file that is gone microseconds later, and the
+// per-file lstat came back ENOENT and aborted the whole export with a raw 500. A populated case
+// made it near-deterministic (a dashboard load fires a burst of sidecar saves); an empty one almost
+// never showed it, which is why it read as content-dependent rather than as the race it is.
+describe("exportEncryptedCase — concurrent writes into the case directory", () => {
+  it("exports while sidecar saves are in flight", async () => {
+    const store = await harness();
+    await store.createCase({ caseId: "INC-RACE", name: "Race", investigator: "a", aiProvider: null });
+    const stateDir = store.stateDir("INC-RACE");
+    await mkdir(stateDir, { recursive: true });
+
+    let writing = true;
+    const churn = (async () => {
+      let n = 0;
+      while (writing) {
+        await Promise.all(
+          ["notebook", "tags", "scope", "hypotheses", "customer"].map((name) =>
+            atomicWrite(join(stateDir, `${name}.json`), JSON.stringify({ n: n++ })),
+          ),
+        );
+      }
+    })();
+
+    try {
+      // Every attempt must succeed. Before the fix each one failed about two times in three, so six
+      // rounds miss a regression roughly once in a thousand runs — and six is as many as this can
+      // afford: every export pays caseEncryption's deliberately slow scrypt, and a longer loop
+      // starves under the full parallel suite and times out rather than failing honestly.
+      for (let i = 0; i < 6; i++) {
+        const archive = await exportEncryptedCase(store, "INC-RACE", PASSWORD);
+        expect(archive.length).toBeGreaterThan(0);
+      }
+    } finally {
+      writing = false;
+      await churn;
+    }
+  });
+
+  it("keeps atomicWrite's temp files out of the archive", async () => {
+    const store = await harness();
+    await store.createCase({ caseId: "INC-TMP", name: "Tmp", investigator: "a", aiProvider: null });
+    const stateDir = store.stateDir("INC-TMP");
+    await mkdir(stateDir, { recursive: true });
+    // A temp file left behind by a write that died before its rename. It is not case content, and
+    // archiving it would also make the manifest differ run to run.
+    await writeFile(join(stateDir, "notebook.json.3f2504e0-4f89-41d3-9a0c-0305e82c3301.tmp"), "{}");
+
+    const entries = readZip(decryptBuffer(await exportEncryptedCase(store, "INC-TMP", PASSWORD), PASSWORD));
+
+    expect(entries.map((e) => e.path).filter((p) => p.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("still archives an analyst's own .tmp evidence", async () => {
+    const store = await harness();
+    await store.createCase({ caseId: "INC-EVID", name: "Evidence", investigator: "a", aiProvider: null });
+    const importsDir = store.importsDir("INC-EVID");
+    await mkdir(importsDir, { recursive: true });
+    await writeFile(join(importsDir, "payload.tmp"), "MZ evidence bytes");
+
+    const entries = readZip(decryptBuffer(await exportEncryptedCase(store, "INC-EVID", PASSWORD), PASSWORD));
+
+    const evidence = entries.find((e) => e.path === "imports/payload.tmp");
+    expect(
+      evidence,
+      "an imported sample named payload.tmp must not be mistaken for a write temp",
+    ).toBeDefined();
+    expect(evidence?.data.toString("utf8")).toBe("MZ evidence bytes");
   });
 });
 

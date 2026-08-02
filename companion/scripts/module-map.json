@@ -167,6 +167,7 @@
     "caseLockGate.ts": "analysis/case",
     "casePassword.ts": "analysis/case",
     "caseSqliteWorker.ts": "storage",
+    "caseTransientPaths.ts": "storage",
     "caseStats.ts": "analysis/case",
     "chainSignature.ts": "analysis/detect",
     "chainsawImport.ts": "analysis/ingest",
