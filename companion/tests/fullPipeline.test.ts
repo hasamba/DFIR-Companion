@@ -236,7 +236,9 @@ describe("full-pipeline integration (capture → import → synthesis → report
     // 10. Evidence files are preserved — in BOTH the original AND the restored case. This is the
     // whole point of the encrypted archive replacing the old JSON-only snapshot: screenshots and
     // raw imports now travel with the export, not just references to them.
-    expect(screenshotFile).toMatch(/\.webp$/);
+    // The fixture is a PNG, so the stored name says .png — ingest preserves the detected source
+    // format rather than labelling everything .webp (#425).
+    expect(screenshotFile).toMatch(/\.png$/);
     const evidence = await request(app).get(`/cases/pipeline-1/evidence/${screenshotFile}`);
     expect(evidence.status).toBe(200);
     expect(evidence.headers["content-type"]).toContain("image/");

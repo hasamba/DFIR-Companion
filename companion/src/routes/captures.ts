@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { ingestCapture, CaseNotFoundError, InvalidImageError } from "../ingest/captureIngest.js";
 import { searchOcrIndex, isOcrSearchEnabled } from "../analysis/ocrSearch.js";
 import { isValidCaseId } from "../storage/caseStore.js";
+import { detectImageFormat } from "../ingest/imageFormat.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken, verifyCasePassword } from "../analysis/casePassword.js";
 import { getUnlockLimiter } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
@@ -179,7 +180,12 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
     for (const path of candidates) {
       try {
         const buf = await readFile(path);
-        res.type(evidenceContentType(file));
+        // Bytes first, name second. The extension map below is right for imports (csv/json/log),
+        // but a screenshot written before ingest preserved the source format carries a ".webp"
+        // suffix over PNG/JPEG/GIF bytes, and serving those as image/webp is how the browser gets
+        // told something untrue about the evidence (#425). Only the four image magic numbers are
+        // sniffed, so nothing textual can be re-typed by its content.
+        res.type(detectImageFormat(buf)?.mimeType ?? evidenceContentType(file));
         res.setHeader("Cache-Control", "private, max-age=300");
         return res.send(buf);
       } catch (err) {

@@ -84,7 +84,8 @@ describe("ingestCapture", () => {
       store,
       payload({ imageBase64: img, tabTitle: "Velociraptor — Hunts" }),
     );
-    expect(meta.screenshotFile).toMatch(/^000001_.*_Velociraptor-Hunts\.webp$/);
+    // .png, not .webp: the extension follows the DETECTED format (#425), and this fixture is a PNG.
+    expect(meta.screenshotFile).toMatch(/^000001_.*_Velociraptor-Hunts\.png$/);
     const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
     expect(onDisk.length).toBeGreaterThan(0);
   });
@@ -93,7 +94,7 @@ describe("ingestCapture", () => {
     const img = await pngBase64(40, 50, 60);
     const meta = await ingestCapture(store, payload({ imageBase64: img, tabTitle: "💀💀" }));
     // No trailing underscore, no title segment at all.
-    expect(meta.screenshotFile).toMatch(/^000001_[^_]+\.webp$/);
+    expect(meta.screenshotFile).toMatch(/^000001_[^_]+\.png$/);
   });
 
   it("rejects an invalid payload (missing url)", async () => {
