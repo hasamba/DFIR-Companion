@@ -32,6 +32,7 @@ jobs:
   companion-quality:
     name: Companion lint + format + structure
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,6 +98,11 @@ jobs:
   companion:
     name: Companion build + test
     runs-on: ubuntu-latest
+    # ~4 min observed. The generous multiple is deliberate: #408 moved per-test
+    # timeouts from vitest's 15s default to 20-30s, so a systemic break (the background
+    # pipeline not running at all) now reddens the suite in roughly twice the wall-clock
+    # it used to. This bounds that without being tight enough to fail a merely slow runner.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,6 +137,7 @@ jobs:
   extension:
     name: Extension build + test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4

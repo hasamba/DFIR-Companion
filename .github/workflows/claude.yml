@@ -28,6 +28,9 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    # An agentic run that implements a change and opens a PR, so it is legitimately
+    # long-running. Bounded only to stop a wedged run burning the 6h default.
+    timeout-minutes: 60
     permissions:
       contents: write          # push the implementation branch
       pull-requests: write      # open the PR
