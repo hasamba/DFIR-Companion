@@ -73,9 +73,19 @@ function tokenHash(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
+const USERNAME_SYNTAX = /^[A-Za-z0-9][A-Za-z0-9._@-]{2,63}$/;
+
+/** The same rule account creation enforces, as a predicate. The login route needs it to reject a
+ *  malformed username BEFORE the database lookup, the scrypt verification against the dummy hash,
+ *  and the permanent audit row — none of which a string that could never name an account should
+ *  ever be able to buy (#421). */
+export function isValidUsername(value: string): boolean {
+  return USERNAME_SYNTAX.test(value.trim());
+}
+
 function normalizeUsername(value: string): string {
   const username = value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._@-]{2,63}$/.test(username)) {
+  if (!isValidUsername(username)) {
     throw new Error("username must be 3-64 letters, numbers, dots, dashes, underscores, or @");
   }
   return username;

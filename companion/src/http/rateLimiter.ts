@@ -148,6 +148,10 @@ let _unlockSweepTimer: NodeJS.Timeout | null = null;
 let _aiSweepTimer: NodeJS.Timeout | null = null;
 let _importSweepTimer: NodeJS.Timeout | null = null;
 let _importIpSweepTimer: NodeJS.Timeout | null = null;
+let _loginLimiter: AttemptLimiter | null = null;
+let _loginIpLimiter: SlidingWindowLimiter | null = null;
+let _loginSweepTimer: NodeJS.Timeout | null = null;
+let _loginIpSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -202,6 +206,37 @@ export function getImportIpLimiter(): SlidingWindowLimiter {
   return _importIpLimiter;
 }
 
+/** Per-ACCOUNT failed-login limiter for POST /auth/local/login, keyed by client IP + username.
+ *  That key is what makes it insufficient on its own: an unauthenticated caller who rotates the
+ *  username gets a fresh bucket per request, so this limiter alone bounded brute force against one
+ *  named account while bounding nothing per client (#421). Pair it with getLoginIpLimiter().
+ *
+ *  It used to be a bare `new AttemptLimiter(...)` module constant in authRoutes.ts, with no sweep
+ *  scheduled — one permanent Map entry per (ip, username) ever tried. */
+export function getLoginLimiter(): AttemptLimiter {
+  if (!_loginLimiter) {
+    const limiter = new AttemptLimiter(5, 30_000);
+    _loginLimiter = limiter;
+    _loginSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _loginSweepTimer.unref?.();
+  }
+  return _loginLimiter;
+}
+
+/** Client-wide login budget, keyed by IP alone and consumed by EVERY login attempt — not only the
+ *  failures — because the cost being bounded is the scrypt verification itself, which a miss pays
+ *  in full against the dummy hash. 60 a minute is far past any human at a login form and still
+ *  caps one client at roughly one password hash per second. */
+export function getLoginIpLimiter(): SlidingWindowLimiter {
+  if (!_loginIpLimiter) {
+    const limiter = new SlidingWindowLimiter(60, 60_000);
+    _loginIpLimiter = limiter;
+    _loginIpSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _loginIpSweepTimer.unref?.();
+  }
+  return _loginIpLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
@@ -209,6 +244,8 @@ export function resetLimiters(): void {
   if (_aiSweepTimer) clearInterval(_aiSweepTimer);
   if (_importSweepTimer) clearInterval(_importSweepTimer);
   if (_importIpSweepTimer) clearInterval(_importIpSweepTimer);
+  if (_loginSweepTimer) clearInterval(_loginSweepTimer);
+  if (_loginIpSweepTimer) clearInterval(_loginIpSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
@@ -217,4 +254,8 @@ export function resetLimiters(): void {
   _aiLimiter = null;
   _importLimiter = null;
   _importIpLimiter = null;
+  _loginSweepTimer = null;
+  _loginIpSweepTimer = null;
+  _loginLimiter = null;
+  _loginIpLimiter = null;
 }
