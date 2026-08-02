@@ -178,15 +178,13 @@ async function injectBlob() {
 
 // All packages that sharp requires at runtime (direct deps + their transitive deps).
 // These must be staged next to the EXE so Node can resolve them at startup.
+// sharp 0.35 replaced the `color` → color-convert/color-string/color-name/simple-swizzle/
+// is-arrayish chain with a single first-party `@img/colour`, which the @img scope copy below
+// already picks up. Listing the retired packages here is not harmless: each one that goes missing
+// prints a warning on every SEA build, which is how a real missing dependency stops being noticed.
 const SHARP_RUNTIME_DEPS = [
   "detect-libc",   // sharp direct dep
-  "color",         // sharp direct dep
   "semver",        // sharp direct dep
-  "color-convert", // color dep
-  "color-string",  // color dep
-  "color-name",    // color-convert + color-string dep
-  "simple-swizzle",// color-string dep
-  "is-arrayish",   // simple-swizzle dep
 ];
 
 async function findSharpRoots() {
