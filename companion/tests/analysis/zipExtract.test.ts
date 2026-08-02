@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createZip } from "../../src/analysis/zipArchive.js";
 import { candidatePasswords, extractZipEntries, MAX_ZIP_ENTRIES } from "../../src/analysis/zipExtract.js";
+import { ZipAuthenticationError } from "../../src/analysis/zipCrypto.js";
 
 const ZC_ZIP_B64 =
   "UEsDBAoACQAAAGWB/VzrJ0KsIwAAABcAAAAKABwAc2FtcGxlLmJpblVUCQAD7vtpau77aWp1eAsAAQToAwAABOgDAACSY93uO3OX" +
@@ -14,6 +15,13 @@ const CUSTOM_ZIP_B64 =
   "UEsDBAoACQAAAO2C/Vx7BJ0tJAAAABgAAAAKABwAc2VjcmV0LmJpblVUCQADzf5pas3+aWp1eAsAAQToAwAABOgDAACQ7YfTxb3j" +
   "gnkcB9RnjbnCiwID4RlVYqmQgwa8AzOEfM/SLxRQSwcIewSdLSQAAAAYAAAAUEsBAh4DCgAJAAAA7YL9XHsEnS0kAAAAGAAAAAoA" +
   "GAAAAAAAAQAAALSBAAAAAHNlY3JldC5iaW5VVAUAA83+aWp1eAsAAQToAwAABOgDAABQSwUGAAAAAAEAAQBQAAAAeAAAAAAA";
+
+// 7-Zip: `7z a -tzip -pinfected -mem=AES256 aes.zip sample.bin` — AE-2, STORED, 23 bytes.
+const AES_ZIP_B64 =
+  "UEsDBDMAAQBjAGaB/VwAAAAAMwAAABcAAAAKAAsAc2FtcGxlLmJpbgGZBwACAEFFAwAAjSVbocfmvx3PE5161dsvWZeAGwRMGhH+" +
+  "U3dNZiO2mA/QMCMLIAwEGRmcHEdlOo1WBP7zUEsBAj8DMwABAGMAZoH9XAAAAAAzAAAAFwAAAAoALwAAAAAAAAAggLSBAAAAAHNh" +
+  "bXBsZS5iaW4KACAAAAAAAAEAGAC4I7e5Wx/dAQAAAAAAAAAAAAAAAAAAAAABmQcAAgBBRQMAAFBLBQYAAAAAAQABAGcAAABmAAAA" +
+  "AAA=";
 
 describe("candidatePasswords", () => {
   it("defaults to infected when nothing is supplied", () => {
@@ -104,5 +112,24 @@ describe("extractZipEntries", () => {
     // Nothing in the ladder opens this one, so the analyst gets an actionable error.
     expect(() => extractZipEntries(Buffer.from(CUSTOM_ZIP_B64, "base64"), "custom.zip"))
       .toThrow(/password/i);
+  });
+
+  // #428: this is the evidence-ingestion entry point, and the password ladder is where a tamper
+  // signal would go missing. ZipAuthenticationError is deliberately not a ZipPasswordError, so the
+  // loop stops on the first candidate and reports the modification instead of walking the rest of
+  // the ladder and blaming the password.
+  it("surfaces AES tampering as tampering, not as 'wrong password (tried N passwords)'", () => {
+    const archive = Buffer.from(AES_ZIP_B64, "base64");
+    let eocd = -1;
+    for (let i = archive.length - 22; i >= 0; i--) {
+      if (archive.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    const central = archive.readUInt32LE(eocd + 16);
+    const localOffset = archive.readUInt32LE(central + 42);
+    const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+    archive[dataStart + 16 + 2 + 5] ^= 0x20;   // past salt + verifier, into the ciphertext
+
+    expect(() => extractZipEntries(archive, "aes.zip")).toThrow(ZipAuthenticationError);
+    expect(() => extractZipEntries(archive, "aes.zip")).toThrow(/modified/i);
   });
 });

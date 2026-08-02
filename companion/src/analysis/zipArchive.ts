@@ -1,6 +1,6 @@
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
-  zipCryptoDecrypt, verifyZipCryptoCheckByte, parseAesExtra, aesDecrypt, ZipPasswordError,
+  zipCryptoDecrypt, verifyZipCryptoCheckByte, parseAesExtra, aesDecrypt, ZipPasswordError, ZipAuthenticationError,
 } from "./zipCrypto.js";
 
 // A tiny, dependency-free ZIP writer/reader. The redacted case export (#54) bundles the
@@ -205,11 +205,26 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
         if (!params) {
           throw new ZipPasswordError(`zip entry "${name}" uses AES but has no readable AE header`, "unsupported-encryption");
         }
-        const { plaintext } = aesDecrypt(compressed, password, params.strength);
+        const { plaintext, macOk } = aesDecrypt(compressed, password, params.strength);
+        // Fail closed on the HMAC, for BOTH AE-1 and AE-2. The tag is the only cryptographic
+        // integrity control WinZip AES has; the CRC is neither a substitute (CRC-32 is linear and
+        // non-cryptographic, and its stored value sits in the central directory the same adversary
+        // can rewrite) nor even present for AE-2. This was previously computed and dropped, which
+        // left AE-2 entries with no integrity verification of any kind: the cipher is AES-CTR, so
+        // flipping a ciphertext bit flips exactly that plaintext bit, and a modified log line, hash
+        // or command line was accepted as authentic (#428). params.aeVersion and params.actualMethod
+        // come from the archive's own 0x9901 field, so the attacker picks AE-2 and STORED to route
+        // around both checks — which is precisely why this one may not be conditional.
+        if (!macOk) {
+          throw new ZipAuthenticationError(
+            `zip entry "${name}" failed AES authentication — the archive was modified after it was ` +
+            `created (or, once in 65536, the password is wrong in a way the verifier missed)`,
+          );
+        }
         compressed = plaintext;
         effectiveMethod = params.actualMethod;
-        // AE-2 stores a zero CRC by design, so the usual integrity check would always fail.
-        // The HMAC already authenticated the data.
+        // AE-2 stores a zero CRC by design, so the usual check would always fail. Skipping it is
+        // sound only because the HMAC above ran and passed.
         verifyCrc = params.aeVersion !== 2;
       } else {
         const decrypted = zipCryptoDecrypt(compressed, password);

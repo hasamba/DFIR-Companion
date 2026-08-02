@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { inflateRawSync } from "node:zlib";
 import { createZip, readZip, crc32, type ZipEntry } from "../../src/analysis/zipArchive.js";
-import { ZipPasswordError } from "../../src/analysis/zipCrypto.js";
+import { ZipPasswordError, ZipAuthenticationError, aesDecrypt } from "../../src/analysis/zipCrypto.js";
 
 const EOCD_SIG = 0x06054b50;
 const LOCAL_SIG = 0x04034b50;
@@ -149,6 +149,73 @@ describe("readZip with encrypted entries", () => {
       expect(err).toBeInstanceOf(ZipPasswordError);
       expect((err as ZipPasswordError).reason).toBe("wrong-password");
     }
+  });
+
+  // #428: aesDecrypt has always computed the WinZip-AES HMAC and returned it as `macOk`; readZip
+  // destructured `plaintext` and threw it away. For AE-2 the CRC check is skipped as well (the
+  // format stores a zero CRC), so those entries had NO integrity verification of any kind.
+  // WinZip AES is AES-CTR: flipping one ciphertext bit flips exactly that plaintext bit, so an
+  // adversary who can touch the archive in transit can make targeted edits to evidence.
+  describe("AES tamper detection", () => {
+    // Overwrite one byte in the middle of the entry's ciphertext, leaving salt, password verifier
+    // and the stored HMAC untouched — so the password still verifies and only the tag disagrees.
+    function tamper(b64: string): Buffer {
+      const archive = Buffer.from(b64, "base64");
+      let eocd = -1;
+      for (let i = archive.length - 22; i >= 0; i--) {
+        if (archive.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+      }
+      const central = archive.readUInt32LE(eocd + 16);
+      const localOffset = archive.readUInt32LE(central + 42);
+      const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+      const AES256_SALT = 16, PW_VERIFY = 2;
+      const target = dataStart + AES256_SALT + PW_VERIFY + 5;   // 6th ciphertext byte
+      archive[target] ^= 0x20;   // one bit — enough to rewrite a character of the plaintext
+      return archive;
+    }
+
+    it("rejects an AE-2 entry whose ciphertext was altered after creation", () => {
+      expect(() => readZip(tamper(AES_ZIP_B64), { password: "infected" }))
+        .toThrow(ZipAuthenticationError);
+    });
+
+    it("reports tampering distinctly from a wrong password", () => {
+      // The analyst has to be able to tell "try another password" from "this archive was altered";
+      // a ZipAuthenticationError is deliberately NOT a ZipPasswordError, so the password-retry
+      // loop in zipExtract stops rather than reporting a password problem.
+      try {
+        readZip(tamper(AES_ZIP_B64), { password: "infected" });
+        throw new Error("expected readZip to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(ZipAuthenticationError);
+        expect(err).not.toBeInstanceOf(ZipPasswordError);
+        expect((err as Error).message).toMatch(/modified/i);
+      }
+    });
+
+    it("the flipped bit really did reach the plaintext — this is what used to be accepted", () => {
+      // Proves the test above is testing something: without the macOk check the modified bytes
+      // came straight back, because the entry is STORED and AE-2 skips the CRC.
+      const archive = tamper(AES_ZIP_B64);
+      let eocd = -1;
+      for (let i = archive.length - 22; i >= 0; i--) {
+        if (archive.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+      }
+      const central = archive.readUInt32LE(eocd + 16);
+      const compSize = archive.readUInt32LE(central + 20);
+      const localOffset = archive.readUInt32LE(central + 42);
+      const dataStart = localOffset + 30 + archive.readUInt16LE(localOffset + 26) + archive.readUInt16LE(localOffset + 28);
+      const { plaintext, macOk } = aesDecrypt(archive.subarray(dataStart, dataStart + compSize), "infected", 3);
+      expect(macOk).toBe(false);
+      expect(plaintext.toString("utf8")).not.toBe("MZ fake sample payload\n");
+      // One bit flipped in the ciphertext → exactly one character changed in the evidence.
+      expect(plaintext.toString("utf8")).toBe("MZ faKe sample payload\n");
+    });
+
+    it("an untampered AE-2 entry still opens", () => {
+      const back = readZip(Buffer.from(AES_ZIP_B64, "base64"), { password: "infected" });
+      expect(back[0].data.toString("utf8")).toBe("MZ fake sample payload\n");
+    });
   });
 
   it("still round-trips unencrypted archives unchanged", () => {
