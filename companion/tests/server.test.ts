@@ -114,7 +114,8 @@ describe("HTTP server", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.sequenceNumber).toBe(1);
-    expect(res.body.screenshotFile).toMatch(/\.webp$/);
+    // pngBase64() posts PNG bytes, so the stored name says .png (#425).
+    expect(res.body.screenshotFile).toMatch(/\.png$/);
   });
 
   it("POST /captures returns 400 on invalid payload", async () => {

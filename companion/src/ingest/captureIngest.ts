@@ -4,6 +4,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { computeContentHash } from "../dedup/contentHash.js";
 import { slugifyTitle } from "./titleSlug.js";
+import { detectImageFormat } from "./imageFormat.js";
 
 // Is deduplication enabled? Default on. `DFIR_DEDUP=off` (also false/no/0) turns it off so
 // EVERY capture is analyzed. Read per call so a restart picks up the change. When on, a capture
@@ -46,21 +47,6 @@ export class InvalidImageError extends Error {
 // In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
 const lastHashByCase = new Map<string, string>();
 
-// Magic-byte sniff: verify the captured bytes are a real image, not arbitrary binary.
-// WebP: RIFF....WEBP  |  PNG: 89 PNG\r\n  |  JPEG: FF D8 FF  |  GIF: GIF8
-function isImageMagic(bytes: Buffer): boolean {
-  if (bytes.length < 12) return false;
-  // WebP
-  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return true;
-  // PNG
-  if (bytes[0] === 0x89 && bytes.subarray(1, 4).toString("ascii") === "PNG") return true;
-  // JPEG
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true;
-  // GIF
-  if (bytes.subarray(0, 4).toString("ascii") === "GIF8") return true;
-  return false;
-}
-
 export async function ingestCapture(
   store: CaseStore,
   rawPayload: unknown,
@@ -76,9 +62,10 @@ export async function ingestCapture(
 
   const bytes = Buffer.from(payload.imageBase64, "base64");
 
-  // Validate that the bytes are a real image (magic-byte sniff) — reject arbitrary binary
-  // stored as a .webp screenshot. Accepts WebP (RIFF....WEBP), PNG, JPEG, and GIF.
-  if (!isImageMagic(bytes)) {
+  // Validate that the bytes are a real image (magic-byte sniff) — reject arbitrary binary stored
+  // as a screenshot — and keep WHICH image it is, so the file on disk is named for what it holds.
+  const format = detectImageFormat(bytes);
+  if (!format) {
     throw new InvalidImageError();
   }
 
@@ -97,9 +84,12 @@ export async function ingestCapture(
   // an empty/all-unsafe title is omitted cleanly (no dangling underscore).
   const titleSlug = slugifyTitle(payload.tabTitle);
   const seq = String(sequenceNumber).padStart(6, "0");
+  // The extension is the DETECTED format, not a fixed ".webp". Every accepted buffer used to be
+  // stored as WebP whatever it was, which made the filename — part of the evidence record — wrong,
+  // and the evidence route derives its Content-Type from exactly this name (#425).
   const screenshotFile = titleSlug
-    ? `${seq}_${tsSafe}_${titleSlug}.webp`
-    : `${seq}_${tsSafe}.webp`;
+    ? `${seq}_${tsSafe}_${titleSlug}${format.ext}`
+    : `${seq}_${tsSafe}${format.ext}`;
 
   // Evidence first: write the image before recording metadata. The provenance goes with the write
   // because this is the only layer that still knows where the frame came from — the store below
