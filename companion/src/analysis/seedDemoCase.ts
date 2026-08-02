@@ -1,8 +1,9 @@
 // Seed the rich demo case ("GlobalTech Industries — BEC & Ransomware Precursor, May 2026").
 // Shared between the CLI script (scripts/seed-demo-case.ts) and the POST /cases/seed-demo
 // server route, so EXE users who don't have tsx/Node can trigger it from the dashboard.
-import { writeFile, mkdir, stat, rm } from "node:fs/promises";
+import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { demoCaseDir, caseAlreadySeeded } from "./seedDemoPaths.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export const DEMO_CASE_ID_DEFAULT = "demo";
@@ -16,10 +17,6 @@ export interface SeedDemoResult {
   caseId: string;
   caseDir: string;
   stats: { findings: number; iocs: number; events: number; superTimelineEvents: number };
-}
-
-async function exists(p: string): Promise<boolean> {
-  try { await stat(p); return true; } catch { return false; }
 }
 
 async function write(p: string, data: unknown): Promise<void> {
@@ -48,9 +45,9 @@ export async function seedDemoCase(
 ): Promise<SeedDemoResult> {
   const caseId = options.caseId ?? DEMO_CASE_ID_DEFAULT;
   const force = options.force ?? false;
-  const caseDir = join(casesRoot, caseId);
+  const caseDir = demoCaseDir(casesRoot, caseId);   // validates caseId before join (#427)
 
-  if (await exists(join(caseDir, "case.json"))) {
+  if (await caseAlreadySeeded(caseDir)) {
     if (!force) {
       const err = new Error(`Case "${caseId}" already exists. Pass force=true to overwrite.`);
       (err as NodeJS.ErrnoException).code = "EEXIST";

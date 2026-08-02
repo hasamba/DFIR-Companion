@@ -359,6 +359,7 @@
     "secretSpillRules.ts": "analysis/privacy",
     "securityOnionImport.ts": "analysis/ingest",
     "seedDemoCase.ts": "analysis/workflow",
+    "seedDemoPaths.ts": "analysis/workflow",
     "semanticKey.ts": "analysis/timeline",
     "sessionSegmentation.ts": "analysis/detect",
     "severityFloor.ts": "analysis/findings",
