@@ -1126,7 +1126,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an object" });
       }
-      const rejected = validateEnvUpdates(updates as Record<string, string>);
+      const rejected = validateEnvUpdates(updates as Record<string, unknown>);   // values are as untrusted as keys (#422)
       if (rejected.length > 0) {
         // Log it: a rejected save is a real misconfiguration (a Settings field whose key was never
         // allowlisted), and with the 400 shown only in a corner of the modal it left no trace at all.

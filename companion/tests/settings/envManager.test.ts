@@ -124,6 +124,50 @@ describe("validateEnvUpdates", () => {
     expect(validateEnvUpdates({})).toEqual([]);
   });
 
+  // #422: a dotenv record is one line, so a line break inside a VALUE writes a second record.
+  // The key allowlist saw one allowed key and waved it through.
+  it("rejects a value carrying a newline that would land a second .env assignment", () => {
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\nDFIR_HOST=0.0.0.0" })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\r\nDFIR_CASES_ROOT=/etc" })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\rDFIR_DEMO_MODE=true" })).toEqual(["DFIR_AI_MODEL"]);
+    // A NUL is a control character too — rejected, whatever the reader would make of it.
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o\u0000DFIR_ANONYMIZE=off" })).toEqual(["DFIR_AI_MODEL"]);
+    // A plain space is NOT a separator: one record, one value. The guard must not reject it.
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: "gpt-4o preview" })).toEqual([]);
+  });
+
+  // The same bypass through the KEY: startsWith() is a prefix test, and the denylist is an
+  // exact-match Set, so a key that carries its own newline satisfied both.
+  it("rejects a key carrying a newline even though it starts with a writable prefix", () => {
+    const rejected = validateEnvUpdates({ "DFIR_AI_MODEL\nDFIR_HOST": "0.0.0.0" });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).not.toContain("\n");   // the reply and the log must not carry the payload
+  });
+
+  it("rejects non-string values rather than stringifying them into the file", () => {
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: 42 })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: null })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: { toString: () => "x" } })).toEqual(["DFIR_AI_MODEL"]);
+    expect(validateEnvUpdates({ DFIR_AI_MODEL: ["a", "b"] })).toEqual(["DFIR_AI_MODEL"]);
+  });
+
+  // The guard must not cost anyone a real secret: API keys and URLs are full of punctuation.
+  it("still accepts ordinary secrets containing punctuation, spaces and '='", () => {
+    expect(validateEnvUpdates({
+      DFIR_VT_KEY: "sk-live_A1b2/C3+d4=e5==",
+      DFIR_IRIS_URL: "https://iris.example.test:8443/api?x=1&y=2#frag",
+      DFIR_NOTIFY_SLACK_WEBHOOK: "https://hooks.slack.com/services/T0/B0/xXyYzZ",
+      DFIR_AI_SYNTH_MODEL: "claude sonnet 4.5 (preview)",
+      DFIR_SMTP_PASSWORD: "hunter2 — don't tell",
+    })).toEqual([]);
+  });
+
+  it("reports a long malformed key truncated, not in full", () => {
+    const rejected = validateEnvUpdates({ ["DFIR_AI_" + "x".repeat(500) + "\nDFIR_HOST"]: "1" });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].length).toBeLessThanOrEqual(65);
+  });
+
   it("rejects a mix of allowed and denied keys, reporting only the denied ones", () => {
     const rejected = validateEnvUpdates({
       DFIR_VISION_MODEL: "gpt-4o-mini",   // ok
