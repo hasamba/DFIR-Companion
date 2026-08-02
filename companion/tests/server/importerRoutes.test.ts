@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImporterStore } from "../../src/analysis/importerStore.js";
 import { EXAMPLE_IMPORTER_SPEC } from "../../src/analysis/importerSpec.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 // Harness mirrors tests/server/veloBundle.test.ts: a real CaseStore + StateStore + a runtime pipeline
 // built via buildRuntimePipeline with NO AI provider (the declarative import path is deterministic and
@@ -54,18 +55,20 @@ describe("custom importer routes", () => {
     expect(imp.body.kind).toBe("mde-advanced-hunting");
 
     // Poll the case state until the deterministic import lands its forensic events (no AI involved).
-    let evs = 0;
-    for (let i = 0; i < 40 && evs === 0; i++) {
-      const st = await request(app).get("/cases/c1/state");
-      evs = (st.body.forensicTimeline ?? []).length;
-      if (evs === 0) await new Promise((r) => setTimeout(r, 25));
-    }
+    const evs = await pollFor(
+      "the custom importer to land a forensic event in the case state",
+      async () => {
+        const st = await request(app).get("/cases/c1/state");
+        const n = (st.body.forensicTimeline ?? []).length;
+        return n > 0 ? n : undefined;
+      },
+    );
     expect(evs).toBeGreaterThan(0);
 
     const del = await request(app).delete("/importers/mde-advanced-hunting");
     expect(del.status).toBe(200);
     expect((await request(app).get("/importers")).body.importers).toHaveLength(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("toggles precedence", async () => {
     const { app } = await harness();
@@ -81,16 +84,20 @@ describe("custom importer routes", () => {
     await request(app).post("/importers").send({ spec: EXAMPLE_IMPORTER_SPEC });
     await request(app).post("/cases/c1/import").send({ text: MDE_CSV, filename: "advanced-hunting.csv" });
 
-    let row: { lastStatus?: string } | undefined;
-    for (let i = 0; i < 40 && row?.lastStatus == null; i++) {
-      const diag = await request(app).get("/diagnostics");
-      row = diag.body.report.importers.perImporter.find((p: { id: string }) => p.id === "mde-advanced-hunting");
-      if (row?.lastStatus == null) await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(row).toBeTruthy();
-    expect(row!.lastStatus).toBe("ok");
-    expect((row as { kept?: number }).kept).toBeGreaterThan(0);
-    expect((row as { lastRunAt?: string }).lastRunAt).toBeTruthy();
-    expect((row as { lastError?: string | null }).lastError).toBeNull();
-  });
+    let seen: string[] = [];
+    const row = await pollFor<{ lastStatus?: string; kept?: number; lastRunAt?: string; lastError?: string | null }>(
+      () => `/diagnostics to report a run for mde-advanced-hunting, saw importers [${seen.join(", ")}]`,
+      async () => {
+        const diag = await request(app).get("/diagnostics");
+        const perImporter = diag.body.report.importers.perImporter as { id: string; lastStatus?: string }[];
+        seen = perImporter.map((p) => p.id);
+        const found = perImporter.find((p) => p.id === "mde-advanced-hunting");
+        return found?.lastStatus == null ? undefined : found;
+      },
+    );
+    expect(row.lastStatus).toBe("ok");
+    expect(row.kept).toBeGreaterThan(0);
+    expect(row.lastRunAt).toBeTruthy();
+    expect(row.lastError).toBeNull();
+  }, POLL_TIMEOUT_MS * 2);
 });

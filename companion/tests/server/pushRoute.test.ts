@@ -8,6 +8,8 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { PushTokenStore } from "../../src/analysis/pushTokenStore.js";
+import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { waitForEvents } from "../helpers/caseWaits.js";
 
 // A deterministic (no-AI) THOR alert the importer maps straight to a forensic event.
 const THOR_EVENT = {
@@ -32,15 +34,6 @@ async function makeApp(opts: { pushToken?: string; withTokenStore?: boolean } = 
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
-}
-
-async function waitForEvents(stateStore: StateStore, caseId: string): Promise<number> {
-  for (let i = 0; i < 100; i++) {
-    const s = await stateStore.load(caseId);
-    if (s.forensicTimeline.length > 0) return s.forensicTimeline.length;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return (await stateStore.load(caseId)).forensicTimeline.length;
 }
 
 describe("POST /cases/:id/push — generic push ingest", () => {
@@ -71,7 +64,7 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     expect(res.body.kind).toBe("thor");
     expect(res.body.source).toBe("siem-webhook");
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one waitForEvents budget, doubled to leave room for setup + assertions
 
   it("accepts a Bearer token too", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
@@ -91,7 +84,7 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     expect(res.status).toBe(202);
     expect(res.body.kind).toBe("velociraptor");
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("authorizes with a per-case token generated via the API", async () => {
     const { app } = await makeApp({});   // no global token
@@ -138,5 +131,5 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem", events: [THOR_EVENT] });
     expect(res.status).toBe(202);
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 });

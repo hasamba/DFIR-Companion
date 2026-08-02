@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 // #94 — characterization test: re-importing the SAME evidence file must stay idempotent.
 //
@@ -96,12 +97,18 @@ async function counts(stateStore: StateStore, superStore: SuperTimelineStore) {
 }
 
 // Poll until the background import has landed at least `atLeast` forensic events, then let it settle.
+// On a WALL-CLOCK budget: the 150x20ms loop this replaces `break`ed out on expiry and then let the
+// caller assert on whatever had landed, so a slow import and a broken one both reported
+// `expected 1 to be 2` (issue #408). Now a wait that runs out says so, and names the count it saw.
 async function settle(stateStore: StateStore, atLeast: number): Promise<void> {
-  for (let i = 0; i < 150; i++) {
-    const s = await stateStore.load("c1");
-    if (s.forensicTimeline.length >= atLeast) break;
-    await new Promise((r) => setTimeout(r, 20));
-  }
+  let last = 0;
+  await pollFor(
+    () => `case c1 to reach ${atLeast} forensic event(s) from the background import, last saw ${last}`,
+    async () => {
+      last = (await stateStore.load("c1")).forensicTimeline.length;
+      return last >= atLeast ? last : undefined;
+    },
+  );
   // Give any trailing super-timeline / tagging work a moment to finish before asserting.
   await new Promise((r) => setTimeout(r, 300));
 }
@@ -123,7 +130,11 @@ describe("#94 — re-importing identical evidence is idempotent", () => {
 
     expect(second.forensic).toBe(first.forensic);
     expect(second.super).toBe(first.super);
-  }, 30000);
+    // ONE real settle() budget: the second call asks for >=1 event, which the first import already
+    // satisfied, so it returns on its first probe and only the 300ms settle covers the re-import.
+    // Pre-existing (the old loop's `break` fired on iteration 0 too) — a weakness in what this test
+    // PROVES, not in how it reports failure. Tracked as a follow-up, not fixed in this refactor.
+  }, POLL_TIMEOUT_MS * 2);
 
   it("still ingests genuinely different evidence as new events", async () => {
     const { app, stateStore, superTimelineStore } = await makeApp();
@@ -139,5 +150,5 @@ describe("#94 — re-importing identical evidence is idempotent", () => {
     const after = await counts(stateStore, superTimelineStore);
     expect(after.forensic).toBe(2);
     expect(after.super).toBe(2);
-  }, 30000);
+  }, POLL_TIMEOUT_MS * 3);
 });

@@ -17,7 +17,7 @@ import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
-import { pollFor } from "../helpers/poll.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 // Fills the three array fields every ForensicEvent carries but no super-timeline assertion in
 // this file reads, so each literal below stays about the fields the route actually filters on.
@@ -400,17 +400,19 @@ describe("superTimelineOnly bundle routing", () => {
 
     // The collect runs in the background (huntResultsByArtifact → parse → super-timeline append).
     // Poll the super-timeline until the raw rows land.
-    let superRes = await request(app).get("/cases/c1/super-timeline");
-    for (let i = 0; i < 80 && (superRes.body.total ?? 0) === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      superRes = await request(app).get("/cases/c1/super-timeline");
-    }
+    const superRes = await pollFor(
+      "the super-timeline to report a row from the background collect",
+      async () => {
+        const res = await request(app).get("/cases/c1/super-timeline");
+        return (res.body.total ?? 0) > 0 ? res : undefined;
+      },
+    );
     expect(superRes.status).toBe(200);
     expect(superRes.body.total).toBeGreaterThan(0);   // raw MFT row landed in the super-timeline
 
     const forensicAfter = (await stateStore.load("c1")).forensicTimeline.length;
     expect(forensicAfter).toBe(forensicBefore);       // forensic timeline untouched by the super-only bundle
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("a super-only bundle does NOT ingest uploaded reports into the forensic timeline", async () => {
     const { app, stateStore } = await makeSuperUploadApp();
@@ -424,21 +426,24 @@ describe("superTimelineOnly bundle routing", () => {
     // Drive the background collect to completion off the hunt job's terminal status (the MFT row lands in
     // the super-timeline). Only THEN can we assert the forensic timeline is still empty — proving the
     // uploaded thor.json was skipped, not dispatched into the forensic timeline.
-    let status: string | undefined;
-    for (let i = 0; i < 120 && status !== "imported"; i++) {
-      const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
-      status = (jobs.body as Array<{ status?: string }>)[0]?.status;
-      if (status === "error") throw new Error("velo hunt collect errored");
-      if (status !== "imported") await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(status).toBe("imported");
+    let lastStatus = "no job at all";
+    await pollFor(
+      () => `the hunt job to reach "imported", last saw "${lastStatus}"`,
+      async () => {
+        const jobs = await request(app).get("/cases/c1/velociraptor/hunt-jobs");
+        const status = (jobs.body as Array<{ status?: string }>)[0]?.status;
+        if (status === "error") throw new Error("velo hunt collect errored");
+        lastStatus = status ?? "no job at all";
+        return status === "imported" ? status : undefined;
+      },
+    );
 
     const superRes = await request(app).get("/cases/c1/super-timeline");
     expect(superRes.body.total).toBeGreaterThan(0);   // the raw MFT row still routed to the super-timeline
 
     const forensicAfter = (await stateStore.load("c1")).forensicTimeline.length;
     expect(forensicAfter).toBe(forensicBefore);       // the uploaded thor.json did NOT leak into forensic
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("re-collecting the same super-only hunt is idempotent (no duplicate events)", async () => {
     const { app } = await makeSuperBundleApp();
@@ -462,17 +467,32 @@ describe("superTimelineOnly bundle routing", () => {
     // Wait until the job reaches a terminal `imported` state with an `importedAt` newer than `prevImportedAt`
     // (so a re-collect is observed as its OWN completed cycle, not the previous one). Re-fires the collect
     // if it didn't take, then polls. Never a fixed sleep on the super-timeline — a stable status condition.
+    // The re-fire runs on a WALL-CLOCK cadence, and the whole wait on a wall-clock budget: the nested
+    // 40x80x25ms loops this replaces counted iterations, and under load those iterations were dominated
+    // by HTTP round-trips rather than the sleeps, so the wait shrank exactly when the machine was
+    // slowest (issue #408).
+    // Deliberately longer than a normal import cycle. The re-POST is belt-and-braces (see above),
+    // and this probe is the one converted site that performs a SIDE EFFECT rather than a read — so
+    // a tight cadence would pile redundant collects onto the coalescing importer under exactly the
+    // load this refactor targets. NOT "the old inner loop's cadence": that loop's 80 iterations were
+    // 80 HTTP round-trips plus 25ms each, so it re-fired every 5-10s on a busy box, not every 2s.
+    const RECOLLECT_EVERY_MS = 4_000;
     async function collectUntilImported(prevImportedAt?: string): Promise<void> {
-      for (let attempt = 0; attempt < 40; attempt++) {
-        expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
-        for (let i = 0; i < 80; i++) {
+      let last = "no job at all";
+      let nextCollectAt = 0;
+      await pollFor(
+        () => `an import cycle newer than importedAt=${prevImportedAt ?? "(none)"}, last saw status "${last}"`,
+        async () => {
+          if (Date.now() >= nextCollectAt) {
+            expect((await request(app).post("/cases/c1/velociraptor/collect").send({})).status).toBe(202);
+            nextCollectAt = Date.now() + RECOLLECT_EVERY_MS;
+          }
           const { status, importedAt } = await jobStatus();
-          if (status === "imported" && importedAt && importedAt !== prevImportedAt) return;
           if (status === "error") throw new Error("velo hunt collect errored");
-          await new Promise((r) => setTimeout(r, 25));
-        }
-      }
-      throw new Error("velo hunt collect never reached imported state");
+          last = status ?? "no job at all";
+          return status === "imported" && importedAt && importedAt !== prevImportedAt ? importedAt : undefined;
+        },
+      );
     }
 
     // First collect → wait for it to fully import; the row must have landed in the super-timeline.
@@ -489,7 +509,7 @@ describe("superTimelineOnly bundle routing", () => {
     await collectUntilImported(firstImportedAt);
     const second = await request(app).get("/cases/c1/super-timeline");
     expect(second.body.total).toBe(totalAfterFirst);   // NOT doubled — idempotent re-collect
-  });
+  }, POLL_TIMEOUT_MS * 3);   // TWO sequential collectUntilImported budgets, plus setup + assertions
 });
 
 // ── Bundle artifact validation against the server catalog ────────────────────────────────────────

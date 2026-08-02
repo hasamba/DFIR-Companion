@@ -10,6 +10,7 @@ import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { VelociraptorClient, type VqlRunner, type VelociraptorApiConfig } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml", binary: "velociraptor", timeoutMs: 5000, maxRows: 1000, maxOutputBytes: 1024 * 1024,
@@ -55,6 +56,29 @@ async function makeApp(runnerOverride: VqlRunner = runner) {
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore, store };
+}
+
+/**
+ * Wait for the case's hunt job to reach a TERMINAL status (issue #408).
+ *
+ * `error` counts as terminal so a genuine import failure still reports as
+ * `expected 'error' to be 'imported'` at the caller's assertion. The six loops this replaces
+ * spelled a private 100x20ms deadline instead, and on expiry fell through to that same assertion
+ * reporting `expected 'collecting' to be 'imported'` — a wait that ran out, wearing the costume of
+ * a state-machine defect. The description closure names the last status actually observed, so a
+ * real hang says what the job was stuck on.
+ */
+async function pollHuntJob<T extends { status: string }>(target: Parameters<typeof request>[0]): Promise<T> {
+  let last = "no job at all";
+  return pollFor<T>(
+    () => `the hunt job to reach a terminal status, last saw "${last}"`,
+    async () => {
+      const job = (await request(target).get("/cases/c1/velociraptor/hunt-jobs")).body[0] as T | undefined;
+      if (!job) return undefined;
+      last = job.status;
+      return job.status === "imported" || job.status === "error" ? job : undefined;
+    },
+  );
 }
 
 describe("Velociraptor triage bundles — routes", () => {
@@ -172,18 +196,13 @@ describe("Velociraptor triage bundles — routes", () => {
     const col = await request(app).post("/cases/c1/velociraptor/collect");
     expect(col.status).toBe(202);
 
-    let job: { status: string } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
+    const job = await pollHuntJob<{ status: string }>(app);
+    expect(job.status).toBe("imported");
 
     // The Pstree rows the mock hunt returned became forensic-timeline events.
     const state = await stateStore.load("c1");
     expect(state.forensicTimeline.length).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("stamps veloUrl on the FORENSIC timeline events a bundle collect produces, not just super-only imports (#7 regression)", async () => {
     // Bug: importVeloHuntResults computed the hunt's GUI deep-link only inside the superTimelineOnly
@@ -192,17 +211,12 @@ describe("Velociraptor triage bundles — routes", () => {
     // timeline's "↗ Velociraptor" row link never rendered.
     await request(app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
     await request(app).post("/cases/c1/velociraptor/collect");
-    let job: { status: string } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
+    const job = await pollHuntJob<{ status: string }>(app);
+    expect(job.status).toBe("imported");
     const state = await stateStore.load("c1");
     expect(state.forensicTimeline.length).toBeGreaterThan(0);
     expect(state.forensicTimeline.every((e) => e.veloUrl === "https://velo.example/app/index.html?org_id=root#/hunts/H.TEST1")).toBe(true);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("ingests an uploaded JSON report (THOR) from the hunt even when result rows are empty", async () => {
     const thorLine = JSON.stringify({
@@ -221,17 +235,12 @@ describe("Velociraptor triage bundles — routes", () => {
     await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
     expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
 
-    let job: { status: string } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
+    const job = await pollHuntJob<{ status: string }>(made.app);
+    expect(job.status).toBe("imported");
     // The uploaded THOR JSON was detected + imported into the timeline (rows were empty).
     const state = await made.stateStore.load("c1");
     expect(state.forensicTimeline.length).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("collect records skipped (failed) and empty (no findings) artifacts on the job — so a bundle where most artifacts fail isn't silently indistinguishable from one where they simply found nothing", async () => {
     const mixedRunner: VqlRunner = async (statements) => {
@@ -264,16 +273,11 @@ describe("Velociraptor triage bundles — routes", () => {
     await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
     expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
 
-    let job: { status: string; skippedArtifacts?: { name: string; error: string }[]; emptyArtifacts?: string[] } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
-    expect(job?.skippedArtifacts).toEqual([{ name: "DetectRaptor.Windows.Detection.Amcache", error: "output exceeded 1048576 bytes" }]);
-    expect(job?.emptyArtifacts).toEqual(["Windows.System.Pslist"]);
-  });
+    const job = await pollHuntJob<{ status: string; skippedArtifacts?: { name: string; error: string }[]; emptyArtifacts?: string[] }>(made.app);
+    expect(job.status).toBe("imported");
+    expect(job.skippedArtifacts).toEqual([{ name: "DetectRaptor.Windows.Detection.Amcache", error: "output exceeded 1048576 bytes" }]);
+    expect(job.emptyArtifacts).toEqual(["Windows.System.Pslist"]);
+  }, POLL_TIMEOUT_MS * 2);
 
   it("run-bundle is 501 when Velociraptor is not configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-velobundle-noclient-"));
@@ -300,14 +304,9 @@ describe("Velociraptor hunt status polling — routes", () => {
     expect(poll.status).toBe(200);
 
     // The poll triggered importVeloHuntResults in the background (fire-and-forget) — wait for it.
-    let job: { status: string } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
-  });
+    const job = await pollHuntJob<{ status: string }>(made.app);
+    expect(job.status).toBe("imported");
+  }, POLL_TIMEOUT_MS * 2);
 
   // Deleting a hunt from the Velociraptor GUI does not make it disappear from hunts() (confirmed
   // against a live server) — it just reports STOPPED, same as a hunt that finished naturally. The only
@@ -327,16 +326,11 @@ describe("Velociraptor hunt status polling — routes", () => {
     await request(made.app).post("/cases/c1/velociraptor/run-bundle").send({ bundleId: "best-practice", waitMinutes: 30 });
     expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
 
-    let job: { status: string; stoppedEarly?: boolean; addedEvents?: number } | null = null;
-    for (let i = 0; i < 100; i++) {
-      job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0] ?? null;
-      if (job && (job.status === "imported" || job.status === "error")) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    expect(job?.status).toBe("imported");
-    expect(job?.stoppedEarly).toBe(true);
-    expect(job?.addedEvents ?? 0).toBe(0);
-  });
+    const job = await pollHuntJob<{ status: string; stoppedEarly?: boolean; addedEvents?: number }>(made.app);
+    expect(job.status).toBe("imported");
+    expect(job.stoppedEarly).toBe(true);
+    expect(job.addedEvents ?? 0).toBe(0);
+  }, POLL_TIMEOUT_MS * 2);
 
   it("poll-status marks the job deleted when Velociraptor has no record of the hunt", async () => {
     const runner: VqlRunner = async (statements) => {

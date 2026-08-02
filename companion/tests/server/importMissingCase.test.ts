@@ -9,6 +9,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { EVIDENCE_IMPORT_ROUTES } from "../../src/routes/importCaseGuard.js";
+import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { waitForEvents } from "../helpers/caseWaits.js";
 
 // Regression: POST /cases/:id/import — evidence imported into a case that does not exist.
 // Found by /qa on 2026-06-25.
@@ -77,18 +79,13 @@ async function makeApp(opts: { withSynthesis?: boolean } = {}) {
   return { app, store, stateStore };
 }
 
-async function waitForEvents(stateStore: StateStore, caseId: string): Promise<number> {
-  for (let i = 0; i < 100; i++) {
-    const s = await stateStore.load(caseId);
-    if (s.forensicTimeline.length > 0) return s.forensicTimeline.length;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return (await stateStore.load(caseId)).forensicTimeline.length;
-}
-
 const body = { filename: "hunt.json", text: JSON.stringify(CHAINSAW_HUNT) };
 
-describe("POST /cases/:id/import — case existence guard", () => {
+// One test below awaits waitForEvents (one poll budget), and poll.ts requires the test timeout to
+// exceed the SUM of its poll budgets. Stated on the suite rather than that one test because this
+// file is Prettier-gated: a third `it()` argument pushes the line past the print width and makes
+// Prettier reflow the whole test body, burying the change in unrelated formatting.
+describe("POST /cases/:id/import — case existence guard", { timeout: POLL_TIMEOUT_MS * 2 }, () => {
   it("404s a valid import into a case that does not exist (no silent 202 / orphaned evidence)", async () => {
     const { app, store } = await makeApp();
     const res = await request(app).post("/cases/does-not-exist/import").send(body);

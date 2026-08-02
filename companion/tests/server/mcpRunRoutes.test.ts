@@ -12,6 +12,14 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { McpServerStore } from "../../src/integrations/mcp/mcpServerStore.js";
 import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
 import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+
+// Nearly every test here awaits `settle` (one poll budget) and a couple await two. Set the timeout
+// once at the suite level rather than on ~22 individual tests: poll.ts requires the caller's test
+// timeout to exceed the SUM of its poll budgets, and one stated figure is easier to keep true than
+// twenty-two copies of it. The trade is that the 8 tests here that never poll (pure request/response
+// 400/404/501 checks) also inherit it, so a hang in one of those surfaces in 30s instead of 15s.
+const MCP_TEST_TIMEOUT = POLL_TIMEOUT_MS * 3;
 
 // Output the existing importers recognize, so the run exercises the real ingest chain.
 const YARA_OUT = "EvilRule /x/a.bin\n0x10:$s: 4d 5a";
@@ -62,14 +70,25 @@ async function harness(opts: { text?: string } = {}) {
            pipeline, stateStore, importUndoStore, mcpTransferRunner };
 }
 
-/** The run is backgrounded, so wait for its job to reach a terminal state. */
+/**
+ * The run is backgrounded, so wait for its job to reach a terminal state.
+ *
+ * On a WALL-CLOCK budget: the 200x10ms loop this replaces spelled "2 seconds" but really meant
+ * "2 seconds of sleeping plus 200 JobManager reads", so it got shorter exactly when the machine was
+ * busiest (issue #408). Its `job never settled` message also never said which state the job was
+ * stuck in; pollFor's description closure does.
+ */
 async function settle(jobManager: JobManager, jobId: string) {
-  for (let i = 0; i < 200; i++) {
-    const job = jobManager.get(jobId);
-    if (job && (job.status === "succeeded" || job.status === "failed" || job.status === "cancelled")) return job;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error("job never settled");
+  let last = "no job registered";
+  return pollFor(
+    () => `job ${jobId} to reach a terminal state, last saw "${last}"`,
+    async () => {
+      const job = jobManager.get(jobId);
+      if (!job) return undefined;
+      last = job.status;
+      return job.status === "succeeded" || job.status === "failed" || job.status === "cancelled" ? job : undefined;
+    },
+  );
 }
 
 const RUN_BODY = {
@@ -78,7 +97,7 @@ const RUN_BODY = {
   targetPath: "imports/mem.raw",
 };
 
-describe("POST /cases/:id/mcp/:serverId/run", () => {
+describe("POST /cases/:id/mcp/:serverId/run", { timeout: MCP_TEST_TIMEOUT }, () => {
   it("delivers, runs, and ingests the result into the case", async () => {
     const { app, jobManager, transfers } = await harness();
 
@@ -187,7 +206,7 @@ describe("POST /cases/:id/mcp/:serverId/run", () => {
 
 // A tool can return reference data as readily as evidence — a capability listing is structurally
 // identical to a Volatility table — so the analyst gets to look before any of it reaches the case.
-describe("preview before import", () => {
+describe("preview before import", { timeout: MCP_TEST_TIMEOUT }, () => {
   it("fetches the output without touching the case", async () => {
     const { app, jobManager } = await harness();
 
@@ -304,7 +323,7 @@ describe("preview before import", () => {
   });
 });
 
-describe("POST /cases/:id/mcp/agent", () => {
+describe("POST /cases/:id/mcp/agent", { timeout: MCP_TEST_TIMEOUT }, () => {
   const AGENT_JSON = '{"findings":[{"title":"Injected process","description":"malfind hit","severity":"High"}],"iocs":[{"type":"ip","value":"10.2.3.4"}]}';
   const agentRunner: ClaudeRunner = async () => ({
     code: 0, stderr: "",
@@ -362,15 +381,24 @@ describe("POST /cases/:id/mcp/agent", () => {
     const { app, jobManager } = await agentHarness({ runner });
     const res = await request(app).post("/cases/c1/mcp/agent").send({ prompt: "investigate" });
 
-    for (let i = 0; i < 50 && !jobManager.get(res.body.jobId)?.detail?.includes("windows.pslist"); i++) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+    // The runner is parked on `await gate`, so `release()` has to run even if the poll times out
+    // or an assertion throws — otherwise the job stays pending for the rest of the file.
+    try {
+      let lastDetail = "no detail yet";
+      const running = await pollFor(
+        () => `the job to publish the windows.pslist tool activity, last saw detail "${lastDetail}"`,
+        async () => {
+          const job = jobManager.get(res.body.jobId);
+          lastDetail = job?.detail ?? "no detail yet";
+          return job?.detail?.includes("windows.pslist") ? job : undefined;
+        },
+      );
+      expect(running.detail).toContain("running windows.pslist");
+      expect(running.detail).not.toContain("secret");
+      expect(running.progress).toEqual({ done: 2, total: 4 });
+    } finally {
+      release();
     }
-    const running = jobManager.get(res.body.jobId)!;
-    expect(running.detail).toContain("running windows.pslist");
-    expect(running.detail).not.toContain("secret");
-    expect(running.progress).toEqual({ done: 2, total: 4 });
-
-    release();
     expect((await settle(jobManager, res.body.jobId)).status).toBe("succeeded");
   });
 
@@ -467,7 +495,7 @@ describe("POST /cases/:id/mcp/agent", () => {
   });
 });
 
-describe("POST /cases/:id/mcp/:serverId/run-upload", () => {
+describe("POST /cases/:id/mcp/:serverId/run-upload", { timeout: MCP_TEST_TIMEOUT }, () => {
   it("stages uploaded bytes, runs against them, and ingests", async () => {
     const { app, jobManager, transfers } = await harness();
 
