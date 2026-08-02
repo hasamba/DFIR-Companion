@@ -9,6 +9,10 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { TagsStore } from "../../src/analysis/tags.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { EnrichmentProvider, IocKind, EnrichmentResult } from "../../src/enrichment/provider.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+
+/** The two IOC ids the bulk-enrich test selects; i2 is deliberately left out. */
+const SELECTED = ["i1", "i3"];
 
 async function freshStore(): Promise<CaseStore> {
   return new CaseStore(await mkdtemp(join(tmpdir(), "dfir-iocbulk-")));
@@ -53,17 +57,23 @@ describe("POST /cases/:id/iocs/bulk-enrich", () => {
     expect(res.body.iocCount).toBe(2);
 
     // Enrichment runs in the background; poll until the two selected IOCs are marked checked.
-    let iocs = (await stateStore.load("c1")).iocs;
-    for (let n = 0; n < 50 && !iocs.find((i) => i.id === "i1")?.enrichedBy; n++) {
-      await new Promise((r) => setTimeout(r, 20));
-      iocs = (await stateStore.load("c1")).iocs;
-    }
+    // Waits on BOTH selected ids, not just i1 — and on a wall-clock budget, so a wait that runs out
+    // says so instead of falling through to `expected undefined to contain "MockLocal"` (issue #408).
+    let pending = SELECTED;
+    const iocs = await pollFor(
+      () => `the bulk enrich to mark i1 and i3 enriched, still unenriched [${pending.join(", ")}]`,
+      async () => {
+        const current = (await stateStore.load("c1")).iocs;
+        pending = SELECTED.filter((id) => !current.find((i) => i.id === id)?.enrichedBy);
+        return pending.length === 0 ? current : undefined;
+      },
+    );
     const byId = Object.fromEntries(iocs.map((i) => [i.id, i]));
     expect(byId.i1.enrichedBy).toContain("MockLocal");
     expect(byId.i3.enrichedBy).toContain("MockLocal");
     expect(byId.i2.enrichedBy).toBeUndefined();             // not selected → untouched
     expect(seen.sort()).toEqual(["1.1.1.1", "3.3.3.3"]);    // only the selected values were queried
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("returns 400 when iocIds is empty", async () => {
     const store = await freshStore();

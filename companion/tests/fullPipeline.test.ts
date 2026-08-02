@@ -12,6 +12,8 @@ import { StateStore } from "../src/analysis/stateStore.js";
 import { MockProvider } from "../src/providers/provider.js";
 import { ReportWriter } from "../src/reports/reportWriter.js";
 import { ReportMetaStore } from "../src/reports/reportMeta.js";
+import { POLL_TIMEOUT_MS } from "./helpers/poll.js";
+import { pollState } from "./helpers/caseWaits.js";
 
 async function pngBase64(): Promise<string> {
   const buf = await sharp({
@@ -138,11 +140,8 @@ describe("full-pipeline integration (capture → import → synthesis → report
     const screenshotFile = capture.body.screenshotFile as string;
 
     // Wait for extraction + auto-synthesis to populate state
-    let state = await stateStore.load("pipeline-1");
-    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("pipeline-1");
-    }
+    let state = await pollState(stateStore, "pipeline-1",
+      "extraction + auto-synthesis to produce a finding", (s) => s.findings.length > 0);
     expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1);
     expect(state.findings.length).toBe(1);
     expect(state.findings[0].title).toBe("Suspicious execution");
@@ -169,11 +168,8 @@ describe("full-pipeline integration (capture → import → synthesis → report
     expect(imp.body.kind).toBe("thor");
 
     // Wait for THOR import to land and re-synthesis to run
-    state = await stateStore.load("pipeline-1");
-    for (let i = 0; i < 80 && state.forensicTimeline.length < 2; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("pipeline-1");
-    }
+    state = await pollState(stateStore, "pipeline-1",
+      "the THOR import to bring the forensic timeline to 2 events", (s) => s.forensicTimeline.length >= 2);
     expect(state.forensicTimeline.some((e) => e.description.includes("mimikatz"))).toBe(true);
     expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
 
@@ -182,11 +178,8 @@ describe("full-pipeline integration (capture → import → synthesis → report
     const enrich = await request(app).post("/cases/pipeline-1/enrich").send({});
     expect(enrich.status).toBe(202);
 
-    state = await stateStore.load("pipeline-1");
-    for (let i = 0; i < 40 && !state.iocs.some((i) => i.enrichments); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("pipeline-1");
-    }
+    state = await pollState(stateStore, "pipeline-1",
+      "the MockTI enrichment to annotate an IOC", (s) => s.iocs.some((i) => i.enrichments));
     const enrichedIoc = state.iocs.find((i) => i.enrichments?.some((e) => e.source === "MockTI"));
     expect(enrichedIoc).toBeDefined();
     expect(enrichedIoc!.enrichments).toEqual([
@@ -258,7 +251,8 @@ describe("full-pipeline integration (capture → import → synthesis → report
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(restoredImportFiles.length).toBeGreaterThanOrEqual(1);
-  }, 60_000);
+    // THREE sequential pollState budgets, plus the export/restore/report legs after them.
+  }, POLL_TIMEOUT_MS * 6);
 
   it("does not leave AI or enrichment provider artifacts behind when AI is off", async () => {
     const { app, stateStore } = await freshFullPipelineApp();

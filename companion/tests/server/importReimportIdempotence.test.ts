@@ -9,7 +9,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
-import { pollFor } from "../helpers/poll.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 // #94 — characterization test: re-importing the SAME evidence file must stay idempotent.
 //
@@ -159,7 +159,7 @@ describe("#94 — re-importing identical evidence is idempotent", () => {
 
     expect(second.forensic).toBe(first.forensic);
     expect(second.super).toBe(first.super);
-  }, 30000);
+  }, POLL_TIMEOUT_MS * 3);   // TWO real settle() budgets (one per import cycle), plus the 300ms settles
 
   it("still ingests genuinely different evidence as new events", async () => {
     const { app, stateStore, superTimelineStore, importMetaStore } = await makeApp();
@@ -172,5 +172,5 @@ describe("#94 — re-importing identical evidence is idempotent", () => {
     const after = await counts(stateStore, superTimelineStore);
     expect(after.forensic).toBe(2);
     expect(after.super).toBe(2);
-  }, 30000);
+  }, POLL_TIMEOUT_MS * 3);
 });

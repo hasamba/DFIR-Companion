@@ -7,6 +7,8 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
+import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { waitForEvents } from "../helpers/caseWaits.js";
 
 // A lightweight stand-in for the IRIS client — only the read methods the import path calls.
 function mockIris(over: Partial<Record<string, unknown>> = {}): IrisClient {
@@ -38,15 +40,6 @@ async function makeApp(opts: { irisClient?: IrisClient; rebuildIrisClient?: () =
   const app = createApp(store, { pipeline, stateStore, irisClient: opts.irisClient, rebuildIrisClient: opts.rebuildIrisClient });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
-}
-
-async function waitForEvents(stateStore: StateStore, caseId: string): Promise<number> {
-  for (let i = 0; i < 100; i++) {
-    const s = await stateStore.load(caseId);
-    if (s.forensicTimeline.length > 0) return s.forensicTimeline.length;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return (await stateStore.load(caseId)).forensicTimeline.length;
 }
 
 describe("DFIR-IRIS import routes (issue #88)", () => {
@@ -85,14 +78,14 @@ describe("DFIR-IRIS import routes (issue #88)", () => {
     const state = await stateStore.load("c1");
     expect(state.iocs.some((i) => i.value === "8.8.8.8")).toBe(true);
     expect(state.forensicTimeline.some((e) => (e.sources ?? []).includes("DFIR-IRIS"))).toBe(true);
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one waitForEvents budget, doubled to leave room for setup + assertions
 
   it("resolves the IRIS case by name", async () => {
     const { app, stateStore } = await makeApp({ irisClient: mockIris() });
     const res = await request(app).post("/cases/c1/iris-import").send({ irisCaseName: "Ransomware FS01" });
     expect(res.status).toBe(202);
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("502s when the IRIS case name does not resolve", async () => {
     const { app } = await makeApp({ irisClient: mockIris() });

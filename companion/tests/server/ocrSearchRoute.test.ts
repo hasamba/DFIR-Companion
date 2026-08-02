@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { _resetDedupCache } from "../../src/ingest/captureIngest.js";
 import type { OcrRunner } from "../../src/analysis/ocrRedact.js";
+import { pollFor, POLL_TIMEOUT_MS, type PollOptions } from "../helpers/poll.js";
 
 // Stub OCR runner — "reads" a fixed line so the background-index path is exercised without tesseract.
 const stubOcr: OcrRunner = {
@@ -87,47 +88,73 @@ describe("POST /captures background OCR indexing", () => {
     ...over,
   });
 
-  // The 201 returns before background OCR finishes; poll the index briefly.
-  async function waitForIndex(file: string, tries = 40): Promise<boolean> {
-    for (let i = 0; i < tries; i++) {
-      const idx = await cases.loadOcrIndex("c1");
-      if (idx[file]) return true;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    return false;
+  // The 201 returns before background OCR finishes; poll the index on a WALL-CLOCK budget.
+  // The `for (i < tries)` loop this replaces returned `false` when it gave up, so the caller's
+  // `expect(...).toBe(true)` reported a wait that ran out as an index that never wrote — a timeout
+  // wearing the costume of a defect (issue #408). Now the failure names the files still missing.
+  //
+  // Takes the whole file list rather than one name, so the burst test below spends ONE budget for
+  // seven screenshots instead of seven sequential budgets that could outlast the test timeout.
+  // That collapse means the budget has to be sized for the WHOLE drain, not one file — the
+  // per-file waits it replaces summed to more tolerance than a single default budget carries.
+  async function waitForIndexed(files: string[], options?: PollOptions): Promise<void> {
+    let missing = files;
+    await pollFor(
+      () => `all ${files.length} screenshot(s) to be OCR-indexed, still missing [${missing.join(", ")}]`,
+      async () => {
+        const idx = await cases.loadOcrIndex("c1");
+        missing = files.filter((f) => !idx[f]);
+        return missing.length === 0 ? true : undefined;
+      },
+      options,
+    );
   }
 
-  it("indexes a captured screenshot's OCR text in the background", async () => {
-    const res = await request(app).post("/captures").send(capture());
-    expect(res.status).toBe(201);
-    const file = res.body.screenshotFile as string;
-
-    expect(await waitForIndex(file)).toBe(true);
-    const idx = await cases.loadOcrIndex("c1");
-    expect(idx[file].text).toBe("mimikatz.exe dumped creds");
-    expect(idx[file].wordCount).toBe(3);
-
-    // and it's searchable end-to-end
-    const search = await request(app).get("/cases/c1/ocr-search").query({ q: "mimikatz" });
-    expect(search.body.hits.map((h: { screenshotFile: string }) => h.screenshotFile)).toContain(file);
-  });
-
-  it("indexes EVERY screenshot in a burst (queued, not dropped past the concurrency cap)", async () => {
-    // Seven captures posted back-to-back, each with distinct bytes so none is a byte-dup.
-    const files: string[] = [];
-    for (let i = 0; i < 7; i++) {
-      const res = await request(app).post("/captures").send(capture({
-        imageBase64: pngBytes(i, i + 1, i + 2, i + 3),
-      }));
+  it(
+    "indexes a captured screenshot's OCR text in the background",
+    async () => {
+      const res = await request(app).post("/captures").send(capture());
       expect(res.status).toBe(201);
-      files.push(res.body.screenshotFile as string);
-    }
-    // All seven must eventually be indexed — the queue drains them, none is dropped.
-    // A generous per-file budget (160 tries × 25ms = 4s) absorbs CI-runner scheduling noise;
-    // a real drop/deadlock still fails well before the 20s test timeout below.
-    for (const f of files) expect(await waitForIndex(f, 160)).toBe(true);
-    expect(Object.keys(await cases.loadOcrIndex("c1"))).toHaveLength(7);
-  }, 20_000);
+      const file = res.body.screenshotFile as string;
+
+      await waitForIndexed([file]);
+      const idx = await cases.loadOcrIndex("c1");
+      expect(idx[file].text).toBe("mimikatz.exe dumped creds");
+      expect(idx[file].wordCount).toBe(3);
+
+      // and it's searchable end-to-end
+      const search = await request(app).get("/cases/c1/ocr-search").query({ q: "mimikatz" });
+      expect(search.body.hits.map((h: { screenshotFile: string }) => h.screenshotFile)).toContain(file);
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one poll budget, doubled to leave room for setup + assertions
+
+  it(
+    "indexes EVERY screenshot in a burst (queued, not dropped past the concurrency cap)",
+    async () => {
+      // Seven captures posted back-to-back, each with distinct bytes so none is a byte-dup.
+      const files: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const res = await request(app)
+          .post("/captures")
+          .send(
+            capture({
+              imageBase64: pngBytes(i, i + 1, i + 2, i + 3),
+            }),
+          );
+        expect(res.status).toBe(201);
+        files.push(res.body.screenshotFile as string);
+      }
+      // All seven must eventually be indexed — the queue drains them, none is dropped. One shared
+      // budget covers the whole burst, and a drop/deadlock now names the files that never landed.
+      // Doubled because this is the slowest workload in the file: seven background OCR jobs behind a
+      // concurrency cap. The per-file waits this replaces gave each file its own 4s, so a single
+      // DEFAULT budget would have made the wait SHORTER than before — the opposite of the point.
+      await waitForIndexed(files, { timeoutMs: POLL_TIMEOUT_MS * 2 });
+      expect(Object.keys(await cases.loadOcrIndex("c1"))).toHaveLength(7);
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
 
   it("does not index when DFIR_OCR_SEARCH is off", async () => {
     process.env.DFIR_OCR_SEARCH = "off";

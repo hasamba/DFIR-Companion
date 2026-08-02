@@ -23,6 +23,8 @@ import { emptyState, type InvestigationState } from "../src/analysis/stateTypes.
 import type { CustomerExposureProvider } from "../src/analysis/customerExposure.js";
 import { JobManager } from "../src/analysis/jobManager.js";
 import { DropStatusStore } from "../src/analysis/dropStatus.js";
+import { pollFor, POLL_TIMEOUT_MS } from "./helpers/poll.js";
+import { pollForFinding, pollForForensicEvents, pollForFirstIocEnrichment } from "./helpers/caseWaits.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -253,13 +255,9 @@ describe("server analysis wiring", () => {
     });
 
     // analysis runs async after the response; poll the state briefly.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 20 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.findings).toHaveLength(1);
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("periodic flush analyzes a lone buffered capture that never fills a window", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-flush-"));
@@ -288,13 +286,9 @@ describe("server analysis wiring", () => {
 
     // No navigation/tab_switch and the window is far from full, so analysis only happens once
     // the periodic sweep fires. Poll the state until the finding lands.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.findings).toHaveLength(1);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("auto-synthesizes (debounced) after a capture window when enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-autosynth-"));
@@ -327,16 +321,12 @@ describe("server analysis wiring", () => {
       triggerType: "navigation", imageBase64: await pngBase64(),
     });
 
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.forensicTimeline.length).toBe(1);          // extraction ran
     expect(state.findings).toHaveLength(1);                  // auto-synthesis ran
     expect(state.findings[0].title).toBe("synth finding");
     expect(state.attackerPath).toBe("path");
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("imports a CSV: persists it as evidence, extracts events, then synthesizes findings", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-csv-"));
@@ -380,15 +370,11 @@ describe("server analysis wiring", () => {
     expect(stored).toBe(csv);
 
     // Background: extraction then synthesis populate the state.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1); // extracted from rows
     expect(state.findings).toHaveLength(1);                          // synthesized
     expect(state.findings[0].title).toBe("finding from CSV");
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("serves screenshot + CSV evidence by filename and blocks traversal/invalid names", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-ev-"));
@@ -454,15 +440,11 @@ describe("server analysis wiring", () => {
     const stored = await readFile(join(store.importsDir("c1"), res.body.file), "utf8");
     expect(stored).toBe(log);
 
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.forensicTimeline.length).toBeGreaterThanOrEqual(1);
     expect(state.findings).toHaveLength(1);
     expect(state.findings[0].title).toBe("finding from log");
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("rejects a log import with empty text (no non-empty lines)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-log-empty-"));
@@ -521,17 +503,13 @@ describe("server analysis wiring", () => {
     expect(auditLog.trim().split("\n")).toHaveLength(1);
 
     // Deterministic mapping populated the timeline; background synthesis adds findings.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.forensicTimeline.length).toBe(1);
     expect(state.forensicTimeline[0].severity).toBe("Critical");
     expect(state.forensicTimeline[0].timestamp).toBe("2025-03-14T21:18:18Z"); // artifact time, not scan time
     expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
     expect(state.findings.length).toBeGreaterThanOrEqual(1);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("rejects a THOR import that has only info/lifecycle rows (no findings)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-thor-empty-"));
@@ -580,16 +558,12 @@ describe("server analysis wiring", () => {
     expect(res.body.kind).toBe("thor");
     expect(res.body.minSeverity).toBe("Critical"); // normalized + echoed back
 
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 80 && state.forensicTimeline.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    let state = await pollForForensicEvents(stateStore, "c1");
     await new Promise((r) => setTimeout(r, 100)); // settle — the Medium Notice must never land
     state = await stateStore.load("c1");
     expect(state.forensicTimeline).toHaveLength(1);          // Alert(Critical) kept, Notice(Medium) dropped
     expect(state.forensicTimeline[0].severity).toBe("Critical");
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("unified /import keeps an ungraded (all-Info) import in full despite a high floor (the 'no severities → import everything' rule)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-import-gate-"));
@@ -615,17 +589,16 @@ describe("server analysis wiring", () => {
     expect(res.status).toBe(202);
     expect(res.body.kind).toBe("kape");
 
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 80 && state.forensicTimeline.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
-    await new Promise((r) => setTimeout(r, 100));
+    // Waits for BOTH rows, not just the first: the assertion below is a count, so polling for
+    // ">0" and then sleeping 100ms would report a second row that merely landed late as
+    // `expected 1 to be 2` — the very failure shape this conversion exists to remove.
+    let state = await pollForForensicEvents(stateStore, "c1", 2);
+    await new Promise((r) => setTimeout(r, 100));   // settle — no third event may appear
     state = await stateStore.load("c1");
     // The floor was "high" but this import grades nothing (all Info) → it is kept whole.
     expect(state.forensicTimeline).toHaveLength(2);
     expect(state.forensicTimeline.every((e) => e.severity === "Info")).toBe(true);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("imports a SIEM/EDR JSON export (Elastic envelope): unwraps, maps Windows events, then synthesizes", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-siem-"));
@@ -664,16 +637,12 @@ describe("server analysis wiring", () => {
     expect(auditLog.trim().split("\n")).toHaveLength(1);
 
     // Deterministic mapping populated the timeline; the ::ffff: IP was unwrapped.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 60 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.forensicTimeline.length).toBe(2);
     expect(state.forensicTimeline.some((e) => e.severity === "High" && e.description.includes("7045"))).toBe(true);
     expect(state.iocs.some((i) => i.type === "ip" && i.value === "10.10.200.11")).toBe(true);
     expect(state.findings.length).toBeGreaterThanOrEqual(1);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("import with AI OFF populates the timeline + IOCs deterministically but does NOT synthesize", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-import-aioff-"));
@@ -698,11 +667,7 @@ describe("server analysis wiring", () => {
 
     // Deterministic THOR mapping runs in the background; give it time, then confirm the
     // timeline + IOCs landed but synthesis never produced findings (AI is off).
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 60 && state.forensicTimeline.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    let state = await pollForForensicEvents(stateStore, "c1");
     // Settle: ensure no delayed synthesis sneaks a finding in afterwards.
     await new Promise((r) => setTimeout(r, 150));
     state = await stateStore.load("c1");
@@ -710,7 +675,7 @@ describe("server analysis wiring", () => {
     expect(state.forensicTimeline[0].severity).toBe("Critical");
     expect(state.iocs.some((i) => i.value.includes("mimikatz.exe"))).toBe(true);
     expect(state.findings).toHaveLength(0);                              // synthesis was gated off — no findings
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("CSV/log import via /import is gated by the AI toggle — saved as evidence, NOT sent to the model, when AI is off", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-import-csv-aioff-"));
@@ -914,14 +879,10 @@ describe("server analysis wiring", () => {
     expect(res.body.iocs).toBe(2);
 
     // Background enrichment annotates the hash (not the file) — poll until it lands.
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 40 && !state.iocs[0].enrichments; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFirstIocEnrichment(stateStore, "c1");
     expect(state.iocs[0].enrichments).toEqual([{ source: "VirusTotal", verdict: "malicious", score: "60/72", fetchedAt: expect.any(String) }]);
     expect(state.iocs[1].enrichments).toBeUndefined(); // file path not enrichable
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("returns 501 for enrich when no providers are configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-server-noenrich-"));
@@ -970,16 +931,12 @@ describe("server analysis wiring", () => {
     expect(on.status).toBe(200);
     expect(on.body.providers).toEqual(["VirusTotal"]);
 
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 40 && !state.iocs[0].enrichments; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFirstIocEnrichment(stateStore, "c1");
     expect(state.iocs[0].enrichments?.[0]).toMatchObject({ source: "VirusTotal", verdict: "malicious" });
 
     // Persisted ON.
     expect((await vtState()).enabled).toBe(true);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("rejects a log import when no AI pipeline is configured", async () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -1026,11 +983,12 @@ describe("server analysis wiring", () => {
       const ai = events.findIndex((e) => e.status === "analyzing" && e.phase === "extracting");
       return ai >= 0 && events.slice(ai + 1).some((e) => e.status === "idle");
     };
-    for (let i = 0; i < 40 && !flushed(); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await pollFor(
+      () => `the window flush to report analyzing(extracting) → idle, saw [${events.map((e) => `${e.status}/${e.phase ?? "-"}`).join(", ")}]`,
+      async () => (flushed() ? true : undefined),
+    );
     expect(flushed()).toBe(true); // the window flush reported analyzing(extracting) → idle
-  });
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   it("GET /health reports aiEnabled false without a pipeline, true with one", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-ai-health-"));
@@ -1224,10 +1182,13 @@ describe("state and report routes", () => {
     expect(post.body.mentions).toEqual(["bob"]);
 
     // dispatchNotify is fire-and-forget AND the notifier loads its channel config from disk before
-    // it fetches, so one microtask tick isn't enough — poll until the send lands (or give up).
-    for (let i = 0; i < 200 && !sent.length; i++) await new Promise((r) => setTimeout(r, 10));
+    // it fetches, so one microtask tick isn't enough — poll until the send lands.
+    await pollFor(
+      "the @mention notification to reach the configured webhook",
+      async () => (sent.length ? sent : undefined),
+    );
     expect(sent).toEqual(["https://hooks.slack.com/services/mentions"]);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("false-positive: onFalsePositive callback fires on add, batch add, and remove", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-legit-cb-"));
@@ -1937,13 +1898,9 @@ describe("AI on/off control", () => {
 
     // turn AI ON → backfill analyzes the two captured-while-off screenshots
     await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    let state = await stateStore.load("c1");
-    for (let i = 0; i < 40 && state.findings.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 25));
-      state = await stateStore.load("c1");
-    }
+    const state = await pollForFinding(stateStore, "c1");
     expect(state.findings).toHaveLength(1);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("emits a terminal idle status when AI is turned on with nothing to catch up on", async () => {
     // Regression: the dashboard optimistically shows "AI on — catching up on un-analyzed
@@ -1962,13 +1919,14 @@ describe("AI on/off control", () => {
 
     // Fresh case, zero captures → toggling AI on has nothing to analyze, but must still emit idle.
     await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    for (let i = 0; i < 40 && !events.some((e) => e.status === "idle"); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await pollFor(
+      () => `a terminal idle status after the AI toggle, saw [${events.map((e) => e.status).join(", ")}]`,
+      async () => (events.some((e) => e.status === "idle") ? true : undefined),
+    );
     expect(events.some((e) => e.status === "idle")).toBe(true);
     // …and it must not have falsely claimed it was analyzing when there was nothing to do.
     expect(events.some((e) => e.status === "analyzing")).toBe(false);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("synthesizes evidence imported while AI was off when AI is turned on (no screenshots)", async () => {
     // Bug: importing a Velociraptor table with AI off populates the timeline deterministically, but
@@ -1986,9 +1944,12 @@ describe("AI on/off control", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     // No capture log at all (import-only case). Turning AI on must trigger synthesis, not idle.
     await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-    for (let i = 0; i < 80 && !phases.includes("synthesizing"); i++) await new Promise((r) => setTimeout(r, 25));
+    await pollFor(
+      () => `the AI toggle to trigger synthesis, saw phases [${phases.join(", ")}]`,
+      async () => (phases.includes("synthesizing") ? true : undefined),
+    );
     expect(phases).toContain("synthesizing");
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("tracks AI off→on backfill synthesis as a job, not just an onAiStatus ping", async () => {
     // Bug: turning AI on ran synthesis via the debounced auto path (scheduleSynthesis), which never
@@ -2005,13 +1966,15 @@ describe("AI on/off control", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
     await request(app).post("/cases/c1/ai-control").send({ enabled: true });
     let jobs: { kind: string; status: string }[] = [];
-    for (let i = 0; i < 80; i++) {
-      jobs = jobManager.list("c1");
-      if (jobs.some((j) => j.kind === "synthesis")) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await pollFor(
+      () => `a synthesis job to be registered, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
+      async () => {
+        jobs = jobManager.list("c1");
+        return jobs.some((j) => j.kind === "synthesis") ? jobs : undefined;
+      },
+    );
     expect(jobs.some((j) => j.kind === "synthesis")).toBe(true);
-  });
+  }, POLL_TIMEOUT_MS * 2);
 
   it("tracks a drop-folder auto-import as a job so the Jobs panel shows it (parity with /import)", async () => {
     // Bug: the evidence drop-folder poller (scanCaseDrops) imported files through the SAME chain as
@@ -2036,16 +1999,21 @@ describe("AI on/off control", () => {
       await writeFile(join(dropDir, "evidence.json"), velo, "utf8");
 
       let jobs: { kind: string; label?: string }[] = [];
-      for (let i = 0; i < 200 && !jobs.some((j) => j.kind === "import"); i++) {
-        await new Promise((r) => setTimeout(r, 50));
-        jobs = jobManager.list("c1");
-      }
+      await pollFor(
+        () => `the drop-folder sweep to register an import job, saw kinds [${jobs.map((j) => j.kind).join(", ")}]`,
+        async () => {
+          jobs = jobManager.list("c1");
+          return jobs.some((j) => j.kind === "import") ? jobs : undefined;
+        },
+      );
       expect(jobs.some((j) => j.kind === "import" && /drop/i.test(j.label ?? ""))).toBe(true);
     } finally {
       if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
       else process.env.DFIR_DROP_POLL_S = prevPoll;
     }
-  }, 15000);
+    // The drop poller needs ~4s to settle a file before importing it, so this poll genuinely uses
+    // most of its budget — leave a SECOND full poll budget on top (20s total), not the 15s default.
+  }, POLL_TIMEOUT_MS * 2);
 
   it("POST /import fires onImport(caseId) so dashboards can warn cross-case (parity with captures)", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-onimport-"));

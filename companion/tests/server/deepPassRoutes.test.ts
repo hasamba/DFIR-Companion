@@ -9,6 +9,7 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
@@ -81,18 +82,24 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
 // Reading the log straight after the POST therefore races the write: it wins on a fast dev box and
 // loses on contended CI (seen live: `Cannot read properties of undefined (reading 'detail')`).
 // Poll for the entry instead of assuming it has arrived; the assertion is unchanged, only the wait.
+// The wait itself is a WALL-CLOCK budget: the 50x20ms loop this replaces returned `undefined` when
+// it expired, so the caller's `expect(entry).toBeTruthy()` reported the timeout as a missing log
+// entry — the same defect the fire-and-forget write would produce (issue #408).
 async function awaitActivityEntry(
   app: Parameters<typeof request>[0],
   caseId: string,
   action: string,
-): Promise<{ action: string; detail?: string } | undefined> {
-  for (let i = 0; i < 50; i++) {
-    const log = await request(app).get(`/cases/${caseId}/activity-log`);
-    const entry = (log.body as { action: string; detail?: string }[]).find((e) => e.action === action);
-    if (entry) return entry;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return undefined;
+): Promise<{ action: string; detail?: string }> {
+  let seen: string[] = [];
+  return pollFor(
+    () => `an activity-log entry for "${action}" on case ${caseId}, saw only [${seen.join(", ")}]`,
+    async () => {
+      const log = await request(app).get(`/cases/${caseId}/activity-log`);
+      const entries = log.body as { action: string; detail?: string }[];
+      seen = entries.map((e) => e.action);
+      return entries.find((e) => e.action === action);
+    },
+  );
 }
 
 describe("deep-pass routes", () => {
@@ -238,9 +245,8 @@ describe("deep-pass routes", () => {
     expect(res.body.batchesFailed).toBeGreaterThan(0);
 
     const entry = await awaitActivityEntry(app, "c1", "deep-pass");
-    expect(entry).toBeTruthy();
-    expect(String(entry!.detail)).toMatch(/fail/i);
-  });
+    expect(String(entry.detail)).toMatch(/fail/i);
+  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
 
   // The dashboard must be able to DISABLE the Run button up front instead of letting the analyst
   // click into a 501. /health.aiEnabled is the VISION gate (hasAiProvider) and answers the wrong
@@ -267,7 +273,6 @@ describe("deep-pass routes", () => {
     await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
 
     const entry = await awaitActivityEntry(app, "c1", "deep-pass");
-    expect(entry).toBeTruthy();
-    expect(String(entry!.detail)).not.toMatch(/fail/i);
-  });
+    expect(String(entry.detail)).not.toMatch(/fail/i);
+  }, POLL_TIMEOUT_MS * 2);
 });
