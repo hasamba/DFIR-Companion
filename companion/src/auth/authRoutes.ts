@@ -1,12 +1,11 @@
 import type { Express, Request, Response } from "express";
-import { AttemptLimiter } from "../http/rateLimiter.js";
+import { getLoginLimiter, getLoginIpLimiter } from "../http/rateLimiter.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { readPublicAsset } from "../serverAssets.js";
 import type { TeamAuth } from "./teamAuth.js";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
+import { isValidUsername } from "./authStore.js";
 import { isCaseRole, isGlobalRole, isServicePermission, type RequestAuthentication } from "./types.js";
-
-const loginLimiter = new AttemptLimiter(5, 30_000);
 
 function bodyObject(req: Request): Record<string, unknown> {
   return req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -206,7 +205,24 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
   app.post("/auth/local/login", async (req: Request, res: Response) => {
     const body = bodyObject(req);
     const username = bodyString(body, "username");
-    const key = `${req.ip}:${username.toLowerCase()}`;
+    const ip = req.ip ?? "unknown";
+    // Client-wide budget FIRST, and consumed by every attempt. The per-account key below is
+    // `ip:username`, so rotating the username handed out a fresh bucket per request: the five-try
+    // lockout still protected one named account, but an unauthenticated caller could run an
+    // unbounded sequence of scrypt verifications, permanent audit rows and limiter Map entries
+    // from a single client (#421).
+    if (!getLoginIpLimiter().tryAcquire(ip)) {
+      res.setHeader("Retry-After", "60");
+      return res.status(429).json({ error: "too many attempts, try again later" });
+    }
+    // A username that could never name an account buys nothing: no lookup, no verification against
+    // the dummy hash, no audit row. Same generic 401 as a wrong password — this must not become a
+    // way to tell "no such user" from "wrong password".
+    if (!isValidUsername(username)) {
+      return res.status(401).json({ error: "invalid username or password" });
+    }
+    const loginLimiter = getLoginLimiter();
+    const key = `${ip}:${username.toLowerCase()}`;
     const remaining = loginLimiter.remainingLockout(key);
     if (remaining > 0) {
       res.setHeader("Retry-After", String(Math.ceil(remaining / 1_000)));
@@ -215,7 +231,15 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
     const identity = await auth.store.verifyLocalCredentials(username, bodyString(body, "password"));
     if (!identity) {
       loginLimiter.recordFailure(key);
-      auth.store.addAudit(undefined, "local-login-failed", undefined, undefined, `username=${username}`);
+      // Bounded even though isValidUsername already caps it at 64 — the audit table is permanent,
+      // and the detail column should never be the place a length assumption is first tested.
+      auth.store.addAudit(
+        undefined,
+        "local-login-failed",
+        undefined,
+        undefined,
+        `username=${username.slice(0, 64)}`,
+      );
       return res.status(401).json({ error: "invalid username or password" });
     }
     loginLimiter.clear(key);
