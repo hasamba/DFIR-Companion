@@ -7,7 +7,7 @@ import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
-import { seedDemoCase } from "../analysis/seedDemoCase.js";
+import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
@@ -153,41 +153,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
-  // Seed the built-in demo case ("GlobalTech Industries — BEC & Ransomware Precursor").
-  // Accepts optional { caseId?: string, force?: boolean } in the body.
-  // Returns 409 when the case already exists and force is not set; 201 on success.
-  // Available in both the dev server and the portable EXE so users don't need tsx/Node installed.
-  app.post("/cases/seed-demo", async (req: Request, res: Response) => {
-    try {
-      const caseId = typeof req.body?.caseId === "string" ? req.body.caseId : undefined;
-      const force  = req.body?.force === true;
-      // Guard against clobbering an in-progress case. force previously overwrote case.json +
-      // investigation state for an OPEN case with a running synthesis/import job, destroying the
-      // analyst's findings/timeline mid-flight and leaving orphan files (the demo only writes its
-      // own captures/imports, so extra screenshots/imports survived as orphans). Refuse when the
-      // case exists and is open, or has a non-terminal job — mirroring /restore-backup's check.
-      if (force) {
-        const existing = caseId && await store.getCaseMeta(caseId).catch(() => null);
-        if (existing) {
-          const status = existing.status ?? "open";   // absent means open
-          if (status === "open") {
-            return res.status(409).json({ error: `case "${caseId}" is open — close it before force-seeding the demo over it (or delete it)` });
-          }
-          const busy = options.jobManager?.list(caseId).find((j) => !isTerminal(j.status));
-          if (busy) {
-            return res.status(409).json({ error: `a ${busy.kind}${busy.label ? ` (${busy.label})` : ""} job is in progress for this case — cancel it or wait, then seed`, jobId: busy.id, kind: busy.kind });
-          }
-        }
-      }
-      const result = await seedDemoCase(store.casesRoot, { caseId, force });
-      options.teamAuth?.grantCreator(req, result.caseId);
-      return res.status(201).json(result);
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "EEXIST") return res.status(409).json({ error: e.message });
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  // Seed the built-in demo case — POST /cases/seed-demo (routes/seedDemo.ts).
+  registerSeedDemoRoutes(app, ctx);
 
   // ── Case lifecycle (#119) ──────────────────────────────────────────────────────────────
   // Set a case's lifecycle status (open / closed). A closed case is eligible for archiving.

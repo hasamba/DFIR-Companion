@@ -338,6 +338,51 @@ describe("POST /cases/seed-demo — force guard (#19)", () => {
     expect(res.body.error).toMatch(/open/i);
   });
 
+  // #427: the global createCaseIdGate is mounted on `/cases/:id`, so for this route it validates
+  // the literal segment "seed-demo" and never looks at the body. An unvalidated body caseId flowed
+  // into seedDemoCase's join(casesRoot, caseId): the plain path created the demo scaffold outside
+  // the cases root, and force:true aimed `rm -rf` there.
+  it("rejects a traversal caseId with 400 and writes nothing outside the cases root", async () => {
+    const { app, store } = await harness();
+    const outside = join(store.casesRoot, "..", "escaped-seed");
+    const res = await request(app).post("/cases/seed-demo").send({ caseId: "../escaped-seed" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/traversal/i);
+    await expect(stat(outside)).rejects.toThrow();
+  });
+
+  it("rejects a traversal caseId with force:true without deleting the target directory", async () => {
+    const { app, store } = await harness();
+    // A directory outside the root holding an UNPARSEABLE case.json: getCaseMeta re-throws, the
+    // route's `.catch(() => null)` swallows it, the open-case 409 is skipped — and force's
+    // `rm(caseDir, { recursive: true, force: true })` would have taken the whole tree.
+    const outside = join(store.casesRoot, "..", "victim-tree");
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "case.json"), "not json at all");
+    await writeFile(join(outside, "evidence.bin"), "precious");
+
+    const res = await request(app).post("/cases/seed-demo").send({ caseId: "../victim-tree", force: true });
+    expect(res.status).toBe(400);
+    // Both files survive untouched.
+    await expect(stat(join(outside, "case.json"))).resolves.toBeTruthy();
+    await expect(stat(join(outside, "evidence.bin"))).resolves.toBeTruthy();
+  });
+
+  it("rejects a non-string caseId rather than silently seeding the default demo case", async () => {
+    const { app, store } = await harness();
+    const res = await request(app).post("/cases/seed-demo").send({ caseId: 42 });
+    expect(res.status).toBe(400);
+    await expect(stat(join(store.casesRoot, "demo"))).rejects.toThrow();
+  });
+
+  it("seedDemoCase itself refuses a traversal id, so the CLI path is covered too", async () => {
+    const { store } = await harness();
+    const { seedDemoCase } = await import("../../src/analysis/seedDemoCase.js");
+    await expect(seedDemoCase(store.casesRoot, { caseId: "../cli-escape", force: true })).rejects.toThrow(/invalid caseId/i);
+    await expect(stat(join(store.casesRoot, "..", "cli-escape"))).rejects.toThrow();
+  });
+
   it("force:true on a CLOSED case re-seeds (clears the dir, no orphans)", async () => {
     const { app, store } = await harness();
     await seedCase(app, "democlosed", "Old case");
