@@ -9,6 +9,7 @@ import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { encryptBuffer } from "../../src/analysis/caseEncryption.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -214,6 +215,64 @@ describe("POST /cases/import/encrypted", () => {
     for (let i = 0; i < 4; i++) {
       expect((await request(app).post("/cases/import/encrypted").send({ data: junk, password: "x" })).status).toBe(400);
     }
+  });
+
+  // #424: the limiter recorded a failure only for a DecryptionError. A CORRECTLY encrypted archive
+  // whose contents are not a ZIP pays exactly the same ~1s synchronous scrypt derivation and then
+  // throws an archive error instead — so it never touched the limiter, and looping it was an
+  // unmetered way to hold the event loop. (It answered 500 as well: a client-supplied archive that
+  // does not parse is a bad request, not a server fault.)
+  it("counts a correctly encrypted but malformed archive, which costs the same derivation", { timeout: 60_000 }, async () => {
+    const { app } = await harness();
+    // Valid container, correct password, contents that are not a ZIP. Decryption succeeds; the
+    // ZIP parse is what fails.
+    const data = encryptBuffer(Buffer.from("valid container, contents are not a ZIP"), PASSWORD).toString("base64");
+
+    for (let i = 0; i < 4; i++) {
+      const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+      expect(res.status).toBe(400);
+    }
+    const tripped = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+    expect(tripped.status).toBe(429);
+    expect(tripped.headers["retry-after"]).toBeDefined();
+  });
+
+  it("clears the failure state only on a successful import", { timeout: 60_000 }, async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const good = await exportArchive(app, "INC-1");
+    const bad = encryptBuffer(Buffer.from("not a ZIP"), PASSWORD).toString("base64");
+
+    for (let i = 0; i < 4; i++) {
+      expect((await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status).toBe(400);
+    }
+    // One good import resets the counter...
+    expect((await request(app).post("/cases/import/encrypted").send({ data: good, password: PASSWORD, targetCaseId: "INC-2" })).status).toBe(201);
+    // ...so four more failures fit again rather than tripping on the first.
+    for (let i = 0; i < 4; i++) {
+      expect((await request(app).post("/cases/import/encrypted").send({ data: bad, password: PASSWORD })).status).toBe(400);
+    }
+  });
+
+  // The conflict stays uncounted by the failure limiter — an analyst re-importing is not an
+  // attack — but it opens the archive, which means it pays for a derivation. The per-request
+  // budget is what stops a loop of them from being free.
+  it("stops repeated conflicts from being an unmetered derivation loop", { timeout: 120_000 }, async () => {
+    const { app, stateStore, store } = await harness();
+    await seedCase(app, stateStore, store);
+    const data = await exportArchive(app, "INC-1");
+
+    let budgetHit = 0;
+    for (let i = 0; i < 12; i++) {
+      const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+      if (res.status === 429) { budgetHit = i; break; }
+      expect(res.status).toBe(409);   // still a conflict, still not a "failed import"
+    }
+    expect(budgetHit).toBeGreaterThan(0);
+    // The bound came from the request budget, not the failure lockout — so the message is the
+    // budget's, and the failure limiter was never touched.
+    const res = await request(app).post("/cases/import/encrypted").send({ data, password: PASSWORD });
+    expect(res.body.error).toMatch(/too many import attempts/i);
   });
 
   it("400s on a malformed payload", async () => {
