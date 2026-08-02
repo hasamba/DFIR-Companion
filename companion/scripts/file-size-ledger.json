@@ -9,7 +9,7 @@
   "public/dashboard.html#inline-css": 3234,
   "public/dashboard.html#inline-js": 19203,
   "reports/markdown.ts": 1461,
-  "routes/caseLifecycle.ts": 1269,
+  "routes/caseLifecycle.ts": 1204,
   "routes/import.ts": 1766,
   "routes/mcp.ts": 845,
   "routes/velociraptor.ts": 888,
