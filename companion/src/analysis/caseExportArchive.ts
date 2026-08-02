@@ -252,10 +252,45 @@ export async function exportEncryptedCase(
 // this guard means a malicious or corrupted entry path is rejected before ANY file is written.
 // The colon check also closes an NTFS alternate-data-stream gap: "shot.jpg:hidden.exe" doesn't
 // escape the case directory, but would silently write a hidden stream on Windows without it.
+//
+// It also fixes the archive to ONE path syntax, forward slashes, and rejects the segment spellings
+// Windows silently normalizes. Both exist for the same reason (#426): the duplicate check compares
+// raw path strings, but the write loop resolves them with the host platform's rules, and on Windows
+// several distinct strings resolve to one file. `state/a` and `state\a`, `EVIDENCE.BIN` and
+// `evidence.bin`, `notes` and `notes.` all pass a raw-string comparison and then have the later
+// entry silently overwrite the earlier one — evidence loss with no error, from a crafted archive or
+// from a legitimate one created on a case-sensitive filesystem. A reserved device name (CON, LPT1,
+// NUL — with or without an extension) is worse still: on Windows it does not resolve to a file at
+// all. Every case archive this tool writes uses forward slashes and ordinary names, so nothing
+// legitimate is refused.
+const WINDOWS_RESERVED_SEGMENT = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
 function isSafeZipEntryPath(path: string): boolean {
   if (!path || isAbsolute(path) || /^[a-zA-Z]:/.test(path) || path.includes(":")) return false;
-  const segments = path.split(/[\\/]+/);
-  return segments.every((seg) => seg !== "" && seg !== "." && seg !== "..");
+  if (path.includes("\\")) return false;
+  return path.split("/").every(
+    (seg) =>
+      seg !== "" &&
+      seg !== "." &&
+      seg !== ".." &&
+      !/[.\s]$/.test(seg) && // Windows strips trailing dots and spaces
+      !/[\x00-\x1f]/.test(seg) && // control characters are not filenames anywhere
+      !WINDOWS_RESERVED_SEGMENT.test(seg),
+  );
+}
+
+/**
+ * The key two entry paths collide on, under the most collision-prone rules any supported platform
+ * applies — which is Windows, where the filesystem is case-insensitive. Compared on EVERY platform,
+ * not only Windows: an archive whose entries collide is malformed wherever it is opened, and an
+ * import that quietly succeeds on Linux and loses a file on Windows is the harder bug to find.
+ *
+ * Upper-cased because that is the direction Windows' own comparison folds. JS case mapping is
+ * locale-independent here (toUpperCase, not toLocaleUpperCase), so this does not shift under a
+ * Turkish locale.
+ */
+function destinationKey(path: string): string {
+  return path.toUpperCase();
 }
 
 function rewriteCaseIdInJson(data: Buffer, targetCaseId: string, indent: number | undefined): Buffer {
@@ -391,24 +426,34 @@ export async function importEncryptedCase(
   // needs rewriting has been proven to parse. A corrupt archive must fail cleanly here, not
   // partway through the write loop — a partial write would leave an orphaned case directory
   // that makes store.caseExists() return true for a case that never actually imported.
-  const seenPaths = new Set<string>();
+  const seenPaths = new Map<string, string>();
   for (const entry of entries) {
     if (!isSafeZipEntryPath(entry.path)) {
       throw new Error(`not a valid case archive: unsafe entry path "${entry.path}"`);
     }
-    if (seenPaths.has(entry.path)) {
+    // Keyed by the destination the path resolves to, not the raw string, so an alias cannot slip
+    // past and overwrite the file an earlier entry wrote (#426).
+    const key = destinationKey(entry.path);
+    const earlier = seenPaths.get(key);
+    if (earlier === entry.path) {
       throw new Error(`not a valid case archive: duplicate entry path "${entry.path}"`);
     }
-    seenPaths.add(entry.path);
+    if (earlier !== undefined) {
+      throw new Error(
+        `not a valid case archive: entry path "${entry.path}" resolves to the same file as ` +
+          `"${earlier}" on a case-insensitive filesystem`,
+      );
+    }
+    seenPaths.set(key, entry.path);
   }
 
   const rename = targetCaseId !== originalMeta.caseId;
   const rewrittenByPath = new Map<string, Buffer>();
   if (rename) {
     for (const entry of entries) {
-      // Match on a forward-slash-normalized path so a backslash-separated entry (however
-      // unlikely) still gets its caseId rewritten instead of silently keeping the old id.
-      const normalizedPath = entry.path.replace(/\\/g, "/");
+      // A plain match: entry paths are forward-slash only by the time they get here, because
+      // isSafeZipEntryPath rejects a backslash outright rather than normalizing one away (#426).
+      const normalizedPath = entry.path;
       try {
         if (CASE_ID_JSON_PATHS.has(normalizedPath)) {
           const indent = CASE_ID_JSON_PATHS.get(normalizedPath);

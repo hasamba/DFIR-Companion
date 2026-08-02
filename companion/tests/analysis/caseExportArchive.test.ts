@@ -332,6 +332,78 @@ describe("importEncryptedCase", () => {
     expect(await store.caseExists("INC-NOID")).toBe(false);
   });
 
+  // #426: the duplicate check compared raw path strings, but the write loop resolved them with the
+  // host platform's rules. On Windows several distinct strings name one file, so the later entry
+  // silently overwrote the earlier one — evidence loss with no error. These are checked on every
+  // platform: an archive whose entries collide is malformed wherever it is opened, and an import
+  // that succeeds on Linux while losing a file on Windows is the harder bug to find.
+  describe("path aliases that collide on a Windows destination", () => {
+    async function importAliased(paths: string[], targetCaseId: string) {
+      const store = await harness();
+      await seedCase(store, "INC-1");
+      const caseJson = await readFile(store.caseMetaPath("INC-1"));
+      const archive = encryptBuffer(
+        createZip([
+          { path: "case.json", data: caseJson },
+          ...paths.map((path, i) => ({ path, data: Buffer.from(`entry ${i}`) })),
+        ]),
+        PASSWORD,
+      );
+      return { store, run: () => importEncryptedCase(store, archive, PASSWORD, { targetCaseId }) };
+    }
+
+    it("rejects a backslash alias of a forward-slash path", async () => {
+      const { store, run } = await importAliased(["state/a.bin", "state\\a.bin"], "INC-BS");
+      await expect(run()).rejects.toThrow(/unsafe entry path/);
+      expect(await store.caseExists("INC-BS")).toBe(false);
+    });
+
+    it("rejects a case-only alias", async () => {
+      const { store, run } = await importAliased(
+        ["imports/EVIDENCE.bin", "imports/evidence.bin"],
+        "INC-CASE",
+      );
+      await expect(run()).rejects.toThrow(/same file as/i);
+      expect(await store.caseExists("INC-CASE")).toBe(false);
+    });
+
+    it("rejects a case-only alias in a DIRECTORY segment", async () => {
+      const { store, run } = await importAliased(["Imports/a.bin", "imports/a.bin"], "INC-DIR");
+      await expect(run()).rejects.toThrow(/same file as/i);
+      expect(await store.caseExists("INC-DIR")).toBe(false);
+    });
+
+    it("rejects a trailing-dot or trailing-space name, which Windows strips", async () => {
+      for (const [i, alias] of ["imports/notes.", "imports/notes ", "imports/dir./a.bin"].entries()) {
+        const { store, run } = await importAliased(["imports/notes", alias], `INC-TRIM${i}`);
+        await expect(run()).rejects.toThrow(/unsafe entry path/);
+        expect(await store.caseExists(`INC-TRIM${i}`)).toBe(false);
+      }
+    });
+
+    it("rejects a reserved Windows device name, with or without an extension", async () => {
+      for (const [i, reserved] of [
+        "imports/CON",
+        "imports/nul.txt",
+        "LPT1/a.bin",
+        "imports/com9.bin",
+      ].entries()) {
+        const { store, run } = await importAliased([reserved], `INC-DEV${i}`);
+        await expect(run()).rejects.toThrow(/unsafe entry path/);
+        expect(await store.caseExists(`INC-DEV${i}`)).toBe(false);
+      }
+    });
+
+    it("still accepts the ordinary paths a real export produces", async () => {
+      const { store, run } = await importAliased(
+        ["imports/thor-001.json", "screenshots/shot-001.webp", "state/notes.md", "reports/report.md"],
+        "INC-OK",
+      );
+      await expect(run()).resolves.toBeTruthy();
+      expect(await store.caseExists("INC-OK")).toBe(true);
+    });
+  });
+
   it("rejects an archive with duplicate entry paths", async () => {
     const store = await harness();
     await seedCase(store, "INC-1");
