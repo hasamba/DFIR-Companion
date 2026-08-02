@@ -19,6 +19,92 @@ import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+// The `no-restricted-syntax` selectors that apply to every linted tree (src, scripts, tests).
+//
+// Hoisted out of the rules block because flat config REPLACES a rule's options rather than merging
+// them: the tests-only block below has to add one selector, and the only way to add to this rule is
+// to restate the whole list. Spreading a shared const is how that stays a spread and not a copy
+// that drifts. Anything added here is automatically in force for tests too.
+const SHARED_RESTRICTED_SYNTAX = [
+  {
+    // FORBIDDEN BROAD TIMELINE READS (#385, holding #373's criterion).
+    //
+    // `query(caseId, { limit: Number.MAX_SAFE_INTEGER })` pulls a case's ENTIRE super-timeline
+    // into memory to answer a question about a handful of rows. On a real case that is
+    // hundreds of thousands of events per request.
+    //
+    // There were exactly seven of these when this rule was written — in caseLifecycle,
+    // timeline, threatIntel, analysisGraph and pipeline. #373 landed first and removed every
+    // one (batched `eventBatches()`, `all()`, or a real page size), so the rule ships with ZERO
+    // violations and zero suppressions. It exists purely to keep it that way: #373 fixed the
+    // seven that were there, this stops the eighth.
+    selector:
+      "Property[key.name='limit'] > MemberExpression[object.name='Number'][property.name='MAX_SAFE_INTEGER']",
+    message:
+      "Unbounded timeline read: `limit: Number.MAX_SAFE_INTEGER` loads a whole case into memory. Page the query, or push the filter into the store. See #373.",
+  },
+  {
+    // EXPLICIT BOUNDARY VALIDATION (#385) — request bodies.
+    //
+    // `req.body as { name?: string }` ASSERTS a shape the wire never promised: a client that
+    // posts `{"name": 42}` produces a value typed `string` that is a number at runtime, and
+    // every downstream `.trim()` throws. The safe form the rest of the codebase already uses
+    // is `req.body as { name?: unknown }`, which forces a narrowing step before the value is
+    // read. This rule bans the unsafe form and leaves the safe one alone.
+    selector:
+      "TSAsExpression[expression.object.name='req'][expression.property.name='body'] TSPropertySignature > TSTypeAnnotation > :matches(TSStringKeyword, TSNumberKeyword, TSBooleanKeyword, TSArrayType, TSTypeReference)",
+    message:
+      "Unvalidated request boundary: assert `req.body as { field?: unknown }` and narrow, or parse it with a zod schema. A cast to a concrete type is a promise the client never made.",
+  },
+  {
+    // Same hazard, same fix, for the query string — where EVERY value is a string or an
+    // array of strings no matter what the type says.
+    selector:
+      "TSAsExpression[expression.object.name='req'][expression.property.name='query'] TSPropertySignature > TSTypeAnnotation > :matches(TSNumberKeyword, TSBooleanKeyword, TSTypeReference)",
+    message:
+      "Unvalidated request boundary: query-string values are always strings. Assert `req.query as { field?: unknown }` and narrow.",
+  },
+  {
+    // ACCIDENTAL MUTATION AT A CRITICAL BOUNDARY (#385).
+    //
+    // `(await client.listClientArtifacts(id)).push(x)` mutates whatever the getter handed
+    // back. When that getter serves a cache — as the Velociraptor artifact list does — the
+    // write lands in the cache and every later caller sees the injected row. There is a test
+    // for precisely this ("hands each caller its own array — a mutation cannot poison the
+    // cache"); this rule is the same guarantee stated once, for getters nobody has written a
+    // test for yet. Copy first (`[...(await x())]`) if you need to mutate.
+    selector:
+      "CallExpression > MemberExpression[object.type='AwaitExpression'] > Identifier.property[name=/^(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/]",
+    message:
+      "Mutating the array an async getter just returned writes through to whatever it is backed by (often a cache). Copy it first: `[...(await getter())]`.",
+  },
+];
+
+// HAND-ROLLED POLL LOOPS IN TESTS (#408, holding #173's criterion). tests/ ONLY — see below.
+const NO_HAND_ROLLED_POLL_LOOP = {
+  // Matches the shape `for (let i = 0; i < N …; i++) { … await new Promise(r => setTimeout(r, ms)) }`
+  // and reports on the loop itself, because the loop is the thing that gets deleted.
+  //
+  // Three deliberate exclusions, each load-bearing:
+  //
+  // 1. `[test]` — the loop must be BOUNDED. `for (;;)` has a null test and does not match, which
+  //    is what keeps `pollFor`'s own body (tests/helpers/poll.ts) legal. The replacement cannot be
+  //    the first violation of the rule that mandates it.
+  // 2. `:has(… setTimeout …)` — the sleep must be INSIDE the loop. A data-setup loop that merely
+  //    awaits (`for (let i = 0; i < 2; i++) { await request(app).post("/captures")… }` in
+  //    server.test.ts, which posts two captures) contains no timer and is untouched.
+  // 3. The `ForStatement` requirement — a fixed settle sleep NOT in a loop is untouched. Those
+  //    guard negative assertions ("wait 100ms and prove no findings landed"); there is no state to
+  //    poll toward, so `pollFor` cannot express them and must not be demanded.
+  //
+  // Not covered: the same pattern written as a `while` loop. Nothing in the tree does that today,
+  // and a bounded-counter `while` is hard to separate from a legitimate one by selector alone.
+  selector:
+    "ForStatement[test]:has(AwaitExpression > NewExpression[callee.name='Promise'] CallExpression[callee.name='setTimeout'])",
+  message:
+    "Hand-rolled poll loop: an iteration count is a private wall-clock deadline that, on expiry, falls through to the assertion and reports a timeout as a state mismatch. Use `pollFor` from tests/helpers/poll.ts. See #408.",
+};
+
 export default tseslint.config(
   {
     // Nothing generated, vendored or emitted is linted. `data/` is ATT&CK/D3FEND/centroid JSON,
@@ -154,63 +240,10 @@ export default tseslint.config(
       "no-useless-escape": ["error", { allowRegexCharacters: ["-", "/", "["] }],
 
       // ---------------------------------------------------------------------------------------
-      // Project-specific selectors.
+      // Project-specific selectors. Defined at the top of this file; the tests/ block below adds
+      // one more to the same list.
       // ---------------------------------------------------------------------------------------
-      "no-restricted-syntax": [
-        "error",
-        {
-          // FORBIDDEN BROAD TIMELINE READS (#385, holding #373's criterion).
-          //
-          // `query(caseId, { limit: Number.MAX_SAFE_INTEGER })` pulls a case's ENTIRE super-timeline
-          // into memory to answer a question about a handful of rows. On a real case that is
-          // hundreds of thousands of events per request.
-          //
-          // There were exactly seven of these when this rule was written — in caseLifecycle,
-          // timeline, threatIntel, analysisGraph and pipeline. #373 landed first and removed every
-          // one (batched `eventBatches()`, `all()`, or a real page size), so the rule ships with ZERO
-          // violations and zero suppressions. It exists purely to keep it that way: #373 fixed the
-          // seven that were there, this stops the eighth.
-          selector:
-            "Property[key.name='limit'] > MemberExpression[object.name='Number'][property.name='MAX_SAFE_INTEGER']",
-          message:
-            "Unbounded timeline read: `limit: Number.MAX_SAFE_INTEGER` loads a whole case into memory. Page the query, or push the filter into the store. See #373.",
-        },
-        {
-          // EXPLICIT BOUNDARY VALIDATION (#385) — request bodies.
-          //
-          // `req.body as { name?: string }` ASSERTS a shape the wire never promised: a client that
-          // posts `{"name": 42}` produces a value typed `string` that is a number at runtime, and
-          // every downstream `.trim()` throws. The safe form the rest of the codebase already uses
-          // is `req.body as { name?: unknown }`, which forces a narrowing step before the value is
-          // read. This rule bans the unsafe form and leaves the safe one alone.
-          selector:
-            "TSAsExpression[expression.object.name='req'][expression.property.name='body'] TSPropertySignature > TSTypeAnnotation > :matches(TSStringKeyword, TSNumberKeyword, TSBooleanKeyword, TSArrayType, TSTypeReference)",
-          message:
-            "Unvalidated request boundary: assert `req.body as { field?: unknown }` and narrow, or parse it with a zod schema. A cast to a concrete type is a promise the client never made.",
-        },
-        {
-          // Same hazard, same fix, for the query string — where EVERY value is a string or an
-          // array of strings no matter what the type says.
-          selector:
-            "TSAsExpression[expression.object.name='req'][expression.property.name='query'] TSPropertySignature > TSTypeAnnotation > :matches(TSNumberKeyword, TSBooleanKeyword, TSTypeReference)",
-          message:
-            "Unvalidated request boundary: query-string values are always strings. Assert `req.query as { field?: unknown }` and narrow.",
-        },
-        {
-          // ACCIDENTAL MUTATION AT A CRITICAL BOUNDARY (#385).
-          //
-          // `(await client.listClientArtifacts(id)).push(x)` mutates whatever the getter handed
-          // back. When that getter serves a cache — as the Velociraptor artifact list does — the
-          // write lands in the cache and every later caller sees the injected row. There is a test
-          // for precisely this ("hands each caller its own array — a mutation cannot poison the
-          // cache"); this rule is the same guarantee stated once, for getters nobody has written a
-          // test for yet. Copy first (`[...(await x())]`) if you need to mutate.
-          selector:
-            "CallExpression > MemberExpression[object.type='AwaitExpression'] > Identifier.property[name=/^(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/]",
-          message:
-            "Mutating the array an async getter just returned writes through to whatever it is backed by (often a cache). Copy it first: `[...(await getter())]`.",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...SHARED_RESTRICTED_SYNTAX],
     },
   },
 
@@ -244,5 +277,23 @@ export default tseslint.config(
     // of a type error is the exact failure #385 exists to stop, so they are not relaxed here.
     files: ["tests/**/*.ts", "scripts/**/*.ts"],
     rules: { "no-param-reassign": "off" },
+  },
+
+  {
+    // tests/ ONLY: no hand-rolled poll loops (#408).
+    //
+    // Scoped here rather than added to the shared list because a bounded loop with a sleep in it is
+    // legitimate outside tests — scripts/reanalyze.ts paces its window loop with a 400ms sleep to
+    // stay under a provider rate limit, and it has no state to poll toward. In a TEST the same
+    // shape is always the anti-pattern #173 measured: the iteration count is a wall-clock deadline
+    // nobody wrote down, and when it expires the loop does not fail, it falls through to an
+    // assertion that then reports a timeout as a state mismatch.
+    //
+    // The whole shared list is restated because flat config replaces rule options instead of
+    // merging them — without the spread, tests/ would silently LOSE the four selectors above.
+    files: ["tests/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...SHARED_RESTRICTED_SYNTAX, NO_HAND_ROLLED_POLL_LOOP],
+    },
   },
 );
