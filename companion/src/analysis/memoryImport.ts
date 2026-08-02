@@ -49,6 +49,7 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
+import { pstreeChildren } from "./pstreeDepth.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 
@@ -224,18 +225,17 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
 
   // Index PID → name (across the whole tree) so a flat table resolves PPID → parent name.
   const pidIndex = new Map<string, string>();
-  const index = (list: Row[]): void => {
+  const index = (list: Row[], depth: number): void => {
     for (const r of list) {
       const pid = pickPid(r); const nm = procName(r);
       if (pid && nm) pidIndex.set(pid, nm);
-      const kids = getCI(r, "__children");
-      if (Array.isArray(kids)) index(kids.filter(isObject));
+      index(pstreeChildren(r, depth), depth + 1);
     }
   };
-  index(rows);
+  index(rows, 0);
   recordIndex = 0;
 
-  const walk = (list: Row[], parent: string): void => {
+  const walk = (list: Row[], parent: string, depth: number): void => {
     for (const r of list) {
       const locatorIndex = recordIndex++;
       const name = procName(r);
@@ -312,11 +312,10 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
           ...(path && /[\\/]/.test(path) ? { path } : {}),
         });
       }
-      const kids = getCI(r, "__children");
-      if (Array.isArray(kids)) walk(kids.filter(isObject), name || parent);
+      walk(pstreeChildren(r, depth), name || parent, depth + 1);
     }
   };
-  walk(rows, "");
+  walk(rows, "", 0);
   return out;
 }
 

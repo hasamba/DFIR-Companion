@@ -305,6 +305,7 @@
     "m365Import.ts": "analysis/ingest",
     "manualEntry.ts": "analysis/workflow",
     "memoryImport.ts": "analysis/ingest",
+    "pstreeDepth.ts": "analysis/ingest",
     "memoryNextStep.ts": "analysis/ai",
     "mobileSummary.ts": "analysis/workflow",
     "networkImport.ts": "analysis/ingest",
