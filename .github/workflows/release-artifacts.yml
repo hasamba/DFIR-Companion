@@ -22,6 +22,8 @@ jobs:
   windows-exe:
     name: Build Windows EXE (Node SEA)
     runs-on: windows-latest
+    # ~9 min observed — Windows runners are the slowest and most variable here.
+    timeout-minutes: 30
     outputs:
       # SHA256 of the portable zip, consumed by the `chocolatey` job so its package embeds the
       # exact checksum of the same artifact the release publishes.
@@ -75,6 +77,7 @@ jobs:
   linux-appimage:
     name: Build Linux AppImage (Node SEA)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,6 +131,7 @@ jobs:
     # either zip fails the release, which is the intent — a tag should never publish half the
     # extension.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       # SHA256 of the CHROME extension zip, consumed by the `chocolatey` job which bundles it for
       # offline "Load unpacked". Keep this pointing at the Chrome zip: the Chocolatey package
@@ -217,6 +221,7 @@ jobs:
     # so it's safe to merge before the developer account / credentials exist (#138).
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check for Web Store credentials
         id: creds
@@ -331,6 +336,7 @@ jobs:
     # but does NOT create a junk release named after the branch.
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -387,6 +393,7 @@ jobs:
     needs: [windows-exe, extension-zip, release]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
