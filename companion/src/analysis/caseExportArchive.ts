@@ -1,4 +1,14 @@
-import { readdir, readFile, writeFile, mkdir, lstat } from "node:fs/promises";
+import {
+  readdir,
+  readFile,
+  writeFile,
+  mkdir,
+  mkdtemp,
+  rename as renamePath,
+  rm,
+  stat,
+  lstat,
+} from "node:fs/promises";
 import { join, dirname, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
@@ -16,6 +26,11 @@ import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 // this covers screenshots and raw imported evidence files too, not just derived state.
 
 export const MIN_PASSWORD_LENGTH = 8;
+
+// Where an encrypted import extracts before it is published (#420). Dotted, and a level below the
+// cases, so nothing that enumerates the cases root can mistake a half-extracted archive for a case.
+const IMPORT_STAGING_DIRNAME = ".import-staging";
+const IMPORT_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export class CaseImportConflictError extends Error {
   constructor(public readonly caseId: string) {
@@ -408,25 +423,77 @@ export async function importEncryptedCase(
   }
 
   const counts = manifestCounts ?? countsFromEntries(entries);
-  const caseDir = store.caseDir(targetCaseId);
-  for (const dir of [
-    store.screenshotsDir(targetCaseId),
-    store.metadataDir(targetCaseId),
-    store.stateDir(targetCaseId),
-    store.reportsDir(targetCaseId),
-    store.importsDir(targetCaseId),
-  ]) {
-    await mkdir(dir, { recursive: true });
-  }
 
-  for (const entry of entries) {
-    const data = rewrittenByPath.get(entry.path) ?? entry.data;
-    const target = join(caseDir, entry.path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, data);
+  // Extract into a private staging directory and publish it with a single rename (#420).
+  //
+  // The caseExists() check above is not a claim on the id — nothing stopped a second import from
+  // passing the same check and then interleaving its writes into the same destination. The result
+  // was a case that never existed in either archive: case.json from whichever import wrote it
+  // last, evidence files from both. Nothing downstream could detect that, so every analysis,
+  // report and custody record built on it was untrustworthy.
+  //
+  // rename() of a directory onto an existing non-empty directory fails on every platform, which
+  // makes it the exclusive atomic claim the existence check never was: the first import to finish
+  // publishes, and any other aiming at the same id gets a conflict instead of a merge. It also
+  // means a case directory only ever becomes visible complete — a failure part-way through the
+  // write loop used to leave an orphan that made caseExists() true for a case that never imported.
+  const staging = await createImportStaging(store, targetCaseId);
+  try {
+    for (const sub of ["screenshots", "metadata", "state", "reports", "imports"]) {
+      await mkdir(join(staging, sub), { recursive: true });
+    }
+
+    for (const entry of entries) {
+      const data = rewrittenByPath.get(entry.path) ?? entry.data;
+      const target = join(staging, entry.path);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, data);
+    }
+
+    try {
+      await renamePath(staging, join(store.casesRoot, targetCaseId)); // `rename` is taken: the id-rewrite flag above
+    } catch (err) {
+      // Platforms disagree on the errno for "destination directory is in the way" (ENOTEMPTY,
+      // EEXIST, EPERM on Windows), so ask the filesystem what actually happened rather than
+      // enumerating codes: if the target is a case now, someone else claimed it.
+      if (await store.caseExists(targetCaseId)) throw new CaseImportConflictError(targetCaseId);
+      throw err;
+    }
+  } finally {
+    // No-op after a successful rename; on any failure it is what keeps a half-extracted archive
+    // from surviving as a stale staging directory.
+    await rm(staging, { recursive: true, force: true }).catch(() => {
+      /* best effort */
+    });
   }
 
   const meta = await store.getCaseMeta(targetCaseId);
   if (!meta) throw new Error("import failed: case.json missing after write");
   return { meta, counts };
+}
+
+/**
+ * A unique, private directory to extract into, on the same filesystem as the destination so the
+ * publishing rename is atomic. It lives under a dotted subdirectory of the cases root rather than
+ * beside the cases: listCases() only treats a directory holding a readable case.json as a case, and
+ * a half-extracted archive holds exactly that.
+ *
+ * Also sweeps staging directories older than a day. The finally block above removes this run's on
+ * every path a process survives; the sweep is for the one it does not (a kill or a power loss
+ * mid-extraction), so those cannot accumulate forever. A day is far longer than any import, so it
+ * cannot collide with a slow one running concurrently.
+ */
+async function createImportStaging(store: CaseStore, targetCaseId: string): Promise<string> {
+  const stagingRoot = join(store.casesRoot, IMPORT_STAGING_DIRNAME);
+  await mkdir(stagingRoot, { recursive: true });
+  const cutoff = Date.now() - IMPORT_STAGING_MAX_AGE_MS;
+  for (const name of await readdir(stagingRoot).catch(() => [])) {
+    const path = join(stagingRoot, name);
+    const info = await stat(path).catch(() => null);
+    if (info && info.mtimeMs < cutoff)
+      await rm(path, { recursive: true, force: true }).catch(() => {
+        /* best effort */
+      });
+  }
+  return mkdtemp(join(stagingRoot, `${targetCaseId}-`));
 }
