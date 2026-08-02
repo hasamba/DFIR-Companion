@@ -22,7 +22,7 @@ import type { Adapter, CapturedArtifact } from "./adapters/types.js";
 import { resolveActiveAdapter } from "./adapters/override.js";
 import { matrixToRows } from "./adapters/domTable.js";
 import { decodeCapturedBodies } from "./adapters/extractUtils.js";
-import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG } from "./adapters/bridge.js";
+import { DFIR_CAPTURE_MSG, DFIR_CONFIG_MSG, DFIR_READY_MSG, isAcceptableCaptureBody } from "./adapters/bridge.js";
 import { clampButtonPosition, isDrag, parseButtonPos, type ButtonPos } from "./buttonPosition.js";
 import type { EnsureHookMessage, PushArtifactMessage, PushArtifactResult, CaptureStatusResult } from "./types.js";
 import { browserApi } from "./browser.js";
@@ -197,7 +197,10 @@ function onPageMessage(ev: MessageEvent): void {
 
   if (d.source === DFIR_READY_MSG) { sendConfig(); return; }
 
-  if (d.source === DFIR_CAPTURE_MSG && typeof d.body === "string") {
+  // isAcceptableCaptureBody, not a bare typeof: the hook caps what it forwards, but this message is
+  // page-forgeable and can arrive without having gone through it, so the receiving side enforces
+  // the bound rather than assuming the sender did (#430).
+  if (d.source === DFIR_CAPTURE_MSG && isAcceptableCaptureBody(d.body)) {
     // Decoding may be async (compressed bfetch) — kick it off and don't block the message handler.
     void ingestCapturedBody(String(d.url ?? ""), d.body);
   }
