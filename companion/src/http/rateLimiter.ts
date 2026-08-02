@@ -143,9 +143,11 @@ const SWEEP_INTERVAL_MS = 5 * 60_000;
 let _unlockLimiter: AttemptLimiter | null = null;
 let _aiLimiter: SlidingWindowLimiter | null = null;
 let _importLimiter: AttemptLimiter | null = null;
+let _importIpLimiter: SlidingWindowLimiter | null = null;
 let _unlockSweepTimer: NodeJS.Timeout | null = null;
 let _aiSweepTimer: NodeJS.Timeout | null = null;
 let _importSweepTimer: NodeJS.Timeout | null = null;
+let _importIpSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -182,16 +184,37 @@ export function getImportLimiter(): AttemptLimiter {
   return _importLimiter;
 }
 
+/** Request budget for POST /cases/import/encrypted, keyed by client IP and consumed by every
+ *  attempt that reaches decryption — whatever the outcome. It exists because the failure limiter
+ *  above deliberately does not count a CaseImportConflictError (the archive opened; that is an
+ *  analyst re-importing, not an attack) and a conflict still pays for a full synchronous scrypt
+ *  derivation, so repeated conflicts were an unmetered way to block the event loop (#424).
+ *
+ *  10 a minute: a whole-case import is a rare, heavyweight operation, so this is far above real
+ *  use and still bounds the derivations one client can buy. */
+export function getImportIpLimiter(): SlidingWindowLimiter {
+  if (!_importIpLimiter) {
+    const limiter = new SlidingWindowLimiter(10, 60_000);
+    _importIpLimiter = limiter;
+    _importIpSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _importIpSweepTimer.unref?.();
+  }
+  return _importIpLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
   if (_unlockSweepTimer) clearInterval(_unlockSweepTimer);
   if (_aiSweepTimer) clearInterval(_aiSweepTimer);
   if (_importSweepTimer) clearInterval(_importSweepTimer);
+  if (_importIpSweepTimer) clearInterval(_importIpSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
+  _importIpSweepTimer = null;
   _unlockLimiter = null;
   _aiLimiter = null;
   _importLimiter = null;
+  _importIpLimiter = null;
 }
