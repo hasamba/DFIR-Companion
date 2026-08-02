@@ -84,6 +84,24 @@ export class ZipPasswordError extends Error {
   }
 }
 
+/**
+ * The WinZip-AES HMAC did not match — the entry's ciphertext is not what the archive's author
+ * encrypted. Deliberately NOT a ZipPasswordError: the password already cleared the 2-byte
+ * verifier, so trying more candidates is pointless, and callers that retry on a password failure
+ * (zipExtract) must stop and report this instead.
+ *
+ * It is also not a generic "corrupt ZIP" error. WinZip AES is AES-CTR, which is bit-for-bit
+ * malleable — flipping a ciphertext bit flips exactly that plaintext bit — so a failed tag over
+ * evidence means targeted, predictable modification at least as plausibly as it means bit rot.
+ * An analyst needs to be able to tell "wrong password" from "this archive was altered".
+ */
+export class ZipAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZipAuthenticationError";
+  }
+}
+
 export interface AesParams {
   aeVersion: number;       // 1 or 2; AE-2 zeroes the entry CRC, so callers must skip the CRC check
   strength: 1 | 2 | 3;     // AES-128 / AES-192 / AES-256
