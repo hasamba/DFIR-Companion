@@ -70,11 +70,45 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_PUBLIC_URL", "DFIR_UPDATE_REPO", "DFIR_DIAG_MAX_FILES", "DFIR_LOCAL_TELEMETRY", "DFIR_JOBS_MAX", "DFIR_JOBS_CONCURRENCY", "DFIR_JOBS_PER_CASE",
 ];
 
-/** Validate that every key in `updates` is on the writable allowlist and not explicitly denied.
- * Returns an array of rejected keys (empty = all ok). */
-export function validateEnvUpdates(updates: Record<string, string>): string[] {
+/**
+ * A dotenv record is one line — `KEY=value` — so a line break anywhere inside a record starts a
+ * SECOND one, and `updateEnv` writes both halves verbatim. That turned the key allowlist below
+ * into a formality (#422):
+ *
+ *   - through a VALUE: saving DFIR_AI_MODEL as `gpt-4o\nDFIR_HOST=0.0.0.0` presents exactly one
+ *     key, an allowed one, and lands a DFIR_HOST assignment in .env;
+ *   - through a KEY: `"DFIR_AI_X\nDFIR_HOST".startsWith("DFIR_AI_")` is true and the denylist is
+ *     an exact-match Set, so a key carrying its own newline passes both checks too.
+ *
+ * Either way the caller writes a protected security, authentication, listener or filesystem
+ * setting it is explicitly not allowed to name. So both halves are checked for SYNTAX before the
+ * allowlist gets to decide anything:
+ *
+ *   - keys must be a plain POSIX environment name;
+ *   - values must be strings containing no control characters at all. Real values here are API
+ *     keys, URLs, numbers and booleans — none needs a control character, and rejecting the whole
+ *     class beats reasoning about which of CR / LF / NUL each .env reader treats as a separator
+ *     (parseLines below splits on "\n"; the startup loader is a different parser again).
+ */
+const ENV_KEY_SYNTAX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_VALUE_CONTROL_CHAR = /\p{Cc}/u;
+
+/** A rejected key is echoed into a 400 body and the server log — never let it carry the payload. */
+function safeKeyLabel(key: string): string {
+  const flat = key.replace(/\p{Cc}/gu, "?");
+  return flat.length > 64 ? `${flat.slice(0, 64)}…` : flat;
+}
+
+/** Validate that every key in `updates` is a well-formed name carrying a well-formed value, and is
+ * on the writable allowlist rather than explicitly denied.
+ * Returns an array of rejected keys, sanitized for display (empty = all ok). */
+export function validateEnvUpdates(updates: Record<string, unknown>): string[] {
   const rejected: string[] = [];
-  for (const key of Object.keys(updates)) {
+  for (const [key, value] of Object.entries(updates)) {
+    if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
+      rejected.push(safeKeyLabel(key));
+      continue;
+    }
     if (DENIED_ENV_KEYS.has(key)) {
       rejected.push(key);
       continue;
@@ -174,6 +208,15 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
  * Keys not already in the file are appended. Empty-string values are skipped.
  */
 export async function updateEnv(updates: Record<string, string>): Promise<void> {
+  // Fail closed on the record syntax even though the route validates first (#422). This function
+  // is exported, and the cost of a caller forgetting is an attacker-authored line in the file the
+  // server reads its security configuration from. The allowlist stays the route's business — this
+  // only refuses to write something that would not be a single well-formed dotenv record.
+  for (const [key, value] of Object.entries(updates)) {
+    if (!ENV_KEY_SYNTAX.test(key) || typeof value !== "string" || ENV_VALUE_CONTROL_CHAR.test(value)) {
+      throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
+    }
+  }
   const raw = await readRaw();
   const lines = raw.split("\n");
   const updatedKeys = new Set<string>();
