@@ -44,6 +44,41 @@ describe("parseMemory — Volatility 3 pslist", () => {
   });
 });
 
+// #429: mapProcess walked `__children` with no depth limit, in both the pid-indexing pass and the
+// event-emitting pass. The nesting comes straight from evidence, and V8's JSON.parse is iterative —
+// it accepts arbitrarily deep JSON without complaint — so the depth only became call frames during
+// those walks, and around 20k levels (a ~1 MB file) exhausted the stack. Every call site already
+// caught the RangeError, so the import failed safely; it just failed by telling the analyst
+// "Maximum call stack size exceeded" instead of what was wrong with the file.
+describe("parseMemory — pstree nesting depth", () => {
+  // Built as TEXT, not via JSON.stringify: stringify is recursive and dies well before JSON.parse
+  // does, and that asymmetry is the whole reason this input reaches the walkers at all.
+  function nestedJson(levels: number): string {
+    const parts: string[] = [];
+    for (let i = 1; i <= levels; i++) parts.push(`{"PID":${i},"PPID":${i - 1},"ImageFileName":"p${i}.exe","__children":[`);
+    parts.push('{"PID":0,"PPID":0,"ImageFileName":"leaf.exe","__children":[]}');
+    for (let i = 0; i < levels; i++) parts.push("]}");
+    return `[${parts.join("")}]`;
+  }
+
+  it("rejects an over-deep tree with an actionable message, not a RangeError", () => {
+    // 30k levels: JSON.parse takes it happily, an unbounded recursive walk does not.
+    const text = nestedJson(30_000);
+    expect(() => JSON.parse(text)).not.toThrow();
+    expect(() => parseMemory(text, { filename: "windows.pstree.json" })).toThrow(/nesting is deeper than/i);
+    expect(() => parseMemory(text, { filename: "windows.pstree.json" })).not.toThrow(RangeError);
+  });
+
+  it("still imports a tree of realistic depth", () => {
+    // A deep Windows process tree is a dozen levels; the cap is 128.
+    const r = parseMemory(nestedJson(20), { filename: "windows.pstree.json" });
+    expect(r.processes).toBe(1);                              // one root row in the table
+    expect(r.events.length).toBeGreaterThan(1);               // every level emitted an event
+    expect(r.events.some((e) => e.description.includes("leaf.exe"))).toBe(true);
+    expect(r.events.some((e) => e.parentName === "p20.exe")).toBe(true);
+  });
+});
+
 describe("parseMemory — Volatility 3 netscan", () => {
   it("maps connections, harvests the foreign IP, and grades an external ESTABLISHED conn Low", () => {
     const r = parseMemory(JSON.stringify(netscan()), { filename: "netscan.json" });
