@@ -6,6 +6,7 @@ import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js"
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -35,7 +36,7 @@ export async function importM365(
 ): Promise<InvestigationState> {
   const parsedRaw = parseM365Audit(text, opts.m365);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Microsoft 365", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total);
 
   const raw = {
     findings: [],
@@ -88,7 +89,7 @@ export async function importAws(
 ): Promise<InvestigationState> {
   const parsedRaw = parseCloudTrail(text, opts.aws);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "AWS CloudTrail", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total);
 
   const raw = {
     findings: [],
@@ -141,7 +142,7 @@ export async function importCloudActivity(
 ): Promise<InvestigationState> {
   const parsedRaw = parseCloudActivity(text, opts.cloud);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Cloud activity", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total);
 
   const raw = {
     findings: [],
@@ -195,7 +196,7 @@ export async function importK8sAudit(
 ): Promise<InvestigationState> {
   const parsedRaw = parseK8sAudit(text, opts.k8s);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Kubernetes audit", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Kubernetes audit", parsed.total);
 
   const raw = {
     findings: [],
@@ -248,7 +249,7 @@ export async function importOsquery(
 ): Promise<InvestigationState> {
   const parsedRaw = parseOsqueryLog(text, opts.osquery);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "osquery", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "osquery", parsed.total);
 
   const raw = {
     findings: [],

@@ -9,6 +9,7 @@ import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseThorReport, type ThorImportOptions } from "../thorImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
+import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -39,7 +40,7 @@ export async function importThor(
 ): Promise<InvestigationState> {
   const parsedRaw = parseThorReport(jsonText, opts.thor);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "THOR", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "THOR", parsed.total);
 
   // Assign stable, collision-free ids and validate the delta against the schema
   // (fills defaults like relatedFindingIds). No model call — purely structural.
@@ -91,7 +92,7 @@ export async function importChainsaw(
 ): Promise<InvestigationState> {
   const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Chainsaw", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Chainsaw", parsed.total);
 
   const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
   const raw = {
@@ -147,7 +148,7 @@ export async function importHayabusa(
 ): Promise<InvestigationState> {
   const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Hayabusa", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
 
   const raw = {
     findings: [],
@@ -218,7 +219,7 @@ export async function importVelociraptor(
     opts.onProgress,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Velociraptor", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Velociraptor", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
   const forensicEvents = parsed.events.map((e, i) => {
@@ -288,7 +289,7 @@ export async function importEcar(
 ): Promise<InvestigationState> {
   const parsedRaw = parseEcarJson(text, { ...opts.ecar });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "ECAR", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "ECAR", parsed.total);
 
   const raw = {
     findings: [],
@@ -343,7 +344,7 @@ export async function importKape(
   const parsedRaw = parseKapeCsv(text, opts.kape);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
 
   const raw = {
     findings: [],
@@ -398,7 +399,7 @@ export async function importCybertriage(
   const parsedRaw = parseCybertriage(text, opts.cybertriage);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Cyber Triage", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Cyber Triage", parsed.total);
 
   const raw = {
     findings: [],

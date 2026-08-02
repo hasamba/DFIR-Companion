@@ -1,6 +1,5 @@
 import type { WindowContext, mergeDelta } from "../stateMerge.js";
-import type { InvestigationState, Severity } from "../stateTypes.js";
-import type { PlasoParseResult } from "../plasoImport.js";
+import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 
 /**
@@ -20,6 +19,10 @@ import type { StateStore } from "../stateStore.js";
  * because they are not on this type — which is the boundary that keeps deterministic import
  * deterministic. `analysis/ingest` sits at tier 3 and `analysis/ai` at tier 5 for the same reason;
  * this interface is that rule expressed where the compiler can enforce it.
+ *
+ * THREE members now, not the five #384 counted: `noteEmptyImport` and `persistPlasoParsed` were
+ * import bookkeeping that only ingest ever called, so #418 moved them to `importState.ts` as free
+ * functions over this same context. A seam this narrow is worth keeping narrow.
  */
 export interface ImportContext {
   /**
@@ -49,30 +52,5 @@ export interface ImportContext {
     state: InvestigationState,
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
-  ): Promise<InvestigationState>;
-
-  /**
-   * Record that an import produced nothing, with the importer's own record count so the note says
-   * how much was READ. "0 events from 0 records" (wrong format) and "0 events from 75,951 records"
-   * (understood but uninteresting) are very different problems.
-   */
-  noteEmptyImport(
-    caseId: string,
-    opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
-    kind: string,
-    total: number,
-  ): Promise<InvestigationState>;
-
-  /** Shared tail for the two Plaso entry points (text and file), which differ only in how they parse. */
-  persistPlasoParsed(
-    caseId: string,
-    parsed: PlasoParseResult,
-    opts: {
-      label: string;
-      idPrefix: string;
-      importedAt: string;
-      minSeverity?: Severity;
-      onProgress?: (done: number, total: number) => void;
-    },
   ): Promise<InvestigationState>;
 }

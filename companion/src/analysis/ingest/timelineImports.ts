@@ -9,6 +9,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { type ForensicEvent, type InvestigationState, type Severity } from "../stateTypes.js";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import { persistPlasoParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -38,7 +39,7 @@ export async function importPlaso(
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parsePlasoCsv(text, opts.plaso);
-  return ctx.persistPlasoParsed(caseId, parsedRaw, opts);
+  return persistPlasoParsed(ctx, caseId, parsedRaw, opts);
 }
 
 // Streaming-from-disk Plaso import: for super-timelines too large to hold as one JS string (a
@@ -69,7 +70,7 @@ export async function importPlasoFile(
   } finally {
     rl.close();
   }
-  return ctx.persistPlasoParsed(caseId, parsedRaw, opts);
+  return persistPlasoParsed(ctx, caseId, parsedRaw, opts);
 }
 
 // "Promote" copies already-imported super-timeline events UP into the forensic timeline so AI
