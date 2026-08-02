@@ -10,15 +10,30 @@ import { test, expect } from "../fixtures/test.js";
 // by the password-encrypted .dfircase". There is no endpoint to test. It is listed here so the
 // empty browser_test column is a decision rather than an oversight.
 //
-// A BUG FOUND WHILE WRITING THIS, since fixed (PR #432). POST /cases/:id/export/encrypted answered
-// 500 for a case created by POST /cases/seed-demo — 3 attempts out of 3 — while a case created
-// through POST /cases exported fine. The cause was not the archive walker it first looked like: the
-// demo case is named "GlobalTech Industries — BEC & Ransomware Precursor", and Node throws
-// ERR_INVALID_CHAR for that em dash in a header VALUE, so the archive built in full and the request
-// then died setting Content-Disposition. Any case name outside Latin-1 hit it; the demo case just
-// made it reproducible on demand. The export now sends an RFC 6266 filename*, so the
-// encrypted-export test below uses the seeded fixture — exporting the demo case IS the regression
-// test, and a case created by the test itself would step around the defect that was here.
+// A BUG FOUND WHILE WRITING THIS turned out to be TWO, both since fixed. POST
+// /cases/:id/export/encrypted answered 500 for a case created by POST /cases/seed-demo — 3 attempts
+// out of 3 — while a case created through POST /cases exported fine.
+//
+//   1. The demo case is named "GlobalTech Industries — BEC & Ransomware Precursor", and Node throws
+//      ERR_INVALID_CHAR for that em dash in a header VALUE, so the archive built in full and the
+//      request then died setting Content-Disposition. Any case name outside Latin-1 hit it. Fixed in
+//      PR #432: the export now sends an RFC 6266 filename*.
+//
+//   2. The ENOENT from lstat, which is what this file originally reported. The export walks the case
+//      directory while the app is still writing to it, and both atomicWrite ("<target>.<uuid>.tmp")
+//      and the SQLite worker ("<db>.<verb>-<uuid>", plus a rollback journal) create files that are
+//      renamed away between the readdir and the per-file lstat. A dashboard load on a seeded case
+//      fires the legacy JSON -> SQLite migration and a burst of sidecar saves; a fresh case writes
+//      almost nothing, which is the whole reason a race looked content-dependent. Fixed in PR #434.
+//
+// An earlier version of this note claimed the walker was NOT at fault and that the em dash was the
+// whole story. That was wrong, and wrong in the direction that costs time: bug 2 was reproduced only
+// by exporting a case that something else was actively writing to, which a curl against an idle
+// server never does. Both had to be fixed before this file's encrypted-export test could pass.
+//
+// That test therefore uses the seeded fixture and loads the dashboard first — exporting the demo
+// case IS the regression test for both. A case the test creates for itself, exported with nothing
+// else in flight, steps around both defects.
 //
 // These are the artifacts that leave the building — handed to a client, a court, or another team —
 // so the assertions are about CONTENT, not status codes. An export that returns 200 and a ZIP
@@ -133,8 +148,9 @@ test("US-128: a password-protected export produces a non-empty encrypted file", 
   });
   expect(res.status(), await res.text()).toBe(200);
 
-  // The seeded case name carries an em dash, which is what broke this endpoint (see the note at the
-  // top of the file). A 200 alone would not catch a regression that mangles the name instead.
+  // The seeded case name carries an em dash, one of the two things that broke this endpoint (see
+  // the note at the top of the file). A 200 alone would not catch a regression that mangles the
+  // analyst's name instead of refusing outright.
   expect(res.headers()["content-disposition"], "the analyst's case name must survive the download").toContain(
     "filename*=UTF-8''",
   );
