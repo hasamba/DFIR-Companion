@@ -7,7 +7,7 @@ import { crowdstrikeAdapter } from "../src/adapters/crowdstrike.js";
 import { securityOnionAdapter } from "../src/adapters/securityonion.js";
 import { socratesAdapter } from "../src/adapters/socrates.js";
 import { volwebAdapter, volwebSourceLabel } from "../src/adapters/volweb.js";
-import { parseResponseBodies, decodeCapturedBodies, zipColumnsRows, unflattenDotted } from "../src/adapters/extractUtils.js";
+import { parseResponseBodies, decodeCapturedBodies, zipColumnsRows, unflattenDotted, inflateBase64Json, MAX_INFLATED_BYTES } from "../src/adapters/extractUtils.js";
 import { deflateSync, gzipSync } from "node:zlib";
 
 describe("adapterForUrl", () => {
@@ -510,6 +510,42 @@ describe("decodeCapturedBodies (compressed bfetch — remote/Cloud Kibana)", () 
     const line = gzipSync(Buffer.from(JSON.stringify(item(0, { g: 1 })))).toString("base64");
     const rows = (await decodeCapturedBodies(line)).flatMap((b) => elasticAdapter.extractRows("u", b) ?? []);
     expect(rows).toEqual([{ _id: "0", _index: undefined, g: 1 }]);
+  });
+
+  // #430: inflateBase64Json read the whole DecompressionStream with `new Response(stream).text()`,
+  // which materializes the entire output before anything can look at its size. The input reaches
+  // it from a page-forgeable DFIR_CAPTURE_MSG — the same untrusted channel the DANGEROUS_KEYS
+  // guard exists for — and the hook's 8 MB cap does not apply, because a script in the page's MAIN
+  // world can post the message itself and never goes through the hook.
+  describe("decompression bomb guard", () => {
+    // ~800 KB of JSON from a ~2 KB input: high ratio, and deliberately VALID JSON so that without
+    // the cap it inflates and parses successfully. A bomb of nulls would return null either way
+    // and the test would pass for the wrong reason.
+    const inflatesTo = JSON.stringify(new Array(400_000).fill(0));
+    const bomb = deflateSync(Buffer.from(inflatesTo)).toString("base64");
+
+    it("aborts past the cap and returns null instead of materializing the output", async () => {
+      expect(bomb.length).toBeLessThan(16 * 1024);              // tiny input...
+      expect(inflatesTo.length).toBeGreaterThan(500 * 1024);    // ...large output
+      expect(await inflateBase64Json(bomb, 64 * 1024)).toBeNull();
+    });
+
+    it("is the cap doing it, not the payload — the same bytes decode under a larger cap", async () => {
+      const decoded = await inflateBase64Json(bomb, 4 * 1024 * 1024);
+      expect(Array.isArray(decoded)).toBe(true);
+      expect((decoded as unknown[]).length).toBe(400_000);
+    });
+
+    it("still decodes an ordinary payload, at a small cap and at the production one", async () => {
+      const payload = { rawResponse: { hits: { hits: [{ _id: "1", _source: { ok: true } }] } } };
+      const line = deflateSync(Buffer.from(JSON.stringify(payload))).toString("base64");
+      expect(await inflateBase64Json(line, 64 * 1024)).toEqual(payload);
+      expect(await inflateBase64Json(line)).toEqual(payload);
+    });
+
+    it("caps at 64 MB by default — far above a real bfetch response, far below a heap", () => {
+      expect(MAX_INFLATED_BYTES).toBe(64 * 1024 * 1024);
+    });
   });
 
   it("returns [] for empty input and skips undecodable lines", async () => {

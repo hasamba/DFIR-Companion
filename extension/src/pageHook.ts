@@ -21,7 +21,7 @@
 
   // Don't forward absurdly large bodies across the postMessage bridge (the companion can still
   // ingest big files via the dashboard; this just keeps the in-page channel sane). ~8 MB of text.
-  const MAX_BODY = 8_000_000;
+  const MAX_BODY = 8_000_000;   // keep in sync with MAX_CAPTURE_BODY in adapters/bridge.ts (#430)
 
   const w = window as unknown as { __dfirHookInstalled?: boolean };
   if (w.__dfirHookInstalled) return; // idempotent — survive double injection (SPA re-navigations)

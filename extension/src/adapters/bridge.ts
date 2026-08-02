@@ -10,6 +10,22 @@ export const DFIR_READY_MSG = "dfir-companion-hook-ready";
 export const DFIR_CONFIG_MSG = "dfir-companion-hook-config";
 export const DFIR_CAPTURE_MSG = "dfir-companion-hook-capture";
 
+/**
+ * Largest capture body the content script will accept, in characters.
+ *
+ * The MAIN-world hook applies the same bound before it forwards anything (pageHook.ts's MAX_BODY,
+ * re-declared there for the same standalone-bundle reason the message strings are — keep the two
+ * numbers in sync). That is not enough on its own: a script in the page can post a
+ * DFIR_CAPTURE_MSG itself and never goes through the hook, so the receiving side has to enforce
+ * the bound it relies on rather than assume the sender did (#430).
+ */
+export const MAX_CAPTURE_BODY = 8_000_000;
+
+/** Whether a DFIR_CAPTURE_MSG body is one the content script will accept at all. */
+export function isAcceptableCaptureBody(body: unknown): body is string {
+  return typeof body === "string" && body.length <= MAX_CAPTURE_BODY;
+}
+
 /** content → page: which response URLs to forward (regex sources matched case-insensitively). */
 export interface HookConfigMessage {
   source: typeof DFIR_CONFIG_MSG;

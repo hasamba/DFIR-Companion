@@ -51,8 +51,42 @@ const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
  * `deflate` first, then `gzip`/`deflate-raw` to be robust to encoder differences). Returns the parsed
  * JSON value, or null when the string isn't base64 / doesn't inflate to JSON. Async (the stream API
  * is async); a no-op on plain-JSON deployments.
+ *
+ * The output is capped. `raw` reaches here from a page-forgeable DFIR_CAPTURE_MSG — the same
+ * untrusted channel the DANGEROUS_KEYS guard below exists for — and the hook's own 8 MB cap does
+ * not apply, because a script in the page's MAIN world can post the message itself and never goes
+ * through the hook. A small high-ratio DEFLATE stream therefore used to inflate without limit
+ * (#430). `maxBytes` is a test seam; production callers use the default.
  */
-export async function inflateBase64Json(raw: string): Promise<unknown | null> {
+export const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Inflate to text, reading incrementally and giving up the moment the accumulated output passes
+ * `maxBytes`. Returns null for "too big" — distinct from a throw, which means these bytes are not
+ * this format. `new Response(stream).text()` cannot do this: it materializes the whole output
+ * first, so a check on the result runs after the allocation it was meant to prevent.
+ */
+async function inflateCapped(blob: Blob, format: "deflate" | "gzip" | "deflate-raw", maxBytes: number): Promise<string | null> {
+  const reader = blob.stream().pipeThrough(new DecompressionStream(format)).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => { /* already closing */ });
+      return null;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(merged);
+}
+
+export async function inflateBase64Json(raw: string, maxBytes = MAX_INFLATED_BYTES): Promise<unknown | null> {
   const compact = raw.replace(/\s+/g, "");
   if (compact.length < 8 || !BASE64_RE.test(compact)) return null;
   // Deliberately un-annotated: a bare `Uint8Array` widens to `Uint8Array<ArrayBufferLike>` under
@@ -65,13 +99,17 @@ export async function inflateBase64Json(raw: string): Promise<unknown | null> {
     bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
   } catch { return null; }
   for (const format of ["deflate", "gzip", "deflate-raw"] as const) {
+    let inflated: string | null;
     try {
-      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
-      const text = (await new Response(stream).text()).trim();
-      if (text.startsWith("{") || text.startsWith("[")) {
-        try { return JSON.parse(text); } catch { /* inflated but not JSON — try next format */ }
-      }
-    } catch { /* wrong format for these bytes — try the next */ }
+      inflated = await inflateCapped(new Blob([bytes]), format, maxBytes);
+    } catch { continue; }   // wrong format for these bytes — try the next
+    // Over the cap. Not a format mismatch: only a stream these bytes really are produces output at
+    // all, so trying the remaining formats would just re-run the bomb. Give up on the payload.
+    if (inflated === null) return null;
+    const text = inflated.trim();
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try { return JSON.parse(text); } catch { /* inflated but not JSON — try next format */ }
+    }
   }
   return null;
 }
