@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, readFile, writeFile, mkdir, symlink, link } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile, mkdir, symlink, link } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -21,8 +22,8 @@ async function harness() {
   return new CaseStore(root);
 }
 
-async function seedCase(store: CaseStore, caseId: string) {
-  await store.createCase({ caseId, name: "Case One", investigator: "alice", aiProvider: "anthropic" });
+async function seedCase(store: CaseStore, caseId: string, name = "Case One") {
+  await store.createCase({ caseId, name, investigator: "alice", aiProvider: "anthropic" });
   await store.saveScreenshot(caseId, "shot-001.webp", Buffer.from([0x52, 0x49, 0x46, 0x46, 1, 2, 3]));
   await store.appendCapture(caseId, {
     caseId,
@@ -184,6 +185,62 @@ describe("importEncryptedCase", () => {
     await seedCase(store, "INC-1");
     const archive = await exportEncryptedCase(store, "INC-1", PASSWORD);
     await expect(importEncryptedCase(store, archive, PASSWORD)).rejects.toThrow(CaseImportConflictError);
+  });
+
+  // #420: caseExists() is a check, not a claim. Two imports aimed at the same id both passed it and
+  // then interleaved their writes into the same destination, producing a case that existed in
+  // neither archive — case.json from whichever finished last, evidence files from both. Nothing
+  // downstream can detect that, so every analysis and custody record built on it is untrustworthy.
+  it("cannot merge two archives into one case when imports race for the same id", async () => {
+    const store = await harness();
+    await seedCase(store, "SRC-A", "Case A");
+    await seedCase(store, "SRC-B", "Case B");
+    await store.saveImport("SRC-A", "only-in-a.json", JSON.stringify({ from: "A" }));
+    await store.saveImport("SRC-B", "only-in-b.json", JSON.stringify({ from: "B" }));
+    const archiveA = await exportEncryptedCase(store, "SRC-A", PASSWORD);
+    const archiveB = await exportEncryptedCase(store, "SRC-B", PASSWORD);
+
+    const results = await Promise.allSettled([
+      importEncryptedCase(store, archiveA, PASSWORD, { targetCaseId: "TARGET" }),
+      importEncryptedCase(store, archiveB, PASSWORD, { targetCaseId: "TARGET" }),
+    ]);
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const loser = results.find((r) => r.status === "rejected");
+    expect((loser as PromiseRejectedResult).reason).toBeInstanceOf(CaseImportConflictError);
+
+    // Exactly one archive's evidence is present — never both, never a blend.
+    const hasA = existsSync(join(store.importsDir("TARGET"), "only-in-a.json"));
+    const hasB = existsSync(join(store.importsDir("TARGET"), "only-in-b.json"));
+    expect(hasA).toBe(!hasB);
+    // ...and the metadata agrees with the evidence, which is the property that actually broke.
+    const meta = await store.getCaseMeta("TARGET");
+    expect(meta?.name).toBe(hasA ? "Case A" : "Case B");
+  });
+
+  it("leaves no staging directory behind, on the winning or the losing path", async () => {
+    const store = await harness();
+    await seedCase(store, "SRC-A");
+    const archive = await exportEncryptedCase(store, "SRC-A", PASSWORD);
+    await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "OK-1" });
+    await expect(importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "OK-1" })).rejects.toThrow(
+      CaseImportConflictError,
+    );
+    await expect(
+      importEncryptedCase(store, Buffer.from("not an archive at all"), PASSWORD, { targetCaseId: "OK-2" }),
+    ).rejects.toThrow();
+
+    expect(await readdir(join(store.casesRoot, ".import-staging"))).toEqual([]);
+  });
+
+  it("keeps the staging directory out of the case list", async () => {
+    const store = await harness();
+    await seedCase(store, "SRC-A");
+    const archive = await exportEncryptedCase(store, "SRC-A", PASSWORD);
+    await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "LISTED" });
+    // A half-extracted archive holds a readable case.json, which is exactly what listCases treats
+    // as a case — so staging lives a level down, under a dotted directory.
+    expect((await store.listCases()).map((m) => m.caseId).sort()).toEqual(["LISTED", "SRC-A"]);
   });
 
   it("throws DecryptionError on the wrong password", async () => {
