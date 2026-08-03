@@ -60,23 +60,45 @@ for (const f of walk(SRC)) {
 // ---------------------------------------------------------------------------------------------
 // public/ — the half of the codebase that had no ceiling at all (#384).
 //
-// dashboard.html is 25,571 lines, of which 19,256 are JavaScript inside <script> tags and 3,231
-// are CSS inside <style> tags. It is larger than pipeline.ts and server.ts combined and it lives
-// outside companion/, so until now neither this gate nor check-imports.mjs had ever seen it — and
+// dashboard.html was 25,571 lines, of which 19,256 were JavaScript inside <script> tags and 3,231
+// were CSS inside <style> tags. It was larger than pipeline.ts and server.ts combined and it lives
+// outside companion/, so until #384 neither this gate nor check-imports.mjs had ever seen it — and
 // it grew by 165 lines of script during the branch that added this paragraph.
 //
 // WHAT IS MEASURED IS THE CODE, NOT THE MARKUP. The ~3,000 lines of actual HTML in dashboard.html
 // are not the problem; a 19k-line program hiding inside a markup file is. Budgeting the inline
 // blocks separately also names the two extractions independently: script moves to public/js/
 // modules, style moves to a stylesheet, and each shows up in the ledger as it shrinks.
+//
+// #415 did both. The CSS is gone (3,234 -> 4 lines, and the 4 that remain are the runtime style
+// element safe-dom.js writes into), and the script is down to 18,404. Both destinations are
+// ledgered below, which is the point of the next paragraph.
 // ---------------------------------------------------------------------------------------------
 const PUBLIC = resolve(COMPANION, "..", "public");
 const PUBLIC_JS = join(PUBLIC, "js");
+const PUBLIC_CSS = join(PUBLIC, "css");
 
-// Extracted dashboard feature modules. All six are already under the limit, so they are held there.
+// Extracted dashboard feature modules. All of them are under the limit, so they are held there.
 for (const f of walk(PUBLIC_JS, ".js")) {
   sizes.set(
     `public/js/${relative(PUBLIC_JS, f).replace(/\\/g, "/")}`,
+    readFileSync(f, "utf8").split("\n").length,
+  );
+}
+
+// AND THE STYLESHEETS, or the budget escapes by being extracted (#415).
+//
+// The `#inline-css` figure below froze 3,234 lines of CSS at their length while they sat in
+// <style> blocks. Moving them into public/css/dashboard.css drops that number to 4 — which reads
+// as a 3,230-line win and is really the gate losing sight of the code. A ratchet that a file can
+// leave by changing extension is not a ratchet.
+//
+// So the stylesheet is ledgered in its own right at the length it arrived with, and shrinks from
+// there. That is what makes the extraction honest: the CSS is now in a file where it can be split
+// by concern, and the budget follows it there instead of evaporating at the door.
+for (const f of walk(PUBLIC_CSS, ".css")) {
+  sizes.set(
+    `public/css/${relative(PUBLIC_CSS, f).replace(/\\/g, "/")}`,
     readFileSync(f, "utf8").split("\n").length,
   );
 }

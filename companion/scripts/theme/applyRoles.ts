@@ -1,4 +1,4 @@
-// Rewrites public/dashboard.html onto the semantic role layer:
+// Rewrites the dashboard's client source onto the semantic role layer:
 //
 //   1. replaces the two `--c-<hex>` palette blocks with the generated role CSS
 //   2. rewrites every `var(--c-xxxxxx)` to `var(--role)`
@@ -7,12 +7,30 @@
 //   npm run theme:apply           rewrite in place
 //   npm run theme:apply -- --dry  report what would change, touch nothing
 //
+// TWO FILES SINCE #415, one generated region in each. The CSS moved out of dashboard.html
+// into public/css/dashboard.css, so the token region — which is CSS — went with it. The
+// theme registry the picker reads is JavaScript and stayed in the inline script. Keeping
+// both generated from one run is the point: a menu entry with no matching block renders as
+// the previous theme under a new name, and a block with no entry is unreachable, and both
+// failures are silent.
+//
+// Step 2 and step 3 are run over BOTH files rather than each over "its" file. The split is
+// clean today (var() in the CSS, quoted names in the script) but nothing enforces that, and
+// a rewrite that skipped a file would leave a live `--c-` reference behind — which the
+// occurrence count at the end of this script would then report as a mismatch with no clue
+// which file it was in.
+//
 // Idempotent: running it twice is a no-op, because step 1 matches the original block
 // shape and steps 2-3 have nothing left to find. Safe to re-run after a merge brings
 // in new `--c-` references from another branch.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { DASHBOARD_PATH as DASHBOARD, loadBaseline } from "./loadBaseline.js";
+import {
+  DASHBOARD_CSS_PATH as DASHBOARD_CSS,
+  DASHBOARD_PATH as DASHBOARD,
+  loadBaseline,
+  THEME_SOURCES,
+} from "./loadBaseline.js";
 import { readAlphaAliases, readPaletteFacts } from "./paletteFacts.js";
 import { assignRoles } from "./roleMap.js";
 import {
@@ -34,18 +52,20 @@ import { IMPORTED_THEMES } from "./vendor/themePalettes.js";
  * re-prepended a whole copy — the region silently tripled. A delimiter that depends on
  * what the generated content happens to look like is not a delimiter.
  */
-const TOKENS_BEGIN = "    /* === dfir-theme tokens (issue #53) ===";
-const TOKENS_END = "    /* === end dfir-theme tokens === */";
+// Unindented since #415: the region used to sit four columns in, inside a <style> block, and
+// now starts at column 0 in a stylesheet of its own.
+const TOKENS_BEGIN = "/* === dfir-theme tokens (issue #53) ===";
+const TOKENS_END = "/* === end dfir-theme tokens === */";
 
 /**
  * The hand-written rule that has always followed the generated region. Used only to
  * place the end marker the first time, on a file written before markers existed.
  */
-const LEGACY_TAIL_ANCHOR = "    /* Light mode: the neutral toolbar icons are baked";
+const LEGACY_TAIL_ANCHOR = "/* Light mode: the neutral toolbar icons are baked";
 
 function findTokenRegion(src: string): { start: number; end: number } {
   const start = src.indexOf(TOKENS_BEGIN);
-  if (start < 0) throw new Error("token region begin marker not found in dashboard.html");
+  if (start < 0) throw new Error("token region begin marker not found in dashboard.css");
 
   const marked = src.indexOf(TOKENS_END, start);
   if (marked >= 0) return { start, end: marked + TOKENS_END.length };
@@ -61,30 +81,38 @@ function findTokenRegion(src: string): { start: number; end: number } {
 
 function main() {
   const dry = process.argv.includes("--dry");
-  const src = readFileSync(DASHBOARD, "utf8");
+  const htmlSrc = readFileSync(DASHBOARD, "utf8");
+  const cssSrc = readFileSync(DASHBOARD_CSS, "utf8");
 
   const baseline = loadBaseline();
-  const facts = readPaletteFacts(DASHBOARD, baseline);
+  const facts = readPaletteFacts(THEME_SOURCES, baseline);
   const map = assignRoles(facts, baseline);
   const values = resolveRoleValues(facts, map);
-  const alphas = readAlphaAliases(DASHBOARD);
+  const alphas = readAlphaAliases(THEME_SOURCES);
 
-  const { start, end } = findTokenRegion(src);
+  // First generated region: the tokens, in the stylesheet.
+  const { start, end } = findTokenRegion(cssSrc);
   const css = renderThemeCss(facts, map, values, alphas);
-  let out = src.slice(0, start) + css + src.slice(end);
+  let outCss = cssSrc.slice(0, start) + css + cssSrc.slice(end);
 
-  // Second generated region: the theme registry the picker reads. Kept in sync with the
-  // CSS from one source, because the two failure modes are both silent — a menu entry
-  // with no matching block renders as the previous theme under a new name, and a block
-  // with no entry is unreachable.
-  const rs = out.indexOf(REGISTRY_BEGIN);
-  const re = out.indexOf(REGISTRY_END);
+  // Second generated region: the theme registry the picker reads, in the inline script. Kept in
+  // sync with the CSS from one run, because the two failure modes are both silent — a menu entry
+  // with no matching block renders as the previous theme under a new name, and a block with no
+  // entry is unreachable.
+  const rs = htmlSrc.indexOf(REGISTRY_BEGIN);
+  const re = htmlSrc.indexOf(REGISTRY_END);
   if (rs < 0 || re < 0) throw new Error("theme registry markers not found in dashboard.html");
-  out = out.slice(0, rs) + renderThemeRegistry(IMPORTED_THEMES, values) + out.slice(re + REGISTRY_END.length);
+  let outHtml =
+    htmlSrc.slice(0, rs) + renderThemeRegistry(IMPORTED_THEMES, values) + htmlSrc.slice(re + REGISTRY_END.length);
 
   // Call-site rewrite. Both patterns are anchored on the full 6-hex name so a partial
   // match is impossible, and an unknown name is left alone and reported rather than
   // silently rewritten to something wrong.
+  //
+  // Both patterns run over both files. Today the var() sites are all in the stylesheet and the
+  // quoted names all in the script, but nothing enforces that split and a rewrite that assumed it
+  // would leave a live `--c-` reference behind for the count at the bottom to report as a bare
+  // number with no file attached.
   const unknown = new Set<string>();
   let cssSites = 0;
   let jsSites = 0;
@@ -94,32 +122,36 @@ function main() {
   // would quietly defeat theming for anyone who later made the role conditional.
   // Requiring `,` or `)` after six hex digits leaves the eight-digit RGBA names alone —
   // those keep their own variable, defined as a colour-mix in the alias block.
-  out = out.replace(/var\(\s*(--c-[0-9a-f]{6})\s*(?:,[^)]*)?\)/g, (whole, name: string) => {
-    const role = map[name]?.role;
-    if (!role) {
-      unknown.add(name);
-      return whole;
-    }
-    cssSites++;
-    return `var(${role})`;
-  });
+  const rewriteVars = (text: string) =>
+    text.replace(/var\(\s*(--c-[0-9a-f]{6})\s*(?:,[^)]*)?\)/g, (whole, name: string) => {
+      const role = map[name]?.role;
+      if (!role) {
+        unknown.add(name);
+        return whole;
+      }
+      cssSites++;
+      return `var(${role})`;
+    });
 
-  // Any quoted `--c-<hex>` in the script. This is deliberately broader than
-  // `themeColor("...")`: the swimlane canvas keeps its tokens in lookup tables
-  // (SW_SEV_TOKEN, SW_LABEL_TOKEN) and passes them to themeColor() indirectly, so
-  // matching only the direct call would leave those behind. In this file a string
-  // literal of that exact shape is never anything but a CSS variable name.
-  out = out.replace(/(["'])(--c-[0-9a-f]{6})\1/g, (whole, quote: string, name: string) => {
-    const role = map[name]?.role;
-    if (!role) {
-      unknown.add(name);
-      return whole;
-    }
-    jsSites++;
-    return `${quote}${role}${quote}`;
-  });
+  // Any quoted `--c-<hex>`. This is deliberately broader than `themeColor("...")`: the swimlane
+  // canvas keeps its tokens in lookup tables (SW_SEV_TOKEN, SW_LABEL_TOKEN) and passes them to
+  // themeColor() indirectly, so matching only the direct call would leave those behind. In these
+  // files a string literal of that exact shape is never anything but a CSS variable name.
+  const rewriteQuoted = (text: string) =>
+    text.replace(/(["'])(--c-[0-9a-f]{6})\1/g, (whole, quote: string, name: string) => {
+      const role = map[name]?.role;
+      if (!role) {
+        unknown.add(name);
+        return whole;
+      }
+      jsSites++;
+      return `${quote}${role}${quote}`;
+    });
 
-  console.log(`token region   lines ${lineOf(src, start)}-${lineOf(src, end)} (${end - start} chars) -> ${css.length} chars`);
+  outCss = rewriteQuoted(rewriteVars(outCss));
+  outHtml = rewriteQuoted(rewriteVars(outHtml));
+
+  console.log(`token region   ${DASHBOARD_CSS} lines ${lineOf(cssSrc, start)}-${lineOf(cssSrc, end)} (${end - start} chars) -> ${css.length} chars`);
   console.log(`css call sites ${cssSites}`);
   console.log(`js  call sites ${jsSites}`);
   console.log(`roles emitted  ${values.size}`);
@@ -131,8 +163,9 @@ function main() {
   //   - one alias declaration per variable
   //   - one declaration per alpha alias
   //   - the alpha call sites themselves, which keep their own variable on purpose
-  const remaining = (out.match(/--c-[0-9a-f]{6}/g) ?? []).length;
-  const alphaSites = (out.match(/var\(\s*--c-[0-9a-f]{8}\s*\)/g) ?? []).length;
+  const both = `${outHtml}\n${outCss}`;
+  const remaining = (both.match(/--c-[0-9a-f]{6}/g) ?? []).length;
+  const alphaSites = (both.match(/var\(\s*--c-[0-9a-f]{8}\s*\)/g) ?? []).length;
   const expected = facts.length + alphas.length + alphaSites;
   console.log(
     `--c- occurrences left ${remaining} (expected ${expected}: ${facts.length} aliases + ${alphas.length} alpha aliases + ${alphaSites} alpha call sites)`,
@@ -146,8 +179,9 @@ function main() {
     console.log("\n--dry: nothing written");
     return;
   }
-  writeFileSync(DASHBOARD, out);
-  console.log(`\nwrote ${DASHBOARD}`);
+  writeFileSync(DASHBOARD_CSS, outCss);
+  writeFileSync(DASHBOARD, outHtml);
+  console.log(`\nwrote ${DASHBOARD_CSS}\nwrote ${DASHBOARD}`);
 }
 
 const lineOf = (s: string, idx: number) => s.slice(0, idx).split("\n").length;

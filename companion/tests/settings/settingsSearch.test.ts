@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { dashboardStylesheet } from "../helpers/dashboardModule.js";
 // The module lives outside companion/, next to command-palette.js and graph-view.js. Its pure
 // exports touch no DOM, so importing them in node works — same arrangement as commandPalette.test.ts,
 // but with a .d.ts alongside so this file stays inside `npm run typecheck` instead of joining the
@@ -90,6 +91,9 @@ describe("searchMessage", () => {
 });
 
 const dashboard = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+// The search behaviour is implemented as CSS, and since #415 the CSS is in its own file. These
+// rules moved verbatim; only the file they are read from changed.
+const dashboardCss = dashboardStylesheet;
 
 describe("dashboard.html search markup", () => {
   it("carries the input and message span the module binds to", async () => {
@@ -101,8 +105,8 @@ describe("dashboard.html search markup", () => {
 });
 
 describe("dashboard.html search CSS", () => {
-  it("hides tabs, pane children and row siblings that are not hits", async () => {
-    const h = await dashboard();
+  it("hides tabs, pane children and row siblings that are not hits", () => {
+    const h = dashboardCss();
     expect(h).toContain(
       ".settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }",
     );
@@ -114,14 +118,14 @@ describe("dashboard.html search CSS", () => {
     );
   });
 
-  it("renders the tab match count from the attribute", async () => {
-    const h = await dashboard();
+  it("renders the tab match count from the attribute", () => {
+    const h = dashboardCss();
     expect(h).toContain(".settings-modal[data-searching] .stab[data-hit-count]::after");
     expect(h).toContain("content: attr(data-hit-count)");
   });
 
-  it("steps the Essential/All toggle aside while searching", async () => {
-    const h = await dashboard();
+  it("steps the Essential/All toggle aside while searching", () => {
+    const h = dashboardCss();
     expect(h).toContain(".settings-modal[data-searching] .settings-mode { display: none; }");
   });
 
@@ -129,8 +133,8 @@ describe("dashboard.html search CSS", () => {
   // while EVERY Essential rule opts out of it. A fourth rule added later without the opt-out would
   // keep hiding fields mid-search and silently re-break cross-tab search — with no failing test
   // anywhere else, because Essential mode itself would still look perfect.
-  it("suspends every Essential rule while a search is active", async () => {
-    const h = await dashboard();
+  it("suspends every Essential rule while a search is active", () => {
+    const h = dashboardCss();
     const rules = h.match(/^\s*\.settings-modal\[data-mode="essential"\].*$/gm) ?? [];
     expect(rules.length).toBeGreaterThanOrEqual(3);
     for (const rule of rules) expect(rule).toContain(":not([data-searching])");
@@ -148,13 +152,22 @@ describe("dashboard.html search wiring", () => {
   // the only symptom in the browser is the feature silently not existing — no console error the
   // dashboard surfaces, nothing failing in any other suite. Written as "every module the dashboard
   // loads" rather than naming this one file, so the next /js/ module is covered the day it is added.
-  it("whitelists every /js/ module the dashboard loads", async () => {
+  //
+  // MATCHES ANY <script src="/js/…">, not just `type="module"`. The narrower regex this started as
+  // was true of every dashboard script when it was written and silently stopped being true twice:
+  // js/safe-dom.js has always been a classic script and was never covered, and #415 added eight
+  // more (the dashboard-*.js helpers, which must be classic — see public/js/dashboard-escape.js).
+  // A whitelist test that only sees one kind of tag is a whitelist test with a hole in it.
+  it("whitelists every /js/ script the dashboard loads", async () => {
     const [h, server] = await Promise.all([
       dashboard(),
       readFile(new URL("../../src/http/staticAssets.ts", import.meta.url), "utf8"),
     ]);
-    const loaded = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+    const loaded = [...h.matchAll(/<script[^>]*\ssrc="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
     expect(loaded).toContain("/js/settings-search.js");
+    // Pins the widening above: if the regex ever narrows back to module tags, these disappear.
+    expect(loaded).toContain("/js/safe-dom.js");
+    expect(loaded).toContain("/js/dashboard-escape.js");
     for (const path of loaded) {
       expect(
         server,
@@ -173,7 +186,7 @@ describe("dashboard.html search wiring", () => {
       dashboard(),
       readFile(new URL("../../src/http/staticAssets.ts", import.meta.url), "utf8"),
     ]);
-    const entry = [...h.matchAll(/<script type="module" src="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
+    const entry = [...h.matchAll(/<script[^>]*\ssrc="(\/js\/[^"]+)"><\/script>/g)].map((m) => m[1]);
 
     // Walk the import graph breadth-first; a module may import a module that imports another.
     const seen = new Set<string>();

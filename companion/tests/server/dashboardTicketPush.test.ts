@@ -1,19 +1,21 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dashboardClientSource } from "../helpers/dashboardModule.js";
 
-// The dashboard is a single hand-written HTML file with inline JS and no DOM test harness in this
-// repo, so behaviour cannot be asserted here (see dashboardCustodySection.test.ts). What CAN be
-// asserted is the wiring that makes the Jira/ServiceNow push buttons real rather than decorative:
-// markup with no handler, a handler hitting the wrong route, or a control that shows up even when
-// the integration is unconfigured — the "one-click" framing #272 promised and #297 tracks.
+// The dashboard is a hand-written HTML file with inline JS and no DOM test harness in this repo, so
+// behaviour cannot be asserted here (see dashboardCustodySection.test.ts). What CAN be asserted is
+// the wiring that makes the Jira/ServiceNow push buttons real rather than decorative: markup with
+// no handler, a handler hitting the wrong route, or a control that shows up even when the
+// integration is unconfigured — the "one-click" framing #272 promised and #297 tracks.
+//
+// Reads the whole client source rather than dashboard.html alone: #415 moved ticketPushChips into
+// public/js/dashboard-fragments.js, and every assertion below is about what the dashboard does,
+// not about which file a line of it lives in. tests/dashboard/dashboardFragments.test.ts now tests
+// the chip builder directly, which this suite could not do while it was inline.
 
 let html: string;
 
-beforeAll(async () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  html = await readFile(join(here, "..", "..", "..", "public", "dashboard.html"), "utf8");
+beforeAll(() => {
+  html = dashboardClientSource();
 });
 
 describe("Jira / ServiceNow push buttons in the finding panel (#297)", () => {

@@ -30,6 +30,19 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/case-load-progress.js": "application/javascript; charset=utf-8",
   "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
   "/js/diagnostics-panel.js": "application/javascript; charset=utf-8",
+  // Pure helpers lifted out of dashboard.html's inline script (#415). CLASSIC scripts, not modules
+  // — the dashboard calls them by bare name, so they have to declare real globals; see
+  // public/js/dashboard-escape.js. That distinction matters here because the allowlist test used to
+  // look only at `<script type="module">` tags, which would have skipped all eight of these.
+  "/js/dashboard-state.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-escape.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-time.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-text.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-glyphs.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-filters.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-ioc.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-values.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-fragments.js": "application/javascript; charset=utf-8",
   // Accessibility primitives (#386). modal-autowire is the only one dashboard.html loads directly;
   // the other two are its static imports, and the browser fetches those by URL too — so all three
   // need an entry here or the import chain 404s exactly as described above.
@@ -44,6 +57,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   // still renders, so the only symptom is that focus rings, the skip link and reduced-motion
   // support are silently gone.
   "/css/a11y.css": "text/css; charset=utf-8",
+  // The dashboard's own stylesheet — all 3,224 lines that used to live in fourteen inline <style>
+  // blocks (#415). Unlike a11y.css this one fails loudly: the page hides <body> until safe-dom.js
+  // is ready, so a 404 here is a blank dashboard rather than an unstyled one.
+  "/css/dashboard.css": "text/css; charset=utf-8",
 };
 
 /**
