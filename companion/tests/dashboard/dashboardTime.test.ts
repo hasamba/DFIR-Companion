@@ -43,7 +43,7 @@ describe("the six relative-time formatters disagree, on purpose recorded", () =>
     ["veloClientsAge", "never refreshed", "just now", "just now", "1m ago", "3h ago"],
     ["veloMonAge", "never", "just now", "30s ago", "1m ago", "3h ago"],
     ["relTime", "never", "unknown", "30s ago", "2m ago", "3h ago"],
-    ["activityTimeAgo", "20513d ago", "—", "just now", "1m ago", "3h ago"],
+    ["activityTimeAgo", "—", "—", "just now", "1m ago", "3h ago"],
     ["cockpitAge", "", "", "just now", "1m ago", "3h ago"],
   ])("%s: null=%j unparseable=%j 30s=%j 90s=%j 3h=%j", (name, onNull, onJunk, s30, s90, h3) => {
     const fn = FNS[name as keyof typeof FNS];
@@ -54,15 +54,27 @@ describe("the six relative-time formatters disagree, on purpose recorded", () =>
     expect(fn(ago(3 * 3_600_000))).toBe(h3);
   });
 
-  // A LATENT BUG, PINNED RATHER THAN FIXED — see #458, which owns the fix. `new Date(null)` is the
-  // epoch, not Invalid Date, so activityTimeAgo is the one of the six that reports a missing
-  // timestamp as 57 years ago instead of a placeholder. Its five siblings all guard with `!iso` or
-  // Number.isFinite first. Fixing it changes what the activity feed renders, which belongs in its
-  // own change with its own reasoning — this asserts the current behaviour so that change is
-  // deliberate when it happens. UPDATE THIS TEST AND THE TABLE ROW ABOVE when #458 lands.
-  it("activityTimeAgo(null) reports the epoch, unlike its five siblings", () => {
-    expect(activityTimeAgo(null)).toMatch(/^\d{5}d ago$/);
-    for (const fn of [lgAgo, veloClientsAge, veloMonAge, relTime, cockpitAge]) {
+  // THE BUG #415 PINNED HERE, FIXED BY #458 — this test and the table row above are the two places
+  // that pinned it. `new Date(null)` is the epoch, not Invalid Date, so activityTimeAgo was the one
+  // of the six that reported a missing timestamp as 57 years ago — a literal "20513d ago" in the
+  // activity feed — while its five siblings all guarded with `!iso` or Number.isFinite first. Only
+  // null ever hit it: `new Date(undefined)` IS Invalid Date, so undefined already returned "—".
+  //
+  // IT RETURNS "—", NOT A SIBLING'S PLACEHOLDER. Both call sites render this into a muted, nowrap
+  // table column with the row's raw timestamp already in a `title` tooltip: the Activity Log (#238)
+  // and the Chain of Custody event table (#231). "never"/"never refreshed" would claim the logged
+  // activity did not happen when it is only its timestamp that is missing, "just now" would invent
+  // one, and "" would leave a blank cell that reads as a broken render rather than as absent data.
+  // "—" is what this function already returned for an unparseable string, and what the custody
+  // table beside it already renders for an unknown verification state.
+  //
+  // The sibling sweep is kept and now covers all six: it is what catches a seventh formatter added
+  // without a guard, which is how this one got here.
+  it("renders a placeholder for a missing timestamp, like its five siblings", () => {
+    for (const missing of [null, undefined, ""]) {
+      expect(activityTimeAgo(missing)).toBe("—");
+    }
+    for (const fn of [lgAgo, veloClientsAge, veloMonAge, relTime, activityTimeAgo, cockpitAge]) {
       expect(fn(null)).not.toMatch(/d ago$/);
     }
   });
