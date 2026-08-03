@@ -8,7 +8,8 @@ import {
   cachedSnapshots,
   callsAfter,
   dashboardScripts,
-  dfirStateCalls,
+  setterRefs,
+  capturedByNestedFunction,
   functionsOf,
   reachableFrom,
   usesAfter,
@@ -168,17 +169,22 @@ describe("the single-writer rule", () => {
     { setter: "setLastSuperData", owner: "renderSuperTimeline" },
   ] as const;
 
-  it.each(CELLS)("$setter has exactly one call site anywhere in the client", ({ setter }) => {
-    const calls = dfirStateCalls(scripts, setter);
+  it.each(CELLS)("$setter is referenced exactly once, as a direct call", ({ setter }) => {
+    const refs = setterRefs(scripts, setter);
     expect(
-      calls,
-      `${setter} must have exactly one writer across all ${scripts.length} scripts; found ` +
-        calls.map((c) => `${c.script}:${c.line}`).join(", "),
+      refs,
+      `${setter} must be named exactly once across all ${scripts.length} scripts; found ` +
+        refs.map((r) => `${r.script}:${r.line} (${r.form})`).join(", "),
     ).toHaveLength(1);
+    // Not merely once, but in the one shape the gate can reason about. A destructured or computed
+    // reference hands the setter to code this analysis cannot follow.
+    expect(refs[0].form, `${setter} must be called directly, not stashed or accessed dynamically`).toBe(
+      "direct-call",
+    );
   });
 
   it.each(CELLS)("$setter is called from $owner", ({ setter, owner }) => {
-    const [call] = dfirStateCalls(scripts, setter);
+    const [call] = setterRefs(scripts, setter);
     const script = scripts.find((s) => s.name === call.script);
     const enclosing = functionsOf(script!)
       .filter((f) => {
@@ -221,6 +227,16 @@ describe("no snapshot is cached across a refresh", () => {
           const refreshers = callsAfter(fn.node, cached.pos).filter(
             (c) => c.name === writer || reachableFrom(graph, [c.name]).has(writer),
           );
+          if (refreshers.length === 0) continue;
+          // A value that escapes into a callback has no knowable execution position — see
+          // capturedByNestedFunction. Any refresher in the enclosing function is then a fault.
+          if (capturedByNestedFunction(fn.node, cached.name)) {
+            offenders.push(
+              `${script.name}:${fn.line} ${fn.name} captures \`${cached.name}\` in a callback, ` +
+                `and ${refreshers[0].name}() can replace it before that callback runs`,
+            );
+            continue;
+          }
           for (const r of refreshers) {
             if (usesAfter(fn.node, cached.name, r.end).length > 0) {
               offenders.push(

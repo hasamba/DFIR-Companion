@@ -47,10 +47,27 @@ export function dashboardScripts(): DashboardScript[] {
   for (const m of html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)) {
     out.push(makeScript(`dashboard.html#inline-${++n}`, m[1]));
   }
-  // Any `src="/js/…"`, classic or `type="module"` — the distinction is about load semantics, not
-  // about whether the code can write the store.
-  for (const m of html.matchAll(/<script[^>]*\ssrc="\/js\/([^"]+)"/g)) {
-    out.push(makeScript(`js/${m[1]}`, readFileSync(new URL(`js/${m[1]}`, PUBLIC), "utf8")));
+
+  // Tagged files, THEN everything they import, transitively.
+  //
+  // js/a11y/modal-autowire.js imports modal.js, which imports focus-trap.js. Neither is named by a
+  // script tag, so neither was scanned — the browser fetches them, they run on every page, and a
+  // second writer or a stale snapshot in either would have passed every gate. The same reasoning
+  // that put the whole import graph in the STATIC_ASSETS check (a transitive import 404s exactly as
+  // silently as a direct one) applies here: the gate has to see what the browser executes.
+  const seen = new Set<string>();
+  const queue = [...html.matchAll(/<script[^>]*\ssrc="\/js\/([^"]+)"/g)].map((m) => `js/${m[1]}`);
+  while (queue.length > 0) {
+    const rel = queue.shift() as string;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    const source = readFileSync(new URL(rel, PUBLIC), "utf8");
+    out.push(makeScript(rel, source));
+    // Relative specifiers only — a bare specifier would be a bundler dependency, and this page has
+    // no bundler, so anything not starting with "." is not ours to scan.
+    for (const imp of source.matchAll(/^\s*(?:import|export)\s[^"']*["'](\.[^"']+)["']/gm)) {
+      queue.push(new URL(imp[1], `file:///${rel}`).pathname.replace(/^\//, ""));
+    }
   }
   return out;
 }
@@ -125,22 +142,68 @@ export function callsWithin(node: ts.Node): Set<string> {
   return out;
 }
 
-/** `DfirState.<member>(` call sites, as (script, line) pairs. Comments cannot reach this. */
-export function dfirStateCalls(
-  scripts: DashboardScript[],
-  member: string,
-): Array<{ script: string; line: number }> {
-  const hits: Array<{ script: string; line: number }> = [];
+/** One place a protected setter is named, and whether it is the one permitted shape. */
+export interface SetterRef {
+  script: string;
+  line: number;
+  /** `direct-call` is the only allowed form; everything else defeats the single-writer gate. */
+  form: "direct-call" | "property-reference" | "computed-access" | "destructured";
+}
+
+/**
+ * EVERY reference to `DfirState.<member>`, not just `DfirState.member(...)`.
+ *
+ * Counting direct dot-calls was a gate with three doors and a lock on one of them. All of these
+ * write the cell and none is a direct call:
+ *
+ *     const { setLastFt } = DfirState; setLastFt([]);   // destructured
+ *     DfirState["setLastFt"]([]);                       // computed
+ *     const w = DfirState.setLastFt; w([]);             // property reference
+ *
+ * A probe containing three real writes produced one gate hit. So the rule is not "one call" but
+ * "one reference, and it is a direct call" — anything that gets hold of the setter can write it,
+ * and the gate cannot follow where the reference goes afterwards.
+ */
+export function setterRefs(scripts: DashboardScript[], member: string): SetterRef[] {
+  const hits: SetterRef[] = [];
   for (const s of scripts) {
+    const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
     const visit = (n: ts.Node): void => {
+      // DfirState.member — a call, or a bare reference someone can stash.
       if (
-        ts.isCallExpression(n) &&
-        ts.isPropertyAccessExpression(n.expression) &&
-        ts.isIdentifier(n.expression.expression) &&
-        n.expression.expression.text === "DfirState" &&
-        n.expression.name.text === member
+        ts.isPropertyAccessExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === "DfirState" &&
+        n.name.text === member
       ) {
-        hits.push({ script: s.name, line: s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1 });
+        const isCallee = n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n;
+        hits.push({ script: s.name, line: at(n), form: isCallee ? "direct-call" : "property-reference" });
+      }
+      // DfirState["member"]
+      if (
+        ts.isElementAccessExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === "DfirState" &&
+        n.argumentExpression &&
+        ts.isStringLiteral(n.argumentExpression) &&
+        n.argumentExpression.text === member
+      ) {
+        hits.push({ script: s.name, line: at(n), form: "computed-access" });
+      }
+      // const { member } = DfirState
+      if (
+        ts.isVariableDeclaration(n) &&
+        n.initializer &&
+        ts.isIdentifier(n.initializer) &&
+        n.initializer.text === "DfirState" &&
+        ts.isObjectBindingPattern(n.name)
+      ) {
+        for (const el of n.name.elements) {
+          const source = el.propertyName ?? el.name;
+          if (ts.isIdentifier(source) && source.text === member) {
+            hits.push({ script: s.name, line: at(el), form: "destructured" });
+          }
+        }
       }
       ts.forEachChild(n, visit);
     };
@@ -223,6 +286,39 @@ export function usesAfter(node: ts.Node, name: string, pos: number): number[] {
   };
   ts.forEachChild(node, visit);
   return out;
+}
+
+/**
+ * Is `name` captured by a function nested inside `node`?
+ *
+ * SOURCE ORDER IS NOT EXECUTION ORDER, and the positional check alone believes it is. This passes
+ * it:
+ *
+ *     const ft = DfirState.lastFt();
+ *     setTimeout(() => consume(ft), 0);   // captured here, RUNS later
+ *     render(lastState);                  // replaces lastFt in between
+ *
+ * Every use of `ft` precedes the refresh in the text, so nothing is "used after" it — while at
+ * runtime the order is cache, refresh, use. A loop body does the same thing by jumping backwards.
+ *
+ * A captured variable has no knowable execution position, so the honest treatment is to stop
+ * reasoning about position for it: if the value escapes into a callback and anything in the
+ * enclosing function can refresh the cell, that is a fault. Conservative by design — a deferred
+ * read of a snapshot is worth writing differently even when it happens to be safe.
+ */
+export function capturedByNestedFunction(node: ts.Node, name: string): boolean {
+  let captured = false;
+  const search = (n: ts.Node, insideNested: boolean): void => {
+    if (captured) return;
+    const nested = insideNested || (n !== node && isFunctionLike(n));
+    if (nested && ts.isIdentifier(n) && n.text === name) {
+      captured = true;
+      return;
+    }
+    ts.forEachChild(n, (c) => search(c, nested));
+  };
+  ts.forEachChild(node, (c) => search(c, false));
+  return captured;
 }
 
 /**
