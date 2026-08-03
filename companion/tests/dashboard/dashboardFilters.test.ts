@@ -186,12 +186,13 @@ describe("isFindingFalsePositive", () => {
     expect(f.isFindingFalsePositive("Persistence", [])).toBe(false);
   });
 
-  // A SECOND LATENT BUG THE EXTRACTION MADE VISIBLE, pinned rather than fixed. The match is
-  // `t.includes(ref) || ref.includes(t)`, and every string contains "" — so a finding with no
-  // title at all is suppressed by the FIRST false-positive entry in the list, whatever it says.
-  // The blast radius is small (findings normally have titles) but the direction is bad: the
-  // failure mode of this function is hiding evidence, not showing noise. Fixing it changes what
-  // the findings list renders, so it belongs in its own change; this records today's answer.
+  // A SECOND LATENT BUG THE EXTRACTION MADE VISIBLE, pinned rather than fixed — see #457, which
+  // owns the fix. The match is `t.includes(ref) || ref.includes(t)`, and every string contains ""
+  // — so a finding with no title at all is suppressed by the FIRST false-positive entry in the
+  // list, whatever it says. The blast radius is small (findings normally have titles) but the
+  // direction is bad: the failure mode of this function is hiding evidence, not showing noise.
+  // Fixing it changes what the findings list renders, so it belongs in its own change; this
+  // records today's answer so that change is deliberate. INVERT THIS TEST when #457 lands.
   it("treats an empty title as matching any entry", () => {
     expect(f.isFindingFalsePositive(null, ["powershell"])).toBe(true);
     expect(f.isFindingFalsePositive("   ", ["anything at all"])).toBe(true);

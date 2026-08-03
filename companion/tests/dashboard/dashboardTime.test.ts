@@ -54,11 +54,12 @@ describe("the six relative-time formatters disagree, on purpose recorded", () =>
     expect(fn(ago(3 * 3_600_000))).toBe(h3);
   });
 
-  // A LATENT BUG, PINNED RATHER THAN FIXED. `new Date(null)` is the epoch, not Invalid Date, so
-  // activityTimeAgo is the one of the six that reports a missing timestamp as 57 years ago instead
-  // of a placeholder. Its four siblings all guard with `!iso` or Number.isFinite first. Fixing it
-  // changes what the activity feed renders, which belongs in its own change with its own reasoning
-  // — this asserts the current behaviour so that change is deliberate when it happens.
+  // A LATENT BUG, PINNED RATHER THAN FIXED — see #458, which owns the fix. `new Date(null)` is the
+  // epoch, not Invalid Date, so activityTimeAgo is the one of the six that reports a missing
+  // timestamp as 57 years ago instead of a placeholder. Its five siblings all guard with `!iso` or
+  // Number.isFinite first. Fixing it changes what the activity feed renders, which belongs in its
+  // own change with its own reasoning — this asserts the current behaviour so that change is
+  // deliberate when it happens. UPDATE THIS TEST AND THE TABLE ROW ABOVE when #458 lands.
   it("activityTimeAgo(null) reports the epoch, unlike its five siblings", () => {
     expect(activityTimeAgo(null)).toMatch(/^\d{5}d ago$/);
     for (const fn of [lgAgo, veloClientsAge, veloMonAge, relTime, cockpitAge]) {
