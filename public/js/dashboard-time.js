@@ -89,6 +89,11 @@ function mcpJobDuration(ms) {
 }
 
 function activityTimeAgo(iso) {
+  // The Number.isNaN below does NOT cover a missing timestamp, which is why this looks redundant
+  // and is not (#458): `new Date(null)` is the epoch rather than Invalid Date, so a null
+  // collectedAt used to arrive here as a valid instant and render "20513d ago" — 57 years.
+  // `new Date(undefined)` IS Invalid Date, so only null ever reached that path.
+  if (!iso) return "—";
   const ms = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(ms)) return "—";
   const mins = Math.floor(ms / 60000);
