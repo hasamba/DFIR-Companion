@@ -6,14 +6,19 @@
 // themes whose muted is already near the floor. Before that fix `--text-faint` measured
 // below 3:1 in 23 of the 25 themes.
 //
-// These assertions read the GENERATED blocks out of dashboard.html rather than
-// recomputing from the vendored palettes, so they fail if the generator regresses, if a
-// theme is hand-edited, or if `npm run theme:apply` was not re-run after a change.
+// These assertions read the GENERATED blocks rather than recomputing from the vendored
+// palettes, so they fail if the generator regresses, if a theme is hand-edited, or if
+// `npm run theme:apply` was not re-run after a change.
+//
+// TWO FILES SINCE #415. `npm run theme:apply` writes two generated regions: the CSS tokens, now
+// in public/css/dashboard.css, and the theme registry the picker reads, still in dashboard.html
+// because that half is JavaScript. Keeping them in step is the invariant the registry describe
+// below actually tests, and it can only be tested by reading both.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contrastHex as contrast, hexToRgb, relLuminance } from "../../scripts/theme/contrast.js";
-import { DASHBOARD_PATH } from "../../scripts/theme/loadBaseline.js";
+import { DASHBOARD_CSS_PATH, DASHBOARD_PATH } from "../../scripts/theme/loadBaseline.js";
 import {
   CANONICAL_HUE,
   deltaE,
@@ -26,13 +31,17 @@ import {
 } from "../../scripts/theme/severity.js";
 import { IMPORTED_THEMES } from "../../scripts/theme/vendor/themePalettes.js";
 
-const dashboard = readFileSync(DASHBOARD_PATH, "utf8");
+/** The stylesheet: every generated `:root[data-theme="…"]` block and the token region. */
+const dashboard = readFileSync(DASHBOARD_CSS_PATH, "utf8");
+
+/** The page: the generated DFIR_THEMES registry the theme picker reads. */
+const dashboardHtml = readFileSync(DASHBOARD_PATH, "utf8");
 
 /** Pull one generated `:root[data-theme="x"]` block's declarations out of the file. */
 function themeBlock(name: string): Record<string, string> {
   const at = dashboard.indexOf(`:root[data-theme="${name}"] {`);
   expect(at, `no generated block for theme "${name}" — run \`npm run theme:apply\``).toBeGreaterThan(-1);
-  const body = dashboard.slice(at, dashboard.indexOf("\n    }", at));
+  const body = dashboard.slice(at, dashboard.indexOf("\n}", at));
   const out: Record<string, string> = {};
   // Anchored at line starts so this picks up plain properties (color-scheme) as well as
   // custom ones, without matching anything that merely looks like a declaration inside a value.
@@ -181,9 +190,13 @@ describe("severity scale", () => {
 });
 
 describe("theme registry", () => {
-  const registry = dashboard.slice(
-    dashboard.indexOf("const DFIR_THEMES = {"),
-    dashboard.indexOf("/* <<< dfir-theme registry */"),
+  // The registry is JavaScript and stayed in the page when the CSS moved out (#415), so this is
+  // the one describe here that reads dashboardHtml. That the two now live in different files is
+  // exactly why the first assertion matters more than it did: nothing about editing one of them
+  // puts the other in front of you.
+  const registry = dashboardHtml.slice(
+    dashboardHtml.indexOf("const DFIR_THEMES = {"),
+    dashboardHtml.indexOf("/* <<< dfir-theme registry */"),
   );
 
   it("lists every theme that has a CSS block, and no others", () => {

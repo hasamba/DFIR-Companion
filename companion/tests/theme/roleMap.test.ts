@@ -8,14 +8,14 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DASHBOARD_PATH as DASHBOARD, loadBaseline } from "../../scripts/theme/loadBaseline.js";
+import { DASHBOARD_CSS_PATH, loadBaseline, THEME_SOURCES } from "../../scripts/theme/loadBaseline.js";
 import { isThemeInvariant, readPaletteFacts } from "../../scripts/theme/paletteFacts.js";
 import { assignRoles, TIER_A, TIER_B, TIER_C } from "../../scripts/theme/roleMap.js";
 
 const baseline = loadBaseline();
-const facts = readPaletteFacts(DASHBOARD, baseline);
+const facts = readPaletteFacts(THEME_SOURCES, baseline);
 const map = assignRoles(facts, baseline);
-const dashboard = readFileSync(DASHBOARD, "utf8");
+const dashboard = readFileSync(DASHBOARD_CSS_PATH, "utf8");
 
 describe("dashboard colour role map", () => {
   it("finds the palette and every variable in it", () => {
@@ -80,7 +80,7 @@ describe("dashboard.html after the role migration", () => {
     const block = (selector: string) => {
       const at = dashboard.indexOf(selector);
       expect(at, `${selector} block missing`).toBeGreaterThan(-1);
-      return dashboard.slice(at, dashboard.indexOf("\n    }", at));
+      return dashboard.slice(at, dashboard.indexOf("\n}", at));
     };
     for (const selector of [':root[data-theme="dark"] {', ':root[data-theme="light"] {']) {
       const body = block(selector);
@@ -94,8 +94,8 @@ describe("dashboard.html after the role migration", () => {
     // outrank nothing, but the built-in themes' explicit values must NOT leak to bare
     // `:root` either — that is what lets an imported theme derive its own. Assert the
     // explicit values live behind a data-theme selector.
-    const rootStart = dashboard.indexOf("\n    :root {");
-    const rootBody = dashboard.slice(rootStart, dashboard.indexOf("\n    }", rootStart));
+    const rootStart = dashboard.indexOf("\n:root {");
+    const rootBody = dashboard.slice(rootStart, dashboard.indexOf("\n}", rootStart));
     // Compare on collapsed whitespace: the generator pads declarations into columns and
     // the column width shifts whenever the longest role name changes.
     const flat = rootBody.replace(/\s+/g, " ");

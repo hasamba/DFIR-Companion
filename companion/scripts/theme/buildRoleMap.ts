@@ -1,5 +1,6 @@
-// Resolves every `--c-<hex>` variable in public/dashboard.html to a semantic role and
-// writes scripts/theme/role-map.json, then prints a collapse audit.
+// Resolves every `--c-<hex>` variable in the dashboard's client source to a semantic role and
+// writes scripts/theme/role-map.json, then prints a collapse audit. Since #415 that source is two
+// files — public/css/dashboard.css and public/dashboard.html — read as one corpus; see THEME_SOURCES.
 //
 //   npm run theme:map          write role-map.json + print the audit
 //   npm run theme:map -- --check   audit only, non-zero exit if anything is unassigned
@@ -10,7 +11,7 @@
 // distinction the semantic layer would erase. Those need a role split, not a shrug.
 
 import { writeFileSync } from "node:fs";
-import { DASHBOARD_PATH as DASHBOARD, loadBaseline, ROLE_MAP_PATH as OUT } from "./loadBaseline.js";
+import { loadBaseline, ROLE_MAP_PATH as OUT, THEME_SOURCES } from "./loadBaseline.js";
 import { isThemeInvariant, readPaletteFacts } from "./paletteFacts.js";
 import { assignRoles, type RoleAssignment, TIER_B } from "./roleMap.js";
 
@@ -31,7 +32,7 @@ function rgbDistance(a: string, b: string): number {
 function main() {
   const check = process.argv.includes("--check");
   const baseline = loadBaseline();
-  const facts = readPaletteFacts(DASHBOARD, baseline);
+  const facts = readPaletteFacts(THEME_SOURCES, baseline);
   const map = assignRoles(facts, baseline);
 
   // A theme-invariant variable that got a themed role would start shifting per theme.

@@ -295,8 +295,9 @@ the issue that owns the work, so no number is a blocker without an assignee:
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
-| `public/dashboard.html` inline JS | 2,000 | 19,201 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
-| `public/dashboard.html` inline CSS | 800 | 3,232 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline JS | 2,000 | 18,410 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/css/dashboard.css` | 800 | 3,261 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
 | Boundary ledger | 10 | 47 | shrinks as the above land |
@@ -310,4 +311,40 @@ Two of these numbers moved the *wrong* way during #384, from ordinary parallel w
 inline script grew by 110 lines and `src/analysis/` gained six files. That is not a failure of the
 gates — they froze the new numbers as soon as they landed — but it is the argument for #415 and #416
 having owners rather than waiting.
+
+**`public/css/dashboard.css` is a new row, not a new problem.** #415 moved the CSS out of the
+`<style>` blocks, which would otherwise have retired the `inline CSS` budget by making the gate stop
+looking: `check-file-size.mjs` walks `public/js` and now `public/css` too, so the 3,224 lines are
+still ledgered and still shrink-only, at their new address. A budget a file can escape by changing
+extension is not a budget.
+
+---
+
+## The dashboard client
+
+The five layers above describe `companion/src`. The browser half has its own shape, and since #415
+it has a written answer to the question that governs it.
+
+- **`public/css/dashboard.css`** — the stylesheet. Was fourteen inline `<style>` blocks.
+- **`public/js/dashboard-*.js`** — pure helpers extracted from the inline script: escaping, time
+  formatting, text and prevalence shapes, glyphs, filters, IOC verdicts, value derivations and HTML
+  fragment builders. Classic scripts rather than ES modules, deliberately;
+  [`dashboard-escape.js`](public/js/dashboard-escape.js) carries the argument.
+- **`public/js/<feature>.js`** — feature modules with their own DOM: the graph views, the command
+  palette, settings search, the hunt workbench, the diagnostics panel, the case-load progress bar.
+- **`public/js/dashboard-state.js`** — **who owns dashboard state.** Read this before moving
+  anything else out of the inline script.
+
+The last one is the one that matters, because it is what the remaining ~18,000 lines are blocked on.
+Move a function that reads `lastState` and you have to decide who owns `lastState` first. The file
+answers that from measurement rather than taste — of 422 top-level bindings, 145 are never written,
+231 more are read by five functions or fewer, and the two hottest have **one writer each** — and
+draws three tiers from it: the case snapshot and the cross-cutting selection are owned centrally,
+and the other 231 bindings move into their feature's module and stay private. It also records what
+was rejected (one store for all 408; a reactive layer; per-feature objects with no centre) and why.
+
+Every module under `public/js/` and `public/css/` must be listed in `STATIC_ASSETS`
+(`src/http/staticAssets.ts`) or it 404s in production with no other symptom.
+`tests/settings/settingsSearch.test.ts` pins that, walking the import graph so a transitive import
+cannot be missed either.
 

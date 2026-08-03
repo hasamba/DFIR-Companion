@@ -25,6 +25,26 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const ROLE_MAP_PATH = join(here, "role-map.json");
 export const DASHBOARD_PATH = join(here, "..", "..", "..", "public", "dashboard.html");
 
+/**
+ * The stylesheet #415 moved dashboard.html's fourteen inline <style> blocks into.
+ *
+ * The generated token region lives HERE now — it is CSS, and it moved with the rest of the CSS.
+ * The theme registry the picker reads is still in dashboard.html, because that half is JavaScript.
+ * applyRoles.ts writes one region to each.
+ */
+export const DASHBOARD_CSS_PATH = join(here, "..", "..", "..", "public", "css", "dashboard.css");
+
+/**
+ * Every file that can hold a `--c-<hex>` reference, read as one corpus.
+ *
+ * Usage counts decide which member's colour a role adopts, so they have to see all of it: the CSS
+ * `var()` call sites in dashboard.css and the quoted `themeColor("--c-…")` lookups in
+ * dashboard.html's inline script. Counting only one file would silently re-weight every role — and
+ * the audit would still print a clean table, because a variable with fewer call sites looks like a
+ * variable with fewer call sites, not like a bug.
+ */
+export const THEME_SOURCES = [DASHBOARD_PATH, DASHBOARD_CSS_PATH];
+
 export interface BaselineEntry {
   dark: string;
   light: string | null;

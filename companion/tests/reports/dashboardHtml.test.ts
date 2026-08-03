@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { dashboardClientSource } from "../helpers/dashboardModule.js";
 
 describe("dashboard.html", () => {
   it("lets the analyst dismiss a lateral chain, and review/restore dismissed ones", async () => {
@@ -68,7 +69,7 @@ describe("dashboard.html", () => {
   });
 
   it("keeps restart-interrupted resumable jobs reachable from the toolbar", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     expect(html).toContain('j.status === "interrupted"');
     expect(html).toContain("attention.length");
     expect(html).toContain("need attention");
@@ -185,7 +186,7 @@ describe("dashboard.html", () => {
   });
 
   it("offers fullscreen and layout controls for the asset graph (shared cytoscape toolbar)", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     const mod = await readFile(new URL("../../../public/js/graph-view.js", import.meta.url), "utf8");
     // The asset graph now uses the shared graph-view module: the fullscreen button lives in the
     // toolbar; requestFullscreen is handled once in the module. Layout is chosen via the generic
@@ -419,7 +420,7 @@ describe("dashboard.html", () => {
   });
 
   it("renders an event-density heatmap above the timeline that buckets the full filtered set and zooms on click (#219)", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     expect(html).toContain('id="timelineHeatmap"');
     expect(html).toContain('class="tl-heatmap"');
     expect(html).toContain("function computeTimelineHeatmapBuckets");
@@ -471,7 +472,7 @@ describe("dashboard.html", () => {
   });
 
   it("cites the triggering finding(s) on each AI-suggested playbook hunt card, clickable (#222)", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     expect(html).toContain("function citeFindings(");
     expect(html).toMatch(/function citeFindings[\s\S]{0,400}class="finding-jump/);
     // PlaybookHuntSuggestion (playbookHunt.ts) has NO relatedFindingIds field of its own — unlike
@@ -519,7 +520,7 @@ describe("dashboard.html", () => {
   });
 
   it("keeps the support preview and download actions the same width", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     expect(html.match(/class="diag-support-action"/g)).toHaveLength(2);
     expect(html).toMatch(/\.diag-support-action\s*\{\s*min-width:\s*220px;/);
   });
@@ -551,7 +552,7 @@ describe("dashboard.html", () => {
   });
 
   it("anchors a custom time-scope's datetime-local inputs to UTC, not local wall-clock", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     // The datetime-local value has no timezone of its own; the server expects a full ISO instant, so
     // the client must append seconds + the Z offset rather than let Date parsing assume local time.
     expect(html).toMatch(/function veloTimeScopeBody\(form\)[\s\S]{0,600}return \{ start: start \+ ":00Z", \.\.\.\(end \? \{ end: end \+ ":00Z" \} : \{\}\) \};/);
@@ -561,7 +562,7 @@ describe("dashboard.html", () => {
   });
 
   it("refuses to launch (and warns) when 'custom range…' is selected with no start date, instead of silently running unscoped", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const html = dashboardClientSource();
     // veloTimeScopeBody alone can't distinguish "All time" from "custom but unfilled" — both return
     // undefined — so a dedicated check must gate both the preview and the actual launch.
     expect(html).toMatch(/function veloTimeScopeIncomplete\(form\)[\s\S]{0,200}=== "custom" && !form\.querySelector\("\.velo-ts-start"\)\.value/);
@@ -595,7 +596,7 @@ describe("dashboard.html", () => {
 // NOTE: assert on a BOOLEAN, never `expect(html).toContain(...)` — a failure there prints the whole
 // 1.4 MB file into the diff and crashes the vitest reporter before any result is shown.
 describe("dashboard.html — deep pass", () => {
-  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const load = async () => dashboardClientSource();
   const has = (html: string, needle: string) => html.includes(needle);
   const matches = (html: string, re: RegExp) => re.test(html);
 
@@ -728,7 +729,7 @@ describe("dashboard.html — section visibility coverage", () => {
 });
 
 describe("dashboard.html — Now investigator cockpit (#375)", () => {
-  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const load = async () => dashboardClientSource();
 
   it("is the default focused view and exposes actionable loading, error, review, and lead controls", async () => {
     const html = await load();
@@ -753,7 +754,7 @@ describe("dashboard.html — Now investigator cockpit (#375)", () => {
 });
 
 describe("dashboard.html — help icon", () => {
-  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const load = async () => dashboardClientSource();
 
   it("links to the online user manual from the toolbar", async () => {
     const html = await load();
@@ -773,7 +774,7 @@ describe("dashboard.html — help icon", () => {
 });
 
 describe("dashboard.html — Compliance Impact panel (#336)", () => {
-  const load = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const load = async () => dashboardClientSource();
 
   it("renders the disclaimer and the framework editions with the mapping, not beside it", async () => {
     const html = await load();
@@ -836,9 +837,15 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
     expect(found).toEqual([]);
   });
 
+  // TWO SOURCES ON PURPOSE. The controls are now emitted from two places — static markup in
+  // dashboard.html and rendered markup in the helper modules #415 extracted (cockpitCardControls
+  // is the first of those) — while the ACTIONS table that dispatches them stays inline. Scanning
+  // only the HTML made three live cockpit controls read as dead entries. The invariant the test is
+  // really about is that the two sides match, so the "used" side has to see everything that emits
+  // a control, wherever it now lives.
   it("routes every control through data-act, with a matching ACTIONS entry for each", async () => {
     const html = await load();
-    const used = new Set([...html.matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]));
+    const used = new Set([...dashboardClientSource().matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]));
     const block = html.split("const ACTIONS = {")[1].split("\n    };")[0];
     const defined = new Set([...block.matchAll(/^\s{6}([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
 

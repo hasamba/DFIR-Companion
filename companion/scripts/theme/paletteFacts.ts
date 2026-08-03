@@ -1,13 +1,24 @@
-// Reads the ground truth out of public/dashboard.html: which `--c-<hex>` variables
+// Reads the ground truth out of the dashboard's client source: which `--c-<hex>` variables
 // exist, what each is worth in dark and light, and — critically — which CSS properties
 // each one actually feeds.
 //
 // Role assignment has to follow real usage. A hex sitting at lightness 20 could be a
 // panel background or a card border, and only its call sites say which. So this module
 // classifies by observed property, not by appearance.
+//
+// "The client source" was one file until #415 split it: the declarations and `var()` call
+// sites are in public/css/dashboard.css, the `themeColor("--c-…")` lookups are still in
+// dashboard.html's inline script. Both are read as one corpus (loadBaseline's
+// THEME_SOURCES), because a usage count that saw half of them would quietly re-weight
+// every role while the audit still printed a clean table.
 
 import { readFileSync } from "node:fs";
 import type { Baseline } from "./loadBaseline.js";
+
+/** Read one path or several, concatenated. A newline join keeps line-anchored patterns honest. */
+function readSources(paths: string | string[]): string {
+  return (Array.isArray(paths) ? paths : [paths]).map((p) => readFileSync(p, "utf8")).join("\n");
+}
 
 export interface VarFact {
   name: string;
@@ -120,8 +131,8 @@ function classify(props: Array<[string, number]>, js: number): VarFact["cls"] {
  * Usage counts always come from the file, never the baseline, so new call sites and
  * newly-referenced names are picked up on every run.
  */
-export function readPaletteFacts(dashboardPath: string, baseline?: Baseline): VarFact[] {
-  const src = readFileSync(dashboardPath, "utf8");
+export function readPaletteFacts(sources: string | string[], baseline?: Baseline): VarFact[] {
+  const src = readSources(sources);
   const lines = src.split("\n");
   const rawDark = readBlock(lines, /^\s*:root\s*\{/);
   const rawLight = readBlock(lines, /^\s*:root\[data-theme="light"\]\s*\{/);
@@ -225,8 +236,8 @@ export interface AlphaAlias {
  * their own variables and are emitted as a colour-mix of the base variable's role
  * against `transparent`, which keeps them following the theme.
  */
-export function readAlphaAliases(dashboardPath: string): AlphaAlias[] {
-  const src = readFileSync(dashboardPath, "utf8");
+export function readAlphaAliases(sources: string | string[]): AlphaAlias[] {
+  const src = readSources(sources);
   const seen = new Map<string, AlphaAlias>();
   for (const m of src.matchAll(/--c-([0-9a-f]{6})([0-9a-f]{2})\b/g)) {
     const name = `--c-${m[1]}${m[2]}`;

@@ -469,6 +469,15 @@
     "ROUTE GET /js/case-load-progress.js",
     "ROUTE GET /js/hunt-workbench.js",
     "ROUTE GET /js/diagnostics-panel.js",
+    "ROUTE GET /js/dashboard-state.js",
+    "ROUTE GET /js/dashboard-escape.js",
+    "ROUTE GET /js/dashboard-time.js",
+    "ROUTE GET /js/dashboard-text.js",
+    "ROUTE GET /js/dashboard-glyphs.js",
+    "ROUTE GET /js/dashboard-filters.js",
+    "ROUTE GET /js/dashboard-ioc.js",
+    "ROUTE GET /js/dashboard-values.js",
+    "ROUTE GET /js/dashboard-fragments.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
     "ROUTE GET /js/a11y/focus-trap.js",
@@ -477,6 +486,7 @@
     "ROUTE GET /js/a11y/describe-as-table.js",
     "ROUTE GET /js/a11y/tooltips.js",
     "ROUTE GET /css/a11y.css",
+    "ROUTE GET /css/dashboard.css",
     "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
 }

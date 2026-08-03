@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+// The Essential-mode rules are CSS, and #415 moved the CSS into its own file.
+import { dashboardStylesheet } from "../helpers/dashboardModule.js";
 
 import { validateEnvUpdates } from "../../src/settings/envManager.js";
 
@@ -157,8 +159,8 @@ describe("Settings Essential mode — structural invariants the CSS depends on",
 });
 
 describe("Settings Essential mode — wiring", () => {
-  it("hides everything unmarked, beating the inline display JS sets on panels", async () => {
-    const html = await dashboard();
+  it("hides everything unmarked, beating the inline display JS sets on panels", () => {
+    const html = dashboardStylesheet();
     // The `:not([data-searching])` on each is what suspends Essential while the search box has a
     // query, so a search can reach the tabs and fields this mode hides. Keeping it here means
     // dropping it is a failure in BOTH suites; tests/settings/settingsSearch.test.ts additionally
