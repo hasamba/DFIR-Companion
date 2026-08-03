@@ -7,6 +7,7 @@ import { SNORT_SOURCE, parseSnortLog, type SnortImportOptions } from "../snortIm
 
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { pickImportYear } from "../timeYearClamp.js";
+import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -43,7 +44,7 @@ export async function importSnort(
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Snort", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Snort", parsed.total);
 
   const raw = {
     findings: [],
@@ -102,7 +103,7 @@ export async function importNetwork(
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Network", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Network", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
   const forensicEvents = parsed.events.map((e, i) => {
@@ -167,7 +168,7 @@ export async function importSecurityOnion(
   const parsedRaw = parseSecurityOnion(text, opts.securityOnion);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Security Onion", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Security Onion", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
   const forensicEvents = parsed.events.map((e, i) => {

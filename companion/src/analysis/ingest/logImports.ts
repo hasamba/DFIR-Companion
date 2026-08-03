@@ -15,6 +15,7 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
 import { SYSLOG_SOURCE, parseSyslog, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
+import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -44,7 +45,7 @@ export async function importBashHistory(
   const user = userFromHistoryFilename(opts.label);
   const parsedRaw = parseShellHistoryFile(text, { user });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Shell history", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Shell history", parsed.total);
 
   const raw = {
     findings: [],
@@ -97,7 +98,7 @@ export async function importCombinedLog(
   const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Web/proxy access-log", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Web/proxy access-log", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
   const forensicEvents = parsed.events.map((e, i) => {
@@ -165,7 +166,7 @@ export async function importCiscoAsa(
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Cisco ASA", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Cisco ASA", parsed.total);
 
   const raw = {
     findings: [],
@@ -226,7 +227,7 @@ export async function importSyslog(
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Syslog", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Syslog", parsed.total);
 
   const raw = {
     findings: [],
@@ -280,7 +281,7 @@ export async function importAuditd(
   const parsedRaw = parseAuditdLog(text, opts.auditd);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "auditd", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "auditd", parsed.total);
 
   const raw = {
     findings: [],
@@ -336,7 +337,7 @@ export async function importJournald(
   const parsedRaw = parseJournald(text, opts.journald);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "journald", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "journald", parsed.total);
 
   const raw = {
     findings: [],
@@ -392,7 +393,7 @@ export async function importSysdig(
   const parsedRaw = parseSysdig(text, opts.sysdig);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "sysdig/Falco", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "sysdig/Falco", parsed.total);
 
   const raw = {
     findings: [],

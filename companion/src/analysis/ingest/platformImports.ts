@@ -19,6 +19,7 @@ import { parseTheHive, type TheHiveImportOptions } from "../theHiveImport.js";
 import { detectTool } from "../toolDetect.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
+import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -49,7 +50,7 @@ export async function importSiem(
 ): Promise<InvestigationState> {
   const parsedRaw = parseSiemExport(jsonText, opts.siem);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "SIEM", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "SIEM", parsed.total);
 
   const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
   const eventIdByAggKey = new Map<string, string>();
@@ -118,7 +119,7 @@ export async function importDeclarative(
   opts.onParsed?.(parsedRaw);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, opts.importer.label, parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, opts.importer.label, parsed.total);
 
   const raw = {
     findings: [],
@@ -171,7 +172,7 @@ export async function importSandbox(
 ): Promise<InvestigationState> {
   const parsedRaw = parseSandboxReport(text, opts.sandbox);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Sandbox", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Sandbox", parsed.total);
 
   const raw = {
     findings: [],
@@ -228,7 +229,7 @@ export async function importMemory(
   const parsedRaw = parseMemory(text, { ...opts.memory, filename: opts.label });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Memory", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Memory", parsed.total);
 
   const tool = parsed.tool || "Volatility";
   const raw = {
@@ -286,7 +287,7 @@ export async function importEmail(
   const parsedRaw = parseEmail(text, opts.email);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Email", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Email", parsed.total);
 
   const raw = {
     findings: [],
@@ -340,7 +341,7 @@ export async function importTheHive(
   const parsedRaw = parseTheHive(text, opts.thehive);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "TheHive", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "TheHive", parsed.total);
 
   const raw = {
     findings: [],
@@ -395,7 +396,7 @@ export async function importIris(
   const parsedRaw = parseIrisCase(data, opts.iris);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "DFIR-IRIS", parsed.timelineCount);
+    return noteEmptyImport(ctx, caseId, opts, "DFIR-IRIS", parsed.timelineCount);
 
   const raw = {
     findings: [],
@@ -448,7 +449,7 @@ export async function importWazuh(
 ): Promise<InvestigationState> {
   const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return ctx.noteEmptyImport(caseId, opts, "Wazuh", parsed.total);
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Wazuh", parsed.total);
 
   const raw = {
     findings: [],
@@ -504,7 +505,7 @@ export async function importYara(
   const parsedRaw = parseYaraOutput(text, { ...opts.yara });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "YARA", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "YARA", parsed.total);
 
   const raw = {
     findings: [],
@@ -558,7 +559,7 @@ export async function importSocrates(
   const parsedRaw = parseSocrates(text, opts.socrates);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "SO-CRATES", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "SO-CRATES", parsed.total);
 
   const raw = {
     findings: [],
@@ -627,7 +628,7 @@ export async function importEvtxXml(
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0)
-    return ctx.noteEmptyImport(caseId, opts, "Windows Event Log (XML)", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Windows Event Log (XML)", parsed.total);
 
   const source = detectTool(opts.label) ?? "Windows Event Log";
   const raw = {

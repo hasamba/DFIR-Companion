@@ -68,7 +68,7 @@ today, not invented — `ai` importing `ingest` 39 times is why `ai` is at the t
 
 | Tier | Domain | Owns | Files | Lines |
 |---|---|---|---|---|
-| **5** | `ai/` | `pipeline`, the ~25 prompt constants, `synth*`, `deepPass*`, `hypothesis*`, `secondOpinion`, `secondLook`, `uncertainty`, `queryTranslate`, `aiCost` | 25 | 10,861 |
+| **5** | `ai/` | `pipeline`, the ~25 prompt constants, `synth*`, `deepPass*`, `hypothesis*`, `secondOpinion`, `secondLook`, `uncertainty`, `queryTranslate`, `aiCost` | 47 | 11,081 |
 | **4** | `workflow/` | `cockpit*`, `dashboardViews`, `collectionPlan*`, `scope*`, `presentation`, `notebook`, `activityLog`, `priorWork`, `summary` | 23 | 4,483 |
 | **3** | `ingest/` | the ~40 `*Import.ts` modules, `importDetect`, `importerSpec`, `importResume`, `importUndo`, `declarativeImporter`, `zip*` | 48 | 15,768 |
 | **2** | `findings/` | `ioc*`, `finding*`, `falsePositive*`, `fp*`, `tagger*`, `tags`, `confidence*`, `severityFloor` | 36 | 4,116 |
@@ -269,6 +269,14 @@ The order, by ascending risk:
    `tests/eval/checkChange.ts:36`, `tests/eval/identity.ts:21` (both read the file path directly), and
    `scripts/eject-prompts.ts:11` (imports the constants).
 7. The 35 `importX` methods → `analysis/ingest/` per-format modules.
+   **Done, and #418 finished the rest of `pipeline.ts` on the same pattern:** the AI-backed families
+   (the analyst reports, hunt generation, extraction, the provider-call gate, synthesis, Deep Pass,
+   second opinion) are free functions in `analysis/ai/` taking a narrow context interface, and the
+   class holds one-line delegations. `AnalysisPipeline` is now a facade — 591 lines, of which the 36
+   import delegations are the largest single block. What made this harder than the ingest extraction
+   is written up in the module headers: synthesis's context is deliberately wide because synthesis
+   genuinely touches most of `PipelineOptions`, and `tests/analysis/synthesizeCharacterisation.test.ts`
+   is the substitute for the machine attestation the prompt move could rely on.
 8. `mitreTactics.ts` → `intel/`; `correlate.ts` → `timeline/`; the five persistence modules →
    `storage/`; `stateTypes.ts` + `canonicalEvent.ts` → `src/eventTypes/`. Together these clear
    roughly a third of the ledger, because the map already files them where they belong and only the
@@ -284,11 +292,11 @@ the issue that owns the work, so no number is a blocker without an assignee:
 
 | Target | ≤ | Today | Owner |
 |---|---|---|---|
-| `analysis/pipeline.ts` | 800 | 3,410 | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
+| `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | 4,077 | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
 | `public/dashboard.html` inline JS | 2,000 | 19,201 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | 3,232 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
-| Files in `src/` over 800 lines | 0 | 13 | #416, #418, and the ledger below |
+| Files in `src/` over 800 lines | 0 | 12 | #416 and the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
 | Boundary ledger | 10 | 47 | shrinks as the above land |
 
