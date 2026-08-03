@@ -47,6 +47,29 @@ describe("applyFalsePositive", () => {
     expect(filtered.findings.map((f) => f.title)).toEqual(["Mimikatz credential dumping"]);
   });
 
+  // #457. The match is two-way substring and "" is a substring of every ref, so an unguarded empty
+  // title matched the FIRST marker in the list whatever it said. This filter does not hide a row —
+  // it removes the finding from InvestigationState, which the report is generated from, so an
+  // untitled finding was erased from the exported report. Kept and left for a human to read.
+  it("keeps an untitled finding — an empty title must not match every marker", () => {
+    const state = emptyState("c1");
+    state.findings.push(
+      { id: "f1", severity: "High", title: "", description: "extractor produced no title", relatedIocs: [],
+        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      { id: "f2", severity: "Low", title: "   ", description: "whitespace-only title", relatedIocs: [],
+        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      { id: "f3", severity: "High", title: "SharpHound AD reconnaissance", description: "the real match",
+        relatedIocs: [], mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+    );
+
+    const filtered = applyFalsePositive(state, [
+      marker("finding", "SharpHound AD reconnaissance", "authorized-test", "authorized pentest"),
+    ]);
+
+    // f3 is dropped because it genuinely matches; the two untitled ones survive.
+    expect(filtered.findings.map((f) => f.id)).toEqual(["f1", "f2"]);
+  });
+
   it("buildFalsePositiveContext lists finding/ioc markers with their reason, empty when none", () => {
     expect(buildFalsePositiveContext([])).toBe("");
     const ctx = buildFalsePositiveContext([marker("finding", "SharpHound recon", "authorized-test", "authorized")]);

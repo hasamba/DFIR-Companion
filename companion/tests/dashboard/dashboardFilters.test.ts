@@ -186,17 +186,28 @@ describe("isFindingFalsePositive", () => {
     expect(f.isFindingFalsePositive("Persistence", [])).toBe(false);
   });
 
-  // A SECOND LATENT BUG THE EXTRACTION MADE VISIBLE, pinned rather than fixed — see #457, which
-  // owns the fix. The match is `t.includes(ref) || ref.includes(t)`, and every string contains ""
-  // — so a finding with no title at all is suppressed by the FIRST false-positive entry in the
-  // list, whatever it says. The blast radius is small (findings normally have titles) but the
-  // direction is bad: the failure mode of this function is hiding evidence, not showing noise.
-  // Fixing it changes what the findings list renders, so it belongs in its own change; this
-  // records today's answer so that change is deliberate. INVERT THIS TEST when #457 lands.
-  it("treats an empty title as matching any entry", () => {
-    expect(f.isFindingFalsePositive(null, ["powershell"])).toBe(true);
-    expect(f.isFindingFalsePositive("   ", ["anything at all"])).toBe(true);
-    expect(f.isFindingFalsePositive("", [])).toBe(false); // ...unless there are no entries
+  // FIXED IN #457 — this test was the pin, and it is inverted rather than deleted so the fix has a
+  // permanent witness. The match is `t.includes(ref) || ref.includes(t)` and every string contains
+  // "", so an unguarded empty title matched the FIRST entry in the list whatever it said.
+  //
+  // The client half hid a row. The SERVER half — applyFalsePositive, which shares this match by
+  // design — removed the finding from InvestigationState, i.e. from the exported report. That is
+  // why this is guarded on both sides and why the priority went up once the second half surfaced.
+  it("keeps an untitled finding rather than matching every entry", () => {
+    expect(f.isFindingFalsePositive(null, ["powershell"])).toBe(false);
+    expect(f.isFindingFalsePositive("", ["anything at all"])).toBe(false);
+    expect(f.isFindingFalsePositive("   ", ["anything at all"])).toBe(false);
+  });
+
+  // The mirror-image hazard, in the other direction: an empty REF matches every title, which would
+  // empty the whole Findings panel. The server drops empty refs with `.filter(Boolean)`; this
+  // function is handed the set already built and cannot assume that happened, so it guards too.
+  // Not reachable through the API today (the route 400s a missing ref) — but "same match as the
+  // server" is the contract this function states, and a mirror that holds only for reachable
+  // inputs is not that.
+  it("ignores an empty entry rather than suppressing everything", () => {
+    expect(f.isFindingFalsePositive("Encoded PowerShell", [""])).toBe(false);
+    expect(f.isFindingFalsePositive("Encoded PowerShell", ["", "powershell"])).toBe(true);
   });
 });
 
@@ -213,5 +224,38 @@ describe("ftOriginOf / originFacets", () => {
       f.originFacets([{ artifactName: "MFT" }, { sources: ["evtx"] }, { artifactName: "MFT" }, {}]),
     ).toEqual(["evtx", "MFT", "Unknown"]);
     expect(f.originFacets(null)).toEqual([]);
+  });
+});
+
+// THE MIRROR ITSELF. isFindingFalsePositive exists to answer the same question as the server's
+// applyFalsePositive, so an analyst never sees a finding in the panel that the report has already
+// dropped, or vice versa. #457 was that mirror being broken in both directions at once — each side
+// guarded one empty-string case and not the other — so it is worth a test that runs the two
+// implementations against the same inputs rather than trusting a comment that says they agree.
+describe("agrees with the server's applyFalsePositive", () => {
+  const CASES: Array<[string, string | null, string[]]> = [
+    ["an exact match", "SharpHound AD reconnaissance", ["sharphound ad reconnaissance"]],
+    ["the marker inside the title", "Encoded PowerShell launched", ["powershell"]],
+    ["the title inside the marker", "PowerShell", ["encoded powershell launched"]],
+    ["no relationship at all", "Persistence via run key", ["powershell"]],
+    ["an untitled finding", "", ["powershell"]],
+    ["a whitespace-only title", "   ", ["powershell"]],
+    ["a null title", null, ["powershell"]],
+    ["an empty marker", "Encoded PowerShell", [""]],
+    ["no markers", "Encoded PowerShell", []],
+  ];
+
+  /** The server's rule, transcribed from src/analysis/falsePositive.ts. */
+  const serverDrops = (title: string | null, refs: string[]): boolean => {
+    const t = String(title ?? "")
+      .trim()
+      .toLowerCase();
+    const findingRefs = refs.map((r) => r.trim().toLowerCase()).filter(Boolean);
+    if (!t) return false;
+    return findingRefs.some((ref) => t === ref || t.includes(ref) || ref.includes(t));
+  };
+
+  it.each(CASES)("matches the server on %s", (_label, title, refs) => {
+    expect(f.isFindingFalsePositive(title, refs)).toBe(serverDrops(title, refs));
   });
 });

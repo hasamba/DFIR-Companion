@@ -76,6 +76,16 @@ export function applyFalsePositive(state: InvestigationState, markers: FalsePosi
   const iocs = state.iocs.filter((i) => !iocRefs.has(i.value.trim().toLowerCase()));
   const findings = state.findings.filter((f) => {
     const title = f.title.trim().toLowerCase();
+    // KEEP AN UNTITLED FINDING (#457). The test below is two-way substring, and "" is a substring
+    // of every ref — so without this guard a finding with no title is dropped by whichever marker
+    // happens to be first in the list, whatever that marker says.
+    //
+    // This is the half that mattered: `findingRefs` is already `.filter(Boolean)`-ed, so an empty
+    // MARKER cannot match everything, but nothing guarded the empty TITLE. And this filter does not
+    // merely hide a row — it removes the finding from InvestigationState, which is what the report
+    // is generated from, so the finding is erased from the exported report rather than hidden in
+    // the UI. Hiding evidence is the wrong direction for this function to fail in.
+    if (!title) return true;
     return !findingRefs.some((ref) => title === ref || title.includes(ref) || ref.includes(title));
   });
   return { ...state, iocs, findings };
