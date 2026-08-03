@@ -295,7 +295,7 @@ the issue that owns the work, so no number is a blocker without an assignee:
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
-| `public/dashboard.html` inline JS | 2,000 | 18,182 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline JS | 2,000 | 18,138 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/css/dashboard.css` | 800 | 3,261 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |

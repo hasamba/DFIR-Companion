@@ -123,6 +123,8 @@
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
+  <!-- The CISA KEV catalog panel (#99), the second and last wholly-movable feature (#415 tier 3). -->
+  <script src="/js/dashboard-kev.js"></script>
   <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape.min.js"></script>
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
@@ -20077,50 +20079,6 @@
           if (j.legitimate) renderFalsePositives(j.legitimate);
         })
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
-    }
-
-    // --- CISA KEV catalog (#99) — global CVE cross-reference, Settings → KEV ---------------------
-    function loadKev() {
-      const status = document.getElementById("kevStatus");
-      const cnt = document.getElementById("kevCount");
-      fetch("/kev").then(r => r.json()).then(j => {
-        if (j.count > 0) {
-          const ver = j.catalogVersion ? ` · version ${j.catalogVersion}` : "";
-          const rel = j.dateReleased ? ` · released ${j.dateReleased.slice(0, 10)}` : "";
-          cnt.textContent = `(${j.count.toLocaleString()} CVEs)`;
-          status.textContent = `Catalog loaded${ver}${rel}.`;
-        } else {
-          cnt.textContent = "";
-          status.textContent = "No catalog loaded yet — click \"Load from CISA feed\" or point to a local file.";
-        }
-      }).catch(() => { if (status) status.textContent = "Could not fetch KEV status — restart the server if this 404s."; });
-    }
-    function kevImportUrl() {
-      const msg = document.getElementById("kevUrlMsg");
-      msg.textContent = "fetching from CISA…";
-      fetch("/kev/import-url", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => { msg.textContent = `loaded ${j.total.toLocaleString()} CVEs`; loadKev(); })
-        .catch(e => { msg.textContent = "failed: " + e.message + " — check server outbound connectivity or use a local file."; });
-    }
-    function kevImportFile() {
-      const path = document.getElementById("kevFilePath").value.trim();
-      const msg = document.getElementById("kevFileMsg");
-      if (!path) { msg.textContent = "enter a file path first"; return; }
-      msg.textContent = "loading…";
-      fetch("/kev/import-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => { msg.textContent = `loaded ${j.total.toLocaleString()} CVEs`; document.getElementById("kevFilePath").value = ""; loadKev(); })
-        .catch(e => { msg.textContent = "failed: " + e.message; });
-    }
-    function kevClear() {
-      if (!confirm("Clear the CISA KEV catalog? This is global (affects all cases).")) return;
-      const msg = document.getElementById("kevClearMsg");
-      msg.textContent = "clearing…";
-      fetch("/kev", { method: "DELETE" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(() => { msg.textContent = "cleared"; loadKev(); })
-        .catch(e => { msg.textContent = "failed: " + e.message; });
     }
 
     // --- Update check (#127) — opt-in "newer release available" notice; Settings → Updates ----------
