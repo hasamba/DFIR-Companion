@@ -3,7 +3,17 @@ import { runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { Cell, StateApi } from "./dashboardApi.js";
-import { dashboardClientSource, globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
+import {
+  buildCallGraph,
+  cachedSnapshots,
+  callsAfter,
+  dashboardScripts,
+  dfirStateCalls,
+  functionsOf,
+  reachableFrom,
+  usesAfter,
+} from "../helpers/dashboardAst.js";
+import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-state.js — the store the rest of dashboard.html's 422 top-level bindings are
 // meant to migrate onto, and the answer to #415's actual question: who owns `lastState`.
@@ -107,61 +117,129 @@ describe("activeView", () => {
   });
 });
 
-// THE ACTUAL INVARIANT. Tier 1 and tier 2 in the module's header are defined by having very few
-// writers — `lastState` has exactly one across 43 readers — and the whole decision rests on that
-// staying true. A second writer appearing is the failure this design has to prevent, and the
-// cheapest place to prevent it is here, in the PR that would add it.
-describe("the single-writer rule", () => {
-  // Comment lines are dropped before counting. Not fastidiousness: the first run of this test
-  // failed because dashboard-state.js's own header described the rule using the literal string the
-  // regex looks for, so the module documenting the invariant counted as a violation of it. A gate
-  // that greps source has to decide what counts as source, and prose about the code is not it.
-  //
-  // Line-based rather than a real parser, because the haystack is HTML, CSS and JS concatenated,
-  // and stripping `//` from that would eat every `https://` in the markup.
-  const codeOnly = (source: string): string =>
-    source
-      .split("\n")
-      .filter((line) => !/^\s*(\/\/|\*|<!--)/.test(line))
-      .join("\n");
+// THE ARCHITECTURAL GATES, AST-BASED.
+//
+// These started as regexes over public/dashboard.html. An audit of #460 found three holes, all of
+// which mattered because #415's next phase moves hundreds of functions into modules:
+//
+//   - ONE FILE was scanned. The page loads 26 first-party scripts. A function that gained a second
+//     writer, or cached a snapshot across a refresh, was simply not in the text being searched.
+//   - ONE FUNCTION SHAPE was recognised: four-space-indented `function name(`. An injected
+//     `async function` that cached lastState() and called render() passed all 35 tests.
+//   - DIRECT CALLS ONLY. jumpToEvent reaches render() three hops away via
+//     resetTimelineViewFilters -> setExcludeTerms, and the direct check cleared it — wrongly.
+//
+// tests/helpers/dashboardAst.ts now parses every script the page tags and walks every function-like
+// node. The numbers below are the measure of the difference: 26 scripts, ~3,900 function nodes.
+describe("the state gates see the whole client", () => {
+  const scripts = dashboardScripts();
 
-  it("has exactly one call site that writes activeView", () => {
-    const writes = [...codeOnly(dashboardClientSource()).matchAll(/DfirState\.setActiveView\(/g)];
-    expect(
-      writes,
-      "activeView is owned by applyDashboardView(). A second writer means the cell is shared " +
-        "mutable state again, which is the thing js/dashboard-state.js exists to stop.",
-    ).toHaveLength(1);
+  it("scans every first-party script the page loads, not just the page", () => {
+    const names = scripts.map((s) => s.name);
+    expect(names.filter((n) => n.startsWith("dashboard.html#inline")).length).toBeGreaterThanOrEqual(5);
+    // The helpers AND the feature modules AND the a11y layer — the module half was the gap.
+    for (const required of [
+      "js/dashboard-state.js",
+      "js/dashboard-filters.js",
+      "js/hunt-workbench.js",
+      "js/a11y/modal-autowire.js",
+    ]) {
+      expect(names, `${required} is loaded by the dashboard but not scanned`).toContain(required);
+    }
+    expect(names.length).toBeGreaterThanOrEqual(20);
   });
 
-  it("puts that call site inside applyDashboardView", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const at = html.indexOf("DfirState.setActiveView(");
-    const owner = html.lastIndexOf("function applyDashboardView(", at);
-    const nextFn = html.indexOf("\n    function ", owner + 1);
-    expect(owner, "no applyDashboardView() before the write").toBeGreaterThan(-1);
-    expect(at, "the write escaped applyDashboardView()").toBeLessThan(nextFn);
-  });
-
-  // The bare identifier is gone from the page: `let activeView` no longer exists, so a stray
-  // `activeView = x` would be a ReferenceError rather than a silent second source of truth.
-  it("leaves no top-level activeView binding behind in the inline script", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    expect(html).not.toMatch(/^\s*(let|var|const)\s+activeView\b/m);
+  it("walks every function form, not just top-level declarations", () => {
+    // ~3,900 against the ~800 the old four-space regex could see. The difference is arrows,
+    // methods, async functions and nested callbacks — where most of the dashboard's logic lives.
+    expect(scripts.flatMap(functionsOf).length).toBeGreaterThan(3000);
   });
 });
 
-// WHY COUNTING CALL SITES WAS NOT ENOUGH ON ITS OWN.
+// Each cell has exactly one writer, and that writer is the function that owned the variable.
+// Counted from the AST, so a comment quoting the setter cannot be mistaken for a call — which is
+// how the regex version first failed.
+describe("the single-writer rule", () => {
+  const scripts = dashboardScripts();
+  const CELLS = [
+    { setter: "setActiveView", owner: "applyDashboardView" },
+    { setter: "setLastState", owner: "render" },
+    { setter: "setLastFt", owner: "render" },
+    { setter: "setLastSuperData", owner: "renderSuperTimeline" },
+  ] as const;
+
+  it.each(CELLS)("$setter has exactly one call site anywhere in the client", ({ setter }) => {
+    const calls = dfirStateCalls(scripts, setter);
+    expect(
+      calls,
+      `${setter} must have exactly one writer across all ${scripts.length} scripts; found ` +
+        calls.map((c) => `${c.script}:${c.line}`).join(", "),
+    ).toHaveLength(1);
+  });
+
+  it.each(CELLS)("$setter is called from $owner", ({ setter, owner }) => {
+    const [call] = dfirStateCalls(scripts, setter);
+    const script = scripts.find((s) => s.name === call.script);
+    const enclosing = functionsOf(script!)
+      .filter((f) => {
+        const { line } = script!.ast.getLineAndCharacterOfPosition(f.node.getEnd());
+        return f.line <= call.line && line + 1 >= call.line;
+      })
+      .map((f) => f.name);
+    expect(enclosing, `${setter} is written outside ${owner}()`).toContain(owner);
+  });
+});
+
+// NO SNAPSHOT MAY BE CACHED ACROSS SOMETHING THAT CAN REPLACE IT.
 //
-// The first version of this file shipped with the cell as a top-level `const` in a classic script.
-// That reads as private — it never appears on the global object — but a classic script's top-level
-// `const` goes into the global LEXICAL environment, which every other script on the page shares.
-// `dfirActiveView.set(x)` from any later script therefore wrote the cell while the call-site count
-// above, which looks for `DfirState.setActiveView(`, stayed at one. The invariant this module's
-// whole argument rests on was decorative, and CI would have passed a second writer.
+// 16 of the 84 readers call their own writer. Reading a bare `let` always saw the current value; a
+// cached accessor result does not. But "never cache" is the wrong rule and the first draft of this
+// gate got it wrong: jumpToEvent reads the timeline once and renders that same array, and a
+// consistent snapshot across its body is the point.
 //
-// Both halves are now checked: the closure closes the hole, and these two tests are what notices
-// if a future edit hoists something back out of it.
+// So the rule is positional and transitive: a cache is a fault only when something reachable from
+// the writer runs AFTER it. That is the real invariant rather than a proxy for it, and it is why
+// this flags exactly the functions that are wrong instead of every function that caches.
+describe("no snapshot is cached across a refresh", () => {
+  const scripts = dashboardScripts();
+  const graph = buildCallGraph(scripts);
+  const CELLS = [
+    { cell: "lastState", writer: "render" },
+    { cell: "lastFt", writer: "render" },
+    { cell: "lastSuperData", writer: "renderSuperTimeline" },
+  ] as const;
+
+  it.each(CELLS)("$cell is never used after a refresh that followed caching it", ({ cell, writer }) => {
+    const offenders: string[] = [];
+    for (const script of scripts) {
+      for (const fn of functionsOf(script)) {
+        for (const cached of cachedSnapshots(fn.node, cell)) {
+          // A cache is only a fault when the value is READ again after something that can replace
+          // it has run. Passing the cached value INTO a refreshing renderer is the intended use —
+          // the refresh happens inside the callee, after the argument is already bound — so the
+          // rule is cache -> refresh -> use, not merely cache -> refresh.
+          const refreshers = callsAfter(fn.node, cached.pos).filter(
+            (c) => c.name === writer || reachableFrom(graph, [c.name]).has(writer),
+          );
+          for (const r of refreshers) {
+            if (usesAfter(fn.node, cached.name, r.end).length > 0) {
+              offenders.push(
+                `${script.name}:${fn.line} ${fn.name} reads \`${cached.name}\` after calling ${r.name}()`,
+              );
+              break;
+            }
+          }
+        }
+      }
+    }
+    expect(
+      offenders,
+      `a snapshot cached before a refresh is stale by the time it is used. Read ${cell} after the ` +
+        "call that can replace it, or do not cache it.",
+    ).toEqual([]);
+  });
+});
+
 describe("nothing but the namespace escapes", () => {
   it("adds only DfirState to the global object", () => {
     expect(globalsAddedBy("dashboard-state.js")).toEqual(["DfirState"]);
@@ -232,97 +310,5 @@ describe("the snapshot cells", () => {
     s.onLastSuperDataChange(() => seen.push("super"));
     s.setLastFt([{ a: 1 }]);
     expect(seen).toEqual(["ft"]);
-  });
-});
-
-describe("the snapshot single-writer rule", () => {
-  const codeOnly = (source: string): string =>
-    source
-      .split("\n")
-      .filter((line) => !/^\s*(\/\/|\*|<!--)/.test(line))
-      .join("\n");
-
-  it.each(SNAPSHOT_CELLS)("$write has exactly one call site", ({ write, read }) => {
-    const calls = [...codeOnly(dashboardClientSource()).matchAll(new RegExp(`DfirState\\.${write}\\(`, "g"))];
-    expect(calls, `${read} must keep exactly one writer`).toHaveLength(1);
-  });
-
-  it.each(SNAPSHOT_CELLS)("$write is called from $owner", async ({ write, owner }) => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const at = html.indexOf(`DfirState.${write}(`);
-    const ownerAt = html.lastIndexOf(`function ${owner}(`, at);
-    expect(ownerAt, `no ${owner}() before the write`).toBeGreaterThan(-1);
-    const nextFn = html.indexOf("\n    function ", ownerAt + 1);
-    expect(at, `the write escaped ${owner}()`).toBeLessThan(nextFn);
-  });
-
-  it.each(SNAPSHOT_CELLS)("leaves no top-level $read binding in the inline script", async ({ read }) => {
-    const html = await readFile(DASHBOARD, "utf8");
-    expect(html).not.toMatch(new RegExp(`^\\s*(let|var|const)\\s+${read}\\b`, "m"));
-  });
-});
-
-// THE RULE THIS MIGRATION TURNS ON.
-//
-// 16 of the 84 reader functions call their own writer — setExcludeTerms, loadTags, loadPins,
-// patchFindingWorkflow, applyDashboardView and eleven more all reach render() or
-// renderSuperTimeline(). Reading a bare `let` always saw the current value. Caching the accessor
-// result in a local does not, so `const s = DfirState.lastState()` at the top of one of THOSE
-// functions is a behaviour change on exactly the paths where a refetch happens mid-function.
-//
-// THE GATE IS NOT "NEVER CACHE", and the first draft of it was, which was wrong. jumpToEvent binds
-// `const ft = DfirState.lastFt() || []`, computes a page index into that array, and renders the
-// same array — a consistent snapshot across its body is the POINT, and re-reading the accessor
-// between the index and the render would be the bug. It is safe because nothing it calls reaches
-// render(), which was checked rather than assumed.
-//
-// So the rule is the intersection: do not cache a snapshot in a function that can rewrite it. That
-// is computed from the source below rather than from a list of names, because a list of sixteen
-// function names is exactly the kind of thing that is right on the day it is written.
-describe("no reader caches a snapshot it can invalidate", () => {
-  const WRITER_OF: Record<string, string> = {
-    lastState: "render",
-    lastFt: "render",
-    lastSuperData: "renderSuperTimeline",
-  };
-
-  /** Top-level functions of the inline script, by the 4-space indentation it is written at. */
-  const topLevelFunctions = (html: string): Array<{ name: string; body: string }> => {
-    const out: Array<{ name: string; body: string }> = [];
-    const re = /\n {4}function (\w+)\s*\([^)]*\)\s*\{/g;
-    for (const m of html.matchAll(re)) {
-      const from = m.index + m[0].length;
-      const end = html.indexOf("\n    }", from);
-      out.push({ name: m[1], body: html.slice(from, end < 0 ? undefined : end) });
-    }
-    return out;
-  };
-
-  it("finds the inline script's functions, so the check below is not vacuous", async () => {
-    expect(topLevelFunctions(await readFile(DASHBOARD, "utf8")).length).toBeGreaterThan(700);
-  });
-
-  it("never binds a snapshot local in a function that calls that cell's writer", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const offenders: string[] = [];
-    for (const fn of topLevelFunctions(html)) {
-      for (const [cell, writer] of Object.entries(WRITER_OF)) {
-        const binds = new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*DfirState\\.${cell}\\(\\)`).test(fn.body);
-        const calls = new RegExp(`(?:^|[^.\\w])${writer}\\(`).test(fn.body);
-        if (binds && calls) offenders.push(`${fn.name} caches ${cell} and calls ${writer}()`);
-      }
-    }
-    expect(
-      offenders,
-      "a cached snapshot goes stale the moment its writer runs. Call the accessor at each use in " +
-        "these functions, or stop them re-fetching mid-body.",
-    ).toEqual([]);
-  });
-
-  // Guards the guard: if the accessors were renamed, both regexes above would match nothing and
-  // the check would pass vacuously. There must be reads to police in the first place.
-  it("is policing a real population of reads", () => {
-    const reads = [...dashboardClientSource().matchAll(/DfirState\.(?:lastState|lastFt|lastSuperData)\(\)/g)];
-    expect(reads.length).toBeGreaterThan(100);
   });
 });

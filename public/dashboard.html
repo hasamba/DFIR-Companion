@@ -13164,9 +13164,9 @@
       const sec = document.getElementById("sec-timeline");
       if (sec) sec.classList.remove("collapsed");
       if (swLocateInTable(id)) return;                                    // already on the current page
-      const ft = DfirState.lastFt() || [];
-      if (!ft.some(e => String(e.id) === id)) return;                    // not in the in-scope timeline
+      if (!(DfirState.lastFt() || []).some(e => String(e.id) === id)) return;  // not in the in-scope timeline
       resetTimelineViewFilters();                                         // unhide it if a filter excluded it
+      const ft = DfirState.lastFt() || [];   // AFTER the reset — it reaches render(), which replaces lastFt
       const sorted = sortTimelineEvents(ft.slice());                      // same order the table renders in
       const idx = sorted.findIndex(e => String(e.id) === id);
       if (idx >= 0 && tlPageSize > 0) tlPage = Math.floor(idx / tlPageSize);  // page the event lands on
