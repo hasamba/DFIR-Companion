@@ -75,9 +75,24 @@ function _evMatchesTimeRange(e, from, to) {
 
 // Same substring match the server's applyFalsePositive uses (companion/src/analysis/falsePositive.ts)
 // so a finding hides here under EXACTLY the conditions it will actually be dropped server-side.
+//
+// BOTH EMPTY-STRING GUARDS BELONG TO THAT MIRRORING (#457), and each covers a different direction
+// of the same hazard: the match is two-way substring, and "" is a substring of every string.
+//
+//   - an empty TITLE would match the first ref in the list, whatever it says -> the finding is
+//     hidden here and, until #457, dropped from InvestigationState and the report too.
+//   - an empty REF would match every title -> the whole Findings panel empties.
+//
+// The server guards the second by `.filter(Boolean)` on findingRefs and, since #457, the first by
+// an early return. This function has to guard both, because it is handed the ref set already built
+// and cannot assume it was filtered. The empty ref is not reachable through the API today —
+// POST /cases/:id/false-positive rejects a missing ref with a 400 — but the server defends against
+// it anyway for markers loaded from storage, and a mirror that only holds for reachable inputs is
+// not the claim the comment above makes.
 function isFindingFalsePositive(title, fpTitles) {
   const t = String(title || "").trim().toLowerCase();
-  for (const ref of fpTitles) if (t === ref || t.includes(ref) || ref.includes(t)) return true;
+  if (!t) return false;
+  for (const ref of fpTitles) if (ref && (t === ref || t.includes(ref) || ref.includes(t))) return true;
   return false;
 }
 
