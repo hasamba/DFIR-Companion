@@ -11,6 +11,7 @@ import {
   setterRefs,
   capturedByNestedFunction,
   functionsOf,
+  insideLoop,
   reachableFrom,
   usesAfter,
 } from "../helpers/dashboardAst.js";
@@ -230,6 +231,13 @@ describe("no snapshot is cached across a refresh", () => {
           if (refreshers.length === 0) continue;
           // A value that escapes into a callback has no knowable execution position — see
           // capturedByNestedFunction. Any refresher in the enclosing function is then a fault.
+          if (insideLoop(fn.node, cached.pos)) {
+            offenders.push(
+              `${script.name}:${fn.line} ${fn.name} caches \`${cached.name}\` inside a loop that ` +
+                `also calls ${refreshers[0].name}() — the next iteration reads the replaced value`,
+            );
+            continue;
+          }
           if (capturedByNestedFunction(fn.node, cached.name)) {
             offenders.push(
               `${script.name}:${fn.line} ${fn.name} captures \`${cached.name}\` in a callback, ` +

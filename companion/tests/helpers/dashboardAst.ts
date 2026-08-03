@@ -142,27 +142,39 @@ export function callsWithin(node: ts.Node): Set<string> {
   return out;
 }
 
-/** One place a protected setter is named, and whether it is the one permitted shape. */
+/** One place a protected setter is named, or a way of naming it that defeats the check. */
 export interface SetterRef {
   script: string;
   line: number;
-  /** `direct-call` is the only allowed form; everything else defeats the single-writer gate. */
-  form: "direct-call" | "property-reference" | "computed-access" | "destructured";
+  /** `direct-call` is the only allowed form; every other value defeats the single-writer gate. */
+  form:
+    | "direct-call"
+    | "property-reference"
+    | "computed-access"
+    | "destructured"
+    | "namespace-alias"
+    | "dynamic-access";
 }
 
 /**
- * EVERY reference to `DfirState.<member>`, not just `DfirState.member(...)`.
+ * Every reference to `DfirState.<member>`, AND every construct that puts the setter out of reach
+ * of that question.
  *
- * Counting direct dot-calls was a gate with three doors and a lock on one of them. All of these
- * write the cell and none is a direct call:
+ * This has been widened twice, and each time by the same discovery: the gate was answering "how
+ * many times is it written this one way" while presenting itself as "how many writers are there".
  *
- *     const { setLastFt } = DfirState; setLastFt([]);   // destructured
- *     DfirState["setLastFt"]([]);                       // computed
- *     const w = DfirState.setLastFt; w([]);             // property reference
+ *   round 1 — only `DfirState.setLastFt(...)` counted, so a destructure, a computed access and a
+ *             stashed property reference were three invisible writers.
+ *   round 2 — the two below still were:
  *
- * A probe containing three real writes produced one gate hit. So the rule is not "one call" but
- * "one reference, and it is a direct call" — anything that gets hold of the setter can write it,
- * and the gate cannot follow where the reference goes afterwards.
+ *                 const method = "setLastFt"; DfirState[method]([]);   // dynamic access
+ *                 const state = DfirState;    state.setLastFt([]);     // namespace alias
+ *
+ * Following either properly needs binding-aware analysis, which is a large hammer for a page with
+ * one legitimate writer per cell. So they are REJECTED rather than resolved: aliasing `DfirState`
+ * to another name, or indexing it with anything but a string literal, is reported wherever it
+ * appears. Both are one line to avoid and neither has a use here, so the cost of the blunt rule is
+ * zero and the alternative is a gate that keeps being almost right.
  */
 export function setterRefs(scripts: DashboardScript[], member: string): SetterRef[] {
   const hits: SetterRef[] = [];
@@ -179,30 +191,36 @@ export function setterRefs(scripts: DashboardScript[], member: string): SetterRe
         const isCallee = n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n;
         hits.push({ script: s.name, line: at(n), form: isCallee ? "direct-call" : "property-reference" });
       }
-      // DfirState["member"]
       if (
         ts.isElementAccessExpression(n) &&
         ts.isIdentifier(n.expression) &&
-        n.expression.text === "DfirState" &&
-        n.argumentExpression &&
-        ts.isStringLiteral(n.argumentExpression) &&
-        n.argumentExpression.text === member
+        n.expression.text === "DfirState"
       ) {
-        hits.push({ script: s.name, line: at(n), form: "computed-access" });
+        const arg = n.argumentExpression;
+        if (arg && ts.isStringLiteral(arg) && arg.text === member) {
+          hits.push({ script: s.name, line: at(n), form: "computed-access" });
+        } else if (arg && !ts.isStringLiteral(arg)) {
+          // Cannot be resolved statically, so it could be any member — including this one.
+          hits.push({ script: s.name, line: at(n), form: "dynamic-access" });
+        }
       }
       // const { member } = DfirState
       if (
         ts.isVariableDeclaration(n) &&
         n.initializer &&
         ts.isIdentifier(n.initializer) &&
-        n.initializer.text === "DfirState" &&
-        ts.isObjectBindingPattern(n.name)
+        n.initializer.text === "DfirState"
       ) {
-        for (const el of n.name.elements) {
-          const source = el.propertyName ?? el.name;
-          if (ts.isIdentifier(source) && source.text === member) {
-            hits.push({ script: s.name, line: at(el), form: "destructured" });
+        if (ts.isObjectBindingPattern(n.name)) {
+          for (const el of n.name.elements) {
+            const source = el.propertyName ?? el.name;
+            if (ts.isIdentifier(source) && source.text === member) {
+              hits.push({ script: s.name, line: at(el), form: "destructured" });
+            }
           }
+        } else if (ts.isIdentifier(n.name)) {
+          // const state = DfirState — every member is now reachable under another name.
+          hits.push({ script: s.name, line: at(n), form: "namespace-alias" });
         }
       }
       ts.forEachChild(n, visit);
@@ -289,6 +307,17 @@ export function usesAfter(node: ts.Node, name: string, pos: number): number[] {
 }
 
 /**
+ * Is the cache inside a loop body?
+ *
+ * The positional rule reads a loop as straight-line code, and a loop is exactly where straight-line
+ * reasoning fails: `for (…) { const ft = lastFt(); consume(ft); render(…); }` has every use before
+ * the refresh IN THE TEXT, while iteration two consumes what iteration one's render replaced. The
+ * jump backwards is invisible to a position comparison, so a cache inside a loop with any refresher
+ * in the same loop is treated the same way as one captured by a callback: position stops meaning
+ * anything, and the refresher alone is the fault.
+ */
+
+/**
  * Is `name` captured by a function nested inside `node`?
  *
  * SOURCE ORDER IS NOT EXECUTION ORDER, and the positional check alone believes it is. This passes
@@ -306,6 +335,26 @@ export function usesAfter(node: ts.Node, name: string, pos: number): number[] {
  * enclosing function can refresh the cell, that is a fault. Conservative by design — a deferred
  * read of a snapshot is worth writing differently even when it happens to be safe.
  */
+export function insideLoop(node: ts.Node, pos: number): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    const isLoop =
+      ts.isForStatement(n) ||
+      ts.isForOfStatement(n) ||
+      ts.isForInStatement(n) ||
+      ts.isWhileStatement(n) ||
+      ts.isDoStatement(n);
+    if (isLoop && n.pos <= pos && n.end >= pos) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(node, visit);
+  return found;
+}
+
 export function capturedByNestedFunction(node: ts.Node, name: string): boolean {
   let captured = false;
   const search = (n: ts.Node, insideNested: boolean): void => {
