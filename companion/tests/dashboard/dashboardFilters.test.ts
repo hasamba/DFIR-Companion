@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FiltersApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
+import { applyFalsePositive } from "../../src/analysis/falsePositive.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
 
 // public/js/dashboard-filters.js — the search, exclude and relevance predicates (#415).
 //
@@ -227,35 +229,70 @@ describe("ftOriginOf / originFacets", () => {
   });
 });
 
-// THE MIRROR ITSELF. isFindingFalsePositive exists to answer the same question as the server's
-// applyFalsePositive, so an analyst never sees a finding in the panel that the report has already
-// dropped, or vice versa. #457 was that mirror being broken in both directions at once — each side
-// guarded one empty-string case and not the other — so it is worth a test that runs the two
-// implementations against the same inputs rather than trusting a comment that says they agree.
+// THE MIRROR ITSELF, RUN RATHER THAN RESTATED.
+//
+// isFindingFalsePositive exists to answer the same question as the server's applyFalsePositive, so
+// an analyst never sees a finding the report has already dropped, or vice versa. #457 was that
+// mirror broken in both directions at once.
+//
+// The first version of this test transcribed the server's rule into a local `serverDrops` helper
+// and compared the client against that. An audit caught what that actually tests: a server-only
+// change leaves the transcription untouched, so the test stays green through exactly the
+// divergence it exists to prevent. It was checking the client against a copy of the server, which
+// is the same class of mistake as the bug.
+//
+// So it now imports applyFalsePositive and runs it against a real InvestigationState. If either
+// side changes alone, the two answers differ and this fails.
 describe("agrees with the server's applyFalsePositive", () => {
   const CASES: Array<[string, string | null, string[]]> = [
     ["an exact match", "SharpHound AD reconnaissance", ["sharphound ad reconnaissance"]],
     ["the marker inside the title", "Encoded PowerShell launched", ["powershell"]],
     ["the title inside the marker", "PowerShell", ["encoded powershell launched"]],
+    ["differing case and padding", "  ENCODED PowerShell  ", ["powershell"]],
     ["no relationship at all", "Persistence via run key", ["powershell"]],
     ["an untitled finding", "", ["powershell"]],
     ["a whitespace-only title", "   ", ["powershell"]],
-    ["a null title", null, ["powershell"]],
     ["an empty marker", "Encoded PowerShell", [""]],
-    ["no markers", "Encoded PowerShell", []],
+    ["an empty marker beside a real one", "Encoded PowerShell", ["", "powershell"]],
+    ["no markers at all", "Encoded PowerShell", []],
   ];
 
-  /** The server's rule, transcribed from src/analysis/falsePositive.ts. */
+  /** Does the SERVER drop this finding? Answered by running the server, not by describing it. */
   const serverDrops = (title: string | null, refs: string[]): boolean => {
-    const t = String(title ?? "")
-      .trim()
-      .toLowerCase();
-    const findingRefs = refs.map((r) => r.trim().toLowerCase()).filter(Boolean);
-    if (!t) return false;
-    return findingRefs.some((ref) => t === ref || t.includes(ref) || ref.includes(t));
+    const state = emptyState("parity");
+    state.findings.push({
+      id: "probe",
+      severity: "High",
+      title: title ?? "",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
+    const markers = refs.map((ref, i) => ({
+      id: `m${i}`,
+      kind: "finding" as const,
+      ref,
+      reason: "other" as const,
+      note: "",
+      markedAt: "2026-05-28T10:00:00Z",
+      markedBy: "anonymous",
+    }));
+    return !applyFalsePositive(state, markers).findings.some((f) => f.id === "probe");
   };
 
   it.each(CASES)("matches the server on %s", (_label, title, refs) => {
     expect(f.isFindingFalsePositive(title, refs)).toBe(serverDrops(title, refs));
+  });
+
+  // Guards the guard: if every case came out false on both sides the comparison would be vacuous.
+  // At least one input must actually be suppressed by both.
+  it("includes cases where both sides do suppress", () => {
+    const suppressing = CASES.filter(([, t, r]) => serverDrops(t, r));
+    expect(suppressing.length).toBeGreaterThanOrEqual(3);
+    for (const [, t, r] of suppressing) expect(f.isFindingFalsePositive(t, r)).toBe(true);
   });
 });
