@@ -1,279 +1,68 @@
-import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import express, { type Express } from "express";
 // Patch Express 4's router so async route handlers that throw or reject are forwarded to the
 // terminal error middleware (see the end of createApp) instead of hanging the client connection
 // or surfacing an UnhandledPromiseRejection. Side-effect-only import; must load before any route
 // is registered, so it stays at the top with express itself.
 import "express-async-errors";
 import { config as loadDotenv } from "dotenv";
-import { join, basename, isAbsolute, resolve, dirname, relative, extname } from "node:path";
+import { isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
-import { writeFile, readFile, rm, readdir, stat, lstat, open, copyFile, mkdir, rename } from "node:fs/promises";
-import { ZodError } from "zod";
 import { CaseStore } from "./storage/caseStore.js";
-import { BackupManager, resolveBackupConfig } from "./storage/backupManager.js";
 import { expandHome } from "./storage/expandHome.js";
-import type { RouteContext, ImportBase } from "./routes/context.js";
-import { registerSystemRoutes } from "./routes/system.js";
-import { registerCaptureRoutes } from "./routes/captures.js";
-import { registerPushNotifyRoutes } from "./routes/pushNotify.js";
-import { registerTemplatesViewsRoutes } from "./routes/templatesViews.js";
-import { registerToolsRoutes } from "./routes/tools.js";
-import { registerImportRoutes } from "./routes/import.js";
-import { registerVelociraptorRoutes } from "./routes/velociraptor.js";
-import { registerThreatIntelRoutes } from "./routes/threatIntel.js";
-import { registerAnonymizationRoutes } from "./routes/anonymization.js";
-import { registerTimelineRoutes } from "./routes/timeline.js";
-import { registerAnalysisGraphRoutes } from "./routes/analysisGraph.js";
-import { registerSessionSegmentationRoutes } from "./routes/sessionSegmentation.js";
-import { registerFindingsRoutes } from "./routes/findings.js";
-import { registerTaggerRoutes } from "./routes/tagger.js";
-import { registerCustodyRoutes } from "./routes/custody.js";
-import { registerMcpRoutes } from "./routes/mcp.js";
-import { registerPlaybookHuntsRoutes } from "./routes/playbookHunts.js";
-import { registerPlaybookMatchRoutes } from "./routes/playbookMatch.js";
-import { registerAiSynthesisRoutes } from "./routes/aiSynthesis.js";
-import { registerReportsExportRoutes } from "./routes/reportsExport.js";
-import { registerInteractiveReportRoutes } from "./routes/interactiveReport.js";
-import { registerReportVersionsRoutes } from "./routes/reportVersions.js";
-import { registerAnalysisRunRoutes } from "./routes/analysisRuns.js";
-import { registerCasePasswordRoutes } from "./routes/casePassword.js";
-import { registerCaseLifecycleRoutes } from "./routes/caseLifecycle.js";
-import { registerJobRoutes } from "./routes/jobs.js";
-import { registerDeepPassRoutes } from "./routes/deepPass.js";
-import { registerIncidentTypeRoutes } from "./routes/incidentTypes.js";
-import { registerCollectionPlanRoutes } from "./routes/collectionPlan.js";
-import { registerClockSkewRoutes } from "./routes/clockSkew.js";
-import { registerSlashCommandRoutes, startTelegramPolling, startSlackSocketMode } from "./routes/slashCommand.js";
-import { registerComplianceRoutes } from "./routes/compliance.js";
-import { registerCoachRoutes } from "./routes/coach.js";
-import { registerCockpitRoutes } from "./routes/cockpit.js";
-import { ingestCapture, CaseNotFoundError } from "./ingest/captureIngest.js";
-import { AiControlStore, type AiControl } from "./analysis/aiControl.js";
-import { JobManager, type RegisteredJob } from "./analysis/jobManager.js";
-import { JobLedgerStore } from "./analysis/jobLedgerStore.js";
-import { AnonControlStore } from "./analysis/anonControl.js";
-import { CustomEntitiesStore } from "./analysis/anonEntities.js";
-import { DiscoveredEntitiesStore } from "./analysis/anonDiscovered.js";
-import { isLocalAiProvider } from "./analysis/anonymize.js";
-import { HttpPresidioClient, resolvePresidioMinScore } from "./analysis/presidio.js";
-import { PresidioPendingStore } from "./analysis/presidioPending.js";
-import { TesseractOcrRunner, type OcrRunner } from "./analysis/ocrRedact.js";
-import { extractOcrText, isOcrSearchEnabled } from "./analysis/ocrSearch.js";
-import { FalsePositiveStore, markerId, type FalsePositiveMarker } from "./analysis/falsePositive.js";
-import { ScopeStore, type ScopeWindow } from "./analysis/scope.js";
-import { CorrelationProfileStore } from "./analysis/correlationProfile.js";
-import {
-  verifyUnlockToken,
-  isRememberedUnlockToken,
-  unlockCookieName,
-  parseCookieHeader,
-} from "./analysis/casePassword.js";
+import type { RouteContext } from "./routes/context.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
-import { createCaseLockGate } from "./analysis/caseLockGate.js";
-import { createCaseIdGate } from "./analysis/caseIdGate.js";
-import { contextTokens as resolveContextTokens } from "./analysis/promptBudget.js";
-import { resolveHuntPlatforms, type HuntPlatform } from "./analysis/huntPlatforms.js";
-import { parseVelociraptorJson } from "./analysis/velociraptorImport.js";
-import { detectImportWithCustom } from "./analysis/importDetect.js";
-import { observeImport } from "./analysis/operationalImport.js";
-import { createOperationalHttpMetrics } from "./analysis/operationalHttpMetrics.js";
-import { startOperationalCapacityMonitor } from "./analysis/operationalCapacity.js";
-import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "./analysis/importerStore.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
-import { applySeverityFloor } from "./analysis/severityFloor.js";
-import { enrichIocs, hasEnrichableWork, type EnrichLookupEvent } from "./enrichment/enrichService.js";
-import { EnrichControlStore, resolveEnabledProviders } from "./enrichment/enrichControl.js";
-import { ProviderHealthCache } from "./enrichment/providerHealth.js";
-import type { EnrichmentProvider } from "./enrichment/provider.js";
-import { VirusTotalProvider } from "./enrichment/virustotal.js";
-import { HuntingChProvider } from "./enrichment/huntingch.js";
-import { CrowdStrikeProvider } from "./enrichment/crowdstrike.js";
-import { AbuseIpdbProvider } from "./enrichment/abuseipdb.js";
-import { MispProvider } from "./enrichment/misp.js";
-import { RockyRaccoonProvider, type ParentChildResult } from "./enrichment/rockyraccoon.js";
-import { YetiProvider } from "./enrichment/yeti.js";
-import { OpenCtiProvider } from "./enrichment/opencti.js";
-import { ReverseDnsProvider } from "./enrichment/reverseDns.js";
-import { LookalikeDomainProvider } from "./enrichment/lookalikeDomain.js";
-import { RdapProvider } from "./enrichment/rdap.js";
-import { GeoIpProvider } from "./enrichment/geoip.js";
-import { ShodanProvider } from "./enrichment/shodan.js";
-import { HashlookupProvider } from "./enrichment/hashlookup.js";
-import { validateProcessChains, hasChainWork, type ChainSummary } from "./enrichment/chainValidate.js";
-import type { AnalysisPipeline } from "./analysis/pipeline.js";
-import type { InvestigationState, Severity, ForensicEvent } from "./analysis/stateTypes.js";
-import type { CaptureMetadata } from "./types.js";
-import type { StateStore } from "./analysis/stateStore.js";
-import type { ReportWriter } from "./reports/reportWriter.js";
-import type {} from "./reports/iocBlocklist.js";
-import { ReportMetaStore } from "./reports/reportMeta.js";
-import { ReportVersionStore } from "./reports/reportVersionStore.js";
-import { ReportTemplateStore } from "./reports/reportTemplateStore.js";
-import { ReportTemplateControlStore } from "./reports/reportTemplateControl.js";
-import { DashboardViewStore } from "./analysis/dashboardViewStore.js";
-import { ActivityLogStore } from "./analysis/activityLog.js";
-import { CommentsStore } from "./analysis/comments.js";
-import { TagsStore } from "./analysis/tags.js";
-import { PinnedFindingsStore } from "./analysis/pinnedFindings.js";
-import { FindingWorkflowStore } from "./analysis/findingWorkflow.js";
-import { NotebookStore } from "./analysis/notebookStore.js";
-import { HypothesisStore } from "./analysis/hypothesisStore.js";
-import { LearnedPatternStore } from "./analysis/learnedPatternStore.js";
-import { SourceTrustStore } from "./analysis/sourceTrustStore.js";
-import { ClockSkewStore } from "./analysis/clockSkewStore.js";
-import { DwellWindowStore } from "./analysis/dwellWindowStore.js";
-import { SuperTimelineStore } from "./analysis/superTimelineStore.js";
-import { StarredReportStore } from "./analysis/starredReportStore.js";
-import { TaggerStore } from "./analysis/taggerStore.js";
+import type { ForensicEvent } from "./analysis/stateTypes.js";
 import { autoTagNewEvents } from "./analysis/taggerAuto.js";
-import { ForensicGateControlStore } from "./analysis/forensicGateControl.js";
-import { CustodyStore } from "./analysis/custody.js";
-import { EvidenceIntegrityMonitor, resolveIntegrityConfig } from "./analysis/custodyIntegrity.js";
-import { demoteBelowSeverity, resolveForensicMinSeverity } from "./analysis/forensicGate.js";
-import { ConfidenceControlStore } from "./analysis/confidenceControl.js";
-import { ComplianceControlStore } from "./analysis/complianceControl.js";
-import { PlaybookStore } from "./analysis/playbookStore.js";
-import { type PlaybookTask } from "./analysis/playbook.js";
-import { PlaybookHuntStore } from "./analysis/playbookHuntStore.js";
-import { HuntOutcomeStore } from "./analysis/huntOutcomeStore.js";
-import { recordDeploy, fillOutcome, HUNT_OUTCOME_MAX_DEFAULT, type HuntDeployInput } from "./analysis/huntOutcomes.js";
-import { HuntRunSnapshotStore } from "./analysis/huntRunSnapshotStore.js";
-import { buildHuntRunSnapshot, diffHuntRuns, findHuntRunRecord, upsertHuntRunRecord, type HuntRunDiff } from "./analysis/huntRunDiff.js";
-import { PlaybookControlStore, DEFAULT_PLAYBOOK_CONTROL, type PlaybookControl } from "./analysis/playbookControl.js";
-import { AssetOverridesStore } from "./analysis/assetOverrides.js";
-import { LateralPathDismissStore } from "./analysis/lateralPathDismiss.js";
-import { IocAliasStore } from "./analysis/iocAlias.js";
-import { SynthMetaStore } from "./analysis/synthMeta.js";
-import { AiCostStore } from "./analysis/aiCost.js";
-import { OperationalMetricsStore } from "./analysis/operationalMetrics.js";
-import { SecondOpinionStore } from "./analysis/secondOpinionStore.js";
-import { ImportMetaStore } from "./analysis/importMeta.js";
-import { AnalysisRunStore } from "./analysis/analysisRunStore.js";
-import { recordEnrichmentRun } from "./analysis/analysisRunRecorders.js";
-import { DropStatusStore, type DropFailure, type PendingRawInput } from "./analysis/dropStatus.js";
-import {
-  selectReadyFiles, classifyDropFile, RAW_TOOL_EXTS, shouldIgnoreDropFile, isOversize,
-  DROP_PROCESSED, DROP_FAILED, DROP_README, type DropFileStat,
-} from "./analysis/dropScan.js";
-import { formatDropLogLines, appendDropLog, buildSweepLogEntries, type DropLogEntry } from "./analysis/dropLog.js";
-import {
-  loadAllToolConfigs, toolForExtension, suggestedToolForExtension, SOCRATES_EXTS, type ToolId, type ToolConfig,
-} from "./integrations/tools/toolConfig.js";
-import { spawnToolRunner, type ToolRunner } from "./integrations/tools/toolRunner.js";
-import { runToolAgainstFile, resolveContainedPath } from "./integrations/tools/runToolImport.js";
-import { CustomToolStore, customToolToConfig, type CustomTool } from "./integrations/tools/customToolStore.js";
-import { extractZipEntries } from "./analysis/zipExtract.js";
-import {
-  md5Buffer, probeAnalysis, uploadBuffer, checkStatus, fetchVerdicts,
-} from "./integrations/socrates/socratesApi.js";
-import { SocratesJobStore, type SocratesJob } from "./integrations/socrates/socratesJobStore.js";
-import { pollUntilImported } from "./integrations/socrates/socratesPoller.js";
-import { McpServerStore } from "./integrations/mcp/mcpServerStore.js";
-import type { TransferRunner } from "./integrations/mcp/mcpDelivery.js";
-import type { ClaudeRunner } from "./providers/claudeRunner.js";
-import {
-  createOriginGuard,
-  parseAllowedOrigins,
-  parseAllowedHosts,
-  parseAllowedHostSuffixes,
-} from "./http/originGuard.js";
-import { createSecurityHeaders } from "./http/securityHeaders.js";
-import { getAiLimiter } from "./http/rateLimiter.js";
-import { registerStaticAssets } from "./http/staticAssets.js";
-import type { TeamAuth } from "./auth/teamAuth.js";
-import { registerTeamAuthRoutes } from "./auth/authRoutes.js";
-import { createTeamAuthRuntime } from "./auth/authFactory.js";
-import { TemplateStore } from "./analysis/templateStore.js";
-import { IncidentTypeStore } from "./analysis/incidentTypeStore.js";
-import { CollectionPlanStore } from "./analysis/collectionPlanStore.js";
-import { diffTimeline, addedForensicEvents } from "./analysis/timelineDiff.js";
-import { diffIocs } from "./analysis/iocsDiff.js";
-import { ImportUndoStore, pushCheckpoint, undoMaxBytesFromEnv } from "./analysis/importUndo.js";
-import { IocWhitelistStore } from "./analysis/iocWhitelistStore.js";
-import { whitelistMatches } from "./analysis/iocWhitelist.js";
-import { NsrlStore, ingestNsrlFiles, splitNsrlPaths } from "./analysis/nsrlStore.js";
-import { nsrlMatchIocs, nsrlMatchEvents } from "./analysis/nsrl.js";
-import { KevStore } from "./analysis/kevStore.js";
-import { getAppVersion } from "./version.js";
-import {
-  resolveUpdateMode, DEFAULT_UPDATE_REPO,
-  UPDATE_CHECK_THROTTLE_MS,
-} from "./analysis/updateCheck.js";
-import { UpdateCheckStore } from "./analysis/updateCheckStore.js";
-import { performUpdateCheck } from "./analysis/updateCheckRun.js";
-import { StateLock } from "./analysis/stateLock.js";
-import { NsrlDb, loadNsrlDbPath } from "./analysis/nsrlDb.js";
-import { applyDeobfuscation } from "./analysis/applyDeobfuscation.js";
+import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "./http/originGuard.js";
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
-import {
-  CustomerExposureStore,
-  type CustomerExposureProvider,
-} from "./analysis/customerExposure.js";
-import { IrisClient } from "./integrations/iris/irisClient.js";
-import { VelociraptorClient, buildVelociraptorClient, type HuntUpload } from "./integrations/velociraptor/velociraptorApi.js";
-import { ArtifactBundleStore } from "./analysis/artifactBundleStore.js";
-import { VelociraptorClientStore } from "./analysis/velociraptorClientStore.js";
-import { VeloHuntStore, type VeloHuntJob } from "./analysis/veloHuntStore.js";
-import { VeloMonitorStore, monitorId, type VeloMonitor } from "./analysis/veloMonitorStore.js";
-import { pollMonitorOnce, monitorArtifactMap, type PollDeps } from "./integrations/velociraptor/monitorPoller.js";
-import { pollHuntStatusOnce, isHuntStoppedEarly, type HuntPollDeps } from "./integrations/velociraptor/huntStatusPoller.js";
-import { PushTokenStore } from "./analysis/pushTokenStore.js";
-import { type IrisPushOptions } from "./integrations/iris/irisPush.js";
-import { IrisExportStore } from "./integrations/iris/irisExportStore.js";
-import { TimesketchClient } from "./integrations/timesketch/timesketchClient.js";
-import { type TimesketchPushOptions } from "./integrations/timesketch/timesketchPush.js";
-import { MispPushClient } from "./integrations/misp/mispPushClient.js";
-import { type MispPushOptions } from "./integrations/misp/mispPush.js";
-import { NotionClient } from "./integrations/notion/notionClient.js";
-import { type NotionPushOptions } from "./integrations/notion/notionPush.js";
-import { NotionExportStore } from "./integrations/notion/notionExportStore.js";
-import { ClickUpClient } from "./integrations/clickup/clickupClient.js";
-import { ClickUpExportStore } from "./integrations/clickup/clickupExportStore.js";
-import { type JiraClientLike } from "./integrations/jira/jiraClient.js";
-import { JiraExportStore } from "./integrations/jira/jiraExportStore.js";
-import { type ServiceNowClientLike } from "./integrations/servicenow/servicenowClient.js";
-import { ServiceNowExportStore } from "./integrations/servicenow/servicenowExportStore.js";
-import type { ImporterFailure, AiError, ImporterRunStat } from "./analysis/diagnostics.js";
-import { redactPaths, redactedErrorMessage } from "./analysis/redactPaths.js";
 import type { PreflightReport } from "./analysis/preflight.js";
-import { NotificationConfigStore } from "./analysis/notificationStore.js";
-import { SlashCommandChannelStore } from "./analysis/slashCommandStore.js";
-import { seedDemoCase } from "./analysis/seedDemoCase.js";
+import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
 import {
-  findingEventsFromDiff, milestoneEvent,
-  type NotificationEvent,
-} from "./analysis/notifications.js";
-import { createNotifier, type Notifier } from "./integrations/notify/notifyDispatch.js";
-import { nodeSmtpConnect } from "./integrations/notify/smtpClient.js";
-import {
-  DeHashedExposureProvider,
-  HaveIBeenPwnedExposureProvider,
-  LeakCheckExposureProvider,
-  ShodanExposureProvider,
-} from "./integrations/customerExposureProviders.js";
-import {
-  LoggerImpl,
-  normalizeLogLevel,
-  type Logger,
-} from "./logging/logger.js";
-import { logLine, warnLine, getServerLogger, setServerLogger } from "./logging/serverLogger.js";
-import { numEnv } from "./composition/env.js";
-import { tlsFetchFor } from "./composition/tlsFetch.js";
-import {
-  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
-  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
-  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
-} from "./composition/integrationClients.js";
+  mountRequestPipeline,
+  createUnlockStateReader,
+  mountTerminalHandlers,
+} from "./composition/httpStack.js";
+import { registerAllRoutes } from "./composition/routeRegistry.js";
+import { createRuntimeStores } from "./composition/runtimeStores.js";
+import { startMaintenanceTasks, startPostListenTasks } from "./composition/maintenanceTasks.js";
+import { buildAiRuntime } from "./composition/aiRuntime.js";
+import { buildAppOptions } from "./composition/appWiring.js";
+import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
+import { createCaseAppliers } from "./composition/caseAppliers.js";
+import { createEnrichmentEngine } from "./composition/enrichment.js";
+import { createCaptureAnalysis } from "./composition/captureAnalysis.js";
+import { createImportIngest } from "./composition/importIngest.js";
+import { createExternalTools } from "./composition/externalTools.js";
+import { createDropFolder } from "./composition/dropFolder.js";
+import { createVeloMonitors } from "./composition/veloMonitors.js";
+import { createVeloHunts } from "./composition/veloHunts.js";
+import { createVeloExternalIngest } from "./composition/veloExternalIngest.js";
+import { createSettingsReload } from "./composition/settingsReload.js";
+import { createCaseNotifier } from "./composition/caseNotifier.js";
+import { createOcrIndexer } from "./composition/ocrIndexer.js";
+import { createAiControlCache } from "./composition/aiControlCache.js";
+import { buildIrisClient, buildTimesketchClient } from "./composition/integrationClients.js";
 
 // Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
 // tests keep importing them from `src/server.js` — the extraction moved the definitions, not the
 // public surface (#384).
 export { tlsFetchFor } from "./composition/tlsFetch.js";
 export {
-  buildClickUpClient, buildIrisClient, buildJiraClient, buildMispPushClient, buildNotionClient,
-  buildServiceNowClient, buildTimesketchClient, clickupOptions, irisPushOptions, jiraOptions,
-  mispPushOptions, notionPushOptions, servicenowOptions, timesketchPushOptions,
+  buildClickUpClient,
+  buildIrisClient,
+  buildJiraClient,
+  buildMispPushClient,
+  buildNotionClient,
+  buildServiceNowClient,
+  buildTimesketchClient,
+  clickupOptions,
+  irisPushOptions,
+  jiraOptions,
+  mispPushOptions,
+  notionPushOptions,
+  servicenowOptions,
+  timesketchPushOptions,
 } from "./composition/integrationClients.js";
 
 // Server logging. A single shared Logger tees every line to the console AND to log files (a global
@@ -282,433 +71,13 @@ export {
 // because tests and the settings-reload path reach for these at `src/server.js`.
 export { setServerLogger, getServerLogger } from "./logging/serverLogger.js";
 
-// Delay before the first evidence-integrity sweep after boot. Long enough to stay out of the
-// startup path, short enough that Diagnostics reports a real answer rather than "not verified
-// yet" for a whole interval (#231).
-const INITIAL_INTEGRITY_SWEEP_DELAY_MS = 60_000;
-
-// Truncate a long indicator (e.g. a SHA-256) for a readable one-line log entry.
-function shortValue(value: string): string {
-  return value.length > 24 ? `${value.slice(0, 24)}…` : value;
-}
-
-export type AiStatus = "analyzing" | "idle" | "error";
-// What the AI is actually doing, so the dashboard can say "processing screenshots"
-// vs "synthesizing" vs idle rather than a generic "analyzing".
-// "deep-pass" is its own phase rather than another "synthesizing": its detail already reads as a
-// whole sentence ("deep pass (Medium+) — reading batch 2 of 5"), and the client must be able to tell
-// the two apart to render it without the "synthesizing findings…" prefix.
-export type AiPhase = "extracting" | "synthesizing" | "deep-pass";
-
-export interface AiStatusEvent {
-  status: AiStatus;
-  at: string;        // ISO timestamp
-  phase?: AiPhase;   // present when status === "analyzing"
-  detail?: string;   // e.g. window size, or error message
-}
-
-export interface AppOptions {
-  pipeline?: AnalysisPipeline;
-  teamAuth?: TeamAuth;
-  // Per-case mutex serializing load->save critical sections so concurrent state writes
-  // (manual adds vs background enrichment/synthesis) cannot clobber each other.
-  stateLock?: StateLock;
-  aiConfigured?: boolean;
-  operationalMetrics?: OperationalMetricsStore;
-  liveConnectionCount?: () => number;
-  windowSize?: number;
-  // Safety-net interval that drains capture buffers even when a window never fills.
-  // Default 5 min; set 0 to disable.
-  flushIntervalMs?: number;
-  stateStore?: StateStore;
-  reportWriter?: ReportWriter;
-  // OCR backend for the redacted case export (#54), used to blur PII text in screenshots. Provided
-  // unconditionally in startServer (the export needs it even when the vision model is local); tests
-  // inject a stub. The export route falls back to a fresh TesseractOcrRunner when this is absent.
-  ocrRunner?: OcrRunner;
-  // Human-authored report metadata (title page, distribution, BIA, glossary, recommendations…)
-  // edited from the dashboard and merged into report.md.
-  reportMetaStore?: ReportMetaStore;
-  // Report versioning (#77): one snapshot per report regeneration (markdown + meta + content hash +
-  // the diff-relevant slice of state), powering a version list, a diff view, and rollback of the
-  // editable report-meta.
-  reportVersionStore?: ReportVersionStore;
-  // Custom report templates (issue #60): GLOBAL branded layouts (accent, cover, header/footer,
-  // section selection) + the per-case selection of which template renders the report.
-  reportTemplateStore?: ReportTemplateStore;
-  reportTemplateControlStore?: ReportTemplateControlStore;
-  onReportTemplate?: (caseId: string) => void;
-  // Dashboard view presets (#142): GLOBAL role/phase layouts (sections + severity/top-N filter +
-  // matching report template) the dashboard applies. Built-ins editable in place, custom via CRUD.
-  dashboardViewStore?: DashboardViewStore;
-  // Per-case investigation activity log (#238): chronological record of security-relevant
-  // actions. onActivity pings dashboard clients over the WS to re-fetch on a new entry.
-  activityLogStore?: ActivityLogStore;
-  onActivity?: (caseId: string) => void;
-  // Investigator comments on case entities (collaboration). onComments pings dashboard
-  // clients over the WS to re-fetch when a comment is added/removed.
-  commentsStore?: CommentsStore;
-  onComments?: (caseId: string) => void;
-  // Analyst triage tags on case entities (hand labels like confirmed-malicious / false-positive
-  // / key-evidence, independent of AI severity). onTags pings dashboard clients over the WS to
-  // re-fetch when a tag is added/removed.
-  tagsStore?: TagsStore;
-  onTags?: (caseId: string) => void;
-  // Analyst-pinned findings (#220): a small ordered shortlist the analyst pins so the most
-  // important findings stay visible in a dedicated strip while scrolling. onPins pings dashboard
-  // clients over the WS to re-fetch when a finding is pinned/unpinned/reordered.
-  pinnedFindingsStore?: PinnedFindingsStore;
-  onPins?: (caseId: string) => void;
-  // Analyst assignment + workflow status for findings (#87): a human owner and an analyst-editable
-  // triage state (new/in-progress/in-review/resolved), kept in a side file so re-synthesis never
-  // wipes them. onFindingWorkflow pings dashboard clients over the WS to re-fetch on any change.
-  findingWorkflowStore?: FindingWorkflowStore;
-  onFindingWorkflow?: (caseId: string) => void;
-  // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
-  // clients over the WS to re-fetch when an entry is added, updated, or removed.
-  notebookStore?: NotebookStore;
-  onNotebook?: (caseId: string) => void;
-  // Per-case hypotheses (issue #140): status-tracked investigative hypotheses, analyst-authored or
-  // auto-generated by synthesis. onHypotheses pings dashboard clients over the WS to re-fetch.
-  hypothesisStore?: HypothesisStore;
-  onHypotheses?: (caseId: string) => void;
-  // Learned dismissal patterns (issue #65): recurring reasoned dismissals accumulated per case, fed to
-  // synthesis as a confidence-lowering block. onLearnedPatterns pings dashboard clients to re-fetch.
-  learnedPatternStore?: LearnedPatternStore;
-  onLearnedPatterns?: (caseId: string) => void;
-  // Per-case source-trust overrides (issue #66). onSourceTrust pings dashboard clients to re-fetch.
-  sourceTrustStore?: SourceTrustStore;
-  onSourceTrust?: (caseId: string) => void;
-  // Per-host clock offsets, the analyst's manual overrides and the alignment toggle (#228), in
-  // state/clock-skew.json. onClockSkew pings dashboard clients to re-fetch — alignment changes every
-  // timestamp on screen, so the timeline must be reloaded with it.
-  clockSkewStore?: ClockSkewStore;
-  onClockSkew?: (caseId: string) => void;
-  // Analyst-defined attacker-presence time windows (dwell-time feature). onDwellWindow pings live
-  // dashboard clients over the WS to re-fetch after a mutation, mirroring onHypotheses.
-  dwellWindowStore?: DwellWindowStore;
-  onDwellWindow?: (caseId: string) => void;
-  // Fired after the super-timeline changes (a label (un)set) so live dashboard clients refresh.
-  onSuperTimeline?: (caseId: string) => void;
-  // Super-timeline: the complete record of every imported event (a superset of the forensic timeline).
-  // Every normal import dual-writes its newly-added events here; the forensic timeline stays curated.
-  superTimelineStore?: SuperTimelineStore;
-  // Saved copy of the TimeSketch-style Starred Events Report (a per-case side file) — POST
-  // /starred-report generates it fresh each time (ephemeral); PUT persists the analyst's chosen
-  // copy here so it survives a reload; GET reads it back.
-  starredReportStore?: StarredReportStore;
-  // Content-based event tagger (Timesketch-style tags.yaml): the rule file store. Powers manual
-  // "Run tagger" + rule editing (routes/tagger.ts) and the automatic post-import run (pipeline).
-  taggerStore?: TaggerStore;
-  // Per-case forensic-timeline severity cut (machine/analyst preference — NOT snapshotted). After every
-  // import dual-writes into the super-timeline, sub-threshold (Info-by-default) events are demoted OUT of
-  // the forensic timeline so the AI only synthesizes graded signal. onForensicGate pings live dashboard
-  // clients over the WS to re-fetch after the per-case threshold changes.
-  forensicGateControlStore?: ForensicGateControlStore;
-  onForensicGate?: (caseId: string) => void;
-  custodyStore?: CustodyStore;
-  integrityMonitor?: EvidenceIntegrityMonitor;
-  // Per-case minimum-confidence display preference (#226) — a machine/analyst preference, not
-  // investigation data, mirroring forensicGateControlStore's shape. Purely a display filter: nothing
-  // is removed from state, only the dashboard's findings list defaults to this floor.
-  confidenceControlStore?: ConfidenceControlStore;
-  onConfidenceControl?: (caseId: string) => void;
-  // Per-case compliance-view settings (#336): the analyst-set incident-discovery date the
-  // notification clocks run from, and which frameworks to show. Both are inputs the ATT&CK ->
-  // obligation mapping cannot derive on its own — see analysis/complianceControl.ts.
-  complianceControlStore?: ComplianceControlStore;
-  // Per-case playbook (issue #36): a trackable checklist auto-derived from the case's next
-  // steps + high-severity findings (idempotent re-derive preserves analyst progress), plus
-  // custom tasks. Persisted in state/playbook.json; survives synthesis. onPlaybook pings
-  // dashboard clients over the WS to re-fetch when a task changes or a sync runs.
-  playbookStore?: PlaybookStore;
-  onPlaybook?: (caseId: string) => void;
-  // AI-suggested Velociraptor hunts persisted per case (#70) so they survive a page refresh; a
-  // suggestion is dropped on read once its task is reworded/deleted (state/playbook-hunts.json).
-  playbookHuntStore?: PlaybookHuntStore;
-  // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
-  // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
-  playbookControlStore?: PlaybookControlStore;
-  // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
-  // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
-  // pings dashboard clients over the WS to re-fetch the graph when overrides change.
-  assetOverridesStore?: AssetOverridesStore;
-  onAssetOverrides?: (caseId: string) => void;
-  // Analyst-dismissed lateral-movement chains, persisted per case in
-  // state/lateral-path-dismissals.json. Rejects a derived INFERENCE without discarding the
-  // underlying evidence the way a false-positive marker would.
-  lateralPathDismissStore?: LateralPathDismissStore;
-  // Entity merging for duplicate IOCs (#82). iocAliasStore persists per-case merge aliases (state/
-  // ioc-aliases.json) so a future re-synthesis routes the merged-away value onto its canonical IOC
-  // instead of recreating it (see pipeline.ts's mergeWithAliases). onIocMerge pings dashboard
-  // clients over the WS to re-fetch when a merge/unmerge happens.
-  iocAliasStore?: IocAliasStore;
-  onIocMerge?: (caseId: string) => void;
-  // Confirmed false-positive markers. onFalsePositive pings dashboard
-  // clients over the WS so other investigators see the change immediately, before synthesis.
-  onFalsePositive?: (caseId: string) => void;
-  // Investigation time-window changes. onScope pings dashboard clients with the new window so
-  // other investigators can apply the same scope instantly, without waiting for re-synthesis.
-  onScope?: (caseId: string, scope: ScopeWindow) => void;
-  // Last-synthesis record (when it ran + findings diff) for the dashboard's "last synthesized N
-  // ago" indicator and what-changed view. Read-only here; the pipeline writes it on each run.
-  synthMetaStore?: SynthMetaStore;
-  // Append-only operation manifests (#377), including replay ancestry and integrity hashes.
-  analysisRunStore?: AnalysisRunStore;
-  // Per-case AI cost/token accounting (vision/synthesis/other buckets), read-only here —
-  // the pipeline (via AiCostStore.record) writes it after every AI call.
-  aiCostStore?: AiCostStore;
-  correlationProfileStore?: CorrelationProfileStore;
-  // Second LLM opinion (issue #116): the last QA cross-check record (deltas + analyst decisions),
-  // read by the GET route. `secondOpinionEnabled` gates the dashboard button (a different model is
-  // configured). onSecondOpinion pings dashboard clients to re-fetch after a run or accept/reject.
-  secondOpinionStore?: SecondOpinionStore;
-  secondOpinionEnabled?: boolean;
-  onSecondOpinion?: (caseId: string) => void;
-  // Last-import record (when it ran + forensic-timeline diff) for the dashboard's "last import N
-  // ago - +N new events" indicator and what-was-added view above the timeline. The unified /import
-  // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
-  importMetaStore?: ImportMetaStore;
-  onImportMeta?: (caseId: string) => void;
-  // Evidence drop folder (auto-import inbox): the last-sweep summary read by GET /cases/:id/drop-status
-  // and the live "📥 Drop: N imported, M failed" banner. Presence of dropStatusStore also ARMS the
-  // background watcher (so createApp-only unit tests that omit it never start a filesystem poller).
-  // onDropStatus pings dashboard clients to re-fetch after a sweep that imported or failed something.
-  dropStatusStore?: DropStatusStore;
-  onDropStatus?: (caseId: string) => void;
-  // Import undo/redo (#76): before each import the pre-import forensic timeline + IOCs are snapshotted
-  // onto a per-case stack so the analyst can roll back an import that floods the dashboard (and redo).
-  // onImportUndo pings dashboard clients to re-fetch the undo-stack state (button enable/labels).
-  importUndoStore?: ImportUndoStore;
-  onImportUndo?: (caseId: string) => void;
-  // Called when an AI analysis window starts / finishes / fails, so the
-  // server can push a live "AI status" indicator to dashboard clients.
-  onAiStatus?: (caseId: string, event: AiStatusEvent) => void;
-  // Called for every ingested capture (duplicate or not). Lets the server broadcast a cross-case
-  // signal so a dashboard can warn when captures are arriving for a DIFFERENT case than it's viewing.
-  onCapture?: (caseId: string) => void;
-  // Called for every accepted artifact import / push. Same purpose as onCapture but for imported
-  // evidence (the extension's "Push to DFIR-Companion") — broadcast to ALL dashboards so one viewing
-  // a different case warns that artifacts are arriving for another case (parity with screenshots).
-  onImport?: (caseId: string) => void;
-  // When true, run the synthesis pass automatically (debounced) after capture
-  // windows are analyzed, so the live dashboard shows findings/attacker path.
-  autoSynthesize?: boolean;
-  autoSynthesizeDebounceMs?: number;
-  // Threat-intel enrichment providers (VirusTotal, MalwareBazaar, AbuseIPDB…).
-  enrichmentProviders?: EnrichmentProvider[];
-  enrichDelayMs?: number;
-  enrichProviderDelayMs?: Record<string, number>;  // per-provider throttle overrides (keyed by provider.name)
-  enrichJitterMs?: number;          // ± random jitter added to the inter-call wait (#78)
-  enrichRetries?: number;           // retry attempts for a provider call that hits a 429 (#78)
-  enrichRetryBackoffMs?: number;    // base backoff before the first 429 retry, doubles each attempt (#78)
-  enrichMaxIocs?: number;
-  // Customer Exposure is separate from IOC enrichment: only customer-owned domains/emails are
-  // sent to breach-data providers. IOC domains are never queried here.
-  customerExposureProviders?: CustomerExposureProvider[];
-  customerExposureDelayMs?: number;
-  // Provider reachability gate. A self-hosted MISP / YETI can be down; rather than fire one
-  // doomed request per IOC, each provider is probed (cached `enrichHealthTtlMs`, default 60s)
-  // before sending — a down provider is skipped this run. When `enrichHealthPollMs` is set
-  // (>0), a background poller re-probes down providers on that interval and auto-resumes
-  // enrichment for cases it had to skip, once the server is reachable again.
-  enrichHealthTtlMs?: number;
-  enrichHealthPollMs?: number;
-  // Broadcast a fresh investigation state to dashboard clients (for routes that change
-  // state outside the AI pipeline, e.g. enrichment).
-  onState?: (state: InvestigationState) => void;
-  // DFIR-IRIS push: a configured client (when DFIR_IRIS_URL/KEY are set) + mapping options
-  // (customer/classification ids, base URL for the case link).
-  irisClient?: IrisClient;
-  irisOptions?: IrisPushOptions;
-  // Rebuilds the IRIS client from current config (used by POST /iris/reconnect so config saved
-  // via Settings, or IRIS coming back online, applies without a server restart). Defaults to the
-  // env-based buildIrisClient; tests inject a stub (no network).
-  rebuildIrisClient?: () => IrisClient | undefined;
-  // Remembers the IRIS case name used on the last push per Companion case, so a re-push with
-  // no explicit override still targets the same IRIS case (find-or-create is name-based).
-  irisExportStore?: IrisExportStore;
-  // Velociraptor API: a configured client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) lets the
-  // dashboard run the generated hunt VQL against the server and show the rows inline.
-  velociraptorClient?: VelociraptorClient;
-  // Rebuilds the Velociraptor client from current config (used by POST /velociraptor/reconnect so
-  // config saved via Settings, or the Velociraptor server coming back online, applies without a server
-  // restart). Defaults to the env-based buildVelociraptorClient; tests inject a stub (no spawn).
-  rebuildVelociraptorClient?: () => VelociraptorClient | undefined;
-  // External forensic tools (#211): a runner that spawns the analyst-configured LOCAL binaries
-  // (Hayabusa/Velociraptor CLI/Suricata/Snort/YARA) against raw evidence and hands the output to the
-  // existing importers. Absent → the tools feature is off (routes 501, drops surface a "configure"
-  // banner). Config is read live from DFIR_TOOL_* env via `loadToolConfigs` (default reads process.env,
-  // so POST /tools/reconnect applies saved settings without a restart). Tests inject stubs (no spawn).
-  toolRunner?: ToolRunner;
-  loadToolConfigs?: () => Map<ToolId, ToolConfig>;
-  // User-defined custom tools (#211) — a GLOBAL JSON store of analyst-added tools (name/binary/command/
-  // extensions), merged into the tool set alongside the built-ins. Absent → only built-ins.
-  customToolStore?: CustomToolStore;
-  // Policy for the MCP servers CLAUDE CODE is configured with (#296) — which of them case evidence
-  // may be pointed at, what they may run, how it gets there. No URLs and no tokens: the analyst
-  // configures servers in Claude Code, and the companion asks Claude Code to call them.
-  // Absent → the /mcp routes answer 501.
-  mcpServerStore?: McpServerStore;
-  // Drives the `claude` CLI for MCP discovery and single tool calls. Tests inject; absent = a real
-  // spawn. The Companion speaks no MCP itself, so this is the only route to a server.
-  mcpClaudeRunner?: ClaudeRunner;
-  // How evidence is pushed to an analysis host (scp). Defaults to a real spawn; tests inject.
-  mcpTransferRunner?: TransferRunner;
-  // Drives agentic MCP mode (spawns the claude CLI). Tests inject; absent = the real spawn.
-  mcpAgentRunner?: ClaudeRunner;
-  // Persisted inventory of enrolled clients (issue #70 — host ↔ client_id map). A single-endpoint
-  // collection resolves the host against this file instead of a brittle live `clients(search=...)`
-  // lookup; refreshed at startup, on demand (Settings), and lazily on a collect miss.
-  velociraptorClientStore?: VelociraptorClientStore;
-  // Triage bundles (global, shared across cases): named selections of Velociraptor CLIENT artifacts
-  // the analyst runs as a hunt. Per-case veloHuntStore tracks the in-flight/last bundle hunt so the
-  // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
-  artifactBundleStore?: ArtifactBundleStore;
-  veloHuntStore?: VeloHuntStore;
-  onVeloHunt?: (caseId: string) => void;
-  // Durable background-job ledger (#225, #380): tracks heavy async operations across restarts.
-  // Jobs appear in the dashboard Jobs panel + /api/jobs. Constructed in startServer (its
-  // onJob hook WS-broadcasts job_changed); absent in createApp-only unit tests + scripts/* pipelines.
-  jobManager?: JobManager;
-  // Hunting feedback loop (#157): per-case ledger of deployed hunts + their outcomes (hit/miss +
-  // counts). Recorded on deploy (bundle + suggested fleet/playbook/technique hunts), filled on collect,
-  // read by the suggestion routes (exclude + "PRIOR HUNTS" context) and the dashboard hunting profile.
-  huntOutcomeStore?: HuntOutcomeStore;
-  // Run-to-run hunt diffing (#80): the latest result-row snapshot per VQL fingerprint, so re-deploying
-  // a recurring/scheduled hunt can show what's new/gone vs its PREVIOUS run (not just vs the whole
-  // case). Sibling to huntOutcomeStore — see huntRunSnapshotStore.ts.
-  huntRunSnapshotStore?: HuntRunSnapshotStore;
-  // Live Velociraptor CLIENT_EVENT monitors (#84): per-case pollers that stream a client monitoring
-  // artifact's new rows into the push/import pipeline. The store persists each monitor + its cursor so
-  // a restart resumes without re-ingesting; onVeloMonitor broadcasts a change to the case's clients.
-  veloMonitorStore?: VeloMonitorStore;
-  onVeloMonitor?: (caseId: string) => void;
-  // Poll interval (seconds) for live monitors when the request doesn't specify one (DFIR_VELO_MONITOR_POLL_S).
-  veloMonitorPollSeconds?: number;
-  // Generic push ingest (#84): the global shared secret (DFIR_PUSH_TOKEN) external tools present in
-  // X-DFIR-Key, and the per-case token store (generated in Settings). Either authorizes a push.
-  pushToken?: string;
-  pushTokenStore?: PushTokenStore;
-  onPushToken?: (caseId: string) => void;
-  // IOC whitelist (global, shared across cases): known-good patterns (CIDR ranges, hashes, regexes)
-  // that auto-mark matching IOCs LEGITIMATE on import. Opt-in (the store starts empty).
-  iocWhitelistStore?: IocWhitelistStore;
-  // User-authored declarative importers (global, shared across cases): the external plugin layer that
-  // lets analysts add new import shapes without code. onImporters broadcasts a registry change.
-  importerStore?: ImporterStore;
-  onImporters?: () => void;
-  // NSRL known-good hash set (global, shared across cases, #63): a forensic event whose file hash —
-  // or an IOC whose value — is a known-software hash is auto-marked LEGITIMATE on import, reducing
-  // false positives. Opt-in (the store starts empty).
-  nsrlStore?: NsrlStore;
-  // NSRL RDS SQLite backend (#63): the real ~160 GB RDS queried on demand (complements the flat
-  // store). nsrlDbConfigFile persists a UI-set DB path; nsrlDbEnvManaged = DFIR_NSRL_DB is set, so
-  // the path is env-managed and the UI connect is read-only.
-  nsrlDb?: NsrlDb;
-  nsrlDbConfigFile?: string;
-  nsrlDbEnvManaged?: boolean;
-  // CISA KEV catalog (issue #99): CVEs from the forensic timeline / Shodan exposure results that
-  // CISA confirms are actively exploited are flagged in synthesis + the report. Opt-in (starts empty).
-  kevStore?: KevStore;
-  // Which hunt-query platforms the dashboard's 🔍 generator offers (DFIR_HUNT_PLATFORMS allowlist).
-  // Exposed on /health so the dashboard renders only these cards. Undefined → all platforms.
-  huntPlatforms?: HuntPlatform[];
-  // Timesketch push: a configured client (when DFIR_TIMESKETCH_URL/USER/PASSWORD are set) +
-  // options (base URL for the sketch link, managed timeline name).
-  timesketchClient?: TimesketchClient;
-  timesketchOptions?: TimesketchPushOptions;
-  // Rebuild the Timesketch client at runtime so POST /timesketch/reconnect can apply newly-saved
-  // DFIR_TIMESKETCH_* (or recover a server that came back online) WITHOUT the #1-gotcha restart.
-  // Defaults to the env-based buildTimesketchClient; tests inject a stub (no network).
-  rebuildTimesketchClient?: () => TimesketchClient | undefined;
-  // Case templates: built-in + user-saved templates selectable at case creation.
-  templateStore?: TemplateStore;
-  // Incident-type auto-playbooks (#236): the built-in + custom incident-type library plus the
-  // per-case chosen-type record. Applies a type's auto-configuration (key questions, next steps,
-  // expected-finding seeds) at case creation or on demand, and feeds the synthesis hint.
-  incidentTypeStore?: IncidentTypeStore;
-  // Collection plan (#347): per-case analyst overrides for the incident type's evidence checklist.
-  // The plan itself is derived on read from the timeline — only the overrides are stored.
-  collectionPlanStore?: CollectionPlanStore;
-  // MISP export: a configured client (when DFIR_MISP_URL/KEY are set) + push options
-  // (distribution, analysis state, base URL for the event link).
-  mispPushClient?: MispPushClient;
-  mispPushOptions?: MispPushOptions;
-  // Notion export: a configured client (when DFIR_NOTION_TOKEN is set) + push options
-  // (default parent database/page, container title). The export's page/container pointer is
-  // remembered per case in notionExportStore so a re-export refreshes only Companion content.
-  notionClient?: NotionClient;
-  notionOptions?: NotionPushOptions;
-  notionExportStore?: NotionExportStore;
-  // ClickUp export (issue #36 Phase 3): a configured client (when DFIR_CLICKUP_TOKEN is set) pushes
-  // the Response Playbook as ClickUp tasks. The per-task ClickUp ids are remembered per case in
-  // clickupExportStore so a re-export updates instead of duplicating. Default target list id +
-  // base URL come from clickupOptions.
-  clickupClient?: ClickUpClient;
-  clickupExportStore?: ClickUpExportStore;
-  clickupOptions?: { defaultListId?: string };
-  // Jira export (issue #272): push individual findings as Jira issues. Configured via
-  // DFIR_JIRA_URL, DFIR_JIRA_USER, DFIR_JIRA_TOKEN, and DFIR_JIRA_PROJECT_KEY.
-  // Typed as the INTERFACE, not the concrete client: everything downstream
-  // (pushFindingToJira / pushFindingsToJira / the `configured` flag) needs only me() +
-  // createIssue() + updateIssue(), and naming the class here forced the route tests to
-  // launder their stub through an `as unknown as` cast, which is what kept them out of the
-  // typecheck (#385). Production still passes a real JiraClient.
-  jiraClient?: JiraClientLike;
-  jiraExportStore?: JiraExportStore;
-  jiraOptions?: { projectKey?: string; issueType?: string };
-  // ServiceNow export (issue #272): push individual findings as ServiceNow incidents. Configured via
-  // DFIR_SERVICENOW_URL, DFIR_SERVICENOW_USER, and DFIR_SERVICENOW_PASSWORD.
-  // Interface rather than the concrete client, for the same reason as jiraClient above.
-  servicenowClient?: ServiceNowClientLike;
-  servicenowExportStore?: ServiceNowExportStore;
-  servicenowOptions?: { caller?: string; category?: string; subcategory?: string };
-  // Notifications (issue #58): a GLOBAL channel store (Slack/Teams webhooks + SMTP email) + a
-  // notifier that dispatches NotificationEvents to the channels that want them. Opt-in — the store
-  // starts empty. `notifier` is the dispatcher (loads channels, formats, sends, best-effort);
-  // `notifyEmailEnabled` tells the dashboard whether an SMTP transport is wired (so it can hint).
-  // `dashboardBaseUrl` deep-links notifications back to the case.
-  notificationStore?: NotificationConfigStore;
-  // Per-channel case-binding store for the war-room slash-command bot (#235), in a global JSON
-  // file beside the notification config. Absent → the bot's routes are not registered at all.
-  slashCommandChannelStore?: SlashCommandChannelStore;
-  // Poll Telegram for commands instead of receiving them on a webhook, so no inbound URL is needed
-  // (#235). Gated on this flag rather than read straight from env, so createApp-only unit tests
-  // never start a network loop — same reasoning as the drop-folder watcher below.
-  telegramPolling?: boolean;
-  // Receive Slack commands over an outbound WebSocket instead of a Request URL (#235). Same
-  // reasoning as telegramPolling above: gated on the flag so tests never open a socket.
-  slackSocketMode?: boolean;
-  notifier?: Notifier;
-  notifyEmailEnabled?: boolean;
-  dashboardBaseUrl?: string;
-  // Diagnostics live probe; tests can inject a no-network provider.
-  aiTestProvider?: () => AnalyzeProvider | undefined;
-  // Opt-in "newer release available" notice (issue #127). All optional → a bare createApp (tests)
-  // gets the feature OFF and never touches the network or a timer.
-  updateCheckStore?: UpdateCheckStore;
-  appVersion?: string;                 // resolved once in startServer via getAppVersion()
-  updateRepo?: string;                 // default DEFAULT_UPDATE_REPO; override for forks
-  updateCheckEnv?: string;             // raw DFIR_UPDATE_CHECK (passed, not read globally, for testability)
-  updateFetch?: typeof fetch;          // injectable so tests never hit the network
-  // Demo mode (DFIR_DEMO_MODE): blocks all mutating routes except POST /cases/seed-demo so a
-  // public Railway/cloud deployment is safe to share. The startup seed + periodic reset live in
-  // startServer; the middleware here enforces the read-only surface at the API layer.
-  demoMode?: boolean;
-  // Automatic state backup (#180): snapshots SNAPSHOT_STATE_FILES before synthesis + on a timer.
-  // Opt-in — absent → backup routes 404.
-  backupManager?: BackupManager;
-  // Startup pre-flight (#179): called once inside createApp with the runPreflight function.
-  // startServer stores the function and fires it after app.listen() so the probes run when
-  // the server is actually ready. Tests can inject their own handler or leave it absent.
-  onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
-  // Additional browser origins beyond the always-trusted extension and loopback origins.
-  allowedOrigins?: string[];
-  // Named hosts/suffixes explicitly trusted by the DNS-rebinding guard.
-  allowedHosts?: string[];
-  allowedHostSuffixes?: string[];
-}
+// `AppOptions` (the createApp injection bag) and the AI-status event shape moved to
+// composition/appOptions.ts (#416). 417 lines of pure type surface, plus the ~70-module import
+// block that existed only to name it. Re-exported here so routes/context.ts,
+// routes/presidioApproval.ts and the tests keep importing them from `src/server.js` — the
+// definitions moved, the public surface did not, exactly as #384 did above.
+export type { AiStatus, AiPhase, AiStatusEvent, AppOptions } from "./composition/appOptions.js";
+import type { AppOptions } from "./composition/appOptions.js";
 
 export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   const app = express();
@@ -727,188 +96,149 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
     autoTagNewEvents(
-      { taggerStore: options.taggerStore, tagsStore: options.tagsStore, stateStore: options.stateStore, analysisRunStore: options.analysisRunStore, operationalMetrics: options.operationalMetrics, onTags: options.onTags, onState: options.onState, logLine },
-      caseId, added,
+      {
+        taggerStore: options.taggerStore,
+        tagsStore: options.tagsStore,
+        stateStore: options.stateStore,
+        analysisRunStore: options.analysisRunStore,
+        operationalMetrics: options.operationalMetrics,
+        onTags: options.onTags,
+        onState: options.onState,
+        logLine,
+      },
+      caseId,
+      added,
     );
 
-  // ── Diagnostics runtime state (#118) ─────────────────────────────────────────────────
-  // In-memory, capped error rings powering the Health/Diagnostics page.
-  const appStartedAt = Date.now();
-  const DIAG_RING = 50;
-  const recentImportFailures: ImporterFailure[] = [];
-  const recentAiErrors: AiError[] = [];
-  // Both rings are served to the client by /diagnostics (JSON report AND the copy-to-clipboard text
-  // blob), so the message is redacted on the way IN — one choke point instead of two on the way out.
-  // The raw message still reaches serverLogger at each call site, so the console keeps full paths.
-  const redactErr = (err: unknown): string => redactedErrorMessage(err, [store.casesRoot]);
-  function recordImportFailure(caseId: string, kind: string, filename: string, err: unknown): void {
-    recentImportFailures.unshift({ at: new Date().toISOString(), caseId, kind, filename, error: redactErr(err) });
-    if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
-  }
-  function recordAiError(caseId: string, phase: string, err: unknown): void {
-    const kind = err instanceof ProviderError ? err.kind : "other";
-    recentAiErrors.unshift({ at: new Date().toISOString(), caseId, phase, kind, detail: redactErr(err) });
-    if (recentAiErrors.length > DIAG_RING) recentAiErrors.length = DIAG_RING;
-  }
-  // Per-importer health (#84): last run's outcome per custom (declarative) importer id. Keyed by
-  // spec.id, one entry per importer — NOT a ring, since only the latest run matters for a health view.
-  const importerRunStats = new Map<string, ImporterRunStat>();
-  function recordImporterRun(id: string, patch: Omit<ImporterRunStat, "lastRunAt">): void {
-    importerRunStats.set(id, { ...patch, lastRunAt: new Date().toISOString() });
-  }
+  // Diagnostics runtime state (#118): the capped error rings + per-importer health behind the
+  // Health/Diagnostics page. See composition/diagnosticsRings.ts for why redaction is on the way in.
+  const {
+    appStartedAt,
+    recentImportFailures,
+    recentAiErrors,
+    importerRunStats,
+    redactErr,
+    recordImportFailure,
+    recordAiError,
+    recordImporterRun,
+  } = createDiagnosticsRings(store.casesRoot);
 
-  // Deep link a notification back to the case dashboard (when a public base URL is configured).
-  const caseLink = (caseId: string): string | undefined =>
-    options.dashboardBaseUrl ? `${options.dashboardBaseUrl.replace(/\/+$/, "")}/dashboard?caseId=${encodeURIComponent(caseId)}` : undefined;
+  // Fire a notification event to all matching channels, deep-linked back to the case dashboard.
+  // Best-effort, fire-and-forget: a transport failure NEVER bubbles into the request that triggered
+  // it (notifications are a side channel). See composition/caseNotifier.ts.
+  const dispatchNotify = createCaseNotifier(options);
 
-  // Fire a notification event to all matching channels. Best-effort, fire-and-forget: a transport
-  // failure NEVER bubbles into the request that triggered it (notifications are a side channel).
-  const dispatchNotify = (event: NotificationEvent): void => {
-    if (!options.notifier) return;
-    const enriched = event.url ? event : { ...event, url: caseLink(event.caseId) };
-    options.notifier.dispatch(enriched).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
-  };
+  // Every layer a request traverses before it reaches a route — origin guard, CSP, demo gate,
+  // request log, metrics, body parsers, error redaction, team auth and the per-case gates. Their
+  // ORDER is the contract; see composition/httpStack.ts.
+  mountRequestPipeline(app, { store, options, instanceSecret });
+  const readUnlockState = createUnlockStateReader(instanceSecret);
 
-  // Let the browser extension and the dashboard reach this server, and turn every OTHER browser
-  // origin away (issue #211) — plus every request arriving under a hostname we do not answer to
-  // (#280), which is what a DNS-rebinding attack looks like from in here. Binding to 127.0.0.1
-  // stops other machines, not other origins: without this gate any page you happen to be browsing
-  // could POST a custom tool here and have the companion spawn it. Non-browser callers (curl,
-  // scripted pushes) are unaffected. See src/http/originGuard.ts for the full threat model.
-  app.use(createOriginGuard({
-    allowedOrigins: options.allowedOrigins,
-    allowedHosts: options.allowedHosts,
-    allowedHostSuffixes: options.allowedHostSuffixes,
-  }));
+  // Screenshot OCR full-text search index (#176): background, queued, best-effort — never on the
+  // /captures hot path. See composition/ocrIndexer.ts.
+  const { indexCaptureText } = createOcrIndexer({ store, ocrRunner: options.ocrRunner });
 
-  // Content-Security-Policy on every response. Scripts and styles are confined to this origin or a
-  // per-response nonce, inline attributes are forbidden, and Chromium requires the audited Trusted
-  // Types policies installed by safe-dom.js. Egress is pinned to this origin as a second boundary,
-  // so a missed rendering escape still cannot beacon case data or API keys out. See
-  // http/securityHeaders.ts.
-  app.use(createSecurityHeaders());
+  // Per-case AI on/off + last-analyzed sequence, write-through cached over the on-disk store.
+  // See composition/aiControlCache.ts.
+  const { getControl, setControl } = createAiControlCache(store);
 
-  // Demo mode guard: allow all GETs and the manual reset route; block everything else.
-  // This makes the public Railway demo safe — visitors can browse the pre-seeded case but
-  // cannot create new cases, import evidence, trigger AI calls, or change global settings.
-  if (options.demoMode) {
-    app.use(function demoModeReadOnlyGate(req: Request, res: Response, next: NextFunction) {
-      if (req.method === "GET" || req.method === "OPTIONS") return next();
-      if (req.path === "/cases/seed-demo") return next();
-      return res.status(403).json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
-    });
-  }
+  // ── The services createApp composes ────────────────────────────────────────────────────────────
+  // Each is a factory in src/composition/ taking its dependencies BY NAME (#416). They are built in
+  // dependency order, and all of them before the RouteContext literal below — the ordering is load-
+  // bearing now that these are `const`s rather than the hoisted `function` declarations they used to
+  // be. Where a genuine cycle exists (a service the routes rebind at runtime, or one that reaches
+  // back into a later one) the dependency is passed as a thunk, exactly as RouteContext does.
 
-  // Log each request and its final status (useful for a local single-user tool).
-  app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
-    res.on("finish", () => {
-      logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
-    });
-    next();
+  // The active DFIR-IRIS client. Mutable: POST /iris/reconnect (routes/reportsExport.ts) can rebuild
+  // it at runtime — via ctx.setIrisClient() — without a server restart (config saved via Settings, or
+  // IRIS coming back online). Starts from options.
+  let irisClient = options.irisClient;
+  // The active NSRL RDS SQLite connection (#63). Mutable: the Settings → NSRL connect/disconnect
+  // routes can swap it at runtime (unless env-managed). Starts from the startup-resolved DB.
+  let nsrlDb = options.nsrlDb;
+
+  const appliers = createCaseAppliers({ store, options, runStateExclusive, nsrlDb: () => nsrlDb });
+  const enrichment = createEnrichmentEngine({ store, options, runStateExclusive });
+  const analysis = createCaptureAnalysis({
+    store,
+    options,
+    hasAiProvider,
+    getControl,
+    setControl,
+    recordAiError,
+    autoEnrichIfEnabled: enrichment.autoEnrichIfEnabled,
   });
-  app.use(createOperationalHttpMetrics(options.operationalMetrics));
-  // JSON body limit. Bulk evidence imports (CSV / log / THOR / SIEM-EDR JSON exports) wrap the
-  // whole file in the request body, and SIEM/EDR exports in particular are routinely tens to
-  // hundreds of MB — so the cap is generous and configurable via DFIR_MAX_BODY_MB (default
-  // 256 MB). Localhost-only single-user tool, so a large limit is not a DoS concern. Files
-  // beyond a few hundred MB approach V8's max string length; for those, split the export.
-  const maxBodyMb = Number(process.env.DFIR_MAX_BODY_MB) || 256;
-  app.use(express.json({ limit: `${maxBodyMb}mb` }));
-  // Also accept text/plain + NDJSON bodies so the generic push endpoint (#84) can take a raw blob
-  // (a Velociraptor monitor dump, an NDJSON alert stream) without forcing every caller to wrap it in
-  // a JSON envelope. JSON bodies still parse via express.json above; this only catches non-JSON types.
-  app.use(express.text({ limit: `${maxBodyMb}mb`, type: ["text/*", "application/x-ndjson", "application/jsonl"] }));
-
-  // Turn body-parser failures into actionable JSON (instead of Express's default HTML page):
-  // an over-limit upload → 413 with how to raise the cap; malformed JSON → 400. Placed right
-  // after the parser so it catches its errors; normal requests skip it (4-arg = error-only).
-  app.use(function bodyParserErrorHandler(err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) {
-    if (err?.type === "entity.too.large") {
-      return res.status(413).json({ error: `upload exceeds the ${maxBodyMb} MB limit — raise DFIR_MAX_BODY_MB and restart the companion, or split the export into smaller files` });
-    }
-    if (err?.type === "entity.parse.failed") {
-      return res.status(400).json({ error: "request body is not valid JSON" });
-    }
-    return next(err);
+  const imports = createImportIngest({
+    store,
+    options,
+    runStateExclusive,
+    recordImporterRun,
+    redactErr,
+    autoTagImported,
+    getControl,
+    applyWhitelistToCase: appliers.applyWhitelistToCase,
+    applyNsrlToCase: appliers.applyNsrlToCase,
+    applyDeobfuscationToCase: appliers.applyDeobfuscationToCase,
+    resynthesizeInBackground: analysis.resynthesizeInBackground,
   });
-
-  // ── Absolute-path redaction on every error response (#250) ───────────────────────────
-  // ~60 route catch blocks end in `res.status(500).json({ error: (err as Error).message })`, and
-  // Node's fs errors carry the full path, so each one is a potential cases-root disclosure. Wrapping
-  // res.json here is the single choke point that covers all of them — including routes added later
-  // and the terminal error handler at the bottom of this file — with no per-handler opt-in, the same
-  // reasoning as the caseIdGate/caseLockGate mounts below.
-  //
-  // ONLY the `error` field is rewritten. Ordinary fields legitimately carry filesystem paths that
-  // the operator asked for: /settings/env round-trips DFIR_CASES_ROOT into the Settings form, and
-  // the size report's per-file paths are case-relative, not absolute. Redacting those would break
-  // features to no benefit. Request logging is untouched, so the console still shows real paths.
-  app.use(function errorPathRedactor(_req: Request, res: Response, next: NextFunction) {
-    const sendJson = res.json.bind(res);
-    res.json = ((body: unknown) => {
-      if (body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string") {
-        // Spread rather than mutate: the caller's object literal is not ours to rewrite, and
-        // overwriting an existing key preserves its position in the response.
-        return sendJson({ ...body, error: redactPaths((body as { error: string }).error, [store.casesRoot]) });
-      }
-      return sendJson(body);
-    }) as typeof res.json;
-    next();
+  const tools = createExternalTools({
+    store,
+    options,
+    resolveImportKind: imports.resolveImportKind,
+    ingestStreamed: imports.ingestStreamed,
+    pushImportCheckpoint: appliers.pushImportCheckpoint,
   });
-
-  if (options.teamAuth) {
-    registerTeamAuthRoutes(app, options.teamAuth, store);
-    app.use(options.teamAuth.middleware());
-  }
-  app.use("/cases/:id", createCaseIdGate());
-  // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
-  // here, before ANY /cases/:id/* route is registered, so it covers all of them via prefix
-  // matching — a route added later is protected with no change to this file. See
-  // caseLockGate.ts for the gate itself.
-  app.use("/cases/:id", createCaseLockGate(store, instanceSecret));
-
-  // Bail out of read-only case routes whose client already gave up (#174). The dashboard's connect
-  // flow fans out ~40 GET requests per case; switching (or dismissing a slow-loading) case aborts the
-  // abandoned case's fetches client-side, but Node is single-threaded — a request already queued
-  // behind another one's synchronous JSON/graph work still gets dequeued and run to completion unless
-  // something checks first. This is that check: skip the (often expensive) handler entirely once the
-  // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
-  // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
-  app.use("/cases/:id", function abandonedCaseReadGate(req: Request, res: Response, next: NextFunction) {
-    if (req.method === "GET" && req.destroyed) return;
-    next();
+  const drops = createDropFolder({
+    store,
+    options,
+    hasAiProvider,
+    getControl,
+    recordImportFailure,
+    dispatchNotify,
+    resolveImportKind: imports.resolveImportKind,
+    ingestStreamed: imports.ingestStreamed,
+    liveToolConfigs: tools.liveToolConfigs,
+    resolveToolForExt: tools.resolveToolForExt,
+    rawExtClaimed: tools.rawExtClaimed,
+    runDropToolAndIngest: tools.runDropToolAndIngest,
+    indexCaptureText,
+    captureBuffers: analysis.captureBuffers,
+    flush: analysis.flush,
   });
-
-  // Whether this request already carries a valid unlock for `id` (used by /lock-status), and
-  // whether that unlock — if present — was signed with "remember on this computer". The
-  // dashboard needs the latter to know whether it's safe to explicitly forget the unlock when
-  // navigating away from a case it didn't itself just unlock in this page load (e.g. a case
-  // that was already unlocked via a remembered cookie from an earlier session).
-  function readUnlockState(req: Request, id: string, salt: string): { unlocked: boolean; remembered: boolean } {
-    const cookies = parseCookieHeader(req.headers.cookie);
-    const token = cookies[unlockCookieName(id)];
-    if (!token) return { unlocked: false, remembered: false };
-    const unlocked = verifyUnlockToken(token, id, salt, instanceSecret);
-    return { unlocked, remembered: unlocked && isRememberedUnlockToken(token, id, salt, instanceSecret) };
-  }
-
-  // Per-case record of asynchronous SO-CRATES analyses. Declared here (not beside
-  // startSocratesAnalysis further down) because the RouteContext literal below references it, and a
-  // `const` is not hoisted the way the surrounding function declarations are.
-  const socratesJobs = new SocratesJobStore(store);
-
-  // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
-  // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
-  // once — piles them all onto that lock. Chain them per case so verdicts land one at a time, in
-  // completion order. The chain never rejects (each link swallows), so one bad import cannot wedge
-  // every later one behind it.
-  const socratesIngestChain = new Map<string, Promise<unknown>>();
-  const queueSocratesIngest = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => {
-    const prev = socratesIngestChain.get(caseId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    socratesIngestChain.set(caseId, next.catch(() => { /* keep the chain alive after a failure */ }));
-    return next;
-  };
+  const monitors = createVeloMonitors({ store, options, ingestStreamed: imports.ingestStreamed });
+  const hunts = createVeloHunts({
+    store,
+    options,
+    persistEvidence: imports.persistEvidence,
+    dispatchImport: imports.dispatchImport,
+    resolveImportKind: imports.resolveImportKind,
+    autoTagImported,
+    demoteForensicForCase: imports.demoteForensicForCase,
+    getControl,
+    pushImportCheckpoint: appliers.pushImportCheckpoint,
+    resynthesizeInBackground: analysis.resynthesizeInBackground,
+  });
+  // The external hunt/flow import paths (POST .../import-external) — hunts the Companion did not
+  // launch, so no job record, outcome ledger or checkpoint. See composition/veloExternalIngest.ts.
+  const externalIngest = createVeloExternalIngest({
+    options,
+    persistEvidence: imports.persistEvidence,
+    dispatchImport: imports.dispatchImport,
+    resolveImportKind: imports.resolveImportKind,
+    autoTagImported,
+    demoteForensicForCase: imports.demoteForensicForCase,
+    getControl,
+    applyWhitelistToCase: appliers.applyWhitelistToCase,
+    applyNsrlToCase: appliers.applyNsrlToCase,
+    resynthesizeInBackground: analysis.resynthesizeInBackground,
+  });
+  const rebuildForPrefix = createSettingsReload({
+    options,
+    setEnrichmentProviders: enrichment.setProviders,
+    setIrisClient: (client) => {
+      irisClient = client;
+    },
+  });
 
   const ctx: RouteContext = {
     store,
@@ -925,2963 +255,212 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     // Case-lifecycle graduations (routes/caseLifecycle.ts + routes/casePassword.ts): the unlock-cookie
     // secret, the per-case state mutex, the drop-inbox creator, the importer registry-reload + precedence
     // accessor/setter, and the runtime Timesketch-client rebuild — all shared with code that STAYS in
-    // createApp (see context.ts for why each was graduated rather than moved). instanceSecret +
-    // runStateExclusive are bound at construction (defined above); ensureDropFolders/reloadImporters are
-    // hoisted async functions; importerPrecedence is a live accessor over the `let` below; buildTimesketchClient
-    // is a module-level function (kept in server.ts so no route imports a value from ../server.js).
+    // createApp (see context.ts for why each was graduated rather than moved). buildTimesketchClient is a
+    // module-level function (kept in server.ts so no route imports a value from ../server.js).
     instanceSecret,
     runStateExclusive,
-    ensureDropFolders,
-    reloadImporters,
-    importerPrecedence: () => importerPrecedence,
-    setImporterPrecedence: (precedence) => { importerPrecedence = precedence; },
+    ensureDropFolders: drops.ensureDropFolders,
+    reloadImporters: imports.reloadImporters,
+    importerPrecedence: imports.importerPrecedence,
+    setImporterPrecedence: imports.setImporterPrecedence,
     rebuildTimesketchClient: () => (options.rebuildTimesketchClient ?? buildTimesketchClient)(),
     rebuildForPrefix,
     getControl,
     setControl,
-    backfill,
-    flush,
+    backfill: analysis.backfill,
+    flush: analysis.flush,
     indexCaptureText,
-    ingestStreamed,
-    runToolAndIngest,
-    reloadCustomTools,
-    startSocratesAnalysis,
-    socratesJobStore: socratesJobs,
-    runDropToolAndIngest,
-    resolveImportKind: () => resolveImportKind,
-    captureBuffers: () => buffers,
-    synthInFlight: () => synthInFlight,
-    importerRegistry: () => importerRegistry,
+    ingestStreamed: imports.ingestStreamed,
+    runToolAndIngest: tools.runToolAndIngest,
+    reloadCustomTools: tools.reloadCustomTools,
+    startSocratesAnalysis: tools.startSocratesAnalysis,
+    socratesJobStore: tools.socratesJobStore,
+    runDropToolAndIngest: tools.runDropToolAndIngest,
+    resolveImportKind: () => imports.resolveImportKind,
+    captureBuffers: () => analysis.captureBuffers,
+    synthInFlight: () => analysis.synthInFlight,
+    importerRegistry: imports.importerRegistry,
     irisClient: () => irisClient,
-    setIrisClient: (client) => { irisClient = client; },
+    setIrisClient: (client) => {
+      irisClient = client;
+    },
     rebuildIrisClient: () => (options.rebuildIrisClient ?? buildIrisClient)(),
     dispatchNotify,
-    dropWatchEnabled: () => dropWatchEnabled,
-    enrichmentProviders: () => allProviders,
-    enrichHealth: () => enrichHealth,
-    liveToolConfigs: () => liveToolConfigs,
-    customTools: () => customTools,
-    dispatchImport,
-    demoteForensicForCase,
-    resynthesizeInBackground,
-    pushImportCheckpoint,
-    applyWhitelistToCase,
-    applyNsrlToCase,
-    applyDeobfuscationToCase,
-    moveDropFile,
-    // Threat-intel enrichment engine (routes/threatIntel.ts). enrichInBackground/autoEnrichIfEnabled/
-    // enabledProvidersFor are hoisted functions defined later in createApp; enrichPending/nsrlDb are
-    // live accessors (their bindings are created after this literal). The engine + reachability poller
-    // stay here; the moved routes reach them through these members.
-    enrichInBackground,
-    autoEnrichIfEnabled,
-    enabledProvidersFor,
-    enrichPending: () => enrichPending,
+    dropWatchEnabled: () => drops.watchEnabled,
+    enrichmentProviders: enrichment.providers,
+    enrichHealth: () => enrichment.health,
+    liveToolConfigs: () => tools.liveToolConfigs,
+    customTools: tools.customTools,
+    dispatchImport: imports.dispatchImport,
+    demoteForensicForCase: imports.demoteForensicForCase,
+    resynthesizeInBackground: analysis.resynthesizeInBackground,
+    pushImportCheckpoint: appliers.pushImportCheckpoint,
+    applyWhitelistToCase: appliers.applyWhitelistToCase,
+    applyNsrlToCase: appliers.applyNsrlToCase,
+    applyDeobfuscationToCase: appliers.applyDeobfuscationToCase,
+    moveDropFile: drops.moveDropFile,
+    // Threat-intel enrichment engine (routes/threatIntel.ts). The engine + its reachability poller
+    // live in composition/enrichment.ts; the moved routes reach them through these members. nsrlDb is
+    // a live accessor because Settings → NSRL can swap the handle at runtime.
+    enrichInBackground: enrichment.enrichInBackground,
+    autoEnrichIfEnabled: enrichment.autoEnrichIfEnabled,
+    enabledProvidersFor: enrichment.enabledProvidersFor,
+    enrichPending: () => enrichment.pending,
     nsrlDb: () => nsrlDb,
-    setNsrlDb: (db) => { nsrlDb = db; },
-    // Velociraptor machinery (routes/velociraptor.ts). All hoisted `function` declarations defined later
-    // in createApp, so binding them here (before their textual definition) is safe.
-    refreshVeloClients,
-    resumeVeloMonitors,
-    resumeVeloHuntStatusPolls,
-    scheduleVeloMonitor,
-    pollVeloMonitor,
-    stopVeloMonitorTimer,
-    scheduleVeloHuntStatusPoll,
-    pollVeloHuntStatus,
-    startVeloHuntCollect,
-    ingestVeloArtifactMap,
-    ingestVeloUploads,
-    createVeloMonitor,
-    recordHuntDeploy,
-    // Playbook derivation helpers (routes/playbookHunts.ts); hoisted functions defined later, shared
-    // with the staying POST /cases/:id/push/iris route (syncPlaybook), so bound here as stable methods.
-    syncPlaybook,
-    loadPlaybookControl,
-    dropSeen: () => dropSeen,
-    dropScanning: () => dropScanning,
-    dropPendingLogged: () => dropPendingLogged,
-    veloHuntTimers: () => veloHuntTimers,
+    setNsrlDb: (db) => {
+      nsrlDb = db;
+    },
+    // Velociraptor machinery (routes/velociraptor.ts), from composition/veloMonitors.ts + veloHunts.ts.
+    refreshVeloClients: monitors.refreshVeloClients,
+    resumeVeloMonitors: monitors.resumeVeloMonitors,
+    resumeVeloHuntStatusPolls: hunts.resumeVeloHuntStatusPolls,
+    scheduleVeloMonitor: monitors.scheduleVeloMonitor,
+    pollVeloMonitor: monitors.pollVeloMonitor,
+    stopVeloMonitorTimer: monitors.stopVeloMonitorTimer,
+    scheduleVeloHuntStatusPoll: hunts.scheduleVeloHuntStatusPoll,
+    pollVeloHuntStatus: hunts.pollVeloHuntStatus,
+    startVeloHuntCollect: hunts.startVeloHuntCollect,
+    ingestVeloArtifactMap: externalIngest.ingestVeloArtifactMap,
+    ingestVeloUploads: externalIngest.ingestVeloUploads,
+    createVeloMonitor: monitors.createVeloMonitor,
+    recordHuntDeploy: hunts.recordHuntDeploy,
+    // Playbook derivation helpers (routes/playbookHunts.ts), shared with the staying
+    // POST /cases/:id/push/iris route (syncPlaybook).
+    syncPlaybook: appliers.syncPlaybook,
+    loadPlaybookControl: appliers.loadPlaybookControl,
+    dropSeen: () => drops.seen,
+    dropScanning: () => drops.scanning,
+    dropPendingLogged: () => drops.pendingLogged,
+    veloHuntTimers: () => hunts.veloHuntTimers,
   };
-  registerSystemRoutes(app, ctx);
-  registerCaptureRoutes(app, ctx);
-  registerPushNotifyRoutes(app, ctx);
-  registerTemplatesViewsRoutes(app, ctx);
-  registerToolsRoutes(app, ctx);
-  registerMcpRoutes(app, ctx);
-
-  // Rate-limit AI-cost-bearing routes to prevent an attacker who knows a caseId from burning
-  // the operator's AI budget. 20 requests per minute per case — generous for a single analyst,
-  // blocks a script hammering the endpoint.
-  //
-  // Mounting per-exact-path (NOT as a prefix `app.use("/cases/:id/import", ...)`) — a prefix
-  // mount would also swallow the non-AI undo/redo/undo-stack routes under /import, throttling
-  // a pure read and locking the analyst out of their own import history (#23).
-  //
-  // Covers EVERY route that issues an LLM call (extract/synth/explain/ask/second-opinion/exec-
-  // summary/starred-report/view-summary/remediation-plan/hypothesis-review/narrative/memory/
-  // next-steps + the import triggers). The limiter key is the caseId, so a single attacker
-  // can't rotate endpoints to evade the cap (#25). The deep-pass/preview GET and the read-only
-  // GETs (synth-meta, ai-cost, hypotheses, ai-control, confidence-control, adversary-hints,
-  // starred-report) are NOT limited — they cost zero AI tokens.
-  const aiLimiter = getAiLimiter();
-  const aiLimited = aiLimiter.middleware((req) => req.params.id);
-  // Static AI-cost POST routes (relative to /cases/:id).
-  const AI_LIMIT_PATHS = new Set([
-    "/import", "/import-file", "/import-csv", "/import-log",   // import triggers synthesis
-    "/synthesize", "/deep-pass",                                // explicit synthesis
-    "/second-opinion", "/second-opinion/apply", "/second-opinion/apply-all",  // 2nd LLM opinion
-    "/ask",                                                      // Ask-the-case GraphRAG
-    "/executive-summary", "/starred-report", "/view-summary", "/remediation-plan",  // report AI
-    "/hypothesis-review", "/narrative",                          // narrative + hypothesis AI
-    "/memory/next-steps",                                       // memory-forensics next-step AI
-  ]);
-  app.use("/cases/:id", function aiRateLimitGate(req: Request, res: Response, next: NextFunction) {
-    if (req.method !== "POST") return next();
-    // Strip the /cases/:id/ prefix to compare against the static set.
-    const rel = req.path.replace(/^\/cases\/[^/]+\//, "/");
-    // /events/:eid/explain has a dynamic segment — match it explicitly.
-    const isExplain = /^\/events\/[^/]+\/explain$/.test(rel);
-    if (AI_LIMIT_PATHS.has(rel) || isExplain) {
-      return aiLimited(req, res, next);
-    }
-    next();
-  });
-
-  registerImportRoutes(app, ctx);
-  registerVelociraptorRoutes(app, ctx);
-  registerThreatIntelRoutes(app, ctx);
-  registerAnonymizationRoutes(app, ctx);
-  registerTimelineRoutes(app, ctx);
-  registerAnalysisGraphRoutes(app, ctx);
-  registerSessionSegmentationRoutes(app, ctx);
-  registerFindingsRoutes(app, ctx);
-  registerTaggerRoutes(app, ctx);
-  // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the
-  // store rather than onto the ~25 saveImport call sites, so no import route — including ones added
-  // later — can quietly land evidence without a custody entry. POST /cases/:id/custody remains for
-  // evidence the companion never wrote itself (mounted images, external tool output).
-  if (options.custodyStore) {
-    const custody = options.custodyStore;
-    store.onArtifactStored(async (artifact) => {
-      await custody.record(artifact.caseId, {
-        artifactPath: artifact.path,
-        sha256: artifact.sha256,
-        // Only the capture path knows its collector and origin URL; an import is attributed to the
-        // companion itself, with the analyst's action already in the activity log.
-        collectedBy: artifact.provenance?.collectedBy ?? "companion",
-        collectedAt: new Date().toISOString(),
-        source: artifact.provenance?.source ?? "",
-        trigger: artifact.provenance?.trigger ?? artifact.kind,
-        caseId: artifact.caseId,
-      });
-    });
-  }
-  registerCustodyRoutes(app, ctx);
-  registerPlaybookHuntsRoutes(app, ctx);
-  registerPlaybookMatchRoutes(app, ctx);
-  registerAiSynthesisRoutes(app, ctx);
-  registerDeepPassRoutes(app, ctx);
-  // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
-  // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so
-  // registering the interactive report after it makes the route permanently unreachable.
-  registerInteractiveReportRoutes(app, ctx);
-  registerReportsExportRoutes(app, ctx);
-  registerReportVersionsRoutes(app, ctx);
-  registerAnalysisRunRoutes(app, ctx);
-  registerCasePasswordRoutes(app, ctx);
-  registerCaseLifecycleRoutes(app, ctx);
-  registerJobRoutes(app, ctx);
-  registerIncidentTypeRoutes(app, ctx);
-  registerCollectionPlanRoutes(app, ctx);
-  registerClockSkewRoutes(app, ctx);
-  registerCoachRoutes(app, ctx);
-  registerCockpitRoutes(app, ctx);
-  registerComplianceRoutes(app, ctx);
-  registerSlashCommandRoutes(app, ctx);
-  // Outbound command transports (#235) are opt-in; app.locals lets the host stop them on shutdown.
-  if (options.telegramPolling) app.locals.telegramPoller = startTelegramPolling(ctx);
-  if (options.slackSocketMode) app.locals.slackSocketMode = startSlackSocketMode(ctx);
-
-  const windowSize = options.windowSize ?? 4;
-  const buffers = new Map<string, CaptureMetadata[]>();
-
-  // Screenshot OCR full-text search index (#176). Runs in the BACKGROUND after a capture is
-  // persisted — never on the /captures hot path (Tesseract is ~0.5–2s/image and evidence-first
-  // means the screenshot is already on disk). Best-effort: a failure is logged, never thrown.
-  // A burst of captures (e.g. a batch import) is QUEUED and drained at most OCR_MAX_CONCURRENT
-  // at a time, so every non-duplicate screenshot is indexed — not dropped — without spawning N
-  // Tesseract workers at once. The queue is bounded purely as a runaway safety net; in practice
-  // captures are paced far slower than OCR drains.
-  const ocrQueue: CaptureMetadata[] = [];
-  let ocrActive = 0;
-  const OCR_MAX_CONCURRENT = 2;
-  const OCR_MAX_QUEUE = 1000;
-  function pumpOcrQueue(): void {
-    while (ocrActive < OCR_MAX_CONCURRENT && ocrQueue.length > 0) {
-      const metadata = ocrQueue.shift()!;
-      ocrActive++;
-      void (async () => {
-        try {
-          const path = join(store.screenshotsDir(metadata.caseId), metadata.screenshotFile);
-          const bytes = await readFile(path);
-          const runner = options.ocrRunner ?? new TesseractOcrRunner();
-          const words = await runner.recognize(bytes);
-          const text = extractOcrText(words);
-          await store.putOcrEntry(metadata.caseId, {
-            screenshotFile: metadata.screenshotFile,
-            text,
-            ocrAt: new Date().toISOString(),
-            wordCount: text.length === 0 ? 0 : text.split(" ").length,
-          });
-        } catch (err) {
-          getServerLogger().debug(`OCR index failed for ${metadata.screenshotFile}: ${(err as Error).message}`, { caseId: metadata.caseId });
-        } finally {
-          ocrActive--;
-          pumpOcrQueue();
-        }
-      })();
-    }
-  }
-  function indexCaptureText(metadata: CaptureMetadata): void {
-    if (!isOcrSearchEnabled() || !metadata.screenshotFile || metadata.isDuplicate) return;
-    if (ocrQueue.length >= OCR_MAX_QUEUE) {
-      // Runaway safety net only — recover anything dropped here with `npm run ocr-index`.
-      getServerLogger().debug(`OCR index: queue full, skipped seq=${metadata.sequenceNumber}`, { caseId: metadata.caseId });
-      return;
-    }
-    ocrQueue.push(metadata);
-    pumpOcrQueue();
-  }
-
-  // Per-case AI on/off + last-analyzed sequence (cached, persisted to disk).
-  const aiControl = new AiControlStore(store);
-  const controlCache = new Map<string, AiControl>();
-  async function getControl(caseId: string): Promise<AiControl> {
-    let c = controlCache.get(caseId);
-    if (!c) { c = await aiControl.load(caseId); controlCache.set(caseId, c); }
-    return c;
-  }
-  async function setControl(caseId: string, patch: Partial<AiControl>): Promise<AiControl> {
-    const next = { ...(await getControl(caseId)), ...patch };
-    controlCache.set(caseId, next);
-    await aiControl.save(caseId, next);
-    return next;
-  }
-
-  // Debounced live synthesis: after capture windows are analyzed, re-derive the
-  // findings / MITRE / attacker path so the dashboard updates as you browse.
-  const autoSynth = options.autoSynthesize ?? false;
-  const synthDebounceMs = options.autoSynthesizeDebounceMs ?? 8000;
-  const synthTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const synthInFlight = new Set<string>();
-
-  function scheduleSynthesis(caseId: string): void {
-    // synthesize() is TEXT work — it runs on the synthesis provider (falling back to the vision
-    // provider), so gate on that, not hasAiProvider(): an OCR-less install (only
-    // DFIR_AI_SYNTH_PROVIDER set) must still auto-synthesize after imports.
-    if (!autoSynth || !options.pipeline || !options.pipeline.hasSynthesisProvider()) return;
-    const existing = synthTimers.get(caseId);
-    if (existing) clearTimeout(existing);
-    synthTimers.set(caseId, setTimeout(() => {
-      synthTimers.delete(caseId);
-      if (synthInFlight.has(caseId)) { scheduleSynthesis(caseId); return; } // busy — retry after debounce
-      synthInFlight.add(caseId);
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing conclusions" });
-      // #225: this debounced/auto path (live re-synth after captures, and the AI off→on backfill
-      // catch-up) previously ran outside the job registry, so it never showed up in the Jobs panel
-      // or offered a Cancel button — only the manual "re-synthesize" button did. Track it the same way.
-      // exclusive: a manual re-synthesize racing this live run (synthInFlight only serializes
-      // auto-vs-auto) supersedes rather than running alongside it.
-      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "live synthesis", cancellable: true, exclusive: true });
-      (job?.ready ?? Promise.resolve()).then(() => options.pipeline!.synthesize(caseId, job?.signal ? { signal: job.signal } : {}))
-        .then(async () => { if (job) await options.jobManager?.finish(job.jobId); options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() }); autoEnrichIfEnabled(caseId); })
-        .catch(async (err) => {
-          const aborted = job?.signal?.aborted === true;
-          if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already cancelled
-          recordAiError(caseId, "synthesizing", err);
-          // A newer exclusive registration may have superseded this run — if a synthesis job for
-          // this case is still active, that newer run owns the status; don't stomp it to idle.
-          if (!(aborted && options.jobManager?.hasActive(caseId, "synthesis"))) {
-            options.onAiStatus?.(caseId, aborted
-              ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
-              : { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-          }
-        })
-        .finally(() => synthInFlight.delete(caseId));
-    }, synthDebounceMs));
-  }
-
-  async function flush(caseId: string): Promise<void> {
-    const buf = buffers.get(caseId) ?? [];
-    if (buf.length === 0 || !options.pipeline || !hasAiProvider()) return;
-    buffers.set(caseId, []);
-    options.onAiStatus?.(caseId, {
-      status: "analyzing",
-      phase: "extracting",
-      at: new Date().toISOString(),
-      detail: `${buf.length} screenshot(s)`,
-    });
-    try {
-      await options.pipeline.analyzeWindow(caseId, buf);
-      // Analysis recovered — drop any stale failure marker from a prior window.
-      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
-      const maxSeq = Math.max(...buf.map((c) => c.sequenceNumber));
-      const cur = await getControl(caseId);
-      if (maxSeq > cur.lastAnalyzedSeq) await setControl(caseId, { lastAnalyzedSeq: maxSeq });
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-      scheduleSynthesis(caseId); // live findings/attacker path
-    } catch (err) {
-      recordAiError(caseId, "extracting", err);
-      const seqs = buf.map((c) => c.sequenceNumber);
-      await writeFile(
-        join(store.stateDir(caseId), "pending_analysis.json"),
-        JSON.stringify({ pending: seqs, error: (err as Error).message }, null, 2),
-        "utf8",
-      );
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: (err as Error).message,
-      });
-    }
-  }
-
-  // Safety-net periodic flush. A `timer`/`click` capture buffers until `windowSize` accumulates
-  // (only a `navigation`/`tab_switch` flushes early), so a single (or sub-window) capture could
-  // otherwise sit unanalyzed indefinitely. Every `flushIntervalMs` (default 5 min) drain any
-  // non-empty buffer so even one screenshot gets analyzed. `flush` is a no-op on an empty buffer
-  // or when AI is unconfigured, and per-case buffers only hold captures for AI-enabled cases
-  // (the route gates on `enabled`; pausing clears the buffer). `unref()` so the timer never keeps
-  // the process — or a test runner — alive.
-  const flushIntervalMs = options.flushIntervalMs ?? 5 * 60_000;
-  if (flushIntervalMs > 0 && options.pipeline) {
-    const sweep = setInterval(() => {
-      for (const [caseId, buf] of buffers) {
-        if (buf.length > 0) void flush(caseId);
-      }
-    }, flushIntervalMs);
-    sweep.unref?.();
-  }
-
-  // Analyze every non-duplicate capture taken since lastAnalyzedSeq — used when AI
-  // is switched back on after capturing with it off. Runs in the background.
-  async function backfill(caseId: string): Promise<void> {
-    // Fired on an AI off→on transition. The dashboard optimistically shows
-    // "AI on — catching up on un-analyzed screenshots…" the instant you toggle — that text is
-    // NOT a live progress indicator, so EVERY exit path here must emit a terminal status, or it
-    // hangs forever (a real bug report: "this message is stuck, I don't know if it finished").
-    const idle = (detail?: string) =>
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), ...(detail ? { detail } : {}) });
-    // No screenshots to analyze, but evidence IMPORTED while AI was off (deterministic Velociraptor/
-    // CSV/… imports populate the timeline without an AI call) still needs synthesis. Trigger it —
-    // skip-if-unchanged makes it a no-op when nothing actually changed — so turning AI on analyzes
-    // the imported data, not just screenshots. If synthesis can't run, clear the optimistic message.
-    const catchUpSynthesis = () => {
-      if (autoSynth && options.pipeline && hasAiProvider()) {
-        options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "synthesizing imported evidence" });
-        scheduleSynthesis(caseId);
-      } else {
-        idle();
-      }
-    };
-    if (!options.pipeline || !hasAiProvider()) {
-      idle("AI on — no AI model configured"); // can't analyze, but clear the optimistic message
-      return;
-    }
-    let control = await getControl(caseId);
-    let captures: CaptureMetadata[];
-    try {
-      const log = await readFile(store.capturesLogPath(caseId), "utf8");
-      captures = log.split("\n").filter((l) => l.trim().length > 0).map((l) => JSON.parse(l) as CaptureMetadata);
-    } catch {
-      catchUpSynthesis(); // no capture log (import-only case) → still synthesize imported evidence
-      return;
-    }
-    const pending = captures.filter((c) => !c.isDuplicate && c.sequenceNumber > control.lastAnalyzedSeq);
-    if (pending.length === 0) {
-      catchUpSynthesis(); // no new screenshots → still synthesize anything imported while off
-      return;
-    }
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `catching up on ${pending.length} screenshot(s)` });
-    try {
-      for (let i = 0; i < pending.length; i += windowSize) {
-        const win = pending.slice(i, i + windowSize);
-        await options.pipeline.analyzeWindow(caseId, win);
-        control = await setControl(caseId, { lastAnalyzedSeq: Math.max(...win.map((c) => c.sequenceNumber)) });
-      }
-      await rm(join(store.stateDir(caseId), "pending_analysis.json"), { force: true });
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-      scheduleSynthesis(caseId);
-    } catch (err) {
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-    }
-  }
-
-  // The active DFIR-IRIS client. Mutable: POST /iris/reconnect (routes/reportsExport.ts) can rebuild
-  // it at runtime — via ctx.setIrisClient() — without a server restart (config saved via Settings, or
-  // IRIS coming back online). Starts from options; createApp's /cases/:id/push/iris reads it, and
-  // ctx.irisClient() exposes it live to the moved iris routes.
-  let irisClient = options.irisClient;
-
-  // Snapshot the enrolled fleet into the persisted client inventory (issue #70). Best-effort; returns
-  // the count. No-op (count 0) when the API or store isn't configured.
-  async function refreshVeloClients(): Promise<number> {
-    const client = options.velociraptorClient;
-    const store = options.velociraptorClientStore;
-    if (!client || !store) return 0;
-    const clients = await client.listClients();
-    await store.save(clients, new Date().toISOString());
-    logLine(`[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)`);
-    return clients.length;
-  }
-
-  // In-memory auto-collect timers, keyed by HUNT id (globally unique) so concurrent hunts each get
-  // their own. Lost on a server restart BY DESIGN — the jobs are persisted (veloHuntStore), so after a
-  // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
-  // pending timer never blocks exit.
-  const veloHuntTimers = new Map<string, NodeJS.Timeout>();
-  // In-flight collects, keyed `caseId huntId`. Closes the TOCTOU race between the fixed-delay timer,
-  // the status poller and a manual "Collect now" all deciding to collect the same hunt at the same
-  // moment (VeloHuntStore has no lock/CAS) — claimed synchronously before any await.
-  //
-  // `rerun` is how a concurrent request is COALESCED rather than dropped (#195). A collect re-reads the
-  // hunt's complete current result set, so N requests that arrive mid-collect collapse into exactly one
-  // follow-up pass — but that pass must happen, otherwise the stragglers that arrived during the first
-  // collect are silently lost and the analyst's second "Collect now" is a no-op behind a 202.
-  const collectingNow = new Map<string, { rerun: boolean }>();
-  const collectKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
-
-  // User-authored declarative importers (external plugin layer). Loaded async at startup; empty
-  // until the load resolves (parity with the velociraptor inventory / iris reconnect self-heals).
-  let importerRegistry: ImporterRegistry = { importers: new Map(), meta: [], errors: [] };
-  let importerPrecedence: ImporterPrecedence = "builtin-first";
-  if (options.importerStore) {
-    options.importerStore.loadAll().then((r) => { importerRegistry = r; }).catch(() => { /* keep empty */ });
-    options.importerStore.precedence().then((p) => { importerPrecedence = p; }).catch(() => { /* default */ });
-  }
-  async function reloadImporters(): Promise<void> {
-    if (!options.importerStore) return;
-    importerRegistry = await options.importerStore.loadAll();
-    importerPrecedence = await options.importerStore.precedence();
-    options.onImporters?.();
-  }
-  const resolveImportKind = (filename: string, text: string): string =>
-    detectImportWithCustom(filename, text, importerRegistry.importers, importerPrecedence);
-
-  // Dispatch a detected import kind to the matching pipeline importer. Shared by the unified /import
-  // route and the Velociraptor bundle collector (which ingests uploaded JSON reports the same way).
-  function dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown> {
-    const pipeline = options.pipeline;
-    if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
-    const startedAt = Date.now();
-    const observe = <T>(work: Promise<T>): Promise<T> => observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work);
-    // A user-authored declarative importer takes the matching kind first (its id is the kind).
-    const custom = importerRegistry.importers.get(kind);
-    if (custom) {
-      let parsed: { total: number; kept: number; dropped: number } | null = null;
-      return observe(pipeline.importDeclarative(caseId, text, {
-        importer: custom, ...base,
-        onParsed: (r) => {
-          parsed = { total: r.total, kept: r.kept, dropped: r.dropped };
-          recordImporterRun(kind, { lastStatus: "ok", ...parsed, lastError: null });
-        },
-      }).catch((err) => {
-        recordImporterRun(kind, { lastStatus: "error", total: parsed?.total ?? 0, kept: parsed?.kept ?? 0, dropped: parsed?.dropped ?? 0, lastError: redactErr(err) });
-        throw err;
-      }));
-    }
-    switch (kind) {
-      case "thor": return observe(pipeline.importThor(caseId, text, base));
-      case "siem": return observe(pipeline.importSiem(caseId, text, base));
-      case "evtxxml": return observe(pipeline.importEvtxXml(caseId, text, base));
-      case "chainsaw": return observe(pipeline.importChainsaw(caseId, text, base));
-      case "hayabusa": return observe(pipeline.importHayabusa(caseId, text, base));
-      case "velociraptor": return observe(pipeline.importVelociraptor(caseId, text, base));
-      case "securityonion": return observe(pipeline.importSecurityOnion(caseId, text, base));
-      case "socrates": return observe(pipeline.importSocrates(caseId, text, base));
-      case "network": return observe(pipeline.importNetwork(caseId, text, base));
-      case "kape": return observe(pipeline.importKape(caseId, text, base));
-      case "cybertriage": return observe(pipeline.importCybertriage(caseId, text, base));
-      case "m365": return observe(pipeline.importM365(caseId, text, base));
-      case "aws": return observe(pipeline.importAws(caseId, text, base));
-      case "cloud": return observe(pipeline.importCloudActivity(caseId, text, base));
-      case "k8s": return observe(pipeline.importK8sAudit(caseId, text, base));
-      case "osquery": return observe(pipeline.importOsquery(caseId, text, base));
-      case "plaso": return observe(pipeline.importPlaso(caseId, text, base));
-      case "sandbox": return observe(pipeline.importSandbox(caseId, text, base));
-      case "memory": return observe(pipeline.importMemory(caseId, text, base));
-      case "email": return observe(pipeline.importEmail(caseId, text, base));
-      case "thehive": return observe(pipeline.importTheHive(caseId, text, base));
-      case "auditd": return observe(pipeline.importAuditd(caseId, text, base));
-      case "journald": return observe(pipeline.importJournald(caseId, text, base));
-      case "sysdig": return observe(pipeline.importSysdig(caseId, text, base));
-      case "wazuh": return observe(pipeline.importWazuh(caseId, text, base));
-      case "bashhistory": return observe(pipeline.importBashHistory(caseId, text, base));
-      case "ecar": return observe(pipeline.importEcar(caseId, text, base));
-      case "snort": return observe(pipeline.importSnort(caseId, text, base));
-      case "yara": return observe(pipeline.importYara(caseId, text, base));
-      case "combinedlog": return observe(pipeline.importCombinedLog(caseId, text, base));
-      case "asa": return observe(pipeline.importCiscoAsa(caseId, text, base));
-      case "syslog": return observe(pipeline.importSyslog(caseId, text, base));
-      case "csv": return observe(pipeline.analyzeCsv(caseId, text, base));
-      case "log": return observe(pipeline.analyzeLog(caseId, text, base));
-      default: return Promise.reject(new Error(`unhandled import kind: ${kind}`));
-    }
-  }
-
-  // Evidence-first persist of an imported blob: next sequence, save the raw file, append the audit line.
-  async function persistEvidence(caseId: string, originalName: string, text: string): Promise<{ storedName: string; importedAt: string; seq: number }> {
-    const seq = await store.nextImportSeq(caseId);
-    const safe = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
-    const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
-    const importedAt = new Date().toISOString();
-    await store.saveImport(caseId, storedName, text);
-    await store.appendImport(caseId, {
-      caseId, sequenceNumber: seq, importedAt, filename: storedName,
-      originalName, rows: 0, bytes: Buffer.byteLength(text, "utf8"),
-    });
-    return { storedName, importedAt, seq };
-  }
-
-  // Route sub-threshold (Info by default) telemetry to the super-timeline only. The super-timeline
-  // already captured these events (dual-write above at each import seam); here we drop them from the
-  // forensic timeline so the AI only synthesizes graded signal. Promotion re-adds them if the analyst
-  // wants (it goes through pipeline.promoteSuperTimeline, NOT this gate). Threshold: per-case
-  // forensic-gate ?? DFIR_FORENSIC_MIN_SEVERITY ?? "Low". Returns the (possibly unchanged) state.
-  //
-  // The demote is CASE-WIDE, so with concurrent imports it can fire between another import's
-  // pre-import snapshot and that import's dual-write, stripping rows the owning import had not yet
-  // copied to super — they would then exist in neither timeline. The capture below closes that:
-  // an event may only leave the forensic timeline after it is written to the super-timeline in this
-  // same critical section. append() dedups by id, so re-capturing a row the seam already wrote is free.
-  async function demoteForensicForCase(caseId: string): Promise<InvestigationState> {
-    return runStateExclusive(caseId, async () => {
-      const state = await options.stateStore!.load(caseId);
-      if (!options.forensicGateControlStore) return state;
-      const min = resolveForensicMinSeverity(
-        (await options.forensicGateControlStore.load(caseId)).minSeverity,
-        process.env.DFIR_FORENSIC_MIN_SEVERITY,
-      );
-      const { kept, demoted } = demoteBelowSeverity(state.forensicTimeline, min);
-      if (!demoted.length) return state;
-      if (options.superTimelineStore) {
-        try {
-          await options.superTimelineStore.append(caseId, demoted);
-          options.onSuperTimeline?.(caseId);
-        } catch {
-          // Capture failed — keep the rows in the forensic timeline rather than dropping them
-          // on the floor; the next import/demote will retry.
-          return state;
-        }
-      }
-      const next = { ...state, forensicTimeline: kept };
-      await options.stateStore!.save(next);
-      options.onState?.(next);
-      return next;
-    });
-  }
-
-  // Shared streamed-ingest path for the generic push endpoint (#84) and the Velociraptor client-event
-  // poller: persist the blob as evidence, run the detected importer, record the import-meta diff (when
-  // it added anything), auto-legitimate via whitelist/NSRL, then re-synthesize. It mirrors the /import
-  // route's chain but is tuned for HIGH-FREQUENCY streaming: it AWAITS the deterministic import (so the
-  // caller can report +N events), backgrounds only the AI synthesis, records import-meta only on a
-  // non-empty diff (a quiet poll must not reset the dashboard's NEW highlights), and skips the undo
-  // checkpoint (per-poll snapshots would flood the undo stack). Resolves with the diff counts; the push
-  // route fires-and-forgets, the poller awaits to update the monitor's running stats.
-  async function ingestStreamed(
-    caseId: string, kind: string, text: string, originalName: string, minSeverity?: Severity,
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
-    const pipeline = options.pipeline;
-    if (!pipeline) throw new Error("AI pipeline not configured");
-    options.onImport?.(caseId); // cross-case signal (parity with /import + captures) for push/monitor ingest
-    const { storedName, importedAt, seq } = await persistEvidence(caseId, originalName, text);
-
-    // CSV/log are themselves an LLM call → respect the per-case AI toggle exactly like /import: with
-    // AI OFF the evidence is saved but not sent to the model. Deterministic importers proceed.
-    const aiDependent = kind === "csv" || kind === "log";
-    if (aiDependent && !(await getControl(caseId)).enabled) {
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `AI is off — ${kind.toUpperCase()} saved as evidence but not analyzed (turn AI on, then re-import)` });
-      return { storedName, addedEvents: 0, addedIocs: 0, analyzed: false };
-    }
-
-    const onProgress = (done: number, total: number): void => options.onAiStatus?.(caseId, {
-      status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `${kind} import — ${done}/${total}`,
-    });
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing (${kind})${minSeverity ? ` — min severity ${minSeverity}` : ""}` });
-
-    let stateBefore: InvestigationState | null = null;
-    if (options.stateStore) { try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ } }
-
-    await dispatchImport(kind, caseId, text, { label: storedName, idPrefix: `${seq}`, importedAt, onProgress, minSeverity });
-    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-
-    let addedEvents = 0, addedIocs = 0;
-    if (options.stateStore && stateBefore) {
-      try {
-        const imported = await options.stateStore.load(caseId);
-        // Dual-write the newly-imported events into the super-timeline FIRST so it stays a superset of
-        // everything imported (Info telemetry included). The diff is lossy, so resolve the FULL events
-        // from the imported (pre-demote) state. Best-effort — a side record.
-        if (options.superTimelineStore) {
-          const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-          const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
-        }
-        // Now demote sub-threshold events out of the forensic timeline (they live on in the super-
-        // timeline). Compute the import-meta diff on the POST-demote state so "+N events" counts only
-        // what actually entered forensic.
-        const s = await demoteForensicForCase(caseId);
-        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
-        addedEvents = tDiff.added.length; addedIocs = iDiff.added.length;
-        if ((addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) && options.importMetaStore) {
-          await options.importMetaStore.record(caseId, { kind, file: storedName, diff: tDiff, iocsDiff: iDiff });
-          options.onImportMeta?.(caseId);
-        }
-      } catch { /* non-fatal */ }
-    }
-    // Auto-mark known-good IOCs/hashes legitimate (whitelist + NSRL) BEFORE re-synthesis, like /import.
-    try { const wl = await applyWhitelistToCase(caseId); if (wl.added > 0) logLine(`[whitelist] ${caseId} auto-marked ${wl.added} pushed IOC(s) legitimate`); } catch { /* non-fatal */ }
-    try { const ns = await applyNsrlToCase(caseId); if (ns.added > 0) logLine(`[nsrl] ${caseId} auto-marked ${ns.added} pushed known-good item(s) legitimate`); } catch { /* non-fatal */ }
-    try { const deob = await applyDeobfuscationToCase(caseId); if (deob.deobfuscated > 0) logLine(`[deobfuscate] ${caseId} decoded ${deob.deobfuscated} pushed event(s), +${deob.newIocs} new IOC(s)`); } catch { /* non-fatal */ }
-    resynthesizeInBackground(caseId);
-    return { storedName, addedEvents, addedIocs, analyzed: true };
-  }
-
-  // ── Evidence drop folder (auto-import inbox) ──────────────────────────────────────────────────
-  // A per-case `cases/<id>/drop/` folder: anything copied in (at any depth) is auto-imported via the
-  // SAME chain as the Import button. ONE global self-rescheduling poller (mirrors resumeVeloMonitors)
-  // — chosen over fs.watch because cases/ often lives in a Dropbox/OneDrive-synced folder where watch
-  // events are unreliable (the same reason atomicWrite retries sync locks). Files settle for one poll
-  // (size+mtime stable) before import, so a half-copied file isn't read. On success the file moves to
-  // drop/_processed/ (which is also the dedup — the watcher skips that subtree); on failure to
-  // drop/_failed/. The watcher is ARMED only when options.dropStatusStore is wired (startServer), so
-  // createApp-only unit tests never spin up a filesystem poller.
-  const dropWatchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
-  const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
-  const dropMaxBytes = Number(process.env.DFIR_DROP_MAX_BYTES) || 200 * 1024 * 1024;
-  const DROP_CONCURRENCY = 4;
-  const dropSeen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
-  const dropScanning = new Set<string>();
-  // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new
-  // PENDING line every poll — only once when first seen pending, cleared once it resolves.
-  const dropPendingLogged = new Map<string, Set<string>>();
-  const DROP_README_TEXT = [
-    "DFIR Companion — evidence drop folder",
-    "",
-    "Copy artifacts into this folder (subfolders are fine — they're scanned recursively).",
-    "Each file is auto-detected and imported into this case, exactly like the dashboard Import button.",
-    "Images (.png/.jpg/...) are ingested as screenshot evidence.",
-    "",
-    "After processing, files move to _processed/ (success) or _failed/ (error).",
-    "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
-    "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
-    "drop-log.txt in this same folder.",
-    "",
-    "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
-    "",
-  ].join("\n");
-
-  // User-defined custom tools (#211) held in memory + refreshed on CRUD (mirrors importerRegistry), so
-  // liveToolConfigs stays synchronous.
-  let customTools: CustomTool[] = [];
-  if (options.customToolStore) options.customToolStore.load().then((t) => { customTools = t; }).catch(() => { /* keep empty */ });
-  async function reloadCustomTools(): Promise<void> {
-    if (options.customToolStore) customTools = await options.customToolStore.load();
-  }
-
-  // External-tools (#211) config is read LIVE from env so POST /tools/reconnect applies without a
-  // restart; tests inject a fixed map. The built-in tools come from env; custom tools are merged in from
-  // the in-memory store. Keyed by string id (built-in ToolId or a custom id). The runner is stateless.
-  const liveToolConfigs = (): Map<string, ToolConfig> => {
-    const out = new Map<string, ToolConfig>((options.loadToolConfigs ?? (() => loadAllToolConfigs(process.env)))());
-    for (const t of customTools) out.set(t.id, customToolToConfig(t));
-    return out;
-  };
-  // Resolve which CONFIGURED tool handles a file extension: built-in preference first (via TOOL_DEFS),
-  // then a custom tool that claims the extension.
-  const resolveToolForExt = (ext: string, configured: Map<string, ToolConfig>): string | null => {
-    const builtin = toolForExtension(ext, configured);
-    if (builtin) return builtin;
-    const e = ext.toLowerCase();
-    const custom = customTools.find((t) => configured.has(t.id) && t.extensions.some((x) => x.toLowerCase() === e));
-    return custom ? custom.id : null;
-  };
-  // Every file extension claimed by a built-in raw type, SO-CRATES, OR a defined custom tool (for drop
-  // routing). SOCRATES_EXTS is included unconditionally — even when SO-CRATES is not configured — so a
-  // dropped .exe is recognized as RAW and surfaces as pending ("configure a tool") instead of falling
-  // through to the text path, which would read the binary as UTF-8 and ingest garbage.
-  const rawExtClaimed = (ext: string): boolean =>
-    RAW_TOOL_EXTS.has(ext.toLowerCase()) || SOCRATES_EXTS.includes(ext.toLowerCase())
-    || customTools.some((t) => t.extensions.some((x) => x.toLowerCase() === ext.toLowerCase()));
-
-  // Run a raw on-disk file through whichever transport its tool uses, and ingest the result. Spawn
-  // tools go through runToolAndIngest (synchronous); HTTP tools hand off to startSocratesAnalysis and
-  // return immediately, with the poller landing the verdicts later. Shared by the drop-folder auto-run
-  // and the "Run pending" batch so both behave identically.
-  // Returns true when the work is ASYNCHRONOUS (handed off, not finished) so the caller can log
-  // SUBMITTED rather than claiming an import that has not happened yet.
-  async function runDropToolAndIngest(
-    caseId: string, toolId: string, fullPath: string, name: string, dropRelpath?: string,
-  ): Promise<boolean> {
-    const cfg = liveToolConfigs().get(toolId);
-    if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
-    if (cfg.transport === "http") {
-      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name, dropRelpath });
-      return true;
-    }
-    const r = await runToolAndIngest(caseId, toolId, fullPath);
-    if (!r.analyzed) throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
-    return false;
-  }
-
-  // Run a configured external tool against a raw on-disk file (contained in the case dir) and ingest its
-  // output through the SAME chain as the Import button (ingestStreamed). Shared by the drop-folder
-  // auto-run and the manual POST /cases/:id/tools/:toolId/run route. A custom tool's output kind is
-  // "auto" → detected from the output. Throws when not configured / the run fails; the output work dir
-  // is server-owned + auto-cleaned inside runToolAgainstFile.
-  async function runToolAndIngest(
-    caseId: string, toolId: string, targetPath: string, opts: { undoLabel?: string } = {},
-  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
-    const cfg = liveToolConfigs().get(toolId);
-    if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
-    // The toolRunner is the PROCESS SPAWNER. Only spawn-transport tools need it — gating http tools
-    // on it would make SO-CRATES unreachable on a machine with no local forensic binaries, which is
-    // exactly the machine most likely to want it.
-    if (cfg.transport === "http") throw new Error(`tool "${toolId}" is an HTTP tool — use startSocratesAnalysis`);
-    if (!options.toolRunner) throw new Error("external tools not configured");
-    const caseDir = store.caseDir(caseId);
-    const contained = resolveContainedPath(caseDir, targetPath);
-    const { outputText, importKind } = await runToolAgainstFile({
-      cfg, runner: options.toolRunner, targetPath: contained, workDir: join(caseDir, ".toolwork"),
-    });
-    const outName = `${basename(contained)}.${toolId}.out`;
-    // Custom tools declare no fixed importer — detect the kind from the tool's output.
-    const kind = importKind === "auto" ? resolveImportKind(outName, outputText) : importKind;
-    if (kind === "unknown") throw new Error(`${toolId}: could not detect the tool output's format (not a recognized import)`);
-    // ingestStreamed skips the undo checkpoint (built for high-frequency streaming), so a MANUAL tool
-    // run (Import dialog / Run button) wouldn't be undoable. When a label is given, snapshot the
-    // pre-import state and push an undo checkpoint if the import changed anything — parity with /import.
-    let before: InvestigationState | null = null;
-    if (opts.undoLabel && options.stateStore) { try { before = await options.stateStore.load(caseId); } catch { /* keep null */ } }
-    const r = await ingestStreamed(caseId, kind, outputText, outName);
-    if (before && opts.undoLabel && (r.addedEvents > 0 || r.addedIocs > 0)) {
-      await pushImportCheckpoint(caseId, before, opts.undoLabel);
-    }
-    return r;
-  }
-
-  // Submit one file (or every entry of a zip) to SO-CRATES and poll for results in the background.
-  // Zip handling happens HERE rather than in SO-CRATES because its upload handler builds the
-  // password list server-side from the filename — an analyst-supplied password cannot reach it —
-  // and it extracts through Python's zipfile, which cannot open AES archives at all.
-  async function startSocratesAnalysis(
-    caseId: string,
-    input: { data: Buffer; filename: string; zipPassword?: string; dropRelpath?: string },
-  ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }> {
-    const cfg = liveToolConfigs().get("socrates");
-    if (!cfg?.baseUrl) throw new Error("SO-CRATES is not configured — set DFIR_TOOL_SOCRATES_URL in Settings → Tools");
-    const baseUrl = cfg.baseUrl;
-
-    // Decide what to submit: the file itself, or each entry of an archive.
-    let submissions: { data: Buffer; name: string; zipEntry?: string }[];
-    let skippedNested: string[] = [];
-    let truncated = false;
-    if (input.data.subarray(0, 2).toString("latin1") === "PK") {
-      const extracted = extractZipEntries(input.data, input.filename, input.zipPassword);
-      skippedNested = extracted.skippedNested;
-      truncated = extracted.truncated;
-      submissions = extracted.entries.map((e) => ({
-        data: e.data, name: basename(e.path), zipEntry: `${input.filename}!${e.path}`,
-      }));
-      if (submissions.length === 0) throw new Error(`"${input.filename}" contained no analyzable files`);
-    } else {
-      submissions = [{ data: input.data, name: input.filename }];
-    }
-
-    const jobIds: string[] = [];
-    for (const sub of submissions) {
-      // Already analyzed? Skip the upload — SO-CRATES keys everything by MD5, so an unchanged file
-      // costs one request instead of a re-analysis.
-      const localMd5 = md5Buffer(sub.data);
-      const probe = await probeAnalysis(baseUrl, localMd5).catch(() => ({ status: "processing" as const }));
-      // Poll under the md5 the SERVER reports, not the one we computed. They usually agree, but
-      // SO-CRATES keys an archive on the hash of the file it extracts rather than the bytes it was
-      // sent — so trusting our own hash would poll a key that never becomes ready.
-      const md5 = probe.status === "ready"
-        ? localMd5
-        : (await uploadBuffer(baseUrl, sub.data, sub.name)).md5 || localMd5;
-
-      const job: SocratesJob = {
-        jobId: randomUUID(), md5, sourceName: input.filename, zipEntry: sub.zipEntry,
-        status: "processing", startedAt: new Date().toISOString(),
-      };
-      await socratesJobs.upsert(caseId, job);
-      jobIds.push(job.jobId);
-
-      // Uploading evidence leaves a copy on the SO-CRATES host, keyed by MD5 and retained until
-      // deleted. That belongs in the case record. Best-effort — never block the analysis.
-      await options.custodyStore?.recordExport(caseId, {
-        exportedBy: "companion",
-        destination: `SO-CRATES analysis at ${baseUrl} (md5 ${md5}, ${sub.zipEntry ?? sub.name})`,
-      }).catch(() => { /* custody is best-effort */ });
-
-      // Fire and forget: the poller updates the job record, which the dashboard polls.
-      void pollUntilImported(caseId, job, {
-        store: socratesJobs,
-        checkStatus: (m) => checkStatus(baseUrl, m),
-        fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
-        ingest: (cid, text, name) => queueSocratesIngest(cid, async () => {
-          const r = await ingestStreamed(cid, "socrates", text, name);
-          return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
-        }),
-      }, { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)) })
-        .then(async (final) => {
-          // Close the SUBMITTED line in drop-log.txt with what actually happened. Without this the
-          // audit trail ends at "handed to socrates" and never says whether verdicts landed — and a
-          // failed analysis would leave a file sitting in _processed/ with no recorded outcome.
-          if (!input.dropRelpath) return;
-          const entry: DropLogEntry = final.status === "imported"
-            ? {
-              status: "IMPORTED", relpath: input.dropRelpath,
-              reason: `via socrates — +${final.addedEvents ?? 0} event(s), +${final.addedIocs ?? 0} IOC(s)`,
-            }
-            : { status: "FAILED", relpath: input.dropRelpath, reason: final.error ?? "SO-CRATES analysis failed" };
-          await appendDropLog(dropDirOf(caseId), formatDropLogLines([entry], new Date().toISOString()))
-            .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
-        })
-        .catch(() => { /* pollUntilImported already records failures on the job */ });
-    }
-
-    return { jobIds, skippedNested, truncated };
-  }
-
-  function dropDirOf(caseId: string): string { return join(store.caseDir(caseId), "drop"); }
-
-  async function ensureDropFolders(caseId: string): Promise<void> {
-    const dropDir = dropDirOf(caseId);
-    await mkdir(join(dropDir, DROP_PROCESSED), { recursive: true });
-    await mkdir(join(dropDir, DROP_FAILED), { recursive: true });
-    const readme = join(dropDir, DROP_README);
-    try { await stat(readme); } catch { await writeFile(readme, DROP_README_TEXT, "utf8").catch(() => { /* best-effort */ }); }
-  }
-
-  // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
-  // Symlinks are rejected (lstat, not stat) to prevent a symlink-to-/etc/shadow from being read into
-  // the case as evidence — a Dropbox/OneDrive-synced cases/ root is exactly where this is realistic.
-  // Hardlinks are rejected too (nlink > 1): a hardlink is indistinguishable from a normal file via
-  // stat/lstat, but a legitimately-dropped file (synced, copied, or dragged in) is always nlink === 1
-  // — a multiply-linked path in the drop folder means some OTHER directory entry aliases the same
-  // inode, which is exactly the "read /etc/shadow via drop/" vector this whole guard exists for.
-  async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
-    const out: DropFileStat[] = [];
-    const walk = async (dir: string): Promise<void> => {
-      let entries;
-      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
-      for (const e of entries) {
-        const full = join(dir, e.name);
-        const rel = relative(dropDir, full);
-        if (shouldIgnoreDropFile(rel)) continue;
-        if (e.isSymbolicLink()) continue;   // never follow symlinks in the drop folder
-        if (e.isDirectory()) { await walk(full); continue; }
-        if (!e.isFile()) continue;
-        try {
-          const st = await lstat(full);
-          if (st.isSymbolicLink() || st.nlink > 1) continue;
-          out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs });
-        } catch { /* vanished mid-walk */ }
-      }
-    };
-    await walk(dropDir);
-    return out;
-  }
-
-  // Find a non-colliding destination (a re-dropped same-name file shouldn't clobber an earlier one).
-  async function uniqueDest(path: string): Promise<string> {
-    let candidate = path;
-    const ext = extname(path);
-    const stem = path.slice(0, path.length - ext.length);
-    for (let n = 1; n < 1000; n++) {
-      try { await stat(candidate); } catch { return candidate; } // ENOENT → free
-      candidate = `${stem}_${n}${ext}`;
-    }
-    return candidate;
-  }
-
-  async function moveDropFile(dropDir: string, relpath: string, ok: boolean): Promise<void> {
-    const src = join(dropDir, relpath);
-    const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
-    await mkdir(dirname(dest), { recursive: true });
-    try {
-      // Guard against a symlink swap (TOCTOU): rename follows symlinks on some platforms, and
-      // copyFile always does. Re-check before moving. Also refuse a hardlink (nlink > 1) — see
-      // listDropFiles for why that's just as much a host-file-exfiltration vector as a symlink.
-      const lst = await lstat(src);
-      if (lst.isSymbolicLink()) throw new Error("symlink detected in drop folder — refused to move (security)");
-      if (lst.nlink > 1) throw new Error("hardlink detected in drop folder — refused to move (security)");
-      await rename(src, dest);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EXDEV") { await copyFile(src, dest); await rm(src, { force: true }); }
-      else throw e;
-    }
-  }
-
-  // Ingest one dropped image as screenshot evidence: transcode to webp (imageLoader sends screenshots
-  // as image/webp, so a dropped png/jpg must be honest on disk + wire), then run the SAME capture +
-  // vision trigger as POST /captures. triggerType "navigation" forces a prompt flush.
-  async function ingestDroppedImage(caseId: string, fullPath: string, name: string, mtimeMs: number): Promise<void> {
-    const raw = await readFile(fullPath);
-    let webp: Buffer;
-    try { const sharp = (await import("sharp")).default; webp = await sharp(raw).webp().toBuffer(); }
-    catch (e) { throw new Error(`not a readable image: ${(e as Error).message}`); }
-    const metadata = await ingestCapture(store, {
-      caseId, timestamp: new Date(mtimeMs).toISOString(), url: `drop://${name}`,
-      tabTitle: name, triggerType: "navigation", imageBase64: webp.toString("base64"),
-    });
-    const willAnalyze = !metadata.isDuplicate && Boolean(options.pipeline) && hasAiProvider() && (await getControl(caseId)).enabled;
-    options.onCapture?.(caseId);
-    indexCaptureText(metadata);
-    if (willAnalyze) {
-      const buf = buffers.get(caseId) ?? [];
-      buf.push(metadata);
-      buffers.set(caseId, buf);
-      void flush(caseId);
-    }
-  }
-
-  async function processDropFile(
-    caseId: string, dropDir: string, file: DropFileStat,
-  ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
-    const full = join(dropDir, file.relpath);
-    const name = basename(file.relpath);
-    try {
-      // TOCTOU guard: re-check that the path is not a symlink before reading. A file could have
-      // been replaced with a symlink between listDropFiles and this read. Also refuse a hardlink
-      // (nlink > 1) — indistinguishable from a normal file via stat, but a legitimately-dropped
-      // file is always nlink === 1 (see listDropFiles).
-      const lst = await lstat(full);
-      if (lst.isSymbolicLink()) return { ok: false, reason: "symlink detected in drop folder — refused to read (security)" };
-      if (lst.nlink > 1) return { ok: false, reason: "hardlink detected in drop folder — refused to read (security)" };
-      // A raw file an external tool handles (built-in EVTX/PCAP, or any extension a CUSTOM tool claims)
-      // — can't be read as text. Run the configured tool against the on-disk file (size-independent, so
-      // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
-      // <tool>". Auto-run is gated per-tool (#211). Images always go to the capture path, not here.
-      const ext = extname(file.relpath).toLowerCase();
-      // Sniff the head so an EXTENSIONLESS or hash-named sample (routine for malware) is still seen as
-      // raw rather than read as text. Only the first 8 KB — the file may be gigabytes.
-      let head: Buffer | undefined;
-      try {
-        const fh = await open(full, "r");
-        try {
-          const buf = Buffer.alloc(Math.min(8192, Math.max(0, file.size)));
-          if (buf.length) await fh.read(buf, 0, buf.length, 0);
-          head = buf;
-        } finally { await fh.close(); }
-      } catch { /* unreadable head → fall back to extension-only classification */ }
-
-      // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
-      // NOT gated on options.toolRunner — that is the PROCESS SPAWNER, and SO-CRATES needs no spawner.
-      // Gating here would drop a binary into the text path on a box with no local forensic binaries.
-      if (classifyDropFile(file.relpath, head) === "raw-tool-input" || rawExtClaimed(ext)) {
-        const configured = liveToolConfigs();
-        // An extensionless binary is claimed by nobody, but SO-CRATES YARA-scans anything, so it is the
-        // fallback whenever it is configured.
-        const toolId = resolveToolForExt(ext, configured) ?? (configured.has("socrates") ? "socrates" : null);
-        const cfg = toolId ? configured.get(toolId) : undefined;
-        // A spawn tool additionally needs the process spawner; an HTTP tool does not.
-        const runnable = !!cfg && cfg.autoRun && (cfg.transport === "http" || !!options.toolRunner);
-        if (!toolId || !cfg || !runnable) {
-          // Not runnable now → pending (banner). Do NOT move the file so a manual run can still act on it.
-          return { ok: false, pending: { relpath: file.relpath, ext, suggestedTool: toolId ?? suggestedToolForExtension(ext), configured: !!toolId } };
-        }
-        const async_ = await runDropToolAndIngest(caseId, toolId, full, name, file.relpath);
-        // An HTTP tool has only been HANDED the file here; its verdicts land later (or the analysis
-        // fails), so the sweep logs SUBMITTED and the job appends the outcome when it resolves.
-        return async_ ? { ok: true, submitted: `handed to ${toolId}; verdicts land when analysis finishes` } : { ok: true };
-      }
-      if (isOversize(file.size, dropMaxBytes)) {
-        return { ok: false, reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path` };
-      }
-      if (classifyDropFile(file.relpath) === "image") {
-        await ingestDroppedImage(caseId, full, name, file.mtimeMs);
-        return { ok: true };
-      }
-      const text = await readFile(full, "utf8");
-      if (!text.trim()) return { ok: false, reason: "empty file" };
-      const kind = resolveImportKind(name, text);
-      if (kind === "unknown") return { ok: false, reason: "unrecognized file type (not a supported import format)" };
-      const r = await ingestStreamed(caseId, kind, text, name, undefined);
-      if (!r.analyzed) return { ok: false, reason: "AI is off — saved as evidence but not analyzed; enable AI and re-import" };
-      return { ok: true };
-    } catch (err) {
-      recordImportFailure(caseId, "drop", name, err);
-      return { ok: false, reason: (err as Error)?.message ?? String(err) };
-    }
-  }
-
-  async function scanCaseDrops(caseId: string): Promise<void> {
-    if (dropScanning.has(caseId)) return;   // a previous sweep of this case is still running
-    dropScanning.add(caseId);
-    // Surface the auto-import sweep as a background job (registered below once we know files are
-    // ready) so the dashboard Jobs panel shows drop-folder activity, exactly like a manual /import (#225).
-    let job: RegisteredJob | undefined;
-    try {
-      const meta = await store.getCaseMeta(caseId).catch(() => null);
-      if (meta?.status === "closed" || meta?.status === "archived") return; // don't auto-import into a closed or archived case (parity with /import)
-      const dropDir = dropDirOf(caseId);
-      await ensureDropFolders(caseId);
-      const listing = await listDropFiles(dropDir);
-      const { ready, nextSeen } = selectReadyFiles(listing, dropSeen.get(caseId) ?? new Map());
-      dropSeen.set(caseId, nextSeen);
-      if (ready.length === 0) return;
-
-      // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the
-      // sweep runs mixed importers that don't thread an abort signal, and a file already imported and
-      // moved to _processed/ can't be un-imported — so there's nothing safe to cancel mid-flight.
-      job = options.jobManager?.register({
-        caseId, kind: "import", label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
-      }); if (job) await job.ready;
-
-      const imported: string[] = [];
-      // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
-      // job itself when the analysis resolves.
-      const submitted: { relpath: string; reason: string }[] = [];
-      const failed: DropFailure[] = [];
-      const pendingRawInputs: PendingRawInput[] = [];
-      let processed = 0;
-      for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
-        const batch = ready.slice(i, i + DROP_CONCURRENCY);
-        await Promise.all(batch.map(async (file) => {
-          try {
-            const res = await processDropFile(caseId, dropDir, file);
-            if (res.pending) {
-              // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
-              // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
-              pendingRawInputs.push(res.pending);
-              return;
-            }
-            // A submitted file still counts as "imported" for the dashboard's drop banner (it was
-            // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
-            if (res.ok && res.submitted) { imported.push(file.relpath); submitted.push({ relpath: file.relpath, reason: res.submitted }); }
-            else if (res.ok) imported.push(file.relpath);
-            else failed.push({ relpath: file.relpath, reason: res.reason ?? "import failed" });
-            await moveDropFile(dropDir, file.relpath, res.ok).catch((e) => logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`));
-            nextSeen.delete(file.relpath); // moved out of the watched area — forget it
-            dropPendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
-          } finally {
-            if (job) options.jobManager?.progress(job.jobId, ++processed, ready.length, basename(file.relpath));
-          }
-        }));
-      }
-      if (job) await options.jobManager?.finish(job.jobId);
-      if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
-
-      if (options.dropStatusStore) {
-        try {
-          await options.dropStatusStore.record(caseId, { dropPath: dropDir, imported, failed, pendingRawInputs });
-          options.onDropStatus?.(caseId);
-        } catch (e) { logLine(`[drop] status record failed: ${(e as Error).message}`); }
-      }
-
-      // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
-      // raw-tool file gets ONE PENDING line the first time it's seen (dropPendingLogged dedups it across
-      // the ~10s poll interval until it resolves).
-      const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
-        // `imported` minus the async handoffs — those get a SUBMITTED line instead, so a file is
-        // never claimed as imported before its verdicts actually land.
-        { imported: imported.filter((r) => !submitted.some((s) => s.relpath === r)), submitted, failed, pendingRawInputs },
-        dropPendingLogged.get(caseId) ?? new Set<string>(),
-      );
-      dropPendingLogged.set(caseId, nextLoggedPending);
-      if (logEntries.length > 0) {
-        await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString()))
-          .catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
-      }
-
-      logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
-      if (failed.length > 0) {
-        const lines = failed.slice(0, 20).map((x) => `• ${x.relpath} — ${x.reason}`);
-        dispatchNotify(milestoneEvent(caseId, `Drop import: ${imported.length} imported, ${failed.length} failed`, lines, new Date().toISOString()));
-      }
-    } catch (err) {
-      // A sweep-level failure (listing/meta/store I/O) must terminate the job — a job stuck "running"
-      // forever is a worse UI bug than the original invisibility. No-op if it already finished.
-      if (job) await options.jobManager?.fail(job.jobId, err);
-      throw err;
-    } finally {
-      dropScanning.delete(caseId);
-    }
-  }
-
-  let dropTimer: NodeJS.Timeout | null = null;
-  async function pollDropFolders(): Promise<void> {
-    try {
-      for (const c of await store.listCases()) await scanCaseDrops(c.caseId);
-    } catch (e) {
-      logLine(`[drop] poll error: ${(e as Error).message}`);
-    } finally {
-      dropTimer = setTimeout(() => { void pollDropFolders(); }, dropPollMs);
-      dropTimer.unref();
-    }
-  }
-  function startDropWatcher(): void {
-    if (dropTimer) return;
-    logLine(`[drop] watching evidence drop folders (poll every ${dropPollMs / 1000}s, cap ${Math.round(dropMaxBytes / 1048576)} MB)`);
-    dropTimer = setTimeout(() => { void pollDropFolders(); }, dropPollMs);
-    dropTimer.unref();
-  }
-
-  // ── Live Velociraptor CLIENT_EVENT monitors (#84) ─────────────────────────────────────────────
-  // Per-monitor self-rescheduling timers (setTimeout, not setInterval, so a slow poll can't overlap
-  // itself). Keyed `caseId\u0000monitorId`. Lost on restart, then re-armed from the persisted store by
-  // resumeVeloMonitors(). .unref() so a pending poll never blocks process exit.
-  const veloMonitorTimers = new Map<string, NodeJS.Timeout>();
-  const monitorKey = (caseId: string, id: string): string => `${caseId}\u0000${id}`;
-
-  // The ingest step a poll hands its rows to: wrap them as a Velociraptor artifact-map and run the
-  // shared streamed-ingest path; return how many forensic events it added (for the running stat).
-  async function ingestMonitorRows(caseId: string, monitor: VeloMonitor, rows: unknown[]): Promise<number> {
-    const json = monitorArtifactMap(monitor.artifact, rows);
-    const shortHost = (monitor.hostname || monitor.clientId).split(".")[0].replace(/[^\w.\-]+/g, "_").slice(0, 40);
-    const filename = `velo-monitor_${monitor.artifact}_${shortHost}.json`;
-    const r = await ingestStreamed(caseId, "velociraptor", json, filename, monitor.minSeverity);
-    return r.addedEvents;
-  }
-
-  // One poll cycle for a monitor: load it, poll (pure pollMonitorOnce), persist the updated monitor,
-  // broadcast, and reschedule the next tick (unless it was removed/stopped). Never throws.
-  async function pollVeloMonitor(caseId: string, id: string): Promise<void> {
-    const monStore = options.veloMonitorStore;
-    const client = options.velociraptorClient;
-    if (!monStore || !client) { veloMonitorTimers.delete(monitorKey(caseId, id)); return; }
-    let monitor: VeloMonitor | null = null;
-    try { monitor = await monStore.get(caseId, id); } catch { /* treat as gone */ }
-    if (!monitor || monitor.status === "stopped") { veloMonitorTimers.delete(monitorKey(caseId, id)); return; }
-
-    const deps: PollDeps = {
-      read: async (clientId, artifact, start, end) => (await client.monitorResults(clientId, artifact, start, end)).rows,
-      ingest: (m, rows) => ingestMonitorRows(caseId, m, rows),
-      now: () => Math.floor(Date.now() / 1000),
-      defaultLookbackSeconds: monitor.pollSeconds,
-      log: logLine,
-    };
-    const updated = await pollMonitorOnce(monitor, deps);
-    try { await monStore.upsert(caseId, updated); } catch { /* best-effort */ }
-    options.onVeloMonitor?.(caseId);
-    // Reschedule only if it's still meant to run (a concurrent stop/delete clears the timer below).
-    if (veloMonitorTimers.has(monitorKey(caseId, id))) scheduleVeloMonitor(caseId, updated);
-  }
-
-  // Arm (or re-arm) a monitor's timer for one poll interval out. Clears any existing timer first so
-  // start is idempotent. Clamped 5s..1h so a bad value can't busy-loop or stall forever.
-  function scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void {
-    const key = monitorKey(caseId, monitor.id);
-    const existing = veloMonitorTimers.get(key);
-    if (existing) clearTimeout(existing);
-    const seconds = Math.min(3600, Math.max(5, Math.floor(monitor.pollSeconds) || 30));
-    const timer = setTimeout(() => { void pollVeloMonitor(caseId, monitor.id); }, seconds * 1000);
-    timer.unref?.();
-    veloMonitorTimers.set(key, timer);
-  }
-
-  function stopVeloMonitorTimer(caseId: string, id: string): void {
-    const key = monitorKey(caseId, id);
-    const timer = veloMonitorTimers.get(key);
-    if (timer) clearTimeout(timer);
-    veloMonitorTimers.delete(key);
-  }
-
-  // Re-arm timers for every active monitor across all cases (called once at startup so monitoring
-  // survives the #1-gotcha restart). Best-effort — a single bad case must not abort the sweep.
-  async function resumeVeloMonitors(): Promise<void> {
-    const monStore = options.veloMonitorStore;
-    if (!monStore || !options.velociraptorClient) return;
-    let cases: { caseId: string }[] = [];
-    try { cases = await store.listCases(); } catch { return; }
-    let resumed = 0;
-    for (const c of cases) {
-      try {
-        for (const m of await monStore.list(c.caseId)) {
-          if (m.status !== "stopped") { scheduleVeloMonitor(c.caseId, m); resumed++; }
-        }
-      } catch { /* skip this case */ }
-    }
-    if (resumed > 0) logLine(`[velo-monitor] resumed ${resumed} live monitor(s) across ${cases.length} case(s)`);
-  }
-
-  // Build + persist + schedule one monitor (shared by the manual start route and the auto-monitor
-  // route). `clientId` is a real client (`C....`) or the ALL_CLIENTS sentinel (`*`) for every endpoint.
-  // Idempotent per (clientId, artifact): re-arming keeps the existing cursor so events aren't re-ingested;
-  // a brand-new monitor starts at "now" (no history backfill). Returns the persisted monitor.
-  async function createVeloMonitor(caseId: string, spec: { clientId: string; artifact: string; pollSeconds: number; hostname?: string; minSeverity?: Severity; allClients?: boolean }): Promise<VeloMonitor> {
-    const monStore = options.veloMonitorStore!;
-    const nowEpoch = Math.floor(Date.now() / 1000);
-    const id = monitorId(spec.clientId, spec.artifact);
-    const existing = await monStore.get(caseId, id);
-    const monitor: VeloMonitor = {
-      id, clientId: spec.clientId, artifact: spec.artifact, pollSeconds: spec.pollSeconds,
-      allClients: spec.allClients || undefined,
-      hostname: spec.allClients ? (spec.hostname || "all clients") : spec.hostname,
-      cursor: existing?.cursor && existing.cursor > 0 ? existing.cursor : nowEpoch,
-      status: "active", minSeverity: spec.minSeverity,
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
-      addedEvents: existing?.addedEvents ?? 0, polls: existing?.polls ?? 0,
-    };
-    await monStore.upsert(caseId, monitor);
-    scheduleVeloMonitor(caseId, monitor);
-    options.onVeloMonitor?.(caseId);
-    logLine(`[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}`);
-    return monitor;
-  }
-
-  // Collect a bundle hunt and import it the SAME way a manual import works. Ingests BOTH the result
-  // ROWS (the {"Artifact.Name":[rows]} artifact-map the Velociraptor importer consumes) AND any
-  // uploaded JSON reports (e.g. THOR/Hayabusa via Generic.Scanner.ThorZIP) — for those the rows don't
-  // matter, the uploaded JSON does; it's detected + dispatched to the right importer. Honors the run's
-  // minSeverity floor, records ONE combined import-meta diff, then synthesizes. Never throws (timer).
-  //
-  // ONE pass. Concurrency is owned by startVeloHuntCollect — call that, not this.
-  async function collectVeloHuntOnce(caseId: string, huntId: string): Promise<void> {
-    const client = options.velociraptorClient;
-    const huntStore = options.veloHuntStore;
-    const pipeline = options.pipeline;
-    if (!client || !huntStore || !pipeline) return;
-    const pending = veloHuntTimers.get(huntId);
-    if (pending) { clearTimeout(pending); veloHuntTimers.delete(huntId); }
-    stopVeloHuntStatusPoll(caseId, huntId);   // an import is starting — it now owns this job's status
-
-    let job = await huntStore.get(caseId, huntId);
-    if (!job) return;
-    // NOTE: a persisted status of "collecting" is deliberately NOT treated as "in flight". It only
-    // means SOME process once started a collect — if that process died mid-collect the status stays
-    // "collecting" on disk forever (resumeVeloHuntStatusPolls re-arms only "running"/"unreachable"),
-    // and honoring it would brick every later "Collect now" for that hunt, permanently and silently.
-    // The authority on what is actually running now is `collectingNow`, which is in-memory by design.
-    try {
-      // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
-      // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
-      // point — the poller, the fixed-delay auto-collect timer, and a manual "Collect now" — gets the
-      // same signal. Best-effort: a failed check must not block the collect itself.
-      let stoppedEarly = job.stoppedEarly === true;
-      if (!stoppedEarly) {
-        try { stoppedEarly = isHuntStoppedEarly(await client.huntStatus(job.huntId), Date.now()); } catch { /* best-effort */ }
-      }
-      job = { ...job, status: "collecting", ...(stoppedEarly ? { stoppedEarly: true } : {}) };
-      await huntStore.upsert(caseId, job);
-      options.onVeloHunt?.(caseId);
-      const minSeverity = job.minSeverity;
-
-      // Snapshot the full state BEFORE any import so we record one combined import-meta diff for the
-      // whole collection AND can push a single pre-collection undo checkpoint (#76).
-      let stateBefore: InvestigationState | null = null;
-      if (options.stateStore) {
-        try { stateBefore = await options.stateStore.load(caseId); } catch { /* keep null */ }
-      }
-
-      let importedAny = false;
-      let lastFile: string | undefined;
-
-      // A bundle flagged superTimelineOnly (the built-in super-timeline-triage) collects raw host
-      // artifacts (MFT/USN/Prefetch) whose only purpose is the super-timeline — routing them through the
-      // normal Velociraptor importer would flood the forensic timeline + IOC list, defeating the point.
-      // So for such a bundle we PARSE the rows (no mergeDelta) and append straight to the super-timeline.
-      const bundle = job.bundleId && options.artifactBundleStore ? await options.artifactBundleStore.get(job.bundleId) : null;
-      const superOnly = bundle?.superTimelineOnly === true && !!options.superTimelineStore;
-
-      // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
-      // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
-      // its uploaded JSON (if any) is still picked up in step 2.
-      // For a suggested fleet hunt the single Custom.Hunt artifact stores rows under named sources
-      // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
-      const sourcesByArtifact = (job.sources?.length && job.artifacts.length === 1) ? { [job.artifacts[0]]: job.sources } : undefined;
-      const { results: map, skipped } = await client.huntResultsByArtifact(job.huntId, job.artifacts, job.filters, sourcesByArtifact);
-      if (skipped.length) logLine(`[velociraptor] hunt ${job.huntId}: skipped ${skipped.length} artifact(s) — ${skipped.map((s) => `${s.name} (${s.error})`).join("; ")} — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT / DFIR_VELOCIRAPTOR_MAX_ROWS if these are oversized`);
-      const totalRows = Object.values(map).reduce((n, rows) => n + rows.length, 0);
-      // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
-      // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
-      // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
-      const skippedNames = new Set(skipped.map((s) => s.name));
-      const emptyArtifacts = job.artifacts.filter((a) => !map[a] && !skippedNames.has(a));
-      if (totalRows > 0) {
-        const json = JSON.stringify(map);
-        const { storedName, importedAt, seq } = await persistEvidence(caseId, `velo-hunt_${job.huntId}.json`, json);
-        lastFile = storedName;
-        options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing Velociraptor hunt ${job.huntId} rows (${Object.keys(map).length} artifact(s), ${totalRows} row(s))` });
-        // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
-        // present, else build it from the hunt id. Shared by every event from this hunt, on EITHER
-        // path — previously only the super-only branch stamped it, so a normal (forensic-timeline-
-        // bound) bundle/hunt collection never carried a veloUrl and the FT's "↗ Velociraptor" link
-        // never rendered for its events.
-        const huntId = job.huntId;   // hoisted so the .map closure below doesn't re-narrow the reassignable `job`
-        const veloUrl = job.guiUrl || client.huntGuiUrlFor(huntId);
-        if (superOnly) {
-          // Parse WITHOUT merging into forensic; append the mapped events to the super-timeline only.
-          // The artifact-map carries each row's _Source, so `artifact` is just a filename fallback.
-          const artifact = storedName.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-          // Complete record: don't aggregate rows, lift the 2000-event cap to the super store's cap.
-          const parsed = parseVelociraptorJson(json, { artifact, aggregate: false, maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000 });
-          const floored = applySeverityFloor(parsed.events, minSeverity);   // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
-          // Id by the HUNT id, not the import `seq` (which increments each collect): re-collecting the
-          // same hunt (Collect now / auto-collect after a manual collect) re-parses the SAME rows, and
-          // the super-timeline's id-based dedup (dedupeAppend) only drops repeats when the ids are
-          // stable. Same rows in the same order → same ids → deduped; a straggler that checks in later
-          // gets a higher index and appends. (Forensic imports get this from correlation dedup; the
-          // super-only path has no such guard, so the ids must be stable across re-collects.)
-          const events: ForensicEvent[] = floored.map((e, i) => ({
-            id: `${huntId}-e${i + 1}`,
-            timestamp: e.timestamp,
-            description: e.description,
-            severity: e.severity,
-            mitreTechniques: e.mitreTechniques ?? [],
-            relatedFindingIds: [],
-            sourceScreenshots: [storedName],
-            ...(e.artifactName ? { artifactName: e.artifactName } : {}),
-            ...(e.message ? { message: e.message } : {}),
-            ...(veloUrl ? { veloUrl } : {}),
-            sources: e.sources?.length ? e.sources : ["Velociraptor"],
-            ...(e.asset ? { asset: e.asset } : {}),
-            ...(e.path ? { path: e.path } : {}),
-            ...(e.sha256 ? { sha256: e.sha256 } : {}),
-            ...(e.md5 ? { md5: e.md5 } : {}),
-          }));
-          await options.superTimelineStore!.append(caseId, events);
-          options.onSuperTimeline?.(caseId);   // live dashboards refresh as super-only events stream in
-          await autoTagImported(caseId, events);
-          importedAny = true;   // report success even though nothing hit the forensic timeline
-        } else {
-          await pipeline.importVelociraptor(caseId, json, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity, veloUrl });
-          importedAny = true;
-        }
-      }
-
-      // 2) Uploaded JSON reports (e.g. THOR/Hayabusa) → detect + dispatch. Best-effort: a wrong upload
-      // VQL for the server version must not break the rows import (set DFIR_VELOCIRAPTOR_UPLOAD_VQL).
-      let uploads: HuntUpload[] = [];
-      try { uploads = await client.huntUploads(job.huntId); }
-      catch (e) { logLine(`[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`); }
-      for (const up of uploads) {
-        const upKind = resolveImportKind(up.name, up.content);   // honor custom importers like /import + /push
-        if (upKind === "unknown") continue;
-        if (superOnly) {
-          // Super-only bundles route to the super-timeline; the upload path (THOR/Hayabusa JSON) only has
-          // a forensic-merge importer (dispatchImport), so ingesting it would leak into the forensic
-          // timeline and break the super-only invariant. Skip it and tell the analyst to collect
-          // upload-based artifacts via a normal bundle. (The shipped super-timeline-triage bundle has no
-          // upload artifacts; this guards custom/edited super-only bundles.)
-          logLine(`[velociraptor] super-only bundle: skipping uploaded ${upKind} report ${up.name} (upload-based artifacts aren't ingested for super-only bundles — collect them via a normal bundle)`);
-          continue;
-        }
-        if ((upKind === "csv" || upKind === "log") && !(await getControl(caseId)).enabled) continue;   // AI-dependent, AI off
-        try {
-          const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
-          lastFile = storedName;
-          options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: importedAt, detail: `importing uploaded ${upKind} report ${up.name}` });
-          await dispatchImport(upKind, caseId, up.content, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity });
-          importedAny = true;
-        } catch (e) { logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`); }
-      }
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-
-      // 3) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
-      let addedEvents = 0;
-      let addedIocs = 0;
-      if (importedAny && options.stateStore && stateBefore) {
-        try {
-          const imported = await options.stateStore.load(caseId);
-          // Dual-write the hunt's new events into the super-timeline FIRST (superset of everything
-          // imported, Info telemetry included); resolve the FULL events from the imported (pre-demote)
-          // state since the diff is lossy.
-          if (options.superTimelineStore) {
-            const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-            const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-            if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
-          }
-          // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
-          // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
-          const s = await demoteForensicForCase(caseId);
-          const diff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-          const iocsDiff = diffIocs(stateBefore.iocs, s.iocs);
-          addedEvents = diff.added.length;
-          addedIocs = iocsDiff.added.length;
-          if (options.importMetaStore) {
-            await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastFile ?? `velo-hunt_${job.huntId}.json`, diff, iocsDiff });
-            options.onImportMeta?.(caseId);
-          }
-          // #76: snapshot the pre-collect state for undo when the hunt actually added data.
-          if (diff.added.length || diff.removed.length || iocsDiff.added.length || iocsDiff.removed.length) {
-            await pushImportCheckpoint(caseId, stateBefore, `velociraptor (${lastFile ?? `hunt ${job.huntId}`})`);
-          }
-        } catch { /* non-fatal */ }
-      }
-
-      // #157 feedback loop: fill this hunt's outcome (by huntId) — for a bundle hunt OR a deployed
-      // suggested hunt. Done regardless of importedAny so a hunt that ran and found nothing is recorded
-      // as a miss (the loop must know it ran empty so it isn't re-proposed as productive). Best-effort.
-      if (options.huntOutcomeStore) {
-        try {
-          const cur = await options.huntOutcomeStore.load(caseId);
-          // #80: run-to-run diff — only meaningful for a fingerprinted (non-bundle) hunt, and only
-          // computed when this collect belongs to a DIFFERENT huntId than the fingerprint's last
-          // recorded run (a genuine re-deploy, not just pulling stragglers off the same running hunt).
-          let runDiff: HuntRunDiff | undefined;
-          const fp = cur.find((o) => o.huntId === huntId)?.vqlFingerprint || "";   // `huntId` (param) === job.huntId, and stays non-null inside this closure (job is a reassignable `let`)
-          if (fp && options.huntRunSnapshotStore) {
-            try {
-              const records = await options.huntRunSnapshotStore.load(caseId);
-              const prevRecord = findHuntRunRecord(records, fp);
-              const snapshot = buildHuntRunSnapshot(map);
-              // A run-diff is only SURFACED for a genuinely new run — no prior snapshot, or a different
-              // huntId (a real re-deploy). A same-huntId re-collect is just stragglers checking into the
-              // SAME running hunt, so it produces no diff of its own.
-              const isNewRun = !prevRecord || prevRecord.huntId !== job.huntId;
-              if (isNewRun) runDiff = diffHuntRuns(prevRecord?.snapshot, snapshot);
-              // But ALWAYS advance the stored baseline to this collect's full result set — including
-              // same-huntId re-collects — so the NEXT run diffs against the COMPLETE previous run rather
-              // than its first partial collect (which would otherwise falsely report later-arriving rows
-              // as "new since last run").
-              const next = upsertHuntRunRecord(records, { vqlFingerprint: fp, huntId: job.huntId, capturedAt: new Date().toISOString(), snapshot });
-              await options.huntRunSnapshotStore.save(caseId, next);
-            } catch (e) { logLine(`[hunt-run-diff] snapshot failed for hunt ${job.huntId}: ${(e as Error).message}`); }
-          }
-          // resultRows = the rows the hunt RETURNED (what the analyst sees); addedEvents = new-to-case
-          // after dedup. Showing both stops "+1 event" reading as wrong next to a 10-row result table.
-          await options.huntOutcomeStore.save(caseId, fillOutcome(cur, job.huntId, { resultRows: totalRows, addedEvents, addedIocs, collectedAt: new Date().toISOString(), runDiff }));
-        } catch (e) { logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`); }
-      }
-
-      job = {
-        ...job, status: "imported", importedAt: new Date().toISOString(), importFile: lastFile, addedEvents, addedIocs, error: undefined,
-        skippedArtifacts: skipped.length ? skipped : undefined, emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
-      };
-      await huntStore.upsert(caseId, job);
-      options.onVeloHunt?.(caseId);
-      if (importedAny) resynthesizeInBackground(caseId);
-    } catch (err) {
-      try {
-        const cur = await huntStore.get(caseId, huntId);
-        if (cur) await huntStore.upsert(caseId, { ...cur, status: "error", error: (err as Error).message });
-      } catch { /* ignore */ }
-      options.onVeloHunt?.(caseId);
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: `Velociraptor hunt collect failed: ${(err as Error).message}` });
-    }
-  }
-
-  // Start a collect for one hunt, in the background, and say synchronously what it decided:
-  //   "started" — this call owns a fresh collect pass.
-  //   "queued"  — a collect was already in flight; ONE more pass will run when it finishes.
-  // Either way the request is honored, which is what the 202 on the collect route promises.
-  //
-  // #195: this used to be a bare `if (already collecting) return`, so a second collect arriving while
-  // the first was still finishing was DISCARDED — behind a `202 {accepted:true}`. The window is the
-  // tail of a collect (persisting the job, broadcasting), which is milliseconds on an idle box and
-  // seconds under disk load, so it read as flake: a hunt's resultRows would freeze at the previous
-  // collect's value forever. Requests are now coalesced into a follow-up pass instead of dropped.
-  function startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued" {
-    const key = collectKey(caseId, huntId);
-    const inFlight = collectingNow.get(key);
-    if (inFlight) { inFlight.rerun = true; return "queued"; }
-
-    const entry = { rerun: false };
-    collectingNow.set(key, entry);
-    void (async () => {
-      try {
-        // Re-check `rerun` AFTER each pass: requests that landed during the pass are served by one
-        // more pass (they'd all read the same complete result set, so they collapse into one).
-        // A pass that throws (only the hunt-store read outside its own try can) is logged and does
-        // NOT cancel a queued rerun — the point of the queue is that a request always gets a pass.
-        do {
-          entry.rerun = false;
-          try { await collectVeloHuntOnce(caseId, huntId); }
-          catch (err) { logLine(`[velociraptor] collect pass failed for hunt ${huntId}: ${(err as Error).message}`); }
-        } while (entry.rerun);
-      } finally {
-        collectingNow.delete(key);
-      }
-    })();
-    return "started";
-  }
-
-  // Ingest ONE Velociraptor artifact-map JSON into a case — the shared core used by the external
-  // hunt/flow import route (POST .../import-external). Mirrors importVeloHuntResults' rows step but is
-  // self-contained for a single map (no uploads / hunt-outcome / checkpoint — those are hunt-launch
-  // concerns). Routes to the forensic timeline (normal, + dual-write to the super-timeline) OR the
-  // super-timeline ONLY (superOnly). `idBase` gives super-only events STABLE ids so re-importing the
-  // same external hunt/flow dedups (dedupeAppend keys on id) instead of duplicating.
-  async function ingestVeloArtifactMap(
-    caseId: string,
-    mapJson: string,
-    opts: { label: string; idBase: string; superOnly?: boolean; minSeverity?: Severity; hostFallback?: string; veloUrl?: string },
-  ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }> {
-    const pipeline = options.pipeline;
-    if (!pipeline) throw new Error("AI pipeline not configured");
-    let stateBefore: InvestigationState | null = null;
-    if (options.stateStore) { try { stateBefore = await options.stateStore.load(caseId); } catch { /* null */ } }
-    const { storedName, importedAt, seq } = await persistEvidence(caseId, opts.label, mapJson);
-
-    if (opts.superOnly && options.superTimelineStore) {
-      const artifact = storedName.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-      // The super-timeline is the COMPLETE record — do NOT aggregate near-identical rows (which would
-      // collapse e.g. 221 collected rows to ~141), and lift the default 2000-event cap to the super
-      // store's cap so a big collection isn't silently truncated.
-      const parsed = parseVelociraptorJson(mapJson, { artifact, hostFallback: opts.hostFallback, aggregate: false, maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000 });
-      const floored = applySeverityFloor(parsed.events, opts.minSeverity);   // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
-      // Same field set as importVeloHuntResults' super-only mapping (intentional parallel — the two
-      // paths stay decoupled).
-      const events: ForensicEvent[] = floored.map((e, i) => ({
-        id: `${opts.idBase}-e${i + 1}`, timestamp: e.timestamp, description: e.description, severity: e.severity,
-        mitreTechniques: e.mitreTechniques ?? [], relatedFindingIds: [], sourceScreenshots: [storedName],
-        ...(e.artifactName ? { artifactName: e.artifactName } : {}),
-        ...(e.message ? { message: e.message } : {}),
-        ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
-        sources: e.sources?.length ? e.sources : ["Velociraptor"],
-        ...(e.asset ? { asset: e.asset } : {}), ...(e.path ? { path: e.path } : {}),
-        ...(e.sha256 ? { sha256: e.sha256 } : {}), ...(e.md5 ? { md5: e.md5 } : {}),
-      }));
-      const superAdded = await options.superTimelineStore.append(caseId, events);
-      options.onSuperTimeline?.(caseId);
-      await autoTagImported(caseId, events);
-      // Super-only imports never touch the forensic timeline, so the forensic diff below is always 0 —
-      // report the SUPER-TIMELINE count instead so "+N events" reflects what actually landed.
-      resynthesizeInBackground(caseId);
-      return { addedEvents: superAdded, addedIocs: 0, storedName };
-    }
-    await pipeline.importVelociraptor(caseId, mapJson, {
-      label: storedName, idPrefix: `${seq}`, importedAt, minSeverity: opts.minSeverity,
-      velociraptor: opts.hostFallback ? { hostFallback: opts.hostFallback } : undefined,
-      veloUrl: opts.veloUrl,
-    });
-
-    let addedEvents = 0, addedIocs = 0;
-    if (options.stateStore && stateBefore) {
-      try {
-        const imported = await options.stateStore.load(caseId);
-        // Dual-write into the super-timeline FIRST (superset, Info telemetry included) — the super-only
-        // path early-returned above, so this is always the forensic path; the `!opts.superOnly` guard is
-        // defensive. Resolve the FULL events from the imported (pre-demote) state since the diff is lossy.
-        if (!opts.superOnly && options.superTimelineStore) {
-          const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-          const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
-        }
-        // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta diff
-        // on the POST-demote state so "+N events" counts only graded signal.
-        const s = opts.superOnly ? imported : await demoteForensicForCase(caseId);
-        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
-        addedEvents = tDiff.added.length; addedIocs = iDiff.added.length;
-        if ((addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) && options.importMetaStore) {
-          await options.importMetaStore.record(caseId, { kind: "velociraptor", file: storedName, diff: tDiff, iocsDiff: iDiff });
-          options.onImportMeta?.(caseId);
-        }
-      } catch { /* non-fatal */ }
-    }
-    try { await applyWhitelistToCase(caseId); } catch { /* non-fatal */ }
-    try { await applyNsrlToCase(caseId); } catch { /* non-fatal */ }
-    resynthesizeInBackground(caseId);
-    return { addedEvents, addedIocs, storedName };
-  }
-
-  // Import ONLY a hunt/flow's uploaded report files (e.g. THOR), skipping rows entirely — used when
-  // the analyst pastes the Velociraptor GUI's "Uploaded Files" tab URL specifically (ref.isUploadsUrl).
-  // Mirrors importVeloHuntResults' uploads step (same resolveImportKind + dispatchImport chain) but
-  // standalone, with ONE before/after diff across every uploaded file instead of hunt-job bookkeeping.
-  async function ingestVeloUploads(
-    caseId: string,
-    uploads: HuntUpload[],
-    opts: { minSeverity?: Severity; label: string },
-  ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }> {
-    const pipeline = options.pipeline;
-    if (!pipeline) throw new Error("AI pipeline not configured");
-    let stateBefore: InvestigationState | null = null;
-    if (options.stateStore) { try { stateBefore = await options.stateStore.load(caseId); } catch { /* null */ } }
-
-    const imported: string[] = [];
-    const skipped: string[] = [];
-    let lastStoredName: string | undefined;
-    for (const up of uploads) {
-      const kind = resolveImportKind(up.name, up.content);
-      if (kind === "unknown") { skipped.push(up.name); continue; }
-      // CSV/log are themselves an LLM call — respect the per-case AI toggle exactly like every other
-      // import path (dispatchImport's own CSV/log routes, and the bundle-collect uploads step).
-      // With AI off, skip entirely rather than persisting evidence that never analyzes.
-      if ((kind === "csv" || kind === "log") && !(await getControl(caseId)).enabled) { skipped.push(up.name); continue; }
-      try {
-        const { storedName, importedAt, seq } = await persistEvidence(caseId, up.name, up.content);
-        lastStoredName = storedName;
-        await dispatchImport(kind, caseId, up.content, { label: storedName, idPrefix: `${seq}`, importedAt, minSeverity: opts.minSeverity });
-        imported.push(up.name);
-      } catch (e) {
-        logLine(`[velociraptor] uploads-only import failed (${up.name}): ${(e as Error).message}`);
-        skipped.push(up.name);
-      }
-    }
-
-    let addedEvents = 0, addedIocs = 0;
-    if (imported.length && options.stateStore && stateBefore) {
-      try {
-        const afterImport = await options.stateStore.load(caseId);
-        if (options.superTimelineStore) {
-          const superDiff = diffTimeline(stateBefore.forensicTimeline, afterImport.forensicTimeline);
-          const added = addedForensicEvents(afterImport.forensicTimeline, superDiff);
-          if (added.length) { try { await options.superTimelineStore.append(caseId, added); options.onSuperTimeline?.(caseId); } catch { /* non-fatal */ } await autoTagImported(caseId, added); }
-        }
-        const s = await demoteForensicForCase(caseId);
-        const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-        const iDiff = diffIocs(stateBefore.iocs, s.iocs);
-        addedEvents = tDiff.added.length; addedIocs = iDiff.added.length;
-        if ((addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) && options.importMetaStore && lastStoredName) {
-          await options.importMetaStore.record(caseId, { kind: "velociraptor", file: lastStoredName, diff: tDiff, iocsDiff: iDiff });
-          options.onImportMeta?.(caseId);
-        }
-      } catch { /* non-fatal */ }
-      try { await applyWhitelistToCase(caseId); } catch { /* non-fatal */ }
-      try { await applyNsrlToCase(caseId); } catch { /* non-fatal */ }
-      resynthesizeInBackground(caseId);
-    }
-    return { addedEvents, addedIocs, imported, skipped };
-  }
-
-  // ── Velociraptor hunt STATUS polling ─────────────────────────────────────────────────────────
-  // Independent from the fixed-delay auto-collect timer above (veloHuntTimers): every
-  // DFIR_VELO_HUNT_POLL_S (default 30s, clamped 5-300) asks Velociraptor for the hunt's real state,
-  // so a hunt deleted/stopped in Velociraptor is reflected promptly instead of waiting out the fixed
-  // delay. Keyed `caseId huntId`, self-rescheduling setTimeout (not setInterval, so a slow poll can't
-  // overlap itself), .unref()'d so a pending poll never blocks process exit. Mirrors the live-monitor
-  // scheduling above (veloMonitorTimers / scheduleVeloMonitor / pollVeloMonitor / resumeVeloMonitors).
-  const veloStatusTimers = new Map<string, NodeJS.Timeout>();
-  const statusKey = (caseId: string, huntId: string): string => `${caseId} ${huntId}`;
-
-  // One status-poll tick: load the job, poll (pure pollHuntStatusOnce), persist + broadcast only on
-  // an actual status change, then either reschedule, trigger an immediate collect, or stop. Never
-  // throws (pollHuntStatusOnce itself never throws; store I/O failures are best-effort).
-  async function pollVeloHuntStatus(caseId: string, huntId: string): Promise<void> {
-    const huntStore = options.veloHuntStore;
-    const client = options.velociraptorClient;
-    if (!huntStore || !client) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
-    let job: VeloHuntJob | null = null;
-    try { job = await huntStore.get(caseId, huntId); } catch (err) { logLine(`[velo-hunt-status] failed to load hunt ${huntId} for status poll: ${(err as Error).message}`); }
-    if (!job) { veloStatusTimers.delete(statusKey(caseId, huntId)); return; }
-
-    const deps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
-    const outcome = await pollHuntStatusOnce(job, deps);
-    if (outcome.job.status !== job.status) {
-      try { await huntStore.upsert(caseId, outcome.job); } catch { /* best-effort */ }
-      options.onVeloHunt?.(caseId);
-    }
-
-    if (outcome.action === "reschedule") {
-      if (veloStatusTimers.has(statusKey(caseId, huntId))) scheduleVeloHuntStatusPoll(caseId, huntId);
-    } else if (outcome.action === "collect") {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-      startVeloHuntCollect(caseId, huntId);   // clears the fixed-delay timer + status poll itself (see below)
-    } else {
-      veloStatusTimers.delete(statusKey(caseId, huntId));
-    }
-  }
-
-  // Arm (or re-arm) a hunt's status-poll timer for one interval out. Clears any existing timer first
-  // so start is idempotent. Clamped 5s..300s so a bad env value can't busy-loop or stall forever.
-  function scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const existing = veloStatusTimers.get(key);
-    if (existing) clearTimeout(existing);
-    const seconds = Math.min(300, Math.max(5, Number(process.env.DFIR_VELO_HUNT_POLL_S) || 30));
-    const timer = setTimeout(() => { void pollVeloHuntStatus(caseId, huntId); }, seconds * 1000);
-    timer.unref?.();
-    veloStatusTimers.set(key, timer);
-  }
-
-  function stopVeloHuntStatusPoll(caseId: string, huntId: string): void {
-    const key = statusKey(caseId, huntId);
-    const timer = veloStatusTimers.get(key);
-    if (timer) clearTimeout(timer);
-    veloStatusTimers.delete(key);
-  }
-
-  // Re-arm status polling for every non-terminal hunt job across all cases (server restart). As a
-  // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
-  // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
-  // collect even though the original setTimeout is gone. Best-effort per case.
-  async function resumeVeloHuntStatusPolls(): Promise<void> {
-    const huntStore = options.veloHuntStore;
-    if (!huntStore || !options.velociraptorClient) return;
-    let cases: { caseId: string }[] = [];
-    try { cases = await store.listCases(); } catch { return; }
-    let resumed = 0;
-    for (const c of cases) {
-      try {
-        for (const job of await huntStore.list(c.caseId)) {
-          if (job.status === "running" || job.status === "unreachable") {
-            scheduleVeloHuntStatusPoll(c.caseId, job.huntId);
-            resumed++;
-          }
-        }
-      } catch { /* skip this case */ }
-    }
-    if (resumed > 0) logLine(`[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`);
-  }
-
-  // Record a deployed hunt in the per-case hunting feedback loop ledger (#157). Best-effort + never
-  // throws — an outcome-recording failure must not break a deploy. Stamps the time here so huntOutcomes
-  // stays time-free. Re-deploying the same huntId upserts (recordDeploy dedups by id).
-  async function recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void> {
-    if (!options.huntOutcomeStore) return;
-    try {
-      const max = Number(process.env.DFIR_HUNT_OUTCOME_MAX) || HUNT_OUTCOME_MAX_DEFAULT;
-      const cur = await options.huntOutcomeStore.load(caseId);
-      await options.huntOutcomeStore.save(caseId, recordDeploy(cur, input, max));
-    } catch (e) {
-      logLine(`[hunt-outcomes] record deploy failed: ${(e as Error).message}`);
-    }
-  }
-
-  // Client-confirmed false-positive findings/IOCs. Marking one re-runs synthesis so the AI
-  // re-derives its conclusions without it.
-  const falsePositives = new FalsePositiveStore(store);
-  // The active NSRL RDS SQLite connection (#63). Mutable: the Settings → NSRL connect/disconnect
-  // routes can swap it at runtime (unless env-managed). Starts from the startup-resolved DB.
-  let nsrlDb = options.nsrlDb;
-
-  // Threat-intel enrichment is OFF by default (OPSEC). When the analyst turns it on it
-  // enriches the current IOCs and — via autoEnrichIfEnabled below — any IOCs added later.
-  const enrichControl = new EnrichControlStore(store);
-
-  // Provider classification (from the configured set) + the per-case enabled subset. MUTABLE (#178):
-  // rebuildForPrefix swaps in a freshly-built set when the analyst saves an enrichment key, so a
-  // newly-configured source is usable without a restart. Always REPLACED with a new array, never
-  // mutated in place; every reader goes through this binding (or ctx.enrichmentProviders()), and the
-  // name projections are derived per call so they can't go stale against it.
-  let allProviders = options.enrichmentProviders ?? [];
-  async function enabledProvidersFor(caseId: string): Promise<EnrichmentProvider[]> {
-    const configuredNames = allProviders.map((p) => p.name);
-    const localNames = allProviders.filter((p) => p.scope === "local").map((p) => p.name);
-    const enabled = new Set(resolveEnabledProviders(await enrichControl.load(caseId), configuredNames, localNames));
-    return allProviders.filter((p) => enabled.has(p.name));
-  }
-
-  // ── Live config rebuild (#178) ──────────────────────────────────────────────────────────────
-  // POST /settings/reload applies a just-saved DFIR_<PREFIX>_* group into process.env. On its own
-  // that changes nothing observable, because every integration client is built ONCE at startup from
-  // env and then captured in `options` — so a corrected MISP URL (or a first-time enrichment key)
-  // sat in process.env while the live client kept its boot-time config, and the operator's only
-  // remedy was the restart the route exists to avoid. This rebuilds whatever the prefix feeds, from
-  // the now-current env, and returns the component names so the route can report what took effect.
-  //
-  // Rebuilds are constructor calls only — no network, no reachability probe — so the reload stays
-  // fast and can't fail on an unreachable server; the per-integration /xxx/reconnect routes remain
-  // the way to VERIFY connectivity. Deliberately not rebuilt: DFIR_AI_/DFIR_VISION_ (buildProvider()
-  // already reads env per call; the running analysis pipeline still needs a restart, unchanged),
-  // DFIR_TOOL_ (the runner is stateless — the next liveToolConfigs() sees the reloaded env),
-  // DFIR_NSRL_ (a live SQLite handle with its own connect/disconnect routes) and DFIR_PUSH_TOKEN
-  // (a store, not env-derived config).
-  const ENRICHMENT_PREFIXES = new Set([
-    "DFIR_VT_", "DFIR_ABUSEIPDB_", "DFIR_HUNTINGCH_", "DFIR_MB_", "DFIR_CROWDSTRIKE_", "DFIR_SHODAN_",
-    "DFIR_MISP_", "DFIR_YETI_", "DFIR_OPENCTI_", "DFIR_ROCKYRACCOON_", "DFIR_GEOIP_",
-  ]);
-  // DFIR_SHODAN_ feeds both sets — the one key backs the IOC provider and the attack-surface check.
-  const EXPOSURE_PREFIXES = new Set(["DFIR_LEAKCHECK_", "DFIR_HIBP_", "DFIR_DEHASHED_", "DFIR_SHODAN_"]);
-  function rebuildForPrefix(prefix: string): string[] {
-    const rebuilt: string[] = [];
-    if (ENRICHMENT_PREFIXES.has(prefix)) {
-      allProviders = buildEnrichmentProviders();
-      options.enrichmentProviders = allProviders;
-      rebuilt.push("enrichment");
-    }
-    if (EXPOSURE_PREFIXES.has(prefix)) {
-      options.customerExposureProviders = buildCustomerExposureProviders();
-      rebuilt.push("exposure");
-    }
-    if (prefix === "DFIR_MISP_") {
-      options.mispPushClient = buildMispPushClient();
-      options.mispPushOptions = mispPushOptions();
-      rebuilt.push("misp");
-    }
-    if (prefix === "DFIR_IRIS_") {
-      irisClient = (options.rebuildIrisClient ?? buildIrisClient)();
-      options.irisOptions = irisPushOptions();
-      rebuilt.push("iris");
-    }
-    if (prefix === "DFIR_TIMESKETCH_") {
-      options.timesketchClient = (options.rebuildTimesketchClient ?? buildTimesketchClient)();
-      options.timesketchOptions = timesketchPushOptions();
-      rebuilt.push("timesketch");
-    }
-    if (prefix === "DFIR_VELOCIRAPTOR_") {
-      options.velociraptorClient = (options.rebuildVelociraptorClient ?? buildVelociraptorClient)();
-      rebuilt.push("velociraptor");
-    }
-    if (prefix === "DFIR_NOTION_") {
-      options.notionClient = buildNotionClient();
-      options.notionOptions = notionPushOptions();
-      rebuilt.push("notion");
-    }
-    if (prefix === "DFIR_CLICKUP_") {
-      options.clickupClient = buildClickUpClient();
-      options.clickupOptions = clickupOptions();
-      rebuilt.push("clickup");
-    }
-    if (rebuilt.length > 0) logLine(`[settings] ${prefix} reloaded — rebuilt ${rebuilt.join(", ")}`);
-    return rebuilt;
-  }
-
-  // Shared reachability cache probes a down self-hosted provider once per TTL and logs transitions.
-  const enrichHealth = new ProviderHealthCache({
-    ttlMs: options.enrichHealthTtlMs,
-    onProbe: (name, h) => logLine(`[enrich] health ${name} ${h.ok ? "UP" : `DOWN (${h.detail ?? "unreachable"})`}`),
-  });
-  // Cases waiting for a down provider; the poller resumes only their unchecked IOCs on recovery.
-  const enrichPending = new Set<string>();
-
-  function enrichInBackground(caseId: string, force = false, parentRunId?: string): void {
-    if (allProviders.length === 0 || !options.stateStore) return;
-    let job: RegisteredJob | undefined; // #225: registered once providers are known
-    void (async () => {
-      const startedAt = new Date().toISOString();
-      const providers = await enabledProvidersFor(caseId);
-      if (providers.length === 0) { enrichPending.delete(caseId); return; }     // nothing enabled — drop any stale pending mark so the poller can idle
-      const state = await options.stateStore!.load(caseId);
-      // Skip the job/status/save when every enabled provider already checked every IOC and process
-      // chain. This avoids spurious enrichment after unrelated re-synthesis; force bypasses it.
-      if (!force) {
-        const chainCapable = providers.some((p) => typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
-        const work = hasEnrichableWork(state.iocs, providers) || (chainCapable && hasChainWork(state.forensicTimeline));
-        if (!work) { enrichPending.delete(caseId); return; }
-      }
-      // #225: track enrichment as a cancellable job — a throttled run (up to maxIocs × delayMs) can be long.
-      job = options.jobManager?.register({ caseId, kind: "enrichment", label: `enrich (${providers.map((p) => p.name).join(", ")})`, cancellable: true }); if (job) await job.ready;
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail: `enriching IOCs (${providers.map((p) => p.name).join(", ")})` });
-      logLine(`[enrich] ${caseId} START providers=[${providers.map((p) => p.name).join(", ")}] force=${force} iocs=${state.iocs.length}`);
-      const { iocs, summary } = await enrichIocs(state.iocs, {
-        providers,
-        delayMs: options.enrichDelayMs,
-        perProviderDelayMs: options.enrichProviderDelayMs,
-        jitterMs: options.enrichJitterMs,
-        retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
-        maxIocs: options.enrichMaxIocs,
-        force,
-        signal: job?.signal,    // #225: analyst cancel — stop between IOCs (partial enrichment is additive/safe)
-        health: enrichHealth,   // probe each provider (cached ~60s) before sending — skip the dead ones
-        onProgress: (done, total) => options.onAiStatus?.(caseId, {
-          status: "analyzing", phase: "extracting", at: new Date().toISOString(),
-          detail: `enriching IOC ${done}/${total}`,
-        }),
-        // One audit line per outbound threat-intel API call: which provider, indicator, result.
-        onLookup: (e: EnrichLookupEvent) => logLine(
-          `[enrich] ${caseId} ${e.provider} ${e.kind} ${shortValue(e.value)} -> ${e.outcome}${e.detail ? ` (${e.detail})` : ""} ${e.ms}ms`,
-        ),
-      });
-      const downNote = summary.unavailable.length ? ` unavailable=[${summary.unavailable.join(", ")}]` : "";
-      logLine(`[enrich] ${caseId} DONE queried=${summary.queried} hits=${summary.withHits} errors=${summary.errors} skipped=${summary.skipped}${downNote}`);
-      // Queue incomplete cases for recovery; clear stale pending state when all providers answered.
-      if (summary.unavailable.length) enrichPending.add(caseId);
-      else enrichPending.delete(caseId);
-      const { chainSummary, merged: finalState } = await runStateExclusive(caseId, async () => {
-        // Re-load + write only the IOCs so a concurrent state change survives.
-        const latest = await options.stateStore!.load(caseId);
-        const byValue = new Map(iocs.map((i) => [i.value, i]));
-        let merged = { ...latest, iocs: latest.iocs.map((i) => byValue.get(i.value) ?? i), updatedAt: new Date().toISOString() };
-
-        // A RockyRaccoon provider validates parent→child chains with the IOC throttle and cap.
-        const rocky = providers.find((p): p is EnrichmentProvider & { checkParentChild: (p: string, c: string) => Promise<ParentChildResult | null> } =>
-          typeof (p as { checkParentChild?: unknown }).checkParentChild === "function");
-        let chainSummary: ChainSummary | undefined;
-        if (rocky) {
-          const { events, summary: cs } = await validateProcessChains(merged.forensicTimeline, {
-            check: (p, c) => rocky.checkParentChild(p, c),
-            delayMs: options.enrichProviderDelayMs?.["RockyRaccoon"] ?? options.enrichDelayMs,
-            jitterMs: options.enrichJitterMs,
-            retry: { retries: options.enrichRetries, backoffMs: options.enrichRetryBackoffMs },
-            maxChecks: options.enrichMaxIocs,
-            force,
-          });
-          merged = { ...merged, forensicTimeline: events };
-          chainSummary = cs;
-        }
-
-        await options.stateStore!.save(merged);
-        options.onState?.(merged);
-        return { chainSummary, merged };
-      });
-      await recordEnrichmentRun(options.analysisRunStore, caseId, {
-        parentRunId, startedAt, providerNames: providers.map((provider) => provider.name), force,
-        maxIocs: options.enrichMaxIocs ?? 100, delayMs: options.enrichDelayMs ?? 0,
-        inputState: state, outputState: finalState, summary,
-      });
-      const chainNote = chainSummary ? `; chains ${chainSummary.anomalies} anomalous/${chainSummary.checked}` : "";
-      const skipNote = summary.unavailable.length ? `; skipped ${summary.unavailable.join(", ")} (unreachable — will retry)` : "";
-      if (job) await options.jobManager?.finish(job.jobId); // no-op if a cancel already marked it cancelled
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString(), detail: `enriched ${summary.withHits}/${summary.queried} (errors ${summary.errors})${chainNote}${skipNote}` });
-    })().catch(async (err) => {
-      if (job) await options.jobManager?.fail(job.jobId, err); // no-op if already terminal (cancelled)
-      options.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-    });
-  }
-
-  // Enrich fresh IOCs after synthesis/import when the toggle is on; the cache skips checked ones.
-  function autoEnrichIfEnabled(caseId: string): void {
-    if (allProviders.length === 0) return;
-    enabledProvidersFor(caseId).then((ps) => { if (ps.length > 0) enrichInBackground(caseId); }).catch(() => {});
-  }
-
-  // The opt-in reachability poller only probes known-down providers while cases are waiting, then
-  // resumes those cases on recovery. Capability is checked inside each tick so rebuilt settings work
-  // (#178); unref prevents the timer holding the process open.
-  if (options.enrichHealthPollMs && options.enrichHealthPollMs > 0) {
-    let polling = false;   // guard against overlap if a probe round runs long
-    const timer = setInterval(() => {
-      if (polling) return;
-      if (enrichPending.size === 0) return;   // no case waiting on a down provider — nothing to resume, so don't probe (or log)
-      if (!allProviders.some((p) => p.probe)) return;   // nothing probe-capable configured (yet)
-      const down = allProviders.filter((p) => enrichHealth.peek(p.name)?.ok === false);
-      if (down.length === 0) return;   // nothing to recover
-      polling = true;
-      void (async () => {
-        for (const p of down) { enrichHealth.invalidate(p.name); await enrichHealth.check(p); }
-        const recovered = down.some((p) => enrichHealth.peek(p.name)?.ok === true);
-        if (recovered && enrichPending.size > 0) {
-          const cases = [...enrichPending];
-          enrichPending.clear();
-          logLine(`[enrich] health recovered — resuming ${cases.length} case(s)`);
-          for (const c of cases) enrichInBackground(c);
-        }
-      })().catch(() => {}).finally(() => { polling = false; });
-    }, options.enrichHealthPollMs);
-    timer.unref?.();
-  }
-
-  function resynthesizeInBackground(caseId: string): void {
-    const pipeline = options.pipeline;
-    if (!pipeline) return;
-    // Gate text synthesis on its provider (with vision fallback), preserving OCR-less installs.
-    if (!pipeline.hasSynthesisProvider()) { autoEnrichIfEnabled(caseId); return; }
-    void (async () => {
-      // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
-      // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
-      // import still populates the forensic timeline + IOCs; it just doesn't trigger LLM
-      // synthesis — findings / attacker-path / MITRE wait until AI is turned on and the case is
-      // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
-      // lookups, not an LLM call), so it still runs regardless of the AI toggle.
-      if (!(await getControl(caseId)).enabled) { autoEnrichIfEnabled(caseId); return; }
-      // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
-      const job = options.jobManager?.register({ caseId, kind: "synthesis", label: "re-synthesis", cancellable: true }); if (job) await job.ready;
-      options.onAiStatus?.(caseId, { status: "analyzing", phase: "synthesizing", at: new Date().toISOString(), detail: "re-synthesizing without legitimate items" });
-      try {
-        await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
-        if (job) await options.jobManager?.finish(job.jobId);
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-        autoEnrichIfEnabled(caseId);
-      } catch (err) {
-        const aborted = job?.signal?.aborted === true;
-        if (job) await options.jobManager?.fail(job.jobId, err); // no-op if the job was already cancelled
-        options.onAiStatus?.(caseId, aborted
-          ? { status: "idle", at: new Date().toISOString(), detail: "synthesis cancelled" }
-          : { status: "error", at: new Date().toISOString(), detail: (err as Error).message });
-      }
-    })();
-  }
-
-  // #76: snapshot the PRE-import investigation state (findings + IOCs + timeline + MITRE + attacker
-  // path — everything the import and its synthesis change) onto the per-case undo stack so the whole
-  // import can be rolled back. Best-effort — undo is a convenience and must NEVER break the import.
-  // Callers gate on whether the import actually changed anything (no checkpoint for a no-op re-import).
-  async function pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void> {
-    const undoStore = options.importUndoStore;
-    if (!undoStore) return;
-    try {
-      // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
-      // import firing requests seconds apart while the previous one's async work is still in
-      // flight) must not race on the same undo-stack file (lost checkpoints, duplicate huge
-      // simultaneous tmp writes).
-      await undoStore.mutate(caseId, (stack) => ({
-        stack: pushCheckpoint(stack, { label, at: new Date().toISOString(), state: beforeState }, undoStore.depth(), undoStore.byteBudget()),
-        result: undefined,
-      }));
-      options.onImportUndo?.(caseId);
-    } catch { /* non-fatal */ }
-  }
-
-  // ── IOC whitelist (Phase 2 of #35) ─────────────────────────────────────────────────────────
-  // A GLOBAL, environment-level set of "known-good" patterns the analyst maintains (internal IP
-  // ranges as CIDR, known-good hashes, regexes for internal domains). An IOC matching a rule is
-  // auto-marked a FALSE POSITIVE — reusing the false-positive machinery, so it's reversible and
-  // shows in the "False Positives" panel. Auto-applied on import; also on demand per case.
-
-  // Apply the whitelist to a case's current IOCs: add a false-positive marker for each match that
-  // isn't already marked. Pure read-modify-write on false-positive.json (no re-synthesis here —
-  // the caller decides). Returns how many IOCs matched and how many NEW markers were added.
-  async function applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }> {
-    if (!options.iocWhitelistStore || !options.stateStore) return { matched: 0, added: 0 };
-    const rules = await options.iocWhitelistStore.load();
-    if (rules.length === 0) return { matched: 0, added: 0 };
-    const state = await options.stateStore.load(caseId);
-    const matches = whitelistMatches(state.iocs, rules);
-    if (matches.length === 0) return { matched: 0, added: 0 };
-    const markers = await falsePositives.load(caseId);
-    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
-    let added = 0;
-    for (const { ioc, rule } of matches) {
-      const id = markerId("ioc", ioc.value);
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id, kind: "ioc", ref: ioc.value, reason: "known-good-tool",
-        note: `auto-whitelist: ${rule.match} ${rule.pattern}${rule.note ? ` — ${rule.note}` : ""}`,
-        markedAt: new Date().toISOString(), markedBy: "anonymous", label: ioc.value,
-      });
-      added++;
-    }
-    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
-    return { matched: matches.length, added };
-  }
-
-  // Apply the deobfuscation pass to a case: scan the forensic timeline for obfuscated command
-  // lines (PowerShell -enc, base64 blobs), decode them, extract hidden IOCs, and persist.
-  // Pure read-modify-write on state.json (no re-synthesis here — the caller decides).
-  // Returns how many events were decoded and how many new IOCs were extracted.
-  async function applyDeobfuscationToCase(caseId: string): Promise<{ deobfuscated: number; newIocs: number }> {
-    if (!options.stateStore) return { deobfuscated: 0, newIocs: 0 };
-    return runStateExclusive(caseId, async () => {
-      const state = await options.stateStore!.load(caseId);
-      const result = applyDeobfuscation(state);
-      if (result.deobfuscated === 0 && result.newIocs === 0) return { deobfuscated: 0, newIocs: 0 };
-      await options.stateStore!.save(result.state);
-      options.onState?.(result.state);
-      return { deobfuscated: result.deobfuscated, newIocs: result.newIocs };
-    });
-  }
-
-  // ── NSRL known-good hashes (#63) ───────────────────────────────────────────────────────────────
-  // A GLOBAL set of known-software file hashes (NIST NSRL / RDS). A forensic event whose file hash —
-  // or an IOC whose value — is in the set is a known-good file, auto-marked a FALSE POSITIVE to
-  // reduce noise. Reuses the false-positive machinery (reversible, shown in "False Positives").
-  // Auto-applied on import; also on demand per case. Opt-in (the set starts empty).
-
-  // Sweep a case's current IOCs + forensic events for NSRL matches, adding a false-positive marker
-  // for each that isn't already marked (ioc → by value, event → by id, so the raw evidence is
-  // preserved and un-marking restores it). Pure read-modify-write on false-positive.json (no
-  // re-synthesis here — the caller decides). Returns how many IOCs/events matched and how many NEW
-  // markers were added.
-  async function applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }> {
-    if (!options.stateStore) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
-    // A hash is known-good if EITHER backend has it: the flat in-memory set (small custom lists) or
-    // the on-demand SQLite RDS (the full ~160 GB set).
-    const flat = options.nsrlStore ? await options.nsrlStore.load() : undefined;
-    const haveFlat = Boolean(flat && flat.size > 0);
-    if (!haveFlat && !nsrlDb) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
-    const lookup = (h: string): boolean => (flat?.has(h) ?? false) || (nsrlDb?.has(h) ?? false);
-    const state = await options.stateStore.load(caseId);
-    const iocMatches = nsrlMatchIocs(state.iocs, lookup);
-    const eventMatches = nsrlMatchEvents(state.forensicTimeline, lookup);
-    if (iocMatches.length === 0 && eventMatches.length === 0) return { matchedIocs: 0, matchedEvents: 0, added: 0 };
-    const markers = await falsePositives.load(caseId);
-    const byId = new Map<string, FalsePositiveMarker>(markers.map((m) => [m.id, m]));
-    const now = new Date().toISOString();
-    let added = 0;
-    for (const { ioc, hash } of iocMatches) {
-      const id = markerId("ioc", ioc.value);
-      if (byId.has(id)) continue;
-      byId.set(id, { id, kind: "ioc", ref: ioc.value, reason: "known-good-tool", note: `NSRL known-good hash (${hash})`, markedAt: now, markedBy: "anonymous", label: ioc.value });
-      added++;
-    }
-    for (const { event, hash } of eventMatches) {
-      const id = markerId("event", event.id);
-      if (byId.has(id)) continue;
-      byId.set(id, { id, kind: "event", ref: event.id, reason: "known-good-tool", note: `NSRL known-good file (${hash})`, markedAt: now, markedBy: "anonymous", label: event.description });
-      added++;
-    }
-    if (added > 0) await falsePositives.save(caseId, [...byId.values()]);
-    return { matchedIocs: iocMatches.length, matchedEvents: eventMatches.length, added };
-  }
-
-  // Per-case playbook derivation helpers (issue #36). The playbook + hunt-suggestion/outcome ROUTES
-  // moved to routes/playbookHunts.ts; these two helpers stay because the POST /cases/:id/push/iris
-  // route below also calls syncPlaybook. Hoisted `function` declarations so they can be bound onto ctx
-  // (above, before their textual definition) as stable methods for the moved routes.
-  async function loadPlaybookControl(caseId: string): Promise<PlaybookControl> {
-    return options.playbookControlStore ? options.playbookControlStore.load(caseId) : { ...DEFAULT_PLAYBOOK_CONTROL };
-  }
-
-  // Re-derive against current state honoring the case's template setting (no-op-safe write).
-  async function syncPlaybook(caseId: string): Promise<PlaybookTask[]> {
-    if (!options.playbookStore || !options.stateStore) return options.playbookStore ? options.playbookStore.load(caseId) : [];
-    const state = await options.stateStore.load(caseId);
-    const { useTemplates } = await loadPlaybookControl(caseId);
-    return options.playbookStore.sync(caseId, state, { useTemplates });
-  }
+  // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
+  // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.
+  const transports = registerAllRoutes(app, ctx);
+  // app.locals is how the host reaches the outbound transports to stop them on shutdown.
+  if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
+  if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
-  void resumeVeloMonitors();
-  void resumeVeloHuntStatusPolls();
+  void monitors.resumeVeloMonitors();
+  void hunts.resumeVeloHuntStatusPolls();
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.
-  if (dropWatchEnabled && options.dropStatusStore) startDropWatcher();
+  if (drops.watchEnabled && options.dropStatusStore) drops.startDropWatcher();
 
-  // Whitelisted static client assets (vendored libraries + first-party browser modules). The map
-  // itself lives in src/http/staticAssets.ts — it grows every time a browser module is added, and
-  // this file may not grow (#385). Registered here so the routes exist in tests too.
-  registerStaticAssets(app);
-
-  // Terminal error handler (4-arg, last-registered so it runs after every route). express-async-errors
-  // forwards any error thrown or rejected inside an async route here; explicit next(err) calls land here
-  // too. Without it, Express 4 would fall through to its default handler and leak an HTML stack-trace page
-  // — or, for async routes it never catches, hang the connection. The failure is always logged (never
-  // silently swallowed); ZodError/CaseNotFoundError keep their conventional 400/404 for routes that forgot
-  // their own try/catch, and everything else becomes a generic JSON 500 so the client always gets a clean,
-  // closed response. Per-route try/catch blocks still handle their own errors and never reach this.
-  app.use(function terminalErrorHandler(err: unknown, req: Request, res: Response, next: NextFunction) {
-    if (res.headersSent) return next(err);
-    if (err instanceof ZodError) return res.status(400).json({ error: "invalid payload", details: err.issues });
-    if (err instanceof CaseNotFoundError) {
-      return res.status(404).json({ error: `case ${err.caseId} does not exist — create it in the dashboard first` });
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    getServerLogger().error(`unhandled error on ${req.method} ${req.path}: ${message}`);
-    return res.status(500).json({ error: "internal server error" });
-  });
+  // The static-asset whitelist and the terminal error handler, which must be last of all.
+  mountTerminalHandlers(app);
 
   return app;
 }
 
-import { StateStore as StateStoreImpl } from "./analysis/stateStore.js";
 import { loadDatabaseSync } from "./analysis/sqliteRuntime.js";
-import { AnalysisPipeline as AnalysisPipelineImpl } from "./analysis/pipeline.js";
-import { makeImageLoader } from "./analysis/imageLoader.js";
-import { ProviderRegistry, ProviderError } from "./providers/provider.js";
-import type { AIProvider as AnalyzeProvider } from "./providers/provider.js";
-import { visionEnv } from "./config/aiEnv.js";
-import { OpenAIProvider } from "./providers/openai.js";
-import { OpenRouterProvider } from "./providers/openrouter.js";
-import { OllamaCloudProvider } from "./providers/ollama.js";
-import { LiteLlmProvider } from "./providers/litellm.js";
-import { GeminiProvider } from "./providers/gemini.js";
-import { AnthropicProvider } from "./providers/anthropic.js";
-import { ClaudeCodeProvider } from "./providers/claudeCode.js";
-import { CodexProvider } from "./providers/codex.js";
-import { LiveHub } from "./live/hub.js";
 import { attachLiveSocket } from "./live/wsGate.js";
-import { ReportWriter as ReportWriterImpl } from "./reports/reportWriter.js";
 
-export interface ProviderParams {
-  provider?: string;
-  model?: string;
-  apiKey?: string;
-  imageDetail?: "high" | "low" | "auto";
-  timeoutMs?: number;
-  maxTokens?: number;
-  // The model's context window (tokens) for the provider's pre-flight guard. Defaults from
-  // DFIR_AI_CONTEXT_TOKENS (or 128000) so an oversized prompt is trimmed/clearly-errored.
-  contextTokens?: number;
-  // Override the provider's API base URL. Required for a self-hosted LiteLLM proxy
-  // (and any OpenAI-compatible local endpoint); each provider keeps its own default
-  // when this is unset. Empty string is treated as unset.
-  baseUrl?: string;
-}
-
-// Build a provider from explicit params (so callers can build more than one,
-// e.g. a cheap extraction model + a stronger synthesis model).
-export function buildProviderFrom(params: ProviderParams): AnalyzeProvider | undefined {
-  const name = params.provider;
-  if (!name) return undefined;
-  const model = params.model ?? "";
-  const apiKey = params.apiKey ?? "";
-  const imageDetail = params.imageDetail ?? "high";
-  // Empty string → undefined so each provider falls back to its built-in default.
-  const baseUrl = params.baseUrl?.trim() || undefined;
-  // Strong models over a large timeline can take >60s — make the request timeout tunable.
-  const timeoutMs = params.timeoutMs ?? (Number(process.env.DFIR_AI_TIMEOUT_MS) || 180_000);
-  // Bound completion tokens. Without this, OpenRouter reserves the model's full max
-  // output for its per-request credit check and can 402 a large request (e.g. THOR
-  // synthesis) even when the account has credits. Tunable via DFIR_AI_MAX_TOKENS.
-  const maxTokens = params.maxTokens ?? (Number(process.env.DFIR_AI_MAX_TOKENS) || 16000);
-  // Context window for the pre-flight guard — same default the pipeline budgets against, so
-  // a too-big prompt is trimmed by the pipeline and, as a backstop, caught here before the API.
-  const contextTokens = params.contextTokens ?? resolveContextTokens();
-  const registry = new ProviderRegistry();
-  registry.register(new OpenAIProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
-  registry.register(new OpenRouterProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
-  registry.register(new OllamaCloudProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
-  registry.register(new LiteLlmProvider({ apiKey, model, baseUrl, imageDetail, timeoutMs, maxTokens, contextTokens }));
-  registry.register(new GeminiProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
-  registry.register(new AnthropicProvider({ apiKey, model, baseUrl, timeoutMs, maxTokens }));
-  registry.register(new ClaudeCodeProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CLAUDE_CODE_BIN }));
-  registry.register(new CodexProvider({ model, timeoutMs, bin: process.env.DFIR_AI_CODEX_BIN }));
-  return registry.get(name);
-}
-
-export function buildProvider(): AnalyzeProvider | undefined {
-  // Vision/screenshot model — DFIR_VISION_* (legacy DFIR_AI_* still honored via visionEnv).
-  return buildProviderFrom({
-    provider: visionEnv(process.env, "PROVIDER"),
-    model: visionEnv(process.env, "MODEL"),
-    apiKey: visionEnv(process.env, "KEY"),
-    baseUrl: visionEnv(process.env, "BASE_URL"),
-    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
-  });
-}
-
-// Synthesis model: dedicated DFIR_AI_SYNTH_* vars, falling back to the main model.
-export function buildSynthesisProvider(): AnalyzeProvider | undefined {
-  // Text model — DFIR_AI_SYNTH_*, falling back to the vision model's config (DFIR_VISION_*, legacy
-  // DFIR_AI_* via visionEnv) when a dedicated synth var is unset.
-  return buildProviderFrom({
-    provider: process.env.DFIR_AI_SYNTH_PROVIDER ?? visionEnv(process.env, "PROVIDER"),
-    model: process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL"),
-    apiKey: process.env.DFIR_AI_SYNTH_KEY ?? visionEnv(process.env, "KEY"),
-    baseUrl: process.env.DFIR_AI_SYNTH_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
-    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
-  });
-}
-
-// Second-opinion model (issue #116): a DEDICATED, DIFFERENT model for the on-demand QA cross-check.
-// Returns undefined UNLESS DFIR_AI_SECOND_OPINION_MODEL is set — that env var IS the opt-in, and its
-// absence disables the feature (route 501, dashboard button hidden). Recommend a model from a
-// DIFFERENT provider than the primary synthesis model so the opinion is genuinely independent; the
-// key/provider/baseUrl fall back to the main AI config so it works out of the box on one account.
-export function buildSecondOpinionProvider(): AnalyzeProvider | undefined {
-  const model = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim();
-  if (!model) return undefined;
-  return buildProviderFrom({
-    provider: process.env.DFIR_AI_SECOND_OPINION_PROVIDER ?? visionEnv(process.env, "PROVIDER"),
-    model,
-    apiKey: process.env.DFIR_AI_SECOND_OPINION_KEY ?? visionEnv(process.env, "KEY"),
-    baseUrl: process.env.DFIR_AI_SECOND_OPINION_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
-  });
-}
-
-// Velociraptor-hunt model (issue #70): a DEDICATED model just for generating Velociraptor VQL hunts
-// (suggestPlaybookHunts + suggestHunts), since many models botch VQL. Defaults to openrouter /
-// anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
-// AI key (so it works out of the box when the main provider is openrouter). The pipeline uses this
-// over the synthesis/main provider for hunt generation only.
-export const DEFAULT_VELO_PROVIDER = "openrouter";
-export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5";   // latest Haiku; a VALID OpenRouter id (claude-haiku-latest 400s there)
-export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
-  return buildProviderFrom({
-    provider: process.env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
-    model: process.env.DFIR_AI_VELO_MODEL?.trim() || DEFAULT_VELO_MODEL,
-    apiKey: process.env.DFIR_AI_VELO_KEY ?? visionEnv(process.env, "KEY"),
-    baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? visionEnv(process.env, "BASE_URL"),
-  });
-}
-
-// Build the threat-intel enrichment providers from env. Each is added only when its key is present
-// (MalwareBazaar needs DFIR_MB_KEY for its API). Empty array → enrichment off. Per-provider TLS
-// trust for a self-hosted intel host comes from composition/tlsFetch.ts.
-export function buildEnrichmentProviders(): EnrichmentProvider[] {
-  const providers: EnrichmentProvider[] = [];
-  if (process.env.DFIR_VT_KEY) providers.push(new VirusTotalProvider({ apiKey: process.env.DFIR_VT_KEY }));
-  // Hunting.ch — the abuse.ch unified hunt (MalwareBazaar + ThreatFox + URLhaus + YARAify).
-  // There's no separate MalwareBazaar source anymore: MalwareBazaar is one of its back-ends.
-  // Uses the ONE abuse.ch Auth-Key; DFIR_MB_KEY (the legacy name for that key) still works.
-  const abuseChKey = process.env.DFIR_HUNTINGCH_KEY || process.env.DFIR_MB_KEY;
-  if (abuseChKey) providers.push(new HuntingChProvider({ apiKey: abuseChKey }));
-  // CrowdStrike Falcon — Threat Intelligence only (Falcon Intelligence Indicators + MalQuery).
-  if (process.env.DFIR_CROWDSTRIKE_CLIENT_ID && process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET) {
-    providers.push(new CrowdStrikeProvider({
-      clientId: process.env.DFIR_CROWDSTRIKE_CLIENT_ID,
-      clientSecret: process.env.DFIR_CROWDSTRIKE_CLIENT_SECRET,
-      cloud: process.env.DFIR_CROWDSTRIKE_CLOUD,
-      baseUrl: process.env.DFIR_CROWDSTRIKE_BASE_URL,
-    }));
-  }
-  if (process.env.DFIR_ABUSEIPDB_KEY) providers.push(new AbuseIpdbProvider({ apiKey: process.env.DFIR_ABUSEIPDB_KEY }));
-  if (process.env.DFIR_MISP_URL && process.env.DFIR_MISP_KEY) providers.push(new MispProvider({ baseUrl: process.env.DFIR_MISP_URL, apiKey: process.env.DFIR_MISP_KEY, fetchFn: tlsFetchFor("MISP") }));
-  if (process.env.DFIR_ROCKYRACCOON_KEY) providers.push(new RockyRaccoonProvider({ apiKey: process.env.DFIR_ROCKYRACCOON_KEY }));
-  if (process.env.DFIR_YETI_URL && process.env.DFIR_YETI_KEY) providers.push(new YetiProvider({ baseUrl: process.env.DFIR_YETI_URL, apiKey: process.env.DFIR_YETI_KEY, fetchFn: tlsFetchFor("YETI") }));
-  if (process.env.DFIR_OPENCTI_URL && process.env.DFIR_OPENCTI_KEY) {
-    const octiScore = Number(process.env.DFIR_OPENCTI_MALICIOUS_SCORE);
-    providers.push(new OpenCtiProvider({
-      baseUrl: process.env.DFIR_OPENCTI_URL,
-      apiKey: process.env.DFIR_OPENCTI_KEY,
-      fetchFn: tlsFetchFor("OPENCTI"),
-      maliciousScore: Number.isFinite(octiScore) && octiScore > 0 ? octiScore : undefined,
-    }));
-  }
-  // CIRCL hashlookup (#154): free, keyless KNOWN-FILE lookup for hash IOCs — the known-good
-  // angle that complements VirusTotal / Hunting.ch (a hit confirms a known, legitimate file).
-  // Always available; `external` scope → opt-in per case. Base URL overridable for a self-hosted
-  // / air-gapped mirror via DFIR_HASHLOOKUP_URL.
-  providers.push(new HashlookupProvider({ baseUrl: process.env.DFIR_HASHLOOKUP_URL }));
-  // IP-infrastructure context providers (#134): reverse DNS, WHOIS-over-RDAP, and GeoIP need
-  // NO API key, so they're always available — but, like all `external` providers, they're
-  // opt-in per case (default OFF), so nothing is looked up off-box without analyst approval.
-  // Base/endpoint overridable via env for self-hosted/paid backends or an air-gapped mirror.
-  providers.push(new ReverseDnsProvider());
-  // Offline lookalike / typosquat domain check — local scope (nothing leaves the box), so it is
-  // enabled by default and flags domain IOCs that imitate a bundled brand list (+ env extras).
-  providers.push(new LookalikeDomainProvider());
-  providers.push(new RdapProvider({ baseUrl: process.env.DFIR_RDAP_URL }));
-  providers.push(new GeoIpProvider({ baseUrl: process.env.DFIR_GEOIP_URL, apiKey: process.env.DFIR_GEOIP_KEY }));
-  // Shodan host lookup (hosted domains / open ports / services / CVEs) reuses the existing
-  // DFIR_SHODAN_KEY (also used by the customer-exposure attack-surface check).
-  if (process.env.DFIR_SHODAN_KEY) providers.push(new ShodanProvider({ apiKey: process.env.DFIR_SHODAN_KEY }));
-  return providers;
-}
-
-// Build a per-provider delay map from `DFIR_ENRICH_DELAY_MS_<PROVIDER>` env vars.
-// Keys must match the `provider.name` strings used in enrichService.
-export function buildEnrichProviderDelayMap(): Record<string, number> | undefined {
-  const entries: Array<[string, string]> = [
-    ["VIRUSTOTAL", "VirusTotal"],
-    ["ABUSEIPDB", "AbuseIPDB"],
-    ["HUNTINGCH", "Hunting.ch"],
-    ["CROWDSTRIKE", "CrowdStrike"],
-    ["ROCKYRACCOON", "RockyRaccoon"],
-    ["MISP", "MISP"],
-    ["YETI", "YETI"],
-    ["OPENCTI", "OpenCTI"],
-    ["REVERSE_DNS", "Reverse DNS"],
-    ["WHOIS", "WHOIS"],
-    ["GEOIP", "GeoIP"],
-    ["SHODAN", "Shodan"],
-    ["HASHLOOKUP", "Hashlookup"],
-  ];
-  const map: Record<string, number> = {};
-  for (const [suffix, name] of entries) {
-    const v = Number(process.env[`DFIR_ENRICH_DELAY_MS_${suffix}`]);
-    if (v > 0) map[name] = v;
-  }
-  return Object.keys(map).length > 0 ? map : undefined;
-}
-
-export function buildCustomerExposureProviders(): CustomerExposureProvider[] {
-  const providers: CustomerExposureProvider[] = [];
-  if (process.env.DFIR_LEAKCHECK_KEY) {
-    providers.push(new LeakCheckExposureProvider({
-      apiKey: process.env.DFIR_LEAKCHECK_KEY,
-      domainLimit: Number(process.env.DFIR_LEAKCHECK_DOMAIN_LIMIT) || undefined,
-    }));
-  }
-  if (process.env.DFIR_DEHASHED_KEY) {
-    providers.push(new DeHashedExposureProvider({
-      apiKey: process.env.DFIR_DEHASHED_KEY,
-      baseUrl: process.env.DFIR_DEHASHED_BASE_URL,
-    }));
-  }
-  if (process.env.DFIR_HIBP_KEY) {
-    providers.push(new HaveIBeenPwnedExposureProvider({
-      apiKey: process.env.DFIR_HIBP_KEY,
-      userAgent: process.env.DFIR_HIBP_USER_AGENT || "DFIR Companion",
-    }));
-  }
-  if (process.env.DFIR_SHODAN_KEY) {
-    providers.push(new ShodanExposureProvider({ apiKey: process.env.DFIR_SHODAN_KEY }));
-  }
-  return providers;
-}
-
-export interface RuntimePipelineParams {
-  provider?: AnalyzeProvider;
-  synthesisProvider?: AnalyzeProvider;
-  // Dedicated model for Velociraptor VQL hunt generation (#70); falls back to synthesis/main.
-  velociraptorProvider?: AnalyzeProvider;
-  stateStore: StateStoreImpl;
-  store: CaseStore;
-  imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
-  onState?: (state: InvestigationState) => void;
-  // Fired after a real synthesis run with the findings diff + new state (issue #58 notifications).
-  onSynth?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["onSynth"];
-  // Provided only when the AI vision provider is external (not local). See ocrRedact.ts.
-  ocrRunner?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["ocrRunner"];
-  // Optional Presidio layer (Task 7). Absent → the option stays undefined and the gate is a no-op
-  // for every one of the 27 AI call sites that funnel through analyzeRestored.
-  presidio?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidio"];
-  presidioPendingStore?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["presidioPendingStore"];
-  // Shared logger so AI/OCR/anonymization debug traces land in the same session + per-case logs.
-  logger?: Logger;
-  // CISA KEV catalog (issue #99): passed to the pipeline so synthesis context includes KEV hits.
-  kevStore?: KevStore;
-  // Clock-skew store (#228): synthesis measures per-host offsets from the PRE-merge timeline (the
-  // correlation that follows collapses the anchors) and stores them here.
-  clockSkewStore?: ClockSkewStore;
-  // Incident-type store (#236): synthesis reads the case's chosen type for its one-line hint.
-  // Passed in rather than built here — it needs the custom-types dir, not just the case store.
-  incidentTypeStore?: IncidentTypeStore;
-  // Second LLM opinion (issue #116): a different model + its persistence store, plus the model
-  // labels for the comparison header. Absent → the feature is disabled (route 501).
-  secondOpinionProvider?: AnalyzeProvider;
-  secondOpinionStore?: SecondOpinionStore;
-  synthesisModelLabel?: string;
-  secondOpinionModelLabel?: string;
-  stateLock?: StateLock;
-  analysisRunStore?: AnalysisRunStore;
-  operationalMetrics?: OperationalMetricsStore;
-}
-
-export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
-  return new AnalysisPipelineImpl({
-    provider: params.provider,
-    synthesisProvider: params.synthesisProvider,
-    velociraptorProvider: params.velociraptorProvider,
-    secondOpinionProvider: params.secondOpinionProvider,
-    secondOpinionStore: params.secondOpinionStore,
-    synthesisModelLabel: params.synthesisModelLabel,
-    secondOpinionModelLabel: params.secondOpinionModelLabel,
-    stateLock: params.stateLock,
-    stateStore: params.stateStore,
-    falsePositiveStore: new FalsePositiveStore(params.store),
-    scopeStore: new ScopeStore(params.store),
-    imageLoader: params.imageLoader ?? makeImageLoader(params.store),
-    onState: params.onState,
-    onSynth: params.onSynth,
-    anonStore: new AnonControlStore(params.store),
-    customEntitiesStore: new CustomEntitiesStore(params.store),
-    discoveredStore: new DiscoveredEntitiesStore(params.store),
-    synthMetaStore: new SynthMetaStore(params.store),
-    analysisRunStore: params.analysisRunStore,
-    operationalMetrics: params.operationalMetrics,
-    aiCostStore: new AiCostStore(params.store),
-    correlationProfileStore: new CorrelationProfileStore(params.store),
-    notebookStore: new NotebookStore(params.store),
-    hypothesisStore: new HypothesisStore(params.store),     // #140 auto-generate hypotheses on synthesis
-    learnedPatternStore: new LearnedPatternStore(params.store), // #65 feed learned dismissal patterns into synthesis
-    sourceTrustStore: new SourceTrustStore(params.store),   // #66 per-source trust weights for merge + confidence
-    clockSkewStore: params.clockSkewStore,                  // #228 measure clock skew on the PRE-merge timeline
-    incidentTypeStore: params.incidentTypeStore,            // #236 frame synthesis with the case's incident type
-    playbookStore: new PlaybookStore(params.store),         // #2 feed DONE/SKIPPED task status into synthesis
-    importMetaStore: new ImportMetaStore(params.store),      // #10 flag a zero-yield AI import as a coverage gap
-    aiControlStore: new AiControlStore(params.store),
-    huntOutcomeStore: new HuntOutcomeStore(params.store),   // #157 hunting feedback loop
-    superTimelineStore: new SuperTimelineStore(params.store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, params.operationalMetrics),  // explainEvent falls back here for raw super-only events
-    ocrRunner: params.ocrRunner,
-    presidio: params.presidio,
-    presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),
-    logger: params.logger,
-    kevStore: params.kevStore,
-    iocAliasStore: new IocAliasStore(params.store),  // #82: keep analyst IOC merges applied across re-synthesis
-  });
-}
+// AI model factories + the runtime pipeline wiring moved to composition/aiProviders.ts, and the
+// threat-intel / customer-exposure provider factories to composition/enrichmentProviders.ts (#416).
+// All of it is constructor-calls-over-env with no lifecycle, which is why it moved first. Re-exported
+// here because scripts/{reanalyze,synthesize,deep-pass,verify-ai}.ts, the provider wiring tests and
+// the settings-reload path import them from `src/server.js`.
+export {
+  buildProviderFrom,
+  buildProvider,
+  buildSynthesisProvider,
+  buildSecondOpinionProvider,
+  buildVelociraptorProvider,
+  buildRuntimePipeline,
+  DEFAULT_VELO_PROVIDER,
+  DEFAULT_VELO_MODEL,
+} from "./composition/aiProviders.js";
+export type { ProviderParams, RuntimePipelineParams } from "./composition/aiProviders.js";
+export {
+  buildEnrichmentProviders,
+  buildEnrichProviderDelayMap,
+  buildCustomerExposureProviders,
+} from "./composition/enrichmentProviders.js";
+// `export ... from` re-exports without binding the names locally, and both startServer (below) and
+// createApp's rebuildForPrefix still call them — so import them too.
 
 export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", logDir?: string): void {
   loadDatabaseSync();
-  const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
-  const store = new CaseStore(casesRoot);
-  const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
-  if (writerGuard) process.once("exit", () => writerGuard.release());
-  // File-backed global and per-case session logs retain the investigation audit trail.
-  // Timestamp punctuation is stripped for Windows-compatible filenames.
-  const sessionStamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const globalLogDir = logDir ?? join(dirname(casesRoot), "logs");
-  const logger = new LoggerImpl({
-    level: normalizeLogLevel(process.env.DFIR_LOG_LEVEL),
-    sessionLogPath: join(globalLogDir, `session-${sessionStamp}.log`),
-    caseLogPath: (caseId) => join(store.caseDir(caseId), "logs", `session-${sessionStamp}.log`),
-  });
-  setServerLogger(logger);
-  logLine(`[DFIR] session log: ${join(globalLogDir, `session-${sessionStamp}.log`)}`);
-  const stateLock = new StateLock();
-  const operationalMetrics = new OperationalMetricsStore(
-    join(dirname(casesRoot), "diagnostics", "operational-metrics.json"),
-    { enabled: !/^(?:0|false|off)$/i.test(process.env.DFIR_LOCAL_TELEMETRY ?? ""), onError: (error) => logLine(`[metrics] ${error.message}`) },
-  );
-  const stateStore = new StateStoreImpl(store, undefined, { operationalMetrics });
-  startOperationalCapacityMonitor(store, stateStore, operationalMetrics, (error) => logLine(`[capacity] ${error.message}`));
-  const templateStore = new TemplateStore(join(dirname(casesRoot), "templates"));
-  // Incident-type auto-playbooks (#236): the built-in library ships in companion/data/incident-types/;
-  // this dir holds analyst-authored custom types (same drive-root-safe rationale as templates/bundles).
-  const incidentTypeStore = new IncidentTypeStore(store, join(dirname(casesRoot), "incident-types"));
-  // Collection plan (#347): per-case only — the plan is derived from the timeline, so nothing global.
-  const collectionPlanStore = new CollectionPlanStore(store);
-  const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
-  // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
-  const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
-  // Dashboard view presets (#142) — GLOBAL like report templates, its own subdir beside cases/.
-  const dashboardViewStore = new DashboardViewStore(join(dirname(casesRoot), "dashboard-views"));
-  // Content-based event tagger: dashboard-edited rules persist here; the bundled data/tags.yaml is
-  // the fallback default (resolved inside TaggerStore), and TAGGER_RULES_FILE overrides both.
-  const taggerStore = new TaggerStore(join(dirname(casesRoot), "tagger", "tags.yaml"));
-  // A dedicated subdir (mirrors bundles/templates) rather than a loose file beside cases/, because
-  // when DFIR_CASES_ROOT is a drive root child (e.g. C:\cases) the sibling is C:\ — and Windows
-  // forbids creating files directly in a drive root. A subdir is always creatable + writable.
-  const iocWhitelistStore = new IocWhitelistStore(join(dirname(casesRoot), "whitelist", "ioc-whitelist.json"));
-  // User-authored declarative importers (#: external plugin layer) — its own subdir beside cases/
-  // (same drive-root rationale as the whitelist). Each *.json is one importer spec. The folder is
-  // overridable with DFIR_IMPORTERS_DIR (absolute used as-is; relative anchors to the cases-root
-  // parent, where the default importers/ lives); unset → importers/ beside the cases root.
-  const rawImportersDir = process.env.DFIR_IMPORTERS_DIR;
-  const importersDir = rawImportersDir && rawImportersDir.trim() !== ""
-    ? (isAbsolute(rawImportersDir) ? rawImportersDir : resolve(dirname(casesRoot), rawImportersDir))
-    : join(dirname(casesRoot), "importers");
-  const importerStore = new ImporterStore(importersDir);
-  // NSRL known-good hash set (#63) — its own subdir next to cases/ (same drive-root rationale as the
-  // whitelist). Optionally pre-loaded at startup from file(s) named in DFIR_NSRL_FILE (; separated):
-  // an NSRLFile.txt RDS export, a hashdeep CSV, or a plain hash-per-line list. Ingest is idempotent.
-  const nsrlStore = new NsrlStore(join(dirname(casesRoot), "nsrl", "known-hashes.txt"));
-  // Custom external tools (#211) — a global JSON store in its own subdir beside cases/ (drive-root-safe).
-  const customToolStore = new CustomToolStore(join(dirname(casesRoot), "tools", "custom-tools.json"));
-  // MCP policy (#296) — global and shared across cases, beside the custom-tool list for the same
-  // reason: a variable-length list belongs in a JSON store, not fixed .env keys.
-  const mcpServerStore = new McpServerStore(join(dirname(casesRoot), "tools", "mcp-servers.json"));
-  const nsrlFiles = splitNsrlPaths(process.env.DFIR_NSRL_FILE);
-  if (nsrlFiles.length > 0) {
-    // Fire-and-forget (startServer is sync): ingest in the background via the same helper the
-    // Settings → NSRL "Load from file" route uses. The set is opt-in and the auto-apply sweep loads
-    // it fresh, so a late finish just means later imports pick it up.
-    void ingestNsrlFiles(nsrlStore, nsrlFiles).then((results) => {
-      for (const r of results) {
-        logLine(r.error
-          ? `[nsrl] could not load ${r.file}: ${r.error}`
-          : `[nsrl] loaded ${r.file} — +${r.added} new (${r.total} total known-good hashes)`);
-      }
-    });
-  }
-  // NSRL RDS SQLite backend (#63): the full ~160 GB set queried on demand. Path from DFIR_NSRL_DB
-  // (env-managed → UI connect is read-only) or, when that's unset, the UI-set path persisted in
-  // nsrl/db-path.txt. Opened read-only; a bad/missing DB logs and is skipped (the flat store still works).
-  const nsrlDbConfigFile = join(dirname(casesRoot), "nsrl", "db-path.txt");
-  const nsrlDbEnv = (process.env.DFIR_NSRL_DB ?? "").trim();
-  const nsrlDbEnvManaged = nsrlDbEnv.length > 0;
-  const resolvedNsrlDbPath = nsrlDbEnv || loadNsrlDbPath(nsrlDbConfigFile);
-  let nsrlDb: NsrlDb | undefined;
-  if (resolvedNsrlDbPath) {
-    try {
-      nsrlDb = NsrlDb.open(resolvedNsrlDbPath);
-      logLine(`[nsrl] connected RDS DB ${resolvedNsrlDbPath} — table ${nsrlDb.table}, columns ${nsrlDb.columns.join("/")}`);
-    } catch (err) {
-      logLine(`[nsrl] could not open RDS DB ${resolvedNsrlDbPath}: ${(err as Error).message}`);
-    }
-  }
-  // CISA KEV catalog (issue #99) — global, shared across cases, own subdir beside cases/ (same
-  // drive-root rationale as the whitelist/nsrl). No env pre-load: analysts fetch/import it via
-  // Settings → KEV. The pipeline lazy-loads it so an import during a session is picked up.
-  const kevStore = new KevStore(join(dirname(casesRoot), "kev", "catalog.json"));
-  const updateCheckStore = new UpdateCheckStore(join(dirname(casesRoot), "updates", "update-check.json"));
-  const appVersion = getAppVersion();
-  const updateRepo = (() => {
-    const envRepo = process.env.DFIR_UPDATE_REPO;
-    return envRepo && /^[\w.-]+\/[\w.-]+$/.test(envRepo) ? envRepo : DEFAULT_UPDATE_REPO;
-  })();
-  // Notifications (issue #58): a global channel store (own subdir, Windows drive-root-safe) + a
-  // notifier wired with a TLS-aware fetch (Slack/Teams webhooks, honoring DFIR_NOTIFY_CA/_INSECURE
-  // for self-hosted Mattermost) and the built-in SMTP transport for email channels.
-  const notificationStore = new NotificationConfigStore(join(dirname(casesRoot), "notifications", "config.json"));
-  // Per-channel case bindings for the war-room slash-command bot (#235) — a global file beside the
-  // notification config (a channel-level concern, not per-case).
-  const slashCommandChannelStore = new SlashCommandChannelStore(
-    join(dirname(casesRoot), "notifications", "slash-command-bindings.json"),
-  );
-  const notifier = createNotifier({
-    store: notificationStore,
-    fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
-    smtpConnect: nodeSmtpConnect,
-    log: (m) => logLine(m),
-  });
-  // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.
-  const dashboardBaseUrl = (process.env.DFIR_PUBLIC_URL || `http://${host}:${port}`).replace(/\/+$/, "");
-  const veloHuntStore = new VeloHuntStore(store);
-  const huntOutcomeStore = new HuntOutcomeStore(store);   // #157 hunting feedback loop ledger
-  const huntRunSnapshotStore = new HuntRunSnapshotStore(store);   // #80 run-to-run hunt diffing
-  // Live Velociraptor CLIENT_EVENT monitors + generic push ingest (#84). The monitor store persists
-  // each poller's cursor (resumed on restart); the push token store holds per-case secrets, and
-  // DFIR_PUSH_TOKEN is the global one. Push is OFF until a token is configured (see pushAuth.ts).
-  const veloMonitorStore = new VeloMonitorStore(store);
-  const pushTokenStore = new PushTokenStore(store);
-  const pushToken = process.env.DFIR_PUSH_TOKEN?.trim() || undefined;
-  const veloMonitorPollSeconds = Number(process.env.DFIR_VELO_MONITOR_POLL_S) || 30;
-  // Velociraptor API client (when DFIR_VELOCIRAPTOR_API_CONFIG is set) + the persisted client inventory
-  // (host ↔ client_id map, #70) in its own subdir beside cases/ (Windows drive-root-safe, like bundles/nsrl).
-  const velociraptorClient = buildVelociraptorClient();
-  const velociraptorClientStore = new VelociraptorClientStore(join(dirname(casesRoot), "velociraptor", "clients.json"));
-  const hub = new LiveHub();
-  const jobManager = new JobManager({
-    onJob: (caseId) => { if (caseId) hub.broadcastTo(caseId, { type: "job_changed" }); },
-    onError: (error) => logLine(`[jobs] durable ledger error: ${error.message}`),
-    ledger: new JobLedgerStore(store),
-    max: Number(process.env.DFIR_JOBS_MAX) || undefined, globalConcurrency: Number(process.env.DFIR_JOBS_CONCURRENCY) || undefined, perCaseConcurrency: Number(process.env.DFIR_JOBS_PER_CASE) || undefined,
-  });
-  const reportMetaStore = new ReportMetaStore(store);
-  const reportVersionStore = new ReportVersionStore(store);   // #77 report versioning (diff & rollback)
-  const analysisRunStore = new AnalysisRunStore(store, { appVersion });
-  const reportTemplateControlStore = new ReportTemplateControlStore(store);
-  const activityLogStore = new ActivityLogStore(store);
-  const commentsStore = new CommentsStore(store);
-  const tagsStore = new TagsStore(store);
-  const pinnedFindingsStore = new PinnedFindingsStore(store, Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined);
-  const findingWorkflowStore = new FindingWorkflowStore(store);
-  const notebookStore = new NotebookStore(store);
-  const hypothesisStore = new HypothesisStore(store);
-  const learnedPatternStore = new LearnedPatternStore(store);
-  const sourceTrustStore = new SourceTrustStore(store);
-  const dwellWindowStore = new DwellWindowStore(store);
-  const clockSkewStore = new ClockSkewStore(store);   // #228 per-host clock offsets + alignment toggle
-  const superTimelineStore = new SuperTimelineStore(store, Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined, operationalMetrics);
-  const starredReportStore = new StarredReportStore(store);
-  const forensicGateControlStore = new ForensicGateControlStore(store);
-  const custodyStore = new CustodyStore(store);
-  const confidenceControlStore = new ConfidenceControlStore(store);
-  const complianceControlStore = new ComplianceControlStore(store);
-  const playbookStore = new PlaybookStore(store);
-  const playbookHuntStore = new PlaybookHuntStore(store);
-  const playbookControlStore = new PlaybookControlStore(store);
-  const assetOverridesStore = new AssetOverridesStore(store);
-  const iocAliasStore = new IocAliasStore(store);   // #82: analyst IOC merges (survive re-synthesis)
-  const synthMetaStore = new SynthMetaStore(store);
-  const aiCostStore = new AiCostStore(store);
-  const correlationProfileStore = new CorrelationProfileStore(store);
-  const secondOpinionStore = new SecondOpinionStore(store);
-  const importMetaStore = new ImportMetaStore(store);
-  const dropStatusStore = new DropStatusStore(store);   // evidence drop-folder last-sweep summary
-  // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
-  const importUndoStore = new ImportUndoStore(store, Number(process.env.DFIR_IMPORT_UNDO_DEPTH) || undefined, undoMaxBytesFromEnv());
-  const notionExportStore = new NotionExportStore(store);
-  const clickupExportStore = new ClickUpExportStore(store);
-  const irisExportStore = new IrisExportStore(store);
-  const lateralPathDismissStore = new LateralPathDismissStore(store);
-  const reportWriter = new ReportWriterImpl(store, stateStore, {
-    custodyStore,
-    // Signs the custody manifest that travels inside a redacted package. Same secret createApp
-    // loads; loadOrCreateInstanceSecret reads the persisted file, so both see the same value.
-    instanceSecret: loadOrCreateInstanceSecret(store.casesRoot),
-    scope: new ScopeStore(store),
-    falsePositives: new FalsePositiveStore(store),
-    reportMeta: reportMetaStore,
-    customerExposure: new CustomerExposureStore(store),
-    notebook: notebookStore,
-    assetOverrides: assetOverridesStore,
-    playbook: playbookStore,
-    reportTemplates: reportTemplateStore,
-    reportTemplateControl: reportTemplateControlStore,
+  // Every store, client and shared runtime object this run needs. See composition/runtimeStores.ts
+  // — including why each global store gets its own subdirectory beside cases/ rather than a loose
+  // file next to it (Windows forbids creating files directly in a drive root).
+  const rt = createRuntimeStores({ casesRoot, host, port, logDir });
+  const {
+    demoMode,
+    store,
+    teamAuth,
+    writerGuard,
+    logger,
+    stateLock,
+    operationalMetrics,
+    stateStore,
+    incidentTypeStore,
     kevStore,
-    hypothesisStore,
-    synthMeta: synthMetaStore,
-    lateralPathDismissals: lateralPathDismissStore,
-    reportVersions: reportVersionStore,
-    analysisRuns: analysisRunStore,
-    complianceControl: complianceControlStore,
-    clockSkew: clockSkewStore,
+    updateCheckStore,
+    updateRepo,
+    notifier,
+    dashboardBaseUrl,
+    velociraptorClient,
+    velociraptorClientStore,
+    hub,
+    analysisRunStore,
+    clockSkewStore,
+    custodyStore,
+    secondOpinionStore,
+  } = rt;
+
+  // Automatic state backup (#180) and periodic evidence re-verification (#231): two .unref()'d
+  // maintenance timers, armed here because both objects are also handed to createApp below.
+  const { backupManager, integrityMonitor } = startMaintenanceTasks({
+    store,
+    custodyStore,
+    notifier,
+    dashboardBaseUrl,
   });
 
-  // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
-  const backupConfig = resolveBackupConfig(process.env);
-  const backupManager = new BackupManager(store, backupConfig);
-  if (backupConfig.intervalMs > 0) {
-    // Time-based: only back up cases that have changed since the last scheduled backup.
-    const lastScheduledBackupAt = new Map<string, number>();
-    const runScheduledBackups = async (): Promise<void> => {
-      const cases = await store.listCases().catch(() => []);
-      for (const c of cases) {
-        const invPath = join(store.stateDir(c.caseId), "investigation.json");
-        let mtime: number;
-        try {
-          mtime = (await stat(invPath)).mtimeMs;
-        } catch {
-          continue; // case has no investigation.json yet
-        }
-        const lastAt = lastScheduledBackupAt.get(c.caseId) ?? 0;
-        if (mtime > lastAt) {
-          try {
-            const { prune } = await backupManager.createBackup(c.caseId, "scheduled");
-            lastScheduledBackupAt.set(c.caseId, Date.now());
-            // The byte cap holds everything it is allowed to delete; when the survivors are all
-            // exempt (newest backup, newest pre-synthesis) it cannot be met. Say so rather than
-            // silently overrunning — deleting the last recovery point would be the worse bug (#295).
-            if (prune.overBudget) {
-              logLine(
-                `[backup] ${c.caseId} is over the ${backupConfig.maxBytes}-byte budget ` +
-                `(${prune.totalBytes} bytes in backups that cannot be pruned further)`,
-              );
-            }
-          } catch (e) {
-            logLine(`[backup] scheduled backup for ${c.caseId} failed: ${(e as Error).message}`);
-          }
-        }
-      }
-    };
-    const backupTimer = setInterval(() => { void runScheduledBackups(); }, backupConfig.intervalMs);
-    backupTimer.unref();
-    logLine(
-      `[backup] automatic backups every ${backupConfig.intervalMs / 1000}s (retain ${backupConfig.retain}` +
-      `${backupConfig.maxBytes > 0 ? `, max ${backupConfig.maxBytes} bytes per case` : ", no byte cap"})`,
-    );
-  }
-
-  // Periodic evidence re-verification (#231 item 3). Scheduled here beside the backup timer rather
-  // than inside BackupManager: it reuses that scheduling PATTERN, but state backups and custody
-  // verification are unrelated concerns and folding one into the other would only couple them.
-  const integrityConfig = resolveIntegrityConfig(process.env);
-  const integrityMonitor = new EvidenceIntegrityMonitor(store, custodyStore, integrityConfig, (sweep) => {
-    const problems = [
-      sweep.failedArtifacts ? `${sweep.failedArtifacts} artifact(s) failed verification` : "",
-      sweep.chainBreaks ? `${sweep.chainBreaks} custody-log chain break(s)` : "",
-    ].filter(Boolean).join(", ");
-    warnLine(`[custody] EVIDENCE INTEGRITY ALERT — ${problems} across ${sweep.problemCases.length} case(s): ${sweep.problemCases.map((c) => c.caseId).join(", ")}`);
-    // One notification per affected case, so it lands in that case's feed where an analyst will
-    // see it rather than in a global channel nobody is watching. Fully guarded, like onSynth
-    // below: notifications are a side channel and must never break the sweep.
-    try {
-      for (const problem of sweep.problemCases) {
-        const url = `${dashboardBaseUrl}/dashboard?caseId=${encodeURIComponent(problem.caseId)}`;
-        const event = milestoneEvent(problem.caseId, "Evidence integrity check FAILED", [
-          `${problem.mismatches.length} artifact(s) failed verification, ${problem.chainBreaks.length} custody-log chain break(s).`,
-          ...problem.mismatches.slice(0, 5).map((m) => `${m.reason}: ${m.artifactPath}`),
-        ], sweep.finishedAt);
-        notifier.dispatch({ ...event, url }).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
-      }
-    } catch (err) {
-      logLine(`[custody] integrity alert dispatch error: ${(err as Error).message}`);
-    }
-  });
-  if (integrityConfig.intervalMs > 0) {
-    const integrityTimer = setInterval(() => { void integrityMonitor.runSweepIfIdle(); }, integrityConfig.intervalMs);
-    integrityTimer.unref();
-    // A first sweep shortly after boot, so Diagnostics reports a real answer instead of "not
-    // verified yet" for a whole interval. Delayed rather than inline: re-hashing every artifact
-    // must not sit in the startup path.
-    const firstSweep = setTimeout(() => { void integrityMonitor.runSweepIfIdle(); }, INITIAL_INTEGRITY_SWEEP_DELAY_MS);
-    firstSweep.unref();
-    logLine(`[custody] all-cases evidence integrity sweep every ${integrityConfig.intervalMs / 1000}s`);
-  }
-  if (integrityConfig.onOpenThrottleMs > 0) {
-    logLine(`[custody] cases verified on open (re-checked after ${integrityConfig.onOpenThrottleMs / 1000}s)`);
-  }
-
-  const provider = buildProvider();
-  const synthesisProvider = buildSynthesisProvider();
-  const velociraptorProvider = buildVelociraptorProvider();   // dedicated VQL-hunt model (#70)
-  const secondOpinionProvider = buildSecondOpinionProvider(); // dedicated second-opinion model (#116)
-  // Model labels for the second-opinion comparison header (fall back to provider name in the pipeline).
-  const synthesisModelLabel = process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? undefined;
-  const secondOpinionModelLabel = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim() || undefined;
-  if (secondOpinionProvider) logLine(`[second-opinion] enabled — model "${secondOpinionModelLabel}" (${secondOpinionProvider.name})`);
-  // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
-  // provider — if the model is local, screenshots never leave the machine so redaction is
-  // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
-  const visionIsLocalForPipeline = isLocalAiProvider(visionEnv(process.env, "PROVIDER"), visionEnv(process.env, "BASE_URL"));
-  const ocrRunner = !visionIsLocalForPipeline ? new TesseractOcrRunner() : undefined;
-  // Optional Presidio layer (Task 7): a locally-run container that scans the ALREADY-MASKED
-  // prompt for PII our own regex/exact-match anonymizer missed (principally names). Empty/unset
-  // URL → presidio stays undefined and every code path in the pipeline gate is skipped, so
-  // existing behaviour is completely unchanged when the analyst has not opted in.
-  const presidioUrl = (process.env.DFIR_PRESIDIO_URL ?? "").trim();
-  const presidioMinScore = resolvePresidioMinScore(process.env.DFIR_PRESIDIO_MIN_SCORE);
-  const presidio = presidioUrl
-    ? { client: new HttpPresidioClient(presidioUrl), url: presidioUrl, minScore: presidioMinScore }
-    : undefined;
-  if (presidio) logLine(`[presidio] enabled — scanning masked AI prompts via ${presidioUrl} (minScore ${presidio.minScore})`);
-  const wiredPipeline = buildRuntimePipeline({
-    provider, synthesisProvider, velociraptorProvider, stateStore, store, stateLock, onState: (s) => hub.broadcast(s), ocrRunner, logger, kevStore, clockSkewStore, incidentTypeStore,
+  // Model providers, the optional Presidio gate, the OCR runner and the pipeline that binds them to
+  // the stores. See composition/aiRuntime.ts.
+  const { provider, secondOpinionProvider, ocrRunner, wiredPipeline } = buildAiRuntime({
+    store,
+    stateStore,
+    stateLock,
+    logger,
+    kevStore,
+    clockSkewStore,
+    incidentTypeStore,
     analysisRunStore,
     operationalMetrics,
-    presidio, presidioPendingStore: new PresidioPendingStore(store),
-    secondOpinionProvider, secondOpinionStore, synthesisModelLabel, secondOpinionModelLabel,
-    // After a real synthesis, page the matching channels for each new/escalated finding (#58).
-    // Fully guarded — notifications are a side channel and must NEVER break synthesis.
-    onSynth: (caseId, diff, state) => {
-      try {
-        const url = `${dashboardBaseUrl}/dashboard?caseId=${encodeURIComponent(caseId)}`;
-        for (const ev of findingEventsFromDiff(caseId, diff, state.findings, state.updatedAt)) {
-          notifier.dispatch({ ...ev, url }).catch((err) => logLine(`[notify] dispatch error: ${(err as Error).message}`));
-        }
-      } catch (err) {
-        logLine(`[notify] onSynth error: ${(err as Error).message}`);
-      }
-    },
+    secondOpinionStore,
+    notifier,
+    dashboardBaseUrl,
+    onState: (s) => hub.broadcast(s),
   });
 
   // Pre-flight (#179): createApp calls onPreflightReady with runPreflightChecks; we store it
   // here and fire it after app.listen() so probes don't run before the server is ready.
   let scheduledPreflight: (() => Promise<PreflightReport>) | null = null;
 
-  // Live synthesis on by default — set DFIR_AI_AUTO_SYNTHESIZE=off to disable.
-  const autoSynthesize = (process.env.DFIR_AI_AUTO_SYNTHESIZE ?? "on").toLowerCase() !== "off";
-  const autoSynthesizeDebounceMs = Number(process.env.DFIR_AI_AUTO_SYNTHESIZE_MS) || 8000;
-
-  // Safety-net flush: drain any non-empty capture buffer on this interval so a lone
-  // `timer`/`click` screenshot is still analyzed instead of waiting for a full window.
-  // Default 5 min; set DFIR_FLUSH_INTERVAL_MS=0 to disable.
-  const flushIntervalMs = process.env.DFIR_FLUSH_INTERVAL_MS === "0"
-    ? 0
-    : (Number(process.env.DFIR_FLUSH_INTERVAL_MS) || undefined);
-
-  const app = createApp(store, {
-    teamAuth,
-    pipeline: wiredPipeline,
-    aiConfigured: Boolean(provider),
-    flushIntervalMs,
-    stateStore,
-    operationalMetrics,
-    liveConnectionCount: () => hub.connectionCount(),
-    stateLock,
-    reportWriter,
-    // The redacted-export route needs OCR even when the vision model is local (the pipeline's
-    // ocrRunner is undefined in that case), so give createApp its own always-available runner.
-    ocrRunner: ocrRunner ?? new TesseractOcrRunner(),
-    reportMetaStore,
-    reportVersionStore,
-    reportTemplateStore,
-    reportTemplateControlStore,
-    dashboardViewStore,
-    taggerStore,
-    onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
-    activityLogStore,
-    onActivity: (caseId) => hub.broadcastTo(caseId, { type: "activity_changed" }),
-    commentsStore,
-    onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
-    tagsStore,
-    onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
-    pinnedFindingsStore,
-    onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
-    findingWorkflowStore,
-    onFindingWorkflow: (caseId) => hub.broadcastTo(caseId, { type: "finding_workflow_changed" }),
-    notebookStore,
-    onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
-    hypothesisStore,
-    onHypotheses: (caseId) => hub.broadcastTo(caseId, { type: "hypotheses_changed" }),
-    learnedPatternStore,
-    onLearnedPatterns: (caseId) => hub.broadcastTo(caseId, { type: "learned_patterns_changed" }),
-    sourceTrustStore,
-    clockSkewStore,
-    onClockSkew: (caseId) => hub.broadcastTo(caseId, { type: "clock_skew_changed" }),
-    onSourceTrust: (caseId) => hub.broadcastTo(caseId, { type: "source_trust_changed" }),
-    dwellWindowStore,
-    onDwellWindow: (caseId) => hub.broadcastTo(caseId, { type: "dwell_window_changed" }),
-    superTimelineStore,
-    onSuperTimeline: (caseId) => hub.broadcastTo(caseId, { type: "super_timeline_changed" }),
-    starredReportStore,
-    forensicGateControlStore,
-    onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
-    custodyStore,
-    integrityMonitor,
-    confidenceControlStore,
-    onConfidenceControl: (caseId) => hub.broadcastTo(caseId, { type: "confidence_control_changed" }),
-    complianceControlStore,
-    playbookStore,
-    playbookHuntStore,
-    playbookControlStore,
-    onPlaybook: (caseId) => hub.broadcastTo(caseId, { type: "playbook_changed" }),
-    assetOverridesStore,
-    onAssetOverrides: (caseId) => hub.broadcastTo(caseId, { type: "asset_overrides_changed" }),
-    lateralPathDismissStore,
-    iocAliasStore,
-    onIocMerge: (caseId) => hub.broadcastTo(caseId, { type: "ioc_merge_changed" }),
-    onFalsePositive: (caseId) => hub.broadcastTo(caseId, { type: "false_positive_changed" }),
-    onScope: (caseId, scope) => hub.broadcastTo(caseId, { type: "scope_changed", ...scope }),
-    synthMetaStore,
-    analysisRunStore,
-    aiCostStore,
-    correlationProfileStore,
-    secondOpinionStore,
-    secondOpinionEnabled: Boolean(secondOpinionProvider),
-    onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
-    importMetaStore,
-    onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
-    dropStatusStore,
-    onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),
-    // External forensic tools (#211): the real spawn runner (tests inject a stub). Config is read live
-    // from DFIR_TOOL_* env, so a tool is off until its binary is set — no gating client to build.
-    toolRunner: spawnToolRunner(),
-    customToolStore,
-    // MCP policy (#296). No gating client: the companion holds no credentials and reaches every
-    // server through Claude Code, which must be installed and configured on this host.
-    mcpServerStore,
-    // Extra browser origins permitted past the origin guard (#211), beyond the extension and
-    // loopback. Comma-separated, e.g. "https://soc.example.com".
-    allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
-    // Extra hostnames this companion answers to (#280), beyond loopback and bare IP addresses.
-    // Only a deployment reached through a NAME needs these — e.g. "dfir.example.com", or the
-    // suffix ".lab.example.com" where the platform mints a fresh hostname per session.
-    allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),
-    allowedHostSuffixes: parseAllowedHostSuffixes(process.env.DFIR_ALLOWED_HOST_SUFFIXES),
-    importUndoStore,
-    onImportUndo: (caseId) => hub.broadcastTo(caseId, { type: "import_undo_changed" }),
-    jobManager,
-    autoSynthesize,
-    autoSynthesizeDebounceMs,
-    onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
-    // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
-    // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
-    onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
-    onImport: (caseId) => hub.broadcastAll({ type: "import_ingest", caseId }),
-    onState: (s) => hub.broadcast(s),
-    enrichmentProviders: buildEnrichmentProviders(),
-    enrichDelayMs: Number(process.env.DFIR_ENRICH_DELAY_MS) || undefined,
-    enrichProviderDelayMs: buildEnrichProviderDelayMap(),
-    // #78: ± jitter on the inter-call wait, and bounded retry-with-backoff on a 429 (honouring
-    // Retry-After) instead of a single rate-limit hit aborting the lookup.
-    // NOTE: parse with `numEnv` (not `Number(x) || undefined`) so an explicit "0" is honored —
-    // `Number("0") || undefined` is `undefined` (0 is falsy), which silently fell back to the
-    // hardcoded default. An operator who set DFIR_ENRICH_RETRIES=0 to disable 429 retry still
-    // got 2 retries (#5). The poller's `=== "0"` special-case is now unified here too.
-    enrichJitterMs: numEnv("DFIR_ENRICH_JITTER_MS"),
-    enrichRetries: numEnv("DFIR_ENRICH_RETRIES"),
-    enrichRetryBackoffMs: numEnv("DFIR_ENRICH_RETRY_BACKOFF_MS"),
-    enrichMaxIocs: numEnv("DFIR_ENRICH_MAX"),
-    customerExposureProviders: buildCustomerExposureProviders(),
-    customerExposureDelayMs: numEnv("DFIR_EXPOSURE_DELAY_MS"),
-    // Reachability gate: probe a self-hosted MISP/YETI before sending IOCs, cached this long
-    // (default 60s in the cache). The poller re-checks down servers on the same cadence and
-    // auto-resumes skipped cases on recovery — set DFIR_ENRICH_HEALTH_POLL_MS=0 to disable it.
-    enrichHealthTtlMs: numEnv("DFIR_ENRICH_HEALTH_TTL_MS"),
-    enrichHealthPollMs: numEnv("DFIR_ENRICH_HEALTH_POLL_MS") ?? 60_000,
-    irisClient: buildIrisClient(),
-    velociraptorClient,
-    velociraptorClientStore,
-    artifactBundleStore,
-    iocWhitelistStore,
-    importerStore,
-    onImporters: () => hub.broadcastAll({ type: "importers_changed" }),
-    nsrlStore,
-    nsrlDb,
-    nsrlDbConfigFile,
-    nsrlDbEnvManaged,
-    kevStore,
-    veloHuntStore,
-    huntOutcomeStore,
-    huntRunSnapshotStore,
-    onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
-    veloMonitorStore,
-    onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),
-    veloMonitorPollSeconds,
-    pushToken,
-    pushTokenStore,
-    onPushToken: (caseId) => hub.broadcastTo(caseId, { type: "push_token_changed" }),
-    // Trim the dashboard's hunt-query modal to the tools this team runs (default: all).
-    huntPlatforms: resolveHuntPlatforms(process.env.DFIR_HUNT_PLATFORMS),
-    irisOptions: irisPushOptions(),
-    irisExportStore,
-    timesketchClient: buildTimesketchClient(),
-    timesketchOptions: timesketchPushOptions(),
-    rebuildTimesketchClient: buildTimesketchClient,
-    templateStore,
-    incidentTypeStore,
-    collectionPlanStore,
-    mispPushClient: buildMispPushClient(),
-    mispPushOptions: mispPushOptions(),
-    notionClient: buildNotionClient(),
-    notionOptions: notionPushOptions(),
-    notionExportStore,
-    clickupClient: buildClickUpClient(),
-    clickupExportStore,
-    clickupOptions: clickupOptions(),
-    jiraClient: buildJiraClient(),
-    jiraExportStore: new JiraExportStore(store),
-    jiraOptions: jiraOptions(),
-    servicenowClient: buildServiceNowClient(),
-    servicenowExportStore: new ServiceNowExportStore(store),
-    servicenowOptions: servicenowOptions(),
-    notificationStore,
-    slashCommandChannelStore,
-    telegramPolling: (process.env.DFIR_TELEGRAM_POLL ?? "").trim().toLowerCase() === "on",
-    slackSocketMode: (process.env.DFIR_SLACK_SOCKET_MODE ?? "").trim().toLowerCase() === "on",
-    notifier,
-    notifyEmailEnabled: true,
-    dashboardBaseUrl,
-    // Diagnostics AI connectivity test (#118): rebuild a provider from the CURRENT env each call,
-    // so a key/model saved via Settings is reflected even before a server restart.
-    aiTestProvider: () => buildProvider(),
-    updateCheckStore,
-    appVersion,
-    updateCheckEnv: process.env.DFIR_UPDATE_CHECK,
-    updateRepo,
-    demoMode,
-    backupManager,
-    // Pre-flight (#179): fire the checks once the server is listening (see below).
-    onPreflightReady: (run) => { scheduledPreflight = run; },
-  });
+  // The ~120-member AppOptions literal binding every store to its live-broadcast callback.
+  // See composition/appWiring.ts.
+  const app = createApp(
+    store,
+    buildAppOptions(rt, {
+      teamAuth,
+      pipeline: wiredPipeline,
+      provider,
+      secondOpinionProvider,
+      ocrRunner,
+      backupManager,
+      integrityMonitor,
+      onPreflightReady: (run) => {
+        scheduledPreflight = run;
+      },
+    }),
+  );
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
   // filenames only; browsers that auto-request /favicon.ico get the crisp 32px PNG.
@@ -3890,7 +469,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     "/favicon-16.png": "image/png",
     "/favicon-32.png": "image/png",
     "/apple-touch-icon.png": "image/png",
-    "/favicon.ico": "image/png",            // alias → favicon-32.png
+    "/favicon.ico": "image/png", // alias → favicon-32.png
   };
   for (const [route, type] of Object.entries(iconFiles)) {
     app.get(route, async (_req, res) => {
@@ -3913,15 +492,27 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     // Pre-flight (#179): fire now that the server is listening so probes can reach the AI provider
     // and local enrichment servers. Best-effort — a failure is logged, never fatal.
     if (scheduledPreflight) {
-      void scheduledPreflight().then((r) => {
-        if (r.disabled) { logLine("[preflight] checks disabled"); return; }
-        const status = r.anyCriticalFailed ? "CRITICAL" : r.anyFailed ? "WARN" : "OK";
-        logLine(`[preflight] ${status} (${r.durationMs}ms) — ${r.items.map((i) => `${i.name}:${i.ok ? "ok" : "FAIL"}`).join(", ")}`);
-        if (r.anyCriticalFailed) {
-          const failed = r.items.filter((i) => !i.ok && i.critical).map((i) => `  ✗ ${i.name}: ${i.detail}`).join("\n");
-          warnLine(`[preflight] CRITICAL — open the dashboard → Settings → Diagnostics for details:\n${failed}`);
-        }
-      }).catch((e) => warnLine(`[preflight] error: ${(e as Error).message}`));
+      void scheduledPreflight()
+        .then((r) => {
+          if (r.disabled) {
+            logLine("[preflight] checks disabled");
+            return;
+          }
+          const status = r.anyCriticalFailed ? "CRITICAL" : r.anyFailed ? "WARN" : "OK";
+          logLine(
+            `[preflight] ${status} (${r.durationMs}ms) — ${r.items.map((i) => `${i.name}:${i.ok ? "ok" : "FAIL"}`).join(", ")}`,
+          );
+          if (r.anyCriticalFailed) {
+            const failed = r.items
+              .filter((i) => !i.ok && i.critical)
+              .map((i) => `  ✗ ${i.name}: ${i.detail}`)
+              .join("\n");
+            warnLine(
+              `[preflight] CRITICAL — open the dashboard → Settings → Diagnostics for details:\n${failed}`,
+            );
+          }
+        })
+        .catch((e) => warnLine(`[preflight] error: ${(e as Error).message}`));
     }
   });
   server.once("close", () => {
@@ -3929,64 +520,17 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     writerGuard?.release();
   });
 
-  // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
-  // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
-  // but never fatal. The timer is .unref()'d so it doesn't block a clean process exit.
-  if (demoMode) {
-    const resetHours = Math.max(1, Number(process.env.DFIR_DEMO_RESET_HOURS) || 1);
-    const seedDemo = (): void => {
-      void seedDemoCase(store.casesRoot, { force: true })
-        .then((r) => logLine(`[demo] demo case seeded — ${r.stats.events} events, ${r.stats.findings} findings, ${r.stats.iocs} IOCs`))
-        .catch((e) => logLine(`[demo] demo case seed failed: ${(e as Error).message}`));
-    };
-    seedDemo();
-    const t = setInterval(seedDemo, resetHours * 60 * 60 * 1000);
-    t.unref();
-    logLine(`[demo] demo mode active — writes blocked, case resets every ${resetHours}h`);
-  }
-
-  // Snapshot the enrolled Velociraptor fleet into the client inventory at startup (#70), so a single-
-  // endpoint collection can resolve a host → client_id from the file. RETRY WITH BACKOFF: if the
-  // Velociraptor server is down when the companion boots (a common ordering), keep retrying for a while
-  // so the inventory self-heals once it comes up — the analyst shouldn't have to restart the companion
-  // (Settings → Velociraptor → Reconnect also forces it). Best-effort; timers .unref() so they never
-  // block exit. Live monitors self-heal on their own poll timers, so this only covers the inventory.
-  if (velociraptorClient) {
-    const backoffMs = [0, 30_000, 60_000, 120_000, 300_000, 600_000];   // ~18 min of attempts
-    const attempt = (i: number): void => {
-      velociraptorClient.listClients()
-        .then((clients) => velociraptorClientStore.save(clients, new Date().toISOString()))
-        .then((inv) => logLine(`[velociraptor] client inventory: ${inv.clients.length} enrolled client(s)`))
-        .catch((e) => {
-          const next = i + 1;
-          if (next < backoffMs.length) {
-            logLine(`[velociraptor] startup inventory refresh failed (${(e as Error).message}) — retrying in ${backoffMs[next] / 1000}s`);
-            const t = setTimeout(() => attempt(next), backoffMs[next]);
-            t.unref?.();
-          } else {
-            logLine(`[velociraptor] startup inventory refresh still failing — use Settings → Velociraptor → Reconnect once the server is up`);
-          }
-        });
-    };
-    attempt(0);
-  }
-
-  // Opt-in update check (issue #127): when enabled (and not env-locked), check GitHub at most
-  // once / 24h on startup and on a daily timer. Best-effort, never blocks startup, never throws.
-  void (async () => {
-    const stored = (await updateCheckStore.load()).enabled;
-    const mode = resolveUpdateMode(process.env.DFIR_UPDATE_CHECK, stored);
-    if (!mode.enabled || mode.locked) return;
-    const runIfStale = async () => {
-      const prev = (await updateCheckStore.load()).result;
-      if (prev && !prev.error && Date.now() - prev.checkedAt < UPDATE_CHECK_THROTTLE_MS) return;
-      await performUpdateCheck({ store: updateCheckStore, repo: updateRepo, fetchFn: fetch, now: Date.now() });
-      logLine(`[update] checked ${updateRepo} for a newer release`);
-    };
-    await runIfStale().catch((e) => warnLine(`[update] check failed: ${(e as Error).message}`));
-    const timer = setInterval(() => { void runIfStale().catch(() => {}); }, UPDATE_CHECK_THROTTLE_MS);
-    timer.unref?.();
-  })();
+  // The three best-effort startup tasks that must not run until the server is actually up: demo
+  // seeding, the Velociraptor inventory snapshot, and the update check. See
+  // composition/maintenanceTasks.ts.
+  startPostListenTasks({
+    store,
+    demoMode,
+    velociraptorClient,
+    velociraptorClientStore,
+    updateCheckStore,
+    updateRepo,
+  });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
   server.on("error", (err: NodeJS.ErrnoException) => {
@@ -4070,7 +614,9 @@ if (seaRuntime || entryPath.endsWith("server.ts") || entryPath.endsWith("server.
   // saves it. Same reason as the cases root above — dotenv does not expand "~".
   const rawLogDir = process.env.DFIR_LOG_DIR?.trim() ? expandHome(process.env.DFIR_LOG_DIR) : undefined;
   const logDir = rawLogDir
-    ? (isAbsolute(rawLogDir) ? rawLogDir : resolve(companionDir, rawLogDir))
+    ? isAbsolute(rawLogDir)
+      ? rawLogDir
+      : resolve(companionDir, rawLogDir)
     : undefined;
 
   startServer(casesRoot, port, host, logDir);

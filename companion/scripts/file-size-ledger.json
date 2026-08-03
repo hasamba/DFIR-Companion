@@ -11,6 +11,5 @@
   "routes/caseLifecycle.ts": 1204,
   "routes/import.ts": 1766,
   "routes/mcp.ts": 845,
-  "routes/velociraptor.ts": 888,
-  "server.ts": 4078
+  "routes/velociraptor.ts": 888
 }
