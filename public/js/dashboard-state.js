@@ -29,16 +29,24 @@
 //
 // THE DECISION: THREE TIERS, BY MEASURED FAN-OUT
 //
-//   1. THE SNAPSHOT — `lastState`, `lastFt`, `lastSuperData`. One writer (`render`), 84 readers
-//      between them. Owned here, as a write-once-per-fetch cell behind an accessor. The contract
-//      is the one the code already follows, made explicit and enforceable: exactly one call site
-//      may write the cell, and the test below is what enforces it.
+//   1. THE SNAPSHOT — `lastState`, `lastFt`, `lastSuperData`. 84 readers between them and one
+//      writer EACH: `render` for the first two, `renderSuperTimeline` for the third. (An earlier
+//      draft of this paragraph said `render` wrote all three. It does not, and the difference
+//      matters — they are three cells with three owners, not one cell with three names.) Owned
+//      here, as a write-once-per-fetch cell behind an accessor. The contract is the one the code
+//      already followed, made explicit and enforceable: one call site may write each cell, and the
+//      tests below are what enforce it. MIGRATED — see the bottom of this comment.
 //
 //      Note what that does NOT claim. `get()` hands back the object itself, not a copy or a frozen
-//      view, so a reader can still mutate the snapshot in place. Deep-freezing a case's whole state
-//      on every fetch is not free, and the failure this design is actually aimed at is "who
-//      replaced this value", which the single-writer rule answers. Reader-side mutation is a
-//      separate problem, worth solving separately if it turns out to happen.
+//      view, so a reader could mutate the snapshot in place. Deep-freezing a case's whole state on
+//      every fetch is not free, and the failure this design is aimed at is "who replaced this
+//      value", which the single-writer rule answers.
+//
+//      That was written as a caveat before the migration. It is now a measured fact: across all
+//      three cells there is not one in-place mutation in the inline script — no `lastState.x = y`,
+//      no `lastFt.push(...)`, no `.sort()`. Every change goes through whole-value replacement at
+//      one of the three writes. So handing back the live object is safe TODAY, and that is the
+//      property to re-check before anything starts mutating a snapshot rather than replacing it.
 //
 //   2. THE SELECTION — the filter and selection cells that genuinely cross features: filterFrom,
 //      filterTo, searchTerm, excludeTerms, scope, selectedEvents/Iocs/Findings, starredEvents,
@@ -75,17 +83,29 @@
 //   snapshot through 43 signatures. That is not ownership, it is a parameter list.
 //
 //
-// WHAT IS ACTUALLY MIGRATED HERE, AND WHAT IS NOT
+// WHAT IS MIGRATED, AND WHAT IS NEXT
 //
-// `activeView` — one writer, fourteen readers — is migrated, end to end. It was chosen because it
-// has tier 1's shape at a tenth of tier 1's size, so it exercises the whole mechanism (a single
-// permitted writer, a read accessor, a subscriber list) against real call sites rather than a
-// worked example.
+// `activeView` came first — one writer, fourteen readers — chosen because it has tier 1's shape at
+// a tenth of tier 1's size, so it exercised the whole mechanism against real call sites before
+// anything large depended on it.
 //
-// `lastState` is NOT migrated, and the reason is scope rather than difficulty: it is 43 mechanical
-// call-site edits, and putting them in the same change as the mechanism they validate means the
-// review cannot separate "is this the right shape" from "did all 43 edits land correctly". It is
-// the next change, and this file is what it will be migrated onto.
+// TIER 1 IS NOW DONE. All three snapshot cells are here and all 155 reader references go through
+// the accessors. It landed as its own change, separately from the mechanism, so that a review could
+// tell "is this the right shape" apart from "did 155 edits land correctly" — the second question is
+// answered by an AST check that no bare identifier survives and by every inline script still
+// parsing, neither of which says anything about the first.
+//
+// WHAT IS LEFT, in order:
+//
+//   TIER 2, the ~15 selection cells. Harder than tier 1 despite being smaller: 4-6 writers each,
+//   so migrating one means deciding which of its writers is the owner, or accepting that some cells
+//   have several and the single-writer gate does not apply to them. The subscriber list exists for
+//   this tier and is still unused — today every writer re-renders by remembering to call the right
+//   function, which is the coupling `onLastStateChange` is meant to replace.
+//
+//   TIER 3, the 231 feature-local bindings. The bulk of the remaining inline script, and the reason
+//   tiers 1 and 2 came first: a function that reads only its own feature's state can move into that
+//   feature's module, and until the shared reads went through a door, almost none of them qualified.
 //
 //
 // NOT AN ES MODULE, for the same reason as the js/dashboard-*.js helpers: the inline script is a
@@ -164,16 +184,61 @@
    */
   const dfirActiveView = dfirCell(null);
 
+  /**
+   * TIER 1 — THE SNAPSHOT. The cache of what the server last said, and the reason this file exists.
+   *
+   *   lastState      43 reader functions, written only by render()
+   *   lastFt         29 reader functions, written only by render()
+   *   lastSuperData  12 reader functions, written only by renderSuperTimeline()
+   *
+   * 84 readers, three writes. Not contended state — a load-store cell per fetch, which is what
+   * made "who owns lastState" answerable at all.
+   *
+   * NOTHING MUTATES THEM IN PLACE. Checked rather than assumed, across all three: no
+   * `lastState.x = y`, no `lastFt.push(...)`, no `.sort()` on any of them. Every change to the
+   * snapshot goes through a whole-value replacement at one of the three writes above. That is what
+   * makes handing the live object back from get() safe today, and it is the property to re-check
+   * before relaxing anything here — the module header's note about get() not freezing describes a
+   * hazard that the code does not currently walk into.
+   */
+  const dfirLastState = dfirCell(null);
+  const dfirLastFt = dfirCell([]);
+  const dfirLastSuperData = dfirCell(null);
+
   // The ONLY thing that leaves this closure. Every read is now a call rather than a bare
   // identifier, which is the point: `activeView()` is greppable in a way `activeView` is not, and
   // the writes stop looking like reads.
   //
   // `cell` is exposed because the next migrations need to build their own cells, and it is a
   // factory with no ambient state — handing it out grants nothing over `dfirActiveView`.
+  // READ THROUGH THE ACCESSOR AT EVERY SITE. NO CACHED LOCALS. This is the one rule the snapshot
+  // migration turns on, and it is not style:
+  //
+  //   16 of the 84 reader functions CALL THEIR OWN WRITER -- setExcludeTerms, loadTags, loadPins,
+  //   patchFindingWorkflow, applyDashboardView and eleven others all reach render() or
+  //   renderSuperTimeline(). Reading a bare `let` always saw the current value, so binding
+  //   `const s = DfirState.lastState()` at the top of one of those and reading it afterwards would
+  //   quietly change behaviour in a third of the readers -- and only on the paths where a refetch
+  //   happens mid-function, which is exactly the kind of thing that survives review and testing.
+  //
+  // So the accessor call IS the migration. It reads noisier than the variable did; that noise is
+  // the honest cost of making 84 readers go through one door.
   window.DfirState = {
     cell: dfirCell,
     activeView: () => dfirActiveView.get(),
     setActiveView: (view) => dfirActiveView.set(view || null),
     onActiveViewChange: (fn) => dfirActiveView.subscribe(fn),
+
+    lastState: () => dfirLastState.get(),
+    setLastState: (state) => dfirLastState.set(state),
+    onLastStateChange: (fn) => dfirLastState.subscribe(fn),
+
+    lastFt: () => dfirLastFt.get(),
+    setLastFt: (ft) => dfirLastFt.set(ft),
+    onLastFtChange: (fn) => dfirLastFt.subscribe(fn),
+
+    lastSuperData: () => dfirLastSuperData.get(),
+    setLastSuperData: (data) => dfirLastSuperData.set(data),
+    onLastSuperDataChange: (fn) => dfirLastSuperData.subscribe(fn),
   };
 })();

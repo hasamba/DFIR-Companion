@@ -94,10 +94,12 @@
       };
     })();
   </script>
-  <!-- Who owns dashboard state (#415). The store the other 421 top-level bindings are meant to
+  <!-- Who owns dashboard state (#415). The store the remaining top-level bindings are meant to
        migrate onto, and the written argument for which of them should and which should not.
-       `activeView` is the first one moved; js/dashboard-state.js explains why it and not
-       `lastState`. Tagged first because it is the file to read before touching the rest. -->
+       It now owns the case snapshot — the three cells 84 reader functions go through — plus the
+       active view. Read them through DfirState; only render() and renderSuperTimeline() may write,
+       and no reader may cache the result in a local. Tagged first because it is the file to read
+       before touching the rest. -->
   <script src="/js/dashboard-state.js"></script>
   <!-- Pure helpers lifted out of the inline script (#415): 95 functions that reference no shared
        dashboard state and reach for no DOM.
@@ -3533,11 +3535,12 @@
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
     let aiEnabled = false;   // AI defaults OFF per case; loadAiToggle() syncs the real state
     let scope = { start: null, end: null };  // active investigation window (ISO or null)
-    let lastState = null;                    // last raw state from server, for re-render on scope change
+    // The case snapshot moved to js/dashboard-state.js (#415). Read it through DfirState; only
+    // render() and renderSuperTimeline() may write, and never cache a snapshot in a local inside a
+    // function that can re-fetch — 16 readers call their own writer, where a bare `let` never went stale.
     let lastCockpit = null;                  // server-derived Now cockpit, including this investigator's review state
     let lastCockpitRenderSignature = "";     // generatedAt changes every request; repaint only when the decisions change
     let fpMarkers = [];                       // false-positive markers; events here are hidden from the timeline
-    let lastFt = [];                          // last scoped+FP-filtered forensic timeline, for severity re-filter without re-fetching
     let lastIocs = [];                        // last scoped IOC list, for the Host & Account Ranking expand view (#237)
     // Forensic-timeline sort order (#104): { key: "date" | "severity", dir: "asc" | "desc" }.
     // date asc = oldest first (default/chronological), date desc = newest first;
@@ -3561,8 +3564,8 @@
       excludeTerms = terms;
       try { localStorage.setItem("dfir.excludeTerms", JSON.stringify(excludeTerms)); } catch {}
       renderExcludeChips();
-      if (lastState) render(lastState);
-      if (lastSuperData) loadSuperTimeline();   // the main filter's exclude terms scope the super-timeline too
+      if (DfirState.lastState()) render(DfirState.lastState());
+      if (DfirState.lastSuperData()) loadSuperTimeline();   // the main filter's exclude terms scope the super-timeline too
       renderFalsePositives(fpMarkers);   // exclude terms scope the False Positives panel too
     }
     function renderExcludeChips() {
@@ -3618,7 +3621,7 @@
     // Re-render the timeline-derived views so they honor the same global filter. render() already does
     // this; the time-range paths that only re-render the timeline list call this to stay consistent.
     function refreshFilteredViews() {
-      renderKillChain(lastFt || []);
+      renderKillChain(DfirState.lastFt() || []);
       if (phasesData.length) renderPhases();
       // Re-fetch the asset/evidence graphs scoped to the active time filter (#83). Only when a graph
       // has already been loaded for the open case, so a time-range change before the graphs are opened
@@ -3698,7 +3701,7 @@
     // The latest forensic event time anchors the relative-scope presets (DFIR data
     // is historical, so "last 24h" means the last 24h of ACTIVITY, not of wall-clock).
     function latestEventMs() {
-      const events = (lastState && lastState.forensicTimeline) || [];
+      const events = (DfirState.lastState() && DfirState.lastState().forensicTimeline) || [];
       let max = NaN;
       for (const e of events) { const t = Date.parse(e.timestamp); if (!isNaN(t)) max = isNaN(max) ? t : Math.max(max, t); }
       return isNaN(max) ? Date.now() : max;
@@ -3749,7 +3752,7 @@
     function loadConfidenceControl(caseId) {
       fetch(`/cases/${caseId}/confidence-control`).then(r => r.json()).then(c => {
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
-        if (lastState) render(lastState);
+        if (DfirState.lastState()) render(DfirState.lastState());
       }).catch(() => {});
     }
     function saveConfidenceControl(caseId, minConfidence) {
@@ -4049,7 +4052,7 @@
       // load explicitly when the section has never been opened.
       superOffset = 0;
       applySearch();                     // sets searchTerm + rescopes the whole dashboard (window-exposed by the search IIFE)
-      if (!lastSuperData) loadSuperTimeline();
+      if (!DfirState.lastSuperData()) loadSuperTimeline();
       const sec = document.getElementById("sec-super-timeline");
       if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
     }
@@ -4552,7 +4555,7 @@
           let arr = commentsByTarget.get(k); if (!arr) { arr = []; commentsByTarget.set(k, arr); }
           arr.push(c);
         });
-        if (lastState) render(lastState);          // refresh chip counts
+        if (DfirState.lastState()) render(DfirState.lastState());          // refresh chip counts
         refreshSuperRows();                          // super-timeline rows share the comment chips
         if (commentTarget) renderCommentModal();    // refresh an open thread (live collaboration)
       }).catch(() => {});
@@ -4631,11 +4634,11 @@
         });
         deriveStarred();               // stars are tags — rebuild the star lookup with every tag load
         migrateLocalStars(caseId);     // one-time: push legacy localStorage stars up as tags
-        if (lastState) render(lastState);     // refresh inline pills
+        if (DfirState.lastState()) render(DfirState.lastState());     // refresh inline pills
         // A tag change alters the super-timeline's Tags filter facet + tag-filtered results (both now
         // server-driven by tags), so reload it rather than a cache re-render — but only when its section
         // has already been loaded, so we don't fire a fetch on the initial case-load loadTags().
-        if (lastSuperData) loadSuperTimeline();
+        if (DfirState.lastSuperData()) loadSuperTimeline();
         if (tagTarget) renderTagModal();        // refresh an open editor (live collaboration)
       }).catch(() => {});
     }
@@ -4737,7 +4740,7 @@
         pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
         if (typeof (data && data.limit) === "number") pinLimit = data.limit;
         renderPinned();
-        if (lastState) render(lastState);   // refresh the 📌 button state on the finding cards
+        if (DfirState.lastState()) render(DfirState.lastState());   // refresh the 📌 button state on the finding cards
       }).catch(() => {});
     }
 
@@ -4751,7 +4754,7 @@
       fetch(`/cases/${caseId}/finding-workflow`).then(r => r.json()).then(list => {
         workflowByFinding = new Map();
         (Array.isArray(list) ? list : []).forEach(r => { if (r && r.findingId) workflowByFinding.set(String(r.findingId), r); });
-        if (lastState) render(lastState);   // refresh the inline assignee/status controls
+        if (DfirState.lastState()) render(DfirState.lastState());   // refresh the inline assignee/status controls
       }).catch(() => {});
     }
     // The assignee + status controls shown on each finding card — icon action buttons matching the
@@ -4789,7 +4792,7 @@
         if (data && "record" in data) {
           if (data.record) workflowByFinding.set(String(fid), data.record);
           else workflowByFinding.delete(String(fid));
-          if (lastState) render(lastState);
+          if (DfirState.lastState()) render(DfirState.lastState());
         }
       }).catch(() => {});
     }
@@ -4814,7 +4817,7 @@
       // refresh), and replacing innerHTML under an in-progress drag cancels the browser's drag
       // gesture — the #1 cause of "can't reorder". The dragend handler re-renders once settled.
       if (pinDragActive) return;
-      const byId = new Map((lastState && lastState.findings ? lastState.findings : []).map(f => [String(f.id), f]));
+      const byId = new Map((DfirState.lastState() && DfirState.lastState().findings ? DfirState.lastState().findings : []).map(f => [String(f.id), f]));
       const rows = pinnedList.map(p => ({ pin: p, f: byId.get(String(p.findingId)) })).filter(x => x.f);
       if (countEl) countEl.textContent = rows.length ? ` (${rows.length} of ${pinLimit})` : "";
       // Skip the rebuild when nothing visible changed (same ids/order/severity/title) so frequent
@@ -4873,7 +4876,7 @@
       pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
       if (typeof data.limit === "number") pinLimit = data.limit;
       renderPinned();
-      if (lastState) render(lastState);
+      if (DfirState.lastState()) render(DfirState.lastState());
     }
 
     // Drag-to-reorder within the strip — POINTER-based, NOT native HTML5 drag-and-drop. Native DnD
@@ -5356,7 +5359,6 @@
     let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
     let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
     let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
-    let lastSuperData = null;       // last super-timeline query response (for client-side re-render on tag/comment/star change)
     const superCaseId = () => document.getElementById("caseId").value.trim();
 
     // ── Content-based tagger (Timesketch tagger analyzer, ported) ────────────────────────────────
@@ -5592,7 +5594,7 @@
     // caller (loadTags/loadComments/toggleStar) has already refreshed tagsByTarget/commentsByTarget/
     // starredEvents, so the cached rows pick up the new state. No-op if the section was never loaded.
     function refreshSuperRows() {
-      if (lastSuperData && document.getElementById("superTimelineList")) renderSuperTimeline(lastSuperData, superCaseId());
+      if (DfirState.lastSuperData() && document.getElementById("superTimelineList")) renderSuperTimeline(DfirState.lastSuperData(), superCaseId());
     }
 
     function superQueryString() {
@@ -5702,7 +5704,7 @@
     function stCloseDropdowns() { document.querySelectorAll(".st-dd .src-filter-menu").forEach(m => { m.hidden = true; }); }
 
     function renderSuperTimeline(data, caseId) {
-      lastSuperData = data;   // cache for client-side re-render on tag/comment/star change
+      DfirState.setLastSuperData(data);   // cache for client-side re-render on tag/comment/star change
       superTotal = Number(data.total) || 0;
       const badge = document.getElementById("superTimelineBadge");
       if (badge) {
@@ -5844,12 +5846,12 @@
 
     function toggleSuperPromote(id, checked) {
       if (checked) superPromote.add(id); else superPromote.delete(id);
-      if (lastSuperData) updateSuperSelBar(currentSuperRows());
+      if (DfirState.lastSuperData()) updateSuperSelBar(currentSuperRows());
     }
 
     // The rows currently on screen (starred-only is server-side now, so this is just the page).
     function currentSuperRows() {
-      return (lastSuperData && Array.isArray(lastSuperData.events)) ? lastSuperData.events : [];
+      return (DfirState.lastSuperData() && Array.isArray(DfirState.lastSuperData().events)) ? DfirState.lastSuperData().events : [];
     }
 
     // Select-all: tick/untick every row currently shown on this page.
@@ -5976,7 +5978,7 @@
     function genViewSummary() {
       const caseId = superCaseId();
       if (!caseId) return;
-      if (lastSuperData && !superTotal) { stRenderNote("Nothing to summarize — the current filters match no events."); return; }
+      if (DfirState.lastSuperData() && !superTotal) { stRenderNote("Nothing to summarize — the current filters match no events."); return; }
       const btn = document.getElementById("stViewSummary");
       btn.disabled = true; btn.textContent = "✨ summarizing…";
       // Exactly the filter set the timeline query uses, minus pagination (the summary covers the
@@ -6678,11 +6680,11 @@
       const wasStarred = starredEvents.has(id);
       // Optimistic flip for instant feedback; loadTags() re-derives the truth after the server call.
       if (wasStarred) starredEvents.delete(id); else starredEvents.add(id);
-      renderTimelineEvents(lastFt);
+      renderTimelineEvents(DfirState.lastFt());
       refreshSuperRows();   // the star may belong to a super-timeline row (shared ("event", id) key)
       const revert = () => {
         if (wasStarred) starredEvents.add(id); else starredEvents.delete(id);
-        renderTimelineEvents(lastFt); refreshSuperRows();
+        renderTimelineEvents(DfirState.lastFt()); refreshSuperRows();
       };
       const req = wasStarred
         ? fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id) || "")}`, { method: "DELETE" })
@@ -6708,7 +6710,7 @@
         bar.classList.remove("active");
       }
     }
-    function clearSelection() { selectedEvents.clear(); updateBulkBar(); renderTimelineEvents(lastFt); swSelToolbar(); swRenderCanvas(); }
+    function clearSelection() { selectedEvents.clear(); updateBulkBar(); renderTimelineEvents(DfirState.lastFt()); swSelToolbar(); swRenderCanvas(); }
     function updateIocBulkBar() {
       const bar = document.getElementById("iocBulkBar");
       if (!bar) return;
@@ -6719,7 +6721,7 @@
         bar.classList.remove("active");
       }
     }
-    function clearIocSelection() { selectedIocs.clear(); if (lastState) renderIocs(lastState.iocs || []); }
+    function clearIocSelection() { selectedIocs.clear(); if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); }
     // Bulk star/unstar N events: any unstarred → star all, else unstar all. SERIALIZED requests —
     // TagsStore.add() is read-modify-write on tags.json (same reason addTag()'s bulk mode awaits
     // each call). Set updates are reconciled into the UI by the per-tag ws broadcasts and the final loadTags().
@@ -6767,12 +6769,12 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedEvents.size) return;
       const ids = [...selectedEvents];
-      const descById = new Map((lastFt || []).map(e => [String(e.id), String(e.description || "")]));
+      const descById = new Map((DfirState.lastFt() || []).map(e => [String(e.id), String(e.description || "")]));
       const [firstId, ...restIds] = ids;
       const extraRefs = restIds.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
       openFalsePositiveModal("event", firstId, descById.get(firstId) ?? "", extraRefs, () => {
         selectedEvents.clear();
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
         swSelToolbar(); swRenderCanvas();   // clear the rings + hide the swimlane selection bar
       });
     }
@@ -6806,13 +6808,13 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedIocs.size) return;
       const ids = [...selectedIocs];
-      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
       const [firstId, ...restIds] = ids;
       const firstVal = iocById.get(firstId) ?? firstId;
       const extraRefs = restIds.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
       openFalsePositiveModal("ioc", firstVal, firstVal, extraRefs, () => {
         selectedIocs.clear();
-        if (lastState) renderIocs(lastState.iocs || []);
+        if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
       });
     }
 
@@ -6848,13 +6850,13 @@
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedFindings.size) return;
       const ids = [...selectedFindings];
-      const titleById = new Map((lastState?.findings || []).map(f => [f.id, f.title]));
+      const titleById = new Map((DfirState.lastState()?.findings || []).map(f => [f.id, f.title]));
       const [firstId, ...restIds] = ids;
       const firstTitle = titleById.get(firstId) ?? firstId;
       const extraRefs = restIds.map(id => ({ kind: "finding", ref: titleById.get(id) ?? id, label: titleById.get(id) ?? id }));
       openFalsePositiveModal("finding", firstTitle, firstTitle, extraRefs, () => {
         selectedFindings.clear();
-        if (lastState) render(lastState);
+        if (DfirState.lastState()) render(DfirState.lastState());
       });
     }
     function pushFindingToTicket(target, findingId) {
@@ -6904,7 +6906,7 @@
     async function bulkExcludeIocs() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId || !selectedIocs.size) return;
-      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
       const values = [...selectedIocs].map(id => iocById.get(id)).filter(Boolean);
       if (!values.length) return;
       if (!confirm(`Permanently exclude ${values.length} IOC value(s) from this case?\n\nThey are removed now and will never be re-imported or enriched. This cannot be undone (deleting the exclude rule later will not bring them back).`)) return;
@@ -6925,10 +6927,10 @@
         ? `excluded ${succeeded} value(s), purged ${purged} IOC(s) total`
         : `excluded ${succeeded} of ${values.length} value(s) (${values.length - succeeded} failed), purged ${purged} IOC(s) total`;
       selectedIocs.clear();
-      if (lastState) renderIocs(lastState.iocs || []);
+      if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
     }
     function bulkCopyIocs() {
-      const iocById = new Map((lastState?.iocs || []).map(i => [i.id, i.value]));
+      const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
       const text = [...selectedIocs].map(id => iocById.get(id) ?? id).join("\n");
       navigator.clipboard.writeText(text).then(() => {
         const statusEl = document.getElementById("status");
@@ -6960,7 +6962,7 @@
       (t.match(HUNT_HASH) || []).forEach((v) => pushUniq(c.hashes, v.toLowerCase()));
       (t.match(HUNT_URL) || []).forEach((v) => pushUniq(c.urls, v.replace(/[).,]+$/, "")));
       const tl = t.toLowerCase();
-      for (const ioc of (lastState && lastState.iocs) || []) {
+      for (const ioc of (DfirState.lastState() && DfirState.lastState().iocs) || []) {
         const val = String(ioc.value || ""); if (!val) continue;
         const esc = val.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         if (!new RegExp(`(^|[^a-z0-9.])${esc}([^a-z0-9.]|$)`).test(tl)) continue;   // boundary-matched
@@ -7111,7 +7113,7 @@
       if (c.processes.length) sel.push(`    Image|endswith: '\\${baseName(c.processes[0])}'`);
       if (c.parent) sel.push(`    ParentImage|endswith: '\\${baseName(c.parent)}'`);
       if (c.hashes.length) sel.push(`    Hashes|contains: '${c.hashes[0]}'`);
-      const tags = (lastState && Array.isArray(c._mitre) && c._mitre.length)
+      const tags = (DfirState.lastState() && Array.isArray(c._mitre) && c._mitre.length)
         ? c._mitre.map((t) => `  - attack.${String(t).toLowerCase()}`).join("\n") : "  - attack.execution";
       return `title: Hunt - ${String(c.label).slice(0, 60)}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
     }
@@ -7161,9 +7163,9 @@
     function findingSigmaContext(f) {
       const c = { hashes: [], ips: [], domains: [], urls: [], paths: [], processes: [], parent: "", host: "" };
       const wantIds = f.relatedEventIds && f.relatedEventIds.length ? new Set(f.relatedEventIds) : null;
-      const events = (lastFt || []).filter((e) => wantIds ? wantIds.has(e.id) : (e.relatedFindingIds || []).includes(f.id));
+      const events = (DfirState.lastFt() || []).filter((e) => wantIds ? wantIds.has(e.id) : (e.relatedFindingIds || []).includes(f.id));
       for (const e of events) mergeSigmaCtx(c, huntContextFor("event", e));
-      const iocsById = new Map(((lastState && lastState.iocs) || []).map((i) => [i.id, i]));
+      const iocsById = new Map(((DfirState.lastState() && DfirState.lastState().iocs) || []).map((i) => [i.id, i]));
       for (const id of (f.relatedIocs || [])) {
         const ioc = iocsById.get(id);
         if (ioc) mergeSigmaCtx(c, huntContextFor("ioc", ioc));
@@ -7266,7 +7268,7 @@
     }
 
     function exportFindingSigma(findingId) {
-      const f = ((lastState && lastState.findings) || []).find((x) => x.id === findingId);
+      const f = ((DfirState.lastState() && DfirState.lastState().findings) || []).find((x) => x.id === findingId);
       if (!f) return;
       const yaml = findingSigmaYaml(f, findingSigmaContext(f));
       if (!yaml) {
@@ -7350,12 +7352,12 @@
 
     function openHuntModal(kind, id) {
       let entity = kind === "ioc"
-        ? ((lastState && lastState.iocs) || []).find((i) => String(i.id) === String(id))
-        : (lastFt || []).find((e) => String(e.id) === String(id));
+        ? ((DfirState.lastState() && DfirState.lastState().iocs) || []).find((i) => String(i.id) === String(id))
+        : (DfirState.lastFt() || []).find((e) => String(e.id) === String(id));
       // Super-timeline rows may reference a RAW super event that was never promoted into the
-      // forensic state, so it's absent from lastFt — fall back to the cached super page data.
+      // forensic state, so it's absent from DfirState.lastFt() — fall back to the cached super page data.
       if (!entity && kind === "event") {
-        entity = ((lastSuperData && lastSuperData.events) || []).find((e) => String(e.id) === String(id));
+        entity = ((DfirState.lastSuperData() && DfirState.lastSuperData().events) || []).find((e) => String(e.id) === String(id));
       }
       if (!entity) return;
       const c = huntContextFor(kind, entity);
@@ -8899,7 +8901,7 @@
       const d = (m && m.lastDiff) || { added: [], removed: [] };
       // Rebuild the "new event" set used to highlight timeline rows, then re-render the timeline.
       newEventKeys = new Set((d.added || []).map(evKey));
-      if (lastFt) renderTimelineEvents(lastFt);
+      if (DfirState.lastFt()) renderTimelineEvents(DfirState.lastFt());
       if (!m || !m.lastImportedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
       el.style.display = "block";
       const added = m.addedCount || 0, removed = m.removedCount || 0;
@@ -8967,7 +8969,7 @@
       const d = (m && m.iocsDiff) || { added: [], removed: [] };
       // Rebuild the "new IOC" set (keyed by exact value), then re-render the IOC list.
       newIocKeys = new Set((d.added || []).map(x => x.value));
-      if (lastState) renderIocs(lastState.iocs || []);
+      if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
       if (!m || !m.lastImportedAt) { el.innerHTML = ""; el.style.display = "none"; return; }
       el.style.display = "block";
       const added = m.iocsAddedCount || 0, removed = m.iocsRemovedCount || 0;
@@ -9090,7 +9092,7 @@
     // Single AI call per click: what happened, why it matters, ATT&CK mapping, pivot queries,
     // and evidence for/against maliciousness. Ephemeral — no state change.
     function openExplainPanel(caseId, eventId) {
-      const event = lastState && lastState.forensicTimeline && lastState.forensicTimeline.find(e => e.id === eventId);
+      const event = DfirState.lastState() && DfirState.lastState().forensicTimeline && DfirState.lastState().forensicTimeline.find(e => e.id === eventId);
       const overlay = document.getElementById("explainOverlay");
       const titleEl = document.getElementById("explainEventTitle");
       const bodyEl = document.getElementById("explainBody");
@@ -10591,7 +10593,7 @@
     // IOC panel renders them); fall back to the raw value when it isn't a tracked IOC.
     function qaResolveIocId(val, iocid) {
       if (iocid) return iocid;
-      const m = ((lastState && lastState.iocs) || []).find(i => String(i.value).toLowerCase() === String(val).toLowerCase());
+      const m = ((DfirState.lastState() && DfirState.lastState().iocs) || []).find(i => String(i.value).toLowerCase() === String(val).toLowerCase());
       return (m && m.id) || val;
     }
 
@@ -10632,7 +10634,7 @@
         // tag the same way or the red pill never shows and the action looks like it did nothing.
         // Resolve the clicked value to its tracked IOC id (an IOC-row click already carries it; an
         // event-description value is looked up by value); fall back to the raw value otherwise.
-        const iocs = (lastState && lastState.iocs) || [];
+        const iocs = (DfirState.lastState() && DfirState.lastState().iocs) || [];
         const match = iocs.find(i => String(i.value).toLowerCase() === String(val).toLowerCase());
         const targetId = iocid || (match && match.id) || val;
         const tracked = !!(iocid || match);
@@ -10891,7 +10893,7 @@
     function loadIocSources(caseId) {
       fetch(`/cases/${caseId}/ioc-sources`).then(r => r.json()).then(m => {
         iocSourcesById = (m && typeof m === "object") ? m : {};
-        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocSourcesReload() {
@@ -10912,7 +10914,7 @@
     function loadIocProvenance(caseId) {
       fetch(`/cases/${caseId}/ioc-provenance`).then(r => r.json()).then(m => {
         iocProvenance = (m && typeof m === "object") ? m : {};
-        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocProvenanceReload() {
@@ -10950,7 +10952,7 @@
     function loadIocRisk(caseId) {
       fetch(`/cases/${caseId}/ioc-risk`).then(r => r.json()).then(m => {
         iocRisk = (m && typeof m === "object") ? m : {};
-        if (lastState) renderIocs((projectScope(lastState).iocs) || []);
+        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocRiskReload() {
@@ -11051,7 +11053,7 @@
     // description, not just a bare "[1][2][3]" footnote list — the footnote still appears, but
     // as a jump link at the end of that event's own line). citeIds is the finding's own list of
     // cited event ids (may reference events outside suppEventsByFinding's back-link set, so this
-    // looks each one up in lastFt directly rather than only the passed-in `events`).
+    // looks each one up in DfirState.lastFt() directly rather than only the passed-in `events`).
     function findingEvidenceDetails(f, caseId, screenshots, events, iocs, citeIds) {
       const rows = [];
       if (f.confidenceReason) {
@@ -11097,7 +11099,7 @@
       }
       const ids = Array.from(new Set((citeIds || []).map(String).filter(Boolean)));
       if (ids.length) {
-        const byId = new Map((lastFt || []).map(e => [String(e.id), e]));
+        const byId = new Map((DfirState.lastFt() || []).map(e => [String(e.id), e]));
         const items = ids.map((id, i) => {
           const e = byId.get(id);
           const ts = e ? esc(e.timestamp || "(undated)") : "(not in current scope)";
@@ -11124,7 +11126,7 @@
       if (!phasesData.length) { el.innerHTML = "<span data-safe-style='color:var(--text-muted)'>No dated events to group into phases yet.</span>"; return; }
       // Event details for expansion come from the in-scope timeline already on the page.
       const evById = {};
-      for (const e of (lastFt || [])) evById[String(e.id)] = e;
+      for (const e of (DfirState.lastFt() || [])) evById[String(e.id)] = e;
       // Honor the global search-bar filter: keep only each phase's matching events, and drop phases
       // with none — so "I searched an IP" narrows the phases the same way it narrows the timeline.
       const filtered = _hasActiveFilter();
@@ -11435,7 +11437,7 @@
       if (!items.length) { el.innerHTML = "<div class='eg-empty'>No evidence gaps flagged yet — surfaced once the case has a Critical/High finding (run Synthesize).</div>"; return; }
       // Deploy a collect directive only for a KNOWN case host (short-host match) when Velociraptor is
       // configured — reuses the #8 .collect-deploy button + its global delegated click handler.
-      const knownHosts = new Set(((lastState && lastState.forensicTimeline) || []).map(e => egShortHost(e.asset)).filter(Boolean));
+      const knownHosts = new Set(((DfirState.lastState() && DfirState.lastState().forensicTimeline) || []).map(e => egShortHost(e.asset)).filter(Boolean));
       const collectBtn = (c) => {
         if (!c || !c.host) return "";
         const what = c.logSource || c.artifact || "";
@@ -11772,7 +11774,7 @@
     // Capped at 50 each — a "+N more" note covers the rest, never silently truncated.
     function renderHostRankingDetail(r) {
       const caseId = document.getElementById("caseId").value.trim();
-      const evById = new Map((lastFt || []).map(e => [String(e.id), e]));
+      const evById = new Map((DfirState.lastFt() || []).map(e => [String(e.id), e]));
       const events = (r.eventIds || []).map(id => evById.get(String(id))).filter(Boolean)
         .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
       const iocById = new Map((lastIocs || []).map(i => [String(i.id), i]));
@@ -13057,7 +13059,7 @@
     // Selection changed FROM the swimlane → refresh both bulk bars, the table, and the chart.
     function swSelectionChanged() {
       updateBulkBar(); swSelToolbar();
-      renderTimelineEvents(lastFt);   // table rows reflect the new selection
+      renderTimelineEvents(DfirState.lastFt());   // table rows reflect the new selection
       swRenderCanvas();               // dots get / lose their ring
     }
     // Selection changed FROM the table → just refresh the swimlane chrome (table already updated).
@@ -13133,12 +13135,12 @@
       evIdFilterLabel = label || "";
       const sec = document.getElementById("sec-timeline");
       if (sec) sec.classList.remove("collapsed");
-      renderTimelineEvents(lastFt || []);
+      renderTimelineEvents(DfirState.lastFt() || []);
       if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     function clearEvIdFilter() {
       evIdFilter = null; evIdFilterLabel = "";
-      renderTimelineEvents(lastFt || []);
+      renderTimelineEvents(DfirState.lastFt() || []);
     }
     // Render (or hide) the chip that shows the active "only these N events" filter + a Clear button.
     function renderEvIdFilterChip(shown, _total) {
@@ -13162,7 +13164,7 @@
       const sec = document.getElementById("sec-timeline");
       if (sec) sec.classList.remove("collapsed");
       if (swLocateInTable(id)) return;                                    // already on the current page
-      const ft = lastFt || [];
+      const ft = DfirState.lastFt() || [];
       if (!ft.some(e => String(e.id) === id)) return;                    // not in the in-scope timeline
       resetTimelineViewFilters();                                         // unhide it if a filter excluded it
       const sorted = sortTimelineEvents(ft.slice());                      // same order the table renders in
@@ -13346,7 +13348,7 @@
             filterFrom = new Date(ms0).toISOString();
             filterTo = new Date(ms1).toISOString();
             if (cfBtn) cfBtn.hidden = false;
-            renderTimelineEvents(lastFt);
+            renderTimelineEvents(DfirState.lastFt());
             refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the brushed range
             const sec = document.getElementById("sec-timeline");
             if (sec && sec.classList.contains("collapsed")) sec.classList.remove("collapsed");
@@ -13618,7 +13620,7 @@
           : (fpMarkers.length ? `(${fpMarkers.length})` : "");
       }
       // FP events are hidden from the timeline — re-render it with the new set.
-      if (lastState) render(lastState);
+      if (DfirState.lastState()) render(DfirState.lastState());
     }
     // Event ids the client confirmed as a false positive (hidden from the forensic timeline view).
     function fpEventIdSet() {
@@ -13722,7 +13724,7 @@
           fetch(`/cases/${caseId}/ioc-overrides/merge`, {
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: id, into }),
           }).then(r => r.ok ? null : r.json().then(err => Promise.reject(err.error)))
-            .then(() => { if (lastState) renderIocs(lastState.iocs || []); }));
+            .then(() => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); }));
         return;
       }
       const un = e.target.closest(".unfp-btn");
@@ -13765,7 +13767,7 @@
       _iocKeepPage = false;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       renderIocTypeFilter(iocs);
-      renderIocExcludeRules((lastState && lastState.iocExcludeRules) || []);
+      renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
@@ -13892,7 +13894,7 @@
 
     // Per-case IOC exclude rules — list/add/remove UI, IOCs section title bar (🚫 Exclude). Rules
     // ride along on every pushed state (InvestigationState.iocExcludeRules), so this just re-renders
-    // off `lastState` — no separate fetch needed.
+    // off `DfirState.lastState()` — no separate fetch needed.
     function renderIocExcludeRules(rules) {
       const btn = document.getElementById("iocExcludeBtn");
       const list = document.getElementById("iocExcludeList");
@@ -14148,9 +14150,9 @@
       // button are actually visible — otherwise the zoom silently narrows the timeline with no
       // obvious way back (the Clear button lives inside that panel).
       setSearchBarOpen(true, false);
-      renderTimelineEvents(lastFt);
+      renderTimelineEvents(DfirState.lastFt());
       refreshFilteredViews();
-      if (lastSuperData) loadSuperTimeline();
+      if (DfirState.lastSuperData()) loadSuperTimeline();
     }
     function renderTimelineHeatmap(visible) {
       const el = document.getElementById("timelineHeatmap");
@@ -14188,7 +14190,7 @@
     function renderTimelineEvents(ft) {
       // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
       // filtered/paged subset, so counts are stable as the analyst filters.
-      prevIndexClient = buildClientPrevalence((lastState && lastState.forensicTimeline) ? lastState.forensicTimeline : ft);
+      prevIndexClient = buildClientPrevalence((DfirState.lastState() && DfirState.lastState().forensicTimeline) ? DfirState.lastState().forensicTimeline : ft);
       if (!_tlKeepPage) tlPage = 0;
       _tlKeepPage = false;
       // When the corroboration lens is on, scope the Sources menu to the tools present on events that
@@ -14253,7 +14255,7 @@
       }
       _updateSearchCount(totalFiltered, ft.length);
 
-      const caseId = lastState && lastState.caseId;
+      const caseId = DfirState.lastState() && DfirState.lastState().caseId;
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
@@ -14403,7 +14405,7 @@
 
     function kbdFocusedEvent() {
       if (!focusedEventId) return null;
-      return (lastFt || []).find(e => String(e.id) === focusedEventId) || null;
+      return (DfirState.lastFt() || []).find(e => String(e.id) === focusedEventId) || null;
     }
 
     function kbdToggleFlag() {
@@ -14504,7 +14506,7 @@
 
     // Re-filter the timeline whenever a severity checkbox is toggled (no server round-trip).
     document.querySelector('.sev-legend').addEventListener('change', function(e) {
-      if (e.target.classList.contains('sev-filter')) renderTimelineEvents(lastFt);
+      if (e.target.classList.contains('sev-filter')) renderTimelineEvents(DfirState.lastFt());
     });
 
     // Source/tool filter dropdown (#131 follow-up). The button + menu are persistent in the DOM;
@@ -14518,11 +14520,11 @@
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("src-filter")) return;
         if (e.target.checked) hiddenSources.delete(e.target.value); else hiddenSources.add(e.target.value);
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.srcAll) { hiddenSources.clear(); renderTimelineEvents(lastFt); }
-        else if (e.target.dataset.srcNone) { sourceFacets(lastFt).forEach(s => hiddenSources.add(s)); renderTimelineEvents(lastFt); }
+        if (e.target.dataset.srcAll) { hiddenSources.clear(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.srcNone) { sourceFacets(DfirState.lastFt()).forEach(s => hiddenSources.add(s)); renderTimelineEvents(DfirState.lastFt()); }
       });
       // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
       document.addEventListener("click", (e) => {
@@ -14542,11 +14544,11 @@
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("origin-filter")) return;
         if (e.target.checked) hiddenOrigins.delete(e.target.value); else hiddenOrigins.add(e.target.value);
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.originAll) { hiddenOrigins.clear(); renderTimelineEvents(lastFt); }
-        else if (e.target.dataset.originNone) { originFacets(lastFt).forEach(o => hiddenOrigins.add(o)); renderTimelineEvents(lastFt); }
+        if (e.target.dataset.originAll) { hiddenOrigins.clear(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.originNone) { originFacets(DfirState.lastFt()).forEach(o => hiddenOrigins.add(o)); renderTimelineEvents(DfirState.lastFt()); }
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -14563,11 +14565,11 @@
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("host-filter")) return;
         if (e.target.checked) hiddenHosts.delete(e.target.value); else hiddenHosts.add(e.target.value);
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.hostAll) { hiddenHosts.clear(); renderTimelineEvents(lastFt); }
-        else if (e.target.dataset.hostNone) { hostFacets(lastFt).forEach(h => hiddenHosts.add(h)); renderTimelineEvents(lastFt); }
+        if (e.target.dataset.hostAll) { hiddenHosts.clear(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.hostNone) { hostFacets(DfirState.lastFt()).forEach(h => hiddenHosts.add(h)); renderTimelineEvents(DfirState.lastFt()); }
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -14582,7 +14584,7 @@
       const btn = document.getElementById("iocTypeFilterBtn");
       const menu = document.getElementById("iocTypeFilterMenu");
       if (!wrap || !btn || !menu) return;
-      const scopedIocs = () => (lastState ? (projectScope(lastState).iocs || []) : []);
+      const scopedIocs = () => (DfirState.lastState() ? (projectScope(DfirState.lastState()).iocs || []) : []);
       const rerender = () => renderIocs(scopedIocs());
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
@@ -14649,13 +14651,13 @@
       if (!arrow) return;
       timelineSort = { key: arrow.getAttribute('data-sortkey'), dir: arrow.getAttribute('data-sortdir') };
       try { localStorage.setItem('dfir_timeline_sort', timelineSort.key + ':' + timelineSort.dir); } catch {}
-      renderTimelineEvents(lastFt);
+      renderTimelineEvents(DfirState.lastFt());
     });
 
     // Re-render findings when the confidence filter changes, and persist the choice per-case
     // (debounced) so it survives a page reload — see loadConfidenceControl/saveConfidenceControl.
     document.getElementById("confFilter").addEventListener("input", function() {
-      if (lastState) render(lastState);
+      if (DfirState.lastState()) render(DfirState.lastState());
       const caseId = document.getElementById("caseId").value.trim();
       if (caseId) saveConfidenceControl(caseId, parseInt(this.value, 10) || 0);
     });
@@ -14957,7 +14959,7 @@
       // Independent of rawState — it reads the plan from the server, so it is fire-and-forget here.
       renderCollectionPlan();
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
-      lastState = rawState;
+      DfirState.setLastState(rawState);
       const state = projectScope(rawState);
       document.getElementById("summary").textContent = state.lastSummary || "—";
       document.getElementById("attackerPath").textContent = state.attackerPath || "—";
@@ -15063,7 +15065,7 @@
           (suppEventsByFinding[fid] = suppEventsByFinding[fid] || []).push(e);
         }
       }
-      lastFt = ft;
+      DfirState.setLastFt(ft);
       renderTimelineEvents(ft);
       renderKillChain(ft);
       toggleMemNextSteps(ft);   // show the Memory Next Steps panel only when Volatility/Rekall evidence exists (#101)
@@ -15619,10 +15621,10 @@
           document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
           renderScopeInfo();
           // render() projects with the freshly-updated `scope` global AND caches its argument
-          // as `lastState`, so pass the RAW state — passing projectScope(lastState) would cache
+          // as `DfirState.lastState()`, so pass the RAW state — passing projectScope(DfirState.lastState()) would cache
           // a scope-narrowed subset, permanently dropping out-of-window events on the next
           // scope widen/clear until a fresh server state arrives.
-          if (lastState) render(lastState);
+          if (DfirState.lastState()) render(DfirState.lastState());
         }
       };
     }
@@ -16642,14 +16644,14 @@
         showStarredOnly = !showStarredOnly;
         e.target.textContent = showStarredOnly ? "★ Starred" : "☆ Starred";
         e.target.classList.toggle("active", showStarredOnly);
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
         return;
       }
       // IOC verdict filter — only malicious/suspicious (from any enrichment engine)
       if (e.target.id === "iocFlaggedBtn") {
         showFlaggedIocsOnly = !showFlaggedIocsOnly;
         e.target.classList.toggle("active", showFlaggedIocsOnly);
-        if (lastState) renderIocs(lastState.iocs || []);
+        if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         return;
       }
       // IOC noise-reduction view: signal only (flagged / corroborated / enriched) vs everything.
@@ -16657,7 +16659,7 @@
         showSignalIocsOnly = !showSignalIocsOnly;
         localStorage.setItem("dfir.ioc.signalOnly", showSignalIocsOnly ? "1" : "0");
         e.target.classList.toggle("active", showSignalIocsOnly);
-        if (lastState) renderIocs(lastState.iocs || []);
+        if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         return;
       }
       // IOC provenance filter: All IOCs / Detection-linked / Telemetry-only.
@@ -16666,7 +16668,7 @@
         iocProvenanceFilter = provBtn.getAttribute("data-prov") || "all";
         const wrap = provBtn.closest(".ioc-prov-filter");
         if (wrap) wrap.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b === provBtn));
-        if (lastState) renderIocs(lastState.iocs || []);
+        if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         return;
       }
       // Finding evidence-panel chevron → toggle the sibling .finding-evidence-body open/closed.
@@ -17178,8 +17180,8 @@
       function applySearch() {
         searchTerm = gs.value.trim().toLowerCase();
         cs.hidden = !searchTerm;
-        if (lastState) render(lastState);
-        if (lastSuperData) loadSuperTimeline();   // the main filter's search term scopes the super-timeline too
+        if (DfirState.lastState()) render(DfirState.lastState());
+        if (DfirState.lastSuperData()) loadSuperTimeline();   // the main filter's search term scopes the super-timeline too
         renderFalsePositives(fpMarkers);   // search term scopes the False Positives panel too
       }
       window.applySearch = applySearch;   // exposed for cross-section pivots (Login Graph "Open in Timeline")
@@ -17187,9 +17189,9 @@
         filterFrom = utcInputToIso(ff.value);
         filterTo = utcInputToIso(ft.value);
         cfBtn.hidden = !filterFrom && !filterTo;
-        renderTimelineEvents(lastFt);
+        renderTimelineEvents(DfirState.lastFt());
         refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the time range
-        if (lastSuperData) loadSuperTimeline();   // and the super-timeline's own (intersected) time range
+        if (DfirState.lastSuperData()) loadSuperTimeline();   // and the super-timeline's own (intersected) time range
       }
 
       gs.addEventListener("input", () => {
@@ -17236,13 +17238,13 @@
       };
       wire("corrobTimeline", () => corrobTimeline,
         (v) => { corrobTimeline = v; localStorage.setItem("dfir.corrob.timeline", String(v)); },
-        () => { if (lastFt) renderTimelineEvents(lastFt); });
+        () => { if (DfirState.lastFt()) renderTimelineEvents(DfirState.lastFt()); });
       wire("corrobIocs", () => corrobIocs,
         (v) => { corrobIocs = v; localStorage.setItem("dfir.corrob.iocs", String(v)); },
-        () => { if (lastState) renderIocs(lastState.iocs || []); });
+        () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); });
       wire("corrobFindings", () => corrobFindings,
         (v) => { corrobFindings = v; localStorage.setItem("dfir.corrob.findings", String(v)); },
-        () => { if (lastState) { _tlKeepPage = true; render(lastState); } });
+        () => { if (DfirState.lastState()) { _tlKeepPage = true; render(DfirState.lastState()); } });
       // Risk lens (#63) — dedicated handler (accepts tier 2/3/4, which `wire` doesn't).
       const riskSel = document.getElementById("riskIocs");
       if (riskSel) {
@@ -17253,7 +17255,7 @@
           riskIocsFilter = (v >= 2 && v <= 4) ? v : 0;
           localStorage.setItem("dfir.risk.iocs", String(riskIocsFilter));
           riskSel.classList.toggle("active", riskIocsFilter > 0);
-          if (lastState) renderIocs(lastState.iocs || []);
+          if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         });
       }
     })();
@@ -17271,7 +17273,7 @@
         noiseChk.addEventListener("change", () => {
           hideFpNoIntel = noiseChk.checked;
           localStorage.setItem("dfir.ioc.hideNoise", hideFpNoIntel ? "1" : "0");
-          if (lastState) renderIocs(lastState.iocs || []);
+          if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         });
       }
       const sysPathChk = document.getElementById("iocHideSysPathsChk");
@@ -17280,7 +17282,7 @@
         sysPathChk.addEventListener("change", () => {
           hideSystemPaths = sysPathChk.checked;
           localStorage.setItem("dfir.ioc.hideSysPaths", hideSystemPaths ? "1" : "0");
-          if (lastState) renderIocs(lastState.iocs || []);
+          if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
         });
       }
     })();
@@ -18331,9 +18333,9 @@
         el.textContent = d.hidden ? "[details ▶]" : "[details ▼]";
       },
       zoomToTimeWindow:           (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
-      tlPagePrev:                 (el) => { if (tlPage > 0) { _tlKeepPage = true; tlPage--; renderTimelineEvents(lastFt); } },
-      tlPageNext:                 (el) => { if (tlPage < Number(el.dataset.total)) { _tlKeepPage = true; tlPage++; renderTimelineEvents(lastFt); } },
-      tlSetPageSize:              (el) => { tlPageSize = +el.value; renderTimelineEvents(lastFt); },
+      tlPagePrev:                 (el) => { if (tlPage > 0) { _tlKeepPage = true; tlPage--; renderTimelineEvents(DfirState.lastFt()); } },
+      tlPageNext:                 (el) => { if (tlPage < Number(el.dataset.total)) { _tlKeepPage = true; tlPage++; renderTimelineEvents(DfirState.lastFt()); } },
+      tlSetPageSize:              (el) => { tlPageSize = +el.value; renderTimelineEvents(DfirState.lastFt()); },
       clearEvIdFilter:            (el) => clearEvIdFilter(),
       // IOCs
       iocPagePrev:                (el) => iocPageStep(-1),
@@ -18562,9 +18564,9 @@
 
     // Published as a global rather than passed in a call because module scripts run AFTER this
     // inline one — the palette module reads this when it loads, so neither side has to wait on the
-    // other. Both fields are thunks: the registry and `lastState` are re-read on every keystroke,
+    // other. Both fields are thunks: the registry and `DfirState.lastState()` are re-read on every keystroke,
     // so a palette opened before the case loads is correct the moment it does.
-    window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => lastState };
+    window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => DfirState.lastState() };
 
     function loadSectionsOrder() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
@@ -18682,7 +18684,7 @@
       const d = {};
       document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { d[cb.dataset.key] = cb.checked; });
       saveTlDisplay(d);
-      if (typeof lastFt !== "undefined") renderTimelineEvents(lastFt);
+      if (typeof DfirState.lastFt() !== "undefined") renderTimelineEvents(DfirState.lastFt());
     }
 
     // ── Dashboard view presets (#142) ─────────────────────────────────────────
@@ -18817,7 +18819,7 @@
         // case that has never had a view chosen — the latter falls back to the default view below.
         if (k) localStorage.setItem(k, view ? view.id : CUSTOM_VIEW_MARKER);
       }
-      if (opts.rerender !== false && lastState) render(lastState);
+      if (opts.rerender !== false && DfirState.lastState()) render(DfirState.lastState());
     }
 
     // Re-apply the per-case saved view (no persist, no forced re-render — the caller's state fetch

@@ -193,3 +193,136 @@ describe("wiring", () => {
     expect(await readFile(MODULE, "utf8")).not.toMatch(/^\s*(export|import)\s/m);
   });
 });
+
+// ── TIER 1: THE CASE SNAPSHOT ──────────────────────────────────────────────────────────────────
+//
+// 84 reader functions across three cells, migrated in one change. The mechanism was already proven
+// by activeView, so what these tests are for is the migration itself: that each cell still has
+// exactly one writer, that the writer is the function that owned the variable, and — the one that
+// is genuinely new — that no reader caches the value in a local.
+
+const SNAPSHOT_CELLS = [
+  { read: "lastState", write: "setLastState", owner: "render", initial: null },
+  { read: "lastFt", write: "setLastFt", owner: "render", initial: [] },
+  { read: "lastSuperData", write: "setLastSuperData", owner: "renderSuperTimeline", initial: null },
+] as const;
+
+describe("the snapshot cells", () => {
+  const load = () => loadDashboardModule<StateApi>("dashboard-state.js").DfirState;
+
+  it.each(SNAPSHOT_CELLS)("$read starts at its pre-migration default", ({ read, initial }) => {
+    const s = load() as unknown as Record<string, () => unknown>;
+    expect(s[read]()).toEqual(initial);
+  });
+
+  // Identity, not equality: 84 readers reach into the object they get back, and a cell that cloned
+  // on read would break `lastState().findings === lastState().findings` in ways nothing would catch.
+  it.each(SNAPSHOT_CELLS)("$read hands back the very object it was given", ({ read, write }) => {
+    const s = load() as unknown as Record<string, (v?: unknown) => unknown>;
+    const value = { findings: [{ id: "f1" }] };
+    s[write](value);
+    expect(s[read]()).toBe(value);
+  });
+
+  it("notifies per cell, and only for that cell", () => {
+    const s = load();
+    const seen: string[] = [];
+    s.onLastStateChange(() => seen.push("state"));
+    s.onLastFtChange(() => seen.push("ft"));
+    s.onLastSuperDataChange(() => seen.push("super"));
+    s.setLastFt([{ a: 1 }]);
+    expect(seen).toEqual(["ft"]);
+  });
+});
+
+describe("the snapshot single-writer rule", () => {
+  const codeOnly = (source: string): string =>
+    source
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|<!--)/.test(line))
+      .join("\n");
+
+  it.each(SNAPSHOT_CELLS)("$write has exactly one call site", ({ write, read }) => {
+    const calls = [...codeOnly(dashboardClientSource()).matchAll(new RegExp(`DfirState\\.${write}\\(`, "g"))];
+    expect(calls, `${read} must keep exactly one writer`).toHaveLength(1);
+  });
+
+  it.each(SNAPSHOT_CELLS)("$write is called from $owner", async ({ write, owner }) => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const at = html.indexOf(`DfirState.${write}(`);
+    const ownerAt = html.lastIndexOf(`function ${owner}(`, at);
+    expect(ownerAt, `no ${owner}() before the write`).toBeGreaterThan(-1);
+    const nextFn = html.indexOf("\n    function ", ownerAt + 1);
+    expect(at, `the write escaped ${owner}()`).toBeLessThan(nextFn);
+  });
+
+  it.each(SNAPSHOT_CELLS)("leaves no top-level $read binding in the inline script", async ({ read }) => {
+    const html = await readFile(DASHBOARD, "utf8");
+    expect(html).not.toMatch(new RegExp(`^\\s*(let|var|const)\\s+${read}\\b`, "m"));
+  });
+});
+
+// THE RULE THIS MIGRATION TURNS ON.
+//
+// 16 of the 84 reader functions call their own writer — setExcludeTerms, loadTags, loadPins,
+// patchFindingWorkflow, applyDashboardView and eleven more all reach render() or
+// renderSuperTimeline(). Reading a bare `let` always saw the current value. Caching the accessor
+// result in a local does not, so `const s = DfirState.lastState()` at the top of one of THOSE
+// functions is a behaviour change on exactly the paths where a refetch happens mid-function.
+//
+// THE GATE IS NOT "NEVER CACHE", and the first draft of it was, which was wrong. jumpToEvent binds
+// `const ft = DfirState.lastFt() || []`, computes a page index into that array, and renders the
+// same array — a consistent snapshot across its body is the POINT, and re-reading the accessor
+// between the index and the render would be the bug. It is safe because nothing it calls reaches
+// render(), which was checked rather than assumed.
+//
+// So the rule is the intersection: do not cache a snapshot in a function that can rewrite it. That
+// is computed from the source below rather than from a list of names, because a list of sixteen
+// function names is exactly the kind of thing that is right on the day it is written.
+describe("no reader caches a snapshot it can invalidate", () => {
+  const WRITER_OF: Record<string, string> = {
+    lastState: "render",
+    lastFt: "render",
+    lastSuperData: "renderSuperTimeline",
+  };
+
+  /** Top-level functions of the inline script, by the 4-space indentation it is written at. */
+  const topLevelFunctions = (html: string): Array<{ name: string; body: string }> => {
+    const out: Array<{ name: string; body: string }> = [];
+    const re = /\n {4}function (\w+)\s*\([^)]*\)\s*\{/g;
+    for (const m of html.matchAll(re)) {
+      const from = m.index + m[0].length;
+      const end = html.indexOf("\n    }", from);
+      out.push({ name: m[1], body: html.slice(from, end < 0 ? undefined : end) });
+    }
+    return out;
+  };
+
+  it("finds the inline script's functions, so the check below is not vacuous", async () => {
+    expect(topLevelFunctions(await readFile(DASHBOARD, "utf8")).length).toBeGreaterThan(700);
+  });
+
+  it("never binds a snapshot local in a function that calls that cell's writer", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const offenders: string[] = [];
+    for (const fn of topLevelFunctions(html)) {
+      for (const [cell, writer] of Object.entries(WRITER_OF)) {
+        const binds = new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*DfirState\\.${cell}\\(\\)`).test(fn.body);
+        const calls = new RegExp(`(?:^|[^.\\w])${writer}\\(`).test(fn.body);
+        if (binds && calls) offenders.push(`${fn.name} caches ${cell} and calls ${writer}()`);
+      }
+    }
+    expect(
+      offenders,
+      "a cached snapshot goes stale the moment its writer runs. Call the accessor at each use in " +
+        "these functions, or stop them re-fetching mid-body.",
+    ).toEqual([]);
+  });
+
+  // Guards the guard: if the accessors were renamed, both regexes above would match nothing and
+  // the check would pass vacuously. There must be reads to police in the first place.
+  it("is policing a real population of reads", () => {
+    const reads = [...dashboardClientSource().matchAll(/DfirState\.(?:lastState|lastFt|lastSuperData)\(\)/g)];
+    expect(reads.length).toBeGreaterThan(100);
+  });
+});

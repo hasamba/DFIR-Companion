@@ -247,11 +247,28 @@ export interface Cell<T> {
   subscribe(fn: (value: T) => void): () => void;
 }
 
+/** Whatever the server last said. Deliberately loose — the tests care about identity, not shape. */
+export type Snapshot = Record<string, unknown> | null;
+
 export interface StateApi {
   DfirState: {
     cell<T>(initial?: T): Cell<T>;
     activeView(): { id?: string; name?: string } | null;
     setActiveView(view: unknown): { id?: string; name?: string } | null;
     onActiveViewChange(fn: (view: unknown) => void): () => void;
+
+    // Tier 1, the case snapshot. One writer each: render() for the first two,
+    // renderSuperTimeline() for the third.
+    lastState(): Snapshot;
+    setLastState(state: Snapshot): Snapshot;
+    onLastStateChange(fn: (state: Snapshot) => void): () => void;
+
+    lastFt(): unknown[];
+    setLastFt(ft: unknown[]): unknown[];
+    onLastFtChange(fn: (ft: unknown[]) => void): () => void;
+
+    lastSuperData(): Snapshot;
+    setLastSuperData(data: Snapshot): Snapshot;
+    onLastSuperDataChange(fn: (data: Snapshot) => void): () => void;
   };
 }
