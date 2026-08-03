@@ -2817,7 +2817,7 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 #ocrSearchResults .ocr-hit .ocr-snippet { font-size: 12px; margin-top: 2px; }
 #ocrSearchResults .ocr-hit mark { background: var(--sev-medium); color: #000; padding: 0 1px; border-radius: 2px; }
 #ocrSearchResults .ocr-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
-  
+
 
   #sec-now{border-color:color-mix(in oklab,var(--accent) 38%,var(--border-color));background:linear-gradient(145deg,color-mix(in oklab,var(--accent) 5%,var(--bg-secondary)),var(--bg-secondary) 45%)}
   #sec-now h2{display:flex;align-items:center;gap:8px}

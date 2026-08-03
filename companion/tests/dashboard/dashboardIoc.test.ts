@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { IocApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-ioc.js — IOC verdicts, de-duplication, display order and ATT&CK links (#415).
 
-const ioc = loadDashboardModule("dashboard-ioc.js", ["dashboard-escape.js"]);
+const ioc = loadDashboardModule<IocApi>("dashboard-ioc.js", ["dashboard-escape.js"]);
 
 // "We looked and found nothing" and "we never looked" are different answers, and callers rely on
 // the difference: `undefined` means unenriched, "unknown" means enriched-but-inconclusive.
@@ -76,11 +77,7 @@ describe("sortIocsForDisplay", () => {
       { type: "domain", value: "z" },
       { type: "ip", value: "A" },
     ]);
-    expect(sorted.map((i: { type: string; value: string }) => `${i.type}:${i.value}`)).toEqual([
-      "domain:z",
-      "ip:A",
-      "ip:b",
-    ]);
+    expect(sorted.map((i) => `${i.type}:${i.value}`)).toEqual(["domain:z", "ip:A", "ip:b"]);
   });
 
   it("does not mutate its input", () => {

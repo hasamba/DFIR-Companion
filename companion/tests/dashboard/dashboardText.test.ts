@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { TextApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-text.js — parsing, normalisation and shape-fingerprinting (#415).
 
-const t = loadDashboardModule("dashboard-text.js");
+const t = loadDashboardModule<TextApi>("dashboard-text.js");
 
 // The pipe-delimited editors (playbook tasks, hypotheses, custody entries) all round-trip through
 // this pair. Neither is quote-aware or escape-aware, so a pipe inside a field splits it — worth
@@ -157,7 +158,7 @@ describe("custodyGroupByArtifact", () => {
       { artifactPath: "a", n: 3 },
     ]);
     expect([...grouped.keys()]).toEqual(["a", "b"]);
-    expect(grouped.get("a").map((r: { n: number }) => r.n)).toEqual([1, 3]);
+    expect(grouped.get("a")?.map((r) => r.n)).toEqual([1, 3]);
   });
 });
 
@@ -212,8 +213,8 @@ describe("buildClientPrevalence", () => {
       { description: "cmd /c 3", asset: "H2" },
     ]);
     const entry = idx.get("desc:cmd /c <n>");
-    expect(entry.count).toBe(3);
-    expect([...entry.hosts]).toEqual(["h1", "h2"]);
+    expect(entry?.count).toBe(3);
+    expect([...(entry?.hosts ?? [])]).toEqual(["h1", "h2"]);
   });
 
   it("skips events with no fingerprint rather than bucketing them together", () => {
@@ -223,7 +224,7 @@ describe("buildClientPrevalence", () => {
 
   it("records a hashed event with no asset as a host-less occurrence", () => {
     const entry = t.buildClientPrevalence([{ sha256: "ab" }]).get("hash:ab");
-    expect(entry.count).toBe(1);
-    expect(entry.hosts.size).toBe(0);
+    expect(entry?.count).toBe(1);
+    expect(entry?.hosts.size).toBe(0);
   });
 });

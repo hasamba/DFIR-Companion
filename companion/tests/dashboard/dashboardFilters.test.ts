@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { FiltersApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-filters.js — the search, exclude and relevance predicates (#415).
@@ -7,7 +8,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // from a test, so "does the search box look inside MITRE technique IDs" was answerable only by
 // reading 19,000 lines of inline script.
 
-const f = loadDashboardModule("dashboard-filters.js");
+const f = loadDashboardModule<FiltersApi>("dashboard-filters.js");
 
 describe("_evMatchesSearch", () => {
   const event = {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FragmentsApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-fragments.js — data in, escaped markup string out (#415).
@@ -8,7 +9,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // exists because of unsafe DOM sinks, so each builder gets a "what happens with a payload in it"
 // case rather than only a happy path.
 
-const f = loadDashboardModule("dashboard-fragments.js", [
+const f = loadDashboardModule<FragmentsApi>("dashboard-fragments.js", [
   "dashboard-escape.js",
   "dashboard-time.js",
   "dashboard-values.js",

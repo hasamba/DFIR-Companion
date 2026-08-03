@@ -1,0 +1,257 @@
+// Hand-written types for the eight public/js/dashboard-*.js helper modules (#415).
+//
+// Those files are plain JS with no .d.ts, so these are a CLAIM about their surface rather than a
+// derivation from it. Two things keep the claim honest:
+//
+//   - tests/dashboard/dashboardModules.test.ts asserts at runtime that every function each module
+//     declares is published, and that every one of the 95 moved names resolves as a global. A
+//     signature here for a function that no longer exists fails there, not silently.
+//   - the suites that use these interfaces call the functions for real, so a wrong parameter or
+//     return shape shows up as a failing assertion rather than a passing cast.
+//
+// THE SIGNATURES ARE AS PERMISSIVE AS THE JAVASCRIPT REALLY IS, on purpose. `unknown` where a
+// helper does `String(x)` on its argument, `| null` where it guards for absence. Tightening them
+// past what the code accepts would make the edge cases these suites exist to pin —
+// `activityTimeAgo(null)`, `truncate(12345, 3)`, `toolForExt(".evtx", {})` — fail to compile,
+// which would be the types lying about the code under test. Where a function is genuinely
+// polymorphic the parameter is `unknown` and the test narrows.
+//
+// This replaced a `Record<string, any>` in the shared loader. That left all ~300 calls in these
+// suites unchecked and put an eslint suppression in the one helper every dashboard test imports,
+// which is how a deliberately small, fully-enforced rule set erodes.
+
+/** A timeline event, as much of one as the helpers actually read. */
+export interface EventLike {
+  timestamp?: string | null;
+  description?: string | null;
+  asset?: string | null;
+  severity?: string;
+  sources?: Array<string | null | undefined> | null;
+  mitreTechniques?: string[];
+  artifactName?: string;
+  relatedFindingIds?: string[];
+  sha256?: string;
+  md5?: string;
+  path?: string;
+  processName?: string;
+  parentName?: string;
+  chainSignature?: string;
+}
+
+export interface IocLike {
+  id?: string;
+  type?: string;
+  value?: string;
+  enrichments?: Array<{
+    source?: string;
+    verdict?: string;
+    score?: string;
+    tags?: string[];
+    link?: string;
+  }>;
+}
+
+export interface FindingLike {
+  title?: string | null;
+  description?: string | null;
+  mitreTechniques?: string[];
+}
+
+/** A false-positive mark, whose five text fields are all searched. */
+export interface FpMarkLike {
+  kind?: string;
+  ref?: string;
+  label?: string;
+  reason?: string;
+  note?: string;
+}
+
+export interface EscapeApi {
+  esc(s: unknown): string;
+  escAttr(s: unknown): string;
+}
+
+export interface TimeApi {
+  isoToUtcInput(iso: string | null | undefined): string;
+  utcInputToIso(v: string | null | undefined): string | null;
+  lgAgo(iso: string | null | undefined): string;
+  veloClientsAge(updatedAt: string | null | undefined): string;
+  veloMonAge(iso: string | null | undefined): string;
+  relTime(iso: string | null | undefined): string;
+  fmtTime(iso: string): string;
+  mcpJobDuration(ms: number): string;
+  activityTimeAgo(iso: string | null | undefined): string;
+  cockpitAge(value: string | null | undefined): string;
+  skewOffsetLabel(ms: number): string;
+}
+
+export interface TextApi {
+  parseRows(text: string, keys: string[]): Array<Record<string, string>>;
+  rowsToText(arr: Array<Record<string, string>> | null, keys: string[]): string;
+  linesToArray(text: string): string[];
+  /** `String(s)` first, so anything goes in. */
+  truncate(s: unknown, n: number): string;
+  splitEventTitle(desc: string): { title: string; rest: string };
+  huntRefang(s: unknown): string;
+  egShortHost(v: unknown): string;
+  mdToHtml(src: string | null | undefined): string;
+  custodyGroupByArtifact<T extends { artifactPath: string }>(records: T[]): Map<string, T[]>;
+  clientCommandShape(text: unknown): string;
+  clientPatternKey(e: EventLike): string;
+  buildClientPrevalence(events: EventLike[] | null): Map<string, { count: number; hosts: Set<string> }>;
+  arrayBufferToBase64(buffer: ArrayBufferLike): string;
+}
+
+export interface GlyphsApi {
+  gearPath(cx: number, cy: number, R: number, r: number, teeth: number): string;
+  assetIcon(type: string, cx: number, cy: number, color: string): string;
+  legendIcon(type: string): string;
+  glyphDataUri(innerSvg: string, size?: number): string;
+  evSevColor(sev: string | undefined): string;
+  evNodeGlyph(n: { kind?: string; maxSeverity?: string }, x: number, y: number, color: string | null): string;
+  tagColor(label: string): string;
+  geoSevColor(sev: string | undefined): string;
+}
+
+export interface FiltersApi {
+  realSourceCount(sources: Array<string | null | undefined> | null, hidden?: Set<string>): number;
+  _evMatchesSearch(e: EventLike, q: string): boolean;
+  _iocMatchesSearch(i: IocLike, q: string): boolean;
+  _findingMatchesSearch(f: FindingLike, q: string): boolean;
+  _evMatchesExclude(e: EventLike, terms: Array<string | null | undefined>): boolean;
+  _iocMatchesExclude(i: IocLike, terms: Array<string | null | undefined>): boolean;
+  _findingMatchesExclude(f: FindingLike, terms: Array<string | null | undefined>): boolean;
+  _fpMatchesSearch(m: FpMarkLike, q: string): boolean;
+  _fpMatchesExclude(m: FpMarkLike, terms: Array<string | null | undefined>): boolean;
+  _evMatchesTimeRange(e: EventLike, from: string | null, to: string | null): boolean;
+  isFindingFalsePositive(title: string | null, fpTitles: string[]): boolean;
+  ftOriginOf(e: EventLike): string;
+  originFacets(ft: EventLike[] | null): string[];
+  isLowSignalEvent(e: EventLike): boolean;
+  lowSignalChip(e: EventLike): string;
+}
+
+export interface IocApi {
+  verdictColor(v: string | undefined): string;
+  attackUrl(id: string | null): string | null;
+  mitreLinks(ids: string[] | null): string;
+  /** `undefined` for an IOC that was never enriched — not "unknown". */
+  worstIocVerdict(ioc: IocLike): string | undefined;
+  scoreCoversTag(score: string, tag: string | null): boolean;
+  enrichBadges(ioc: IocLike): string;
+  iocFlagged(i: IocLike): boolean;
+  dedupeIocsById(iocs: IocLike[]): IocLike[];
+  sortIocsForDisplay(iocs: IocLike[]): IocLike[];
+}
+
+/** The two element shapes the value helpers read off a node they are handed. */
+export interface ElementLike {
+  dataset?: Record<string, string | undefined>;
+  getClientRects?(): unknown[];
+  hasAttribute?(name: string): boolean;
+  querySelector?(sel: string): unknown;
+}
+
+export interface JobView {
+  job: { id?: string; kind: string; label?: string; status: string };
+  cancel?: boolean;
+  resume?: boolean;
+  detail: string;
+}
+
+export interface ValuesApi {
+  _workflowInitials(name: string): string;
+  pbLocalStats(tasks: Array<{ status: string }>): { total: number; done: number; completionPct: number };
+  ticketLabel(target: string | undefined): string;
+  veloTimeScopeBody(form: ElementLike): { preset?: string; start?: string; end?: string } | undefined;
+  veloTimeScopeIncomplete(form: ElementLike): boolean;
+  toolForExt(ext: string, status: unknown): string | null;
+  suggestToolForExt(ext: string, status: unknown): string | null;
+  toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
+  jobMenuView(j: Record<string, unknown>): JobView;
+  updateJobRow(row: ElementLike, view: JobView): void;
+  deepPassResultKey(cid: string): string;
+  swCanvasXY(
+    e: { clientX: number; clientY: number },
+    canvas: {
+      width: number;
+      height: number;
+      getBoundingClientRect(): { left: number; top: number; width: number; height: number };
+    },
+  ): { x: number; y: number };
+  eventDeepLink(caseId: string, id: string): string;
+  rvStatusLabel(workflow: { status?: string } | undefined): string;
+  analysisRunLabel(run: {
+    kind: string;
+    configuration?: { provider?: string; model?: string };
+    startedAt: string;
+  }): string;
+  fileToBase64(file: unknown): Promise<string>;
+  paletteVisible(el: ElementLike | null): boolean;
+  paletteSectionKeywords(label: string): string[];
+  isSectionDataOpen(el: ElementLike): boolean;
+  stabHidden(btn: ElementLike, mode: string): boolean;
+  wizFieldId(envKey: string): string;
+  /**
+   * The blanked-credential body the settings pane PUTs back. Spelled out rather than
+   * `Record<string, unknown>` because the point of the function is which credential fields it
+   * empties, and the tests assert on exactly those.
+   */
+  ntfChannelToBody(ch: Record<string, unknown>): {
+    type?: string;
+    name?: string;
+    enabled?: boolean;
+    minSeverity?: string;
+    events?: unknown;
+    smtp?: {
+      host?: string;
+      port?: number;
+      secure?: boolean;
+      from?: string;
+      to?: string[];
+      username?: string;
+      password?: string;
+      rejectUnauthorized?: boolean;
+    };
+    telegram?: { botToken: string; chatId?: string };
+    webhookUrl?: string;
+  };
+  ntfEventsSummary(ev: Record<string, boolean | undefined>): string;
+}
+
+export interface FragmentsApi {
+  mentionHtml(text: string): string;
+  ticketPushChips(id: string): string;
+  renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;
+  askStatusBadge(s: string | undefined): string;
+  jobRowHtml(view: JobView): string;
+  qaSpan(type: string, val: string, ctx?: { evid?: unknown; iocid?: unknown }): string;
+  citeFindings(ids: Array<string | null> | null): string;
+  complianceDueBadge(deadline: { status?: string; remainingDays?: number; dueAt?: string } | null): string;
+  ceChip(value: string, kind: string, auto: boolean): string;
+  evidenceLinks(caseId: string, files: Array<string | null> | null): string;
+  cockpitCardControls(card: Record<string, unknown>, parked: boolean): string;
+  cockpitCardHtml(card: Record<string, unknown>, parked: boolean): string;
+  rvAnnotationRows(
+    workflow: { versionId?: string; annotations?: Array<Record<string, unknown>> } | undefined,
+  ): string;
+  wizRenderFields(fields: Array<{ key: string; label: string; hint?: string; secret?: boolean }>): string;
+  caseStatsBarChart(days: Array<{ date: string; imports: number; rows: number }>): string;
+  ntfTargetSummary(ch: Record<string, unknown>): string;
+}
+
+/** A cell as js/dashboard-state.js publishes it. */
+export interface Cell<T> {
+  get(): T;
+  set(next: T): T;
+  subscribe(fn: (value: T) => void): () => void;
+}
+
+export interface StateApi {
+  DfirState: {
+    cell<T>(initial?: T): Cell<T>;
+    activeView(): { id?: string; name?: string } | null;
+    setActiveView(view: unknown): { id?: string; name?: string } | null;
+    onActiveViewChange(fn: (view: unknown) => void): () => void;
+  };
+}

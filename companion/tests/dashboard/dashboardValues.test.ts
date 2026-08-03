@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ValuesApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-values.js — labels, keys, lookups and predicates (#415).
@@ -7,7 +8,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // for one: they never touch `document`, so a stub with the two properties they read is enough, and
 // that is exactly what makes them testable at all.
 
-const v = loadDashboardModule("dashboard-values.js");
+const v = loadDashboardModule<ValuesApi>("dashboard-values.js");
 
 describe("_workflowInitials", () => {
   it.each([
@@ -194,7 +195,7 @@ describe("rvStatusLabel / analysisRunLabel", () => {
 
 describe("fileToBase64", () => {
   it("resolves with the payload after the data: prefix", async () => {
-    const sandbox = loadDashboardModule("dashboard-values.js", [], {
+    const sandbox = loadDashboardModule<ValuesApi>("dashboard-values.js", [], {
       FileReader: class {
         onload: (() => void) | null = null;
         onerror: (() => void) | null = null;
@@ -209,7 +210,7 @@ describe("fileToBase64", () => {
   });
 
   it("rejects when the read fails", async () => {
-    const sandbox = loadDashboardModule("dashboard-values.js", [], {
+    const sandbox = loadDashboardModule<ValuesApi>("dashboard-values.js", [], {
       FileReader: class {
         onerror: (() => void) | null = null;
         readAsDataURL() {
@@ -333,14 +334,14 @@ describe("ntfChannelToBody", () => {
       type: "email",
       smtp: { host: "h", port: 587, secure: true, from: "a", to: "b", username: "u", password: "•••" },
     });
-    expect(body.smtp.password).toBe("");
+    expect(body.smtp?.password).toBe("");
     expect(body.smtp).toMatchObject({ host: "h", port: 587, secure: true, username: "u" });
-    expect(body.smtp.rejectUnauthorized).toBeUndefined();
+    expect(body.smtp?.rejectUnauthorized).toBeUndefined();
   });
 
   it("carries rejectUnauthorized only when it was set, so the server default is not overwritten", () => {
     const body = v.ntfChannelToBody({ type: "email", smtp: { rejectUnauthorized: false } });
-    expect(body.smtp.rejectUnauthorized).toBe(false);
+    expect(body.smtp?.rejectUnauthorized).toBe(false);
   });
 
   it("blanks the webhook URL for every other channel type", () => {

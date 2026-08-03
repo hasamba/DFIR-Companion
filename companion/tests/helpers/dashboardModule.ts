@@ -35,6 +35,19 @@ export const DASHBOARD_HELPER_FILES = [
 ] as const;
 
 /**
+ * public/css/dashboard.css on its own.
+ *
+ * For suites whose subject IS the CSS — the Settings search and Essential-mode rules, which are
+ * deliberately implemented as stylesheet rules rather than render-time branches so a late status
+ * answer cannot miss them. Those read the stylesheet directly rather than the whole client source,
+ * because a selector assertion that accidentally matched a string inside a JS module would pass
+ * for the wrong reason.
+ */
+export function dashboardStylesheet(): string {
+  return readFileSync(new URL("../../../public/css/dashboard.css", import.meta.url), "utf8");
+}
+
+/**
  * dashboard.html plus its stylesheet plus the eight helper files, concatenated.
  *
  * A dozen suites assert things about the dashboard by grepping dashboard.html, because until #415
@@ -51,19 +64,6 @@ export const DASHBOARD_HELPER_FILES = [
  * script tag, an inline handler attribute — keep reading dashboard.html on its own, or the check
  * starts scanning JavaScript and CSS for HTML and finds the wrong things.
  */
-/**
- * public/css/dashboard.css on its own.
- *
- * For suites whose subject IS the CSS — the Settings search and Essential-mode rules, which are
- * deliberately implemented as stylesheet rules rather than render-time branches so a late status
- * answer cannot miss them. Those read the stylesheet directly rather than the whole client source,
- * because a selector assertion that accidentally matched a string inside a JS module would pass
- * for the wrong reason.
- */
-export function dashboardStylesheet(): string {
-  return readFileSync(new URL("../../../public/css/dashboard.css", import.meta.url), "utf8");
-}
-
 export function dashboardClientSource(): string {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
   return [
@@ -76,14 +76,19 @@ export function dashboardClientSource(): string {
 /**
  * The global object a loaded helper module sees, with its own `window` self-reference.
  *
- * `any` rather than `unknown`, deliberately. These files are plain JS with no .d.ts, and the point
- * of the tests is to CALL the functions they declare — `Record<string, unknown>` would make every
- * one of the ~300 call sites in tests/dashboard a cast, which buys no safety and hides the shapes
- * the tests are there to pin. The same trade tests/reports/diagnosticsPanel.test.ts makes with its
- * `@ts-expect-error` on the module import.
+ * `unknown`, not `any`. The first draft of this helper exported `Record<string, any>` behind an
+ * `eslint-disable`, on the argument that the modules are plain JS with no .d.ts so there was
+ * nothing to check against. That was the wrong trade twice over: it left every one of the ~300
+ * helper calls in tests/dashboard unchecked — including the argument shapes those tests exist to
+ * pin — and it put a suppression in a shared helper, where it spreads to every test written
+ * against it. This repo's eslint config is deliberately small and fully enforced with no baseline
+ * file, and a suppression in the one file everything imports is exactly how that erodes.
+ *
+ * Callers pass the surface they use as `T` instead (see `loadDashboardModule`), so each test file
+ * states the contract it is testing and gets it checked. The single unavoidable cast lives at the
+ * bottom of this file, where a vm sandbox becomes that `T`.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type DashboardGlobals = Record<string, any>;
+export type DashboardGlobals = Record<string, unknown>;
 
 /**
  * Names the sandbox borrows from THIS realm instead of using the vm's own copy.
@@ -127,23 +132,61 @@ function borrowHostGlobals(sandbox: DashboardGlobals): void {
  * `extraGlobals` seeds anything else the file expects the browser to have supplied — a stub
  * FileReader, a fake element. Passing one is a statement that the function under test takes that
  * capability from the environment, which is worth having to write down.
+ *
+ * `T` IS THE POINT. Each caller declares the slice of the module's surface it uses — see the
+ * `*Api` interfaces at the top of every tests/dashboard suite — and gets its calls type-checked
+ * against it. Those interfaces are hand-written because the modules are plain JS with no .d.ts, so
+ * they are a claim rather than a derivation; the runtime assertions in dashboardModules.test.ts
+ * are what keep the claim honest, by checking that every declared function really is published.
+ *
+ * The signatures are deliberately as permissive as the functions really are (`unknown` where a
+ * helper does `String(x)`, `| null` where it guards). Tightening them past what the JS accepts
+ * would make the edge cases these suites exist to pin — `activityTimeAgo(null)`, `truncate(12345)`
+ * — fail to compile, which would be the type system lying about the code under test.
  */
-export function loadDashboardModule(
+export function loadDashboardModule<T = DashboardGlobals>(
   file: string,
   preload: string[] = [],
   extraGlobals: DashboardGlobals = {},
-): DashboardGlobals {
+): T {
+  const sandbox = freshSandbox(extraGlobals);
+  for (const dep of [...preload, file]) {
+    const path = new URL(`../../../public/js/${dep}`, import.meta.url);
+    runInContext(readFileSync(path, "utf8"), sandbox, { filename: dep });
+  }
+  // THE ONE CAST. A vm sandbox is a bag of properties the compiler cannot know; every other file
+  // in tests/dashboard is fully typed because this line absorbs that once, here, on purpose.
+  return sandbox as unknown as T;
+}
+
+/** An empty vm context seeded the way a loaded module expects to find one. */
+function freshSandbox(extraGlobals: DashboardGlobals = {}): DashboardGlobals {
   const sandbox: DashboardGlobals = {};
   borrowHostGlobals(sandbox);
   Object.assign(sandbox, extraGlobals);
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  createContext(sandbox);
-  for (const dep of [...preload, file]) {
-    const path = new URL(`../../../public/js/${dep}`, import.meta.url);
-    runInContext(readFileSync(path, "utf8"), sandbox, { filename: dep });
-  }
+  createContext(sandbox); // contextifies in place and returns the same object
   return sandbox;
+}
+
+/**
+ * The names a file adds to the global object when it runs.
+ *
+ * For asserting that a module leaks NOTHING but its namespace. js/dashboard-state.js needs that:
+ * its single-writer rule is enforced by counting `DfirState.setActiveView(` call sites, and a
+ * top-level `const` in a classic script goes into the global LEXICAL environment — shared by every
+ * other script on the page — even though it never appears on the global object. A helper hoisted
+ * out of that file's IIFE would be writable by name from anywhere, with the call-site count still
+ * reading one.
+ *
+ * Lexical bindings are invisible here by construction, so this checks the property side and the
+ * companion test proves the lexical side by trying the bypass and expecting a ReferenceError.
+ */
+export function globalsAddedBy(file: string): string[] {
+  const before = new Set(Object.keys(freshSandbox()));
+  const after = loadDashboardModule<DashboardGlobals>(file);
+  return Object.keys(after).filter((name) => !before.has(name));
 }
 
 /**

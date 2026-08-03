@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { TimeApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-time.js — every relative-time and duration formatter the dashboard had (#415).
@@ -19,7 +20,7 @@ const {
   fmtTime,
   mcpJobDuration,
   skewOffsetLabel,
-} = loadDashboardModule("dashboard-time.js");
+} = loadDashboardModule<TimeApi>("dashboard-time.js");
 
 const NOW = Date.parse("2026-03-01T12:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();

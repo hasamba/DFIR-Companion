@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { GlyphsApi } from "./dashboardApi.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-glyphs.js — SVG glyph builders and severity colour ramps (#415).
@@ -7,7 +8,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 // parsing, which is why the whole helper set loads as a synchronous classic script rather than a
 // deferred module — see public/js/dashboard-escape.js.
 
-const g = loadDashboardModule("dashboard-glyphs.js");
+const g = loadDashboardModule<GlyphsApi>("dashboard-glyphs.js");
 
 describe("gearPath", () => {
   it("closes the path and emits four segments per tooth", () => {

@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
+import type { EscapeApi } from "./dashboardApi.js";
+import type { DashboardGlobals } from "../helpers/dashboardModule.js";
 import { declaredFunctions, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // The contract shared by all eight helper modules extracted from dashboard.html in #415.
@@ -28,7 +30,7 @@ const FILES = Object.keys(MODULES);
 
 describe.each(FILES)("%s", (file) => {
   it("loads as a classic script and publishes its namespace", () => {
-    const globals = loadDashboardModule(
+    const globals = loadDashboardModule<DashboardGlobals>(
       file,
       FILES.filter((f) => f !== file),
     );
@@ -40,11 +42,11 @@ describe.each(FILES)("%s", (file) => {
   // survived in the inline script and every one was a ReferenceError, while all 29 unit tests
   // passed because they exercised the module directly and never loaded the page.
   it("publishes every function it declares", () => {
-    const globals = loadDashboardModule(
+    const globals = loadDashboardModule<DashboardGlobals>(
       file,
       FILES.filter((f) => f !== file),
     );
-    const published = Object.keys(globals[MODULES[file]]);
+    const published = Object.keys(globals[MODULES[file]] as object);
     expect([...declaredFunctions(file)].sort()).toEqual([...published].sort());
   });
 
@@ -111,7 +113,7 @@ describe("esc drift guard", () => {
   });
 
   it("still escapes both quote flavours, whichever copy runs", () => {
-    const { esc, escAttr } = loadDashboardModule("dashboard-escape.js");
+    const { esc, escAttr } = loadDashboardModule<EscapeApi>("dashboard-escape.js");
     expect(esc('<img src=x onerror="alert(1)">')).toBe('&lt;img src=x onerror="alert(1)"&gt;');
     expect(escAttr(`" onmouseover='x'`)).toBe("&quot; onmouseover=&#39;x&#39;");
     expect(esc(null)).toBe("");
@@ -157,7 +159,7 @@ describe("every moved function still resolves at its call sites", () => {
   it("provides every one of them as a global once the tagged scripts have run", async () => {
     const html = await readFile(DASHBOARD, "utf8");
     const tagged = [...html.matchAll(/<script src="\/js\/([^"]+)"><\/script>/g)].map((m) => m[1]);
-    const globals = loadDashboardModule(tagged[tagged.length - 1], tagged.slice(0, -1));
+    const globals = loadDashboardModule<DashboardGlobals>(tagged[tagged.length - 1], tagged.slice(0, -1));
     const missing = MOVED.filter((name) => typeof globals[name] !== "function");
     expect(missing, "declared in a helper module but not reachable as a global").toEqual([]);
   });

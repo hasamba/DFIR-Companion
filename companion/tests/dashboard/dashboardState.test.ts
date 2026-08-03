@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
-import { dashboardClientSource, loadDashboardModule } from "../helpers/dashboardModule.js";
+import type { Cell, StateApi } from "./dashboardApi.js";
+import { dashboardClientSource, globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-state.js — the store the rest of dashboard.html's 422 top-level bindings are
 // meant to migrate onto, and the answer to #415's actual question: who owns `lastState`.
@@ -15,7 +17,8 @@ const MODULE = new URL("../../../public/js/dashboard-state.js", import.meta.url)
 const DASHBOARD = new URL("../../../public/dashboard.html", import.meta.url);
 
 describe("dfirCell", () => {
-  const cellOf = (initial?: unknown) => loadDashboardModule("dashboard-state.js").DfirState.cell(initial);
+  const cellOf = <T>(initial?: T): Cell<T | undefined> =>
+    loadDashboardModule<StateApi>("dashboard-state.js").DfirState.cell(initial);
 
   it("holds a value and hands it back", () => {
     const c = cellOf(1);
@@ -41,10 +44,10 @@ describe("dfirCell", () => {
   });
 
   it("passes the new value to every subscriber, in subscription order", () => {
-    const c = cellOf();
+    const c = cellOf<string>();
     const calls: string[] = [];
-    c.subscribe((v: string) => calls.push(`a:${v}`));
-    c.subscribe((v: string) => calls.push(`b:${v}`));
+    c.subscribe((v) => calls.push(`a:${v}`));
+    c.subscribe((v) => calls.push(`b:${v}`));
     c.set("x");
     expect(calls).toEqual(["a:x", "b:x"]);
   });
@@ -74,7 +77,7 @@ describe("dfirCell", () => {
 });
 
 describe("activeView", () => {
-  const load = () => loadDashboardModule("dashboard-state.js").DfirState;
+  const load = () => loadDashboardModule<StateApi>("dashboard-state.js").DfirState;
 
   it("starts as null, meaning the Custom layout", () => {
     expect(load().activeView()).toBeNull();
@@ -109,9 +112,21 @@ describe("activeView", () => {
 // staying true. A second writer appearing is the failure this design has to prevent, and the
 // cheapest place to prevent it is here, in the PR that would add it.
 describe("the single-writer rule", () => {
-  it("has exactly one call site that writes activeView", async () => {
-    const source = dashboardClientSource();
-    const writes = [...source.matchAll(/DfirState\.setActiveView\(/g)];
+  // Comment lines are dropped before counting. Not fastidiousness: the first run of this test
+  // failed because dashboard-state.js's own header described the rule using the literal string the
+  // regex looks for, so the module documenting the invariant counted as a violation of it. A gate
+  // that greps source has to decide what counts as source, and prose about the code is not it.
+  //
+  // Line-based rather than a real parser, because the haystack is HTML, CSS and JS concatenated,
+  // and stripping `//` from that would eat every `https://` in the markup.
+  const codeOnly = (source: string): string =>
+    source
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|<!--)/.test(line))
+      .join("\n");
+
+  it("has exactly one call site that writes activeView", () => {
+    const writes = [...codeOnly(dashboardClientSource()).matchAll(/DfirState\.setActiveView\(/g)];
     expect(
       writes,
       "activeView is owned by applyDashboardView(). A second writer means the cell is shared " +
@@ -133,6 +148,36 @@ describe("the single-writer rule", () => {
   it("leaves no top-level activeView binding behind in the inline script", async () => {
     const html = await readFile(DASHBOARD, "utf8");
     expect(html).not.toMatch(/^\s*(let|var|const)\s+activeView\b/m);
+  });
+});
+
+// WHY COUNTING CALL SITES WAS NOT ENOUGH ON ITS OWN.
+//
+// The first version of this file shipped with the cell as a top-level `const` in a classic script.
+// That reads as private — it never appears on the global object — but a classic script's top-level
+// `const` goes into the global LEXICAL environment, which every other script on the page shares.
+// `dfirActiveView.set(x)` from any later script therefore wrote the cell while the call-site count
+// above, which looks for `DfirState.setActiveView(`, stayed at one. The invariant this module's
+// whole argument rests on was decorative, and CI would have passed a second writer.
+//
+// Both halves are now checked: the closure closes the hole, and these two tests are what notices
+// if a future edit hoists something back out of it.
+describe("nothing but the namespace escapes", () => {
+  it("adds only DfirState to the global object", () => {
+    expect(globalsAddedBy("dashboard-state.js")).toEqual(["DfirState"]);
+  });
+
+  // The lexical half, which globalsAddedBy() cannot see: a `const` in the shared lexical
+  // environment is invisible to Object.keys but perfectly reachable by name. So the bypass is
+  // attempted for real, from a second script in the same context, and must not resolve.
+  it("puts the cell out of reach of a second script on the page", () => {
+    const globals = loadDashboardModule<StateApi>("dashboard-state.js");
+    globals.DfirState.setActiveView({ id: "legit" });
+    expect(() => runInContext("dfirActiveView.set({ id: 'smuggled' })", globals as object)).toThrow(
+      /dfirActiveView is not defined/,
+    );
+    expect(() => runInContext("dfirCell(0)", globals as object)).toThrow(/dfirCell is not defined/);
+    expect(globals.DfirState.activeView()).toEqual({ id: "legit" });
   });
 });
 

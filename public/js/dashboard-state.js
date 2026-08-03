@@ -91,70 +91,89 @@
 // NOT AN ES MODULE, for the same reason as the js/dashboard-*.js helpers: the inline script is a
 // classic script and calls into this by bare name. See js/dashboard-escape.js.
 
-// HOW "ONE WRITER" IS ENFORCED: BY A GATE, NOT BY THE CELL.
+// HOW "ONE WRITER" IS ENFORCED: A CLOSURE, PLUS A GATE ON WHAT ESCAPES IT.
 //
-// The first draft of this file made every write pass the writing function's name and threw if it
-// did not match a declared owner. That is ceremony at 100% of call sites to catch a mistake at
-// none of them — the check can only fire at runtime, in a browser, after the second writer already
-// shipped. tests/dashboard/dashboardState.test.ts counts the write call sites in the client source
-// instead: a second one fails CI, in the PR that adds it, with no runtime cost and nothing for a
-// caller to remember. Same shape as the rest of this repo's invariants — the size ledger, the
-// import-cycle list, the route inventory, the STATIC_ASSETS pinning.
+// The first draft made every write pass the writing function's name and threw on a mismatch. That
+// is ceremony at 100% of call sites to catch a mistake at none of them — the check can only fire
+// at runtime, in a browser, after the second writer already shipped. So the rule became a test
+// that counts write call sites, the same shape as the rest of this repo's invariants: the size
+// ledger, the import-cycle list, the route inventory, the STATIC_ASSETS pinning.
+//
+// THAT ALONE WAS NOT ENOUGH, and it is worth saying why in full because the hole is not obvious.
+// A classic script's top-level `const` does not become a property of the global OBJECT, so it is
+// easy to assume it is private. It is not: it goes into the global LEXICAL environment, which
+// every other classic script on the page shares. `const dfirActiveView = dfirCell(null)` at top
+// level was therefore reachable by name from any later script, and `dfirActiveView.set(x)` wrote
+// the cell while the call-site count, which looks for the published setter, stayed at one.
+// The invariant this file's whole argument rests on was decorative, and CI would have passed a
+// second writer.
+//
+// Hence the IIFE. Nothing inside escapes except `window.DfirState`, so the only way to write the
+// cell is the one the gate counts. The gate then has a second job: assert that the file leaks
+// nothing else, because a future edit that hoists a helper back out re-opens exactly this hole.
+//
+// The IIFE is safe HERE and would not be in the eight js/dashboard-*.js helpers: those exist to
+// put 95 names in the global scope for the inline script to call by bare name. This file is called
+// only through its namespace, so it has nothing to publish that way.
+(function () {
+  /**
+   * One piece of owned state: a value and whoever wants to hear about changes.
+   *
+   * Deliberately not a Proxy and not a signal. A cell is a variable you can find the writes to;
+   * that is the entire improvement over a top-level `let`, and it is the improvement the
+   * measurement above says is needed.
+   */
+  function dfirCell(initial) {
+    let value = initial;
+    const subscribers = [];
+    return {
+      get() {
+        return value;
+      },
+      /**
+       * Write the cell, then notify.
+       *
+       * Subscribers run AFTER the value is committed, so a subscriber that reads the cell — which
+       * is the normal case, since subscribers exist to re-render from it — sees the new value
+       * rather than the one it is replacing.
+       */
+      set(next) {
+        value = next;
+        // Iterate a copy: a subscriber that unsubscribes itself while being notified would
+        // otherwise shift the array under the loop and skip the next one.
+        for (const fn of [...subscribers]) fn(value);
+        return value;
+      },
+      /** Called on every write. Returns an unsubscribe function. */
+      subscribe(fn) {
+        subscribers.push(fn);
+        return () => {
+          const at = subscribers.indexOf(fn);
+          if (at >= 0) subscribers.splice(at, 1);
+        };
+      },
+    };
+  }
 
-/**
- * One piece of owned state: a value and whoever wants to hear about changes.
- *
- * Deliberately not a Proxy and not a signal. A cell is a variable you can find the writes to;
- * that is the entire improvement over a top-level `let`, and it is the improvement the
- * measurement above says is needed.
- */
-function dfirCell(initial) {
-  let value = initial;
-  const subscribers = [];
-  return {
-    get() {
-      return value;
-    },
-    /**
-     * Write the cell, then notify.
-     *
-     * Subscribers run AFTER the value is committed, so a subscriber that reads the cell — which is
-     * the normal case, since subscribers exist to re-render from it — sees the new value rather
-     * than the one it is replacing.
-     */
-    set(next) {
-      value = next;
-      // Iterate a copy: a subscriber that unsubscribes itself while being notified would
-      // otherwise shift the array under the loop and skip the next one.
-      for (const fn of [...subscribers]) fn(value);
-      return value;
-    },
-    /** Called on every write. Returns an unsubscribe function. */
-    subscribe(fn) {
-      subscribers.push(fn);
-      return () => {
-        const at = subscribers.indexOf(fn);
-        if (at >= 0) subscribers.splice(at, 1);
-      };
-    },
+  /**
+   * Tier 2 — the currently-applied dashboard view preset (#142), or null for Custom.
+   *
+   * The first binding migrated off the inline script's shared scope. applyDashboardView() is the
+   * only function that has ever written it and remains the only one that may; the fourteen readers
+   * all go through DfirState.activeView().
+   */
+  const dfirActiveView = dfirCell(null);
+
+  // The ONLY thing that leaves this closure. Every read is now a call rather than a bare
+  // identifier, which is the point: `activeView()` is greppable in a way `activeView` is not, and
+  // the writes stop looking like reads.
+  //
+  // `cell` is exposed because the next migrations need to build their own cells, and it is a
+  // factory with no ambient state — handing it out grants nothing over `dfirActiveView`.
+  window.DfirState = {
+    cell: dfirCell,
+    activeView: () => dfirActiveView.get(),
+    setActiveView: (view) => dfirActiveView.set(view || null),
+    onActiveViewChange: (fn) => dfirActiveView.subscribe(fn),
   };
-}
-
-/**
- * Tier 2 — the currently-applied dashboard view preset (#142), or null for Custom.
- *
- * The first binding migrated off the inline script's shared scope. applyDashboardView() is the
- * only function that has ever written it and remains the only one that may; the fourteen readers
- * all go through DfirState.activeView().
- */
-const dfirActiveView = dfirCell(null);
-
-// Published for the inline script. Every read is now a call rather than a bare identifier, which
-// is the point: `activeView()` is greppable in a way `activeView` is not, and the writes stop
-// looking like reads.
-window.DfirState = {
-  cell: dfirCell,
-  activeView: () => dfirActiveView.get(),
-  setActiveView: (view) => dfirActiveView.set(view || null),
-  onActiveViewChange: (fn) => dfirActiveView.subscribe(fn),
-};
+})();
