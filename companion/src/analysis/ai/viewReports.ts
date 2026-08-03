@@ -296,10 +296,21 @@ export async function viewSummary(
     backoffMs,
   );
 
+  // `eventCount` is what MATCHED the filters, NOT what the row cap let through — the analyst is
+  // told the true denominator or the disclosure is worthless. Reporting `matched.length` here made
+  // a 750-row filter render as "500 matching events" with `truncated: false` whenever those 500
+  // happened to fit the AI budget: the 250 the cap excluded vanished from the panel and from the
+  // Activity Log line, which is exactly the silent-slice failure the cap exists to prevent.
+  //
+  // `truncated` therefore compares against `total` as well, so it covers BOTH reasons rows went
+  // unread: the VIEW_SUMMARY_MAX_ROWS cap and the AI input budget. Because the flag can no longer
+  // tell those two apart, the dashboard caption states the fact ("N of M matching events
+  // summarized") instead of naming a cause it cannot know — it used to say "(AI input budget)",
+  // which is the wrong reason whenever the row cap was what dropped them.
   return {
     markdown: result.markdown,
-    eventCount: matched.length,
+    eventCount: total,
     usedEvents: events.length,
-    truncated: events.length < matched.length,
+    truncated: events.length < total,
   };
 }

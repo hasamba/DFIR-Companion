@@ -9385,7 +9385,7 @@
         .then(d => {
           if (caseId !== superCaseId()) return;   // case switched mid-flight — drop the stale result
           stRenderAiPanel("✨ View summary", d.markdown || "(empty summary)",
-            d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events (AI input budget)` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
+            d.truncated ? `${d.usedEvents} of ${d.eventCount} matching events summarized` : `${d.eventCount} matching event${d.eventCount !== 1 ? "s" : ""}`,
             null);
         })
         .catch(e => stRenderNote(e.status === 501 ? "AI provider not configured (Settings → AI)." : "view summary failed: " + e.message, true))
