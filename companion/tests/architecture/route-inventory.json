@@ -478,6 +478,7 @@
     "ROUTE GET /js/dashboard-ioc.js",
     "ROUTE GET /js/dashboard-values.js",
     "ROUTE GET /js/dashboard-fragments.js",
+    "ROUTE GET /js/dashboard-tagger.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
     "ROUTE GET /js/a11y/focus-trap.js",
