@@ -14,6 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
+import ts from "typescript";
 
 /**
  * The dashboard's first-party client scripts, in the order dashboard.html tags them.
@@ -190,14 +191,30 @@ export function globalsAddedBy(file: string): string[] {
 }
 
 /**
- * Every top-level `function` the file declares must appear in its namespace.
+ * Every top-level function the file declares, by name.
  *
- * Parsed out of the source text rather than diffed against the context's own keys, because a vm
- * sandbox is pre-populated with the JS built-ins and telling those apart from the module's own
- * declarations is guesswork. The declarations are what the file promises; this checks it kept the
- * promise.
+ * AST-based since #462's audit. This began as `/^function (\w+)\s*\(/gm`, which was the same
+ * mistake the state gates made: it sees `function foo(` and nothing else, so an `async function`
+ * is invisible. That went unnoticed while the helper modules happened to contain none — and then
+ * the first feature module arrived with ten of its twelve functions async, and the check that is
+ * supposed to prove "every declared function is published" silently compared two names against
+ * twelve.
+ *
+ * Top-level only, deliberately: this answers "what does this file promise to publish", and a
+ * callback nested inside one of those functions promises nothing.
  */
 export function declaredFunctions(file: string): string[] {
-  const src = readFileSync(new URL(`../../../public/js/${file}`, import.meta.url), "utf8");
-  return [...src.matchAll(/^function ([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
+  const source = readFileSync(new URL(`../../../public/js/${file}`, import.meta.url), "utf8");
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const out: string[] = [];
+  const visit = (n: ts.Node): void => {
+    // Descend through an IIFE wrapper (js/dashboard-state.js has one) but not into real functions.
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      out.push(n.name.text);
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return out;
 }
