@@ -195,7 +195,13 @@ describe("dashboard.html palette wiring", () => {
     expect(h).toContain('<script type="module" src="/js/command-palette.js"></script>');
     // Thunks, not snapshots — #pushSelect is populated asynchronously and toolbar buttons come and
     // go as the case loads, so a registry captured once would be wrong within seconds.
-    expect(h).toContain("window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => lastState };");
+    //
+    // The state thunk reads DfirState.lastState() since #415 moved the case snapshot into the
+    // store. Still a thunk, so still live: what would break the palette is the arrow disappearing
+    // and a value being captured here, which is what the shape below pins.
+    expect(h).toContain(
+      "window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => DfirState.lastState() };",
+    );
   });
 
   it("carries the overlay markup the module binds to", async () => {
