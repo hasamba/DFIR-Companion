@@ -248,12 +248,13 @@ export default tseslint.config(
   },
 
   {
-    // src/server.ts's settings-reload path REBUILDS live app options in place (`options.
-    // enrichmentProviders = …`) so a saved API key takes effect without a restart. That is the
-    // documented design of rebuildForPrefix, not an accident, and `options` is createApp's own
-    // long-lived object rather than a caller's — so the boundary this rule protects does not exist
-    // here. Narrowed to the property form; reassigning a whole parameter is still an error.
-    files: ["src/server.ts"],
+    // The settings-reload path REBUILDS live app options in place (`options.enrichmentProviders =
+    // …`) so a saved API key takes effect without a restart. That is the documented design of
+    // rebuildForPrefix, not an accident, and `options` is createApp's own long-lived object rather
+    // than a caller's — so the boundary this rule protects does not exist here. Narrowed to the
+    // property form; reassigning a whole parameter is still an error. (#416 moved rebuildForPrefix
+    // out of server.ts into composition/settingsReload.ts; the carve-out followed it.)
+    files: ["src/server.ts", "src/composition/settingsReload.ts"],
     rules: { "no-param-reassign": ["error", { props: false }] },
   },
 

@@ -42,7 +42,7 @@ type-only**, so exempting them would have hidden a third of the problem on day o
 
 | Layer | Contents | May import |
 |---|---|---|
-| **Composition** | `server.ts`, and `src/composition/` once the integration factories land | everything |
+| **Composition** | `server.ts` and `src/composition/` | everything |
 | **Delivery** | `routes/`, `reports/`, `integrations/`, `enrichment/`, `live/` | Domain, Platform, Shared |
 | **Domain** | `analysis/*` (11 domains, below) | Domain (per the tier order), Platform, Shared |
 | **Platform** | `storage/`, `providers/`, `auth/`, `http/`, `settings/`, `logging/`, `config/`, `ingest/`, `dedup/` | Platform, Shared |
@@ -281,8 +281,9 @@ The order, by ascending risk:
    `storage/`; `stateTypes.ts` + `canonicalEvent.ts` → `src/eventTypes/`. Together these clear
    roughly a third of the ledger, because the map already files them where they belong and only the
    files themselves have yet to move.
-9. `createApp`'s middleware (~2,350 lines in one function), then dashboard features as small vertical
-   slices.
+9. ~~`createApp`'s middleware (~2,350 lines in one function)~~ — done in #416: it is now 19 factories
+   under `src/composition/`, each taking its dependencies by name. Then dashboard features as small
+   vertical slices.
 
 ### Who owns what
 
@@ -293,10 +294,10 @@ the issue that owns the work, so no number is a blocker without an assignee:
 | Target | ≤ | Today | Owner |
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
-| `server.ts` | 800 | 4,077 | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
+| `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
 | `public/dashboard.html` inline JS | 2,000 | 19,201 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | 3,232 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
-| Files in `src/` over 800 lines | 0 | 12 | #416 and the ledger below |
+| Files in `src/` over 800 lines | 0 | 11 | the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
 | Boundary ledger | 10 | 47 | shrinks as the above land |
 

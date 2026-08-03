@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reproducible analysis-run ledger** — imports, deterministic tagging, enrichment, synthesis, Deep Pass, and reports now leave immutable, hash-chained manifests that pin their evidence and dependencies; analysts can inspect, replay, and compare runs while reports and exports retain the exact run history (closes #377).
 - **Internal Hunt Workbench and typed query language** — structured, indexed and cursor-paged searches across an explicitly selected forensic or super-timeline dataset, with Boolean/range/time/regex filters, aggregation, rare values, saved parameterized hunts, result pivots/actions, cancellation and resource limits (closes #376).
 
+### Changed
+- **`createApp` decomposed into per-service factories** — `server.ts` goes from 4,077 to 623 lines and no `src/` file it owned is over 800; the stateful blocks (Velociraptor hunts and monitors, the drop-folder watcher, import/ingest, enrichment, capture analysis, the external-tool and SO-CRATES hand-off) are now 24 modules under `src/composition/`, each taking its dependencies by name instead of closing over them (closes #416).
+- **Background poll timers are now covered by tests** — new timer-lifecycle suite pins that each poller is armed when it should be, re-arms itself, is cancelled on stop/delete/hand-off, and is resumed from disk after a restart; mutation-proven against seven lifecycle breaks that no existing test caught (#416).
+
 ### Fixed
 - **Cockpit import counts** — show forensic- and super-timeline additions separately after an import.
 - **Imports into a non-existent case are rejected** — all 24 `/cases/:id/import*` routes now 404 an unknown case id instead of accepting it; a typo'd id used to return 202 and orphan the evidence, an `imports.jsonl` line and a custody record under a directory that never appeared in the case list.
