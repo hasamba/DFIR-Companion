@@ -146,4 +146,39 @@ describe("viewSummary is the documented exception", () => {
     await pipeline.viewSummary("c1", {});
     expect(provider.lastReq!.userPrompt).not.toContain("capped at");
   });
+
+  // The two tests above assert the MODEL is told about the cap. For a long time nothing asserted the
+  // ANALYST was, and they were not: the result reported `eventCount: matched.length` — the capped
+  // count, not the matched one — so a 750-row filter rendered as "500 matching events" with
+  // `truncated: false` whenever those 500 fit the AI budget. The dashboard caption and the Activity
+  // Log line both read from these fields, so the 250 excluded rows disappeared from every surface
+  // the analyst sees. Disclosing a cap to the model and hiding it from the investigator is the
+  // silent-slice failure with an extra step.
+  it("reports the TRUE matched count to the analyst, not the capped one", async () => {
+    const overCap = VIEW_SUMMARY_MAX_ROWS + 250;
+    const { pipeline } = await harness(
+      Array.from({ length: overCap }, (_, i) => ev({ id: `bulk${i}`, description: `row ${i}` })),
+    );
+
+    const result = await pipeline.viewSummary("c1", {});
+
+    expect(result.eventCount).toBe(overCap); // what MATCHED, not what the cap let through
+    expect(result.usedEvents).toBeLessThanOrEqual(VIEW_SUMMARY_MAX_ROWS);
+    expect(result.truncated).toBe(true); // true even when every read row fit the AI budget
+  });
+
+  it("reports no truncation when the whole matched view was read", async () => {
+    // Distinct descriptions: the store folds rows that share a timestamp AND description, so two
+    // bare ev() calls would land as one row and the assertion would be measuring the dedupe.
+    const { pipeline } = await harness([
+      ev({ id: "raw1", description: "prefetch: ONE.EXE" }),
+      ev({ id: "raw2", description: "amcache: TWO.EXE" }),
+    ]);
+
+    const result = await pipeline.viewSummary("c1", {});
+
+    expect(result.eventCount).toBe(2);
+    expect(result.usedEvents).toBe(2);
+    expect(result.truncated).toBe(false);
+  });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,6 +99,12 @@ function spyProvider(rawText: string, during?: () => Promise<void>) {
   };
   return { provider, sent };
 }
+
+// Env stubs are undone here, not at the end of the test that set them: an assertion failure throws
+// past an inline `unstubAllEnvs`, leaking a stubbed DFIR_* into every test that runs after it.
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-synth-char-"));
@@ -213,7 +219,6 @@ describe("synthesize — scope selection", () => {
     expect(coverage.omittedHighSeverity).toBe(1);
     // The model returned one finding; the omitted Critical got one from the deterministic backfill.
     expect(state.findings.length).toBeGreaterThan(1);
-    vi.unstubAllEnvs();
   });
 });
 
