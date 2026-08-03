@@ -91,3 +91,50 @@ describe("the tagger feature is still reachable", () => {
     expect(functionsOf(tagger!).length).toBeGreaterThanOrEqual(TAGGER.length);
   });
 });
+
+// public/js/dashboard-kev.js — the second and last wholly-movable feature (#415 tier 3).
+//
+// Wired differently from the tagger, which is the point of testing it separately: KEV uses
+// `addEventListener("click", kevImportUrl)`, a function REFERENCE resolved when the listener is
+// registered, where the tagger goes through the ACTIONS table's late-bound arrows. Both work only
+// because the module is a synchronous classic script loaded before the inline script — but they
+// would fail differently, so both are pinned.
+describe("the KEV feature moved whole", () => {
+  const KEV = ["loadKev", "kevImportUrl", "kevImportFile", "kevClear"];
+
+  it("declares all four functions and publishes every one", () => {
+    expect(declaredFunctions("dashboard-kev.js").sort()).toEqual([...KEV].sort());
+  });
+
+  it("leaves no half of the feature behind in the inline script", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const leftBehind = [...html.matchAll(/^\s*(?:async )?function (\w*[Kk]ev\w*)\s*\(/gm)].map((m) => m[1]);
+    expect(leftBehind).toEqual([]);
+  });
+
+  it("touches no shared dashboard state", async () => {
+    expect(
+      await readFile(new URL("../../../public/js/dashboard-kev.js", import.meta.url), "utf8"),
+    ).not.toMatch(/\bDfirState\b/);
+  });
+
+  // The listener registrations still name these functions. They resolve at registration time, in
+  // the inline script — so the module must load first, and the names must be real globals.
+  it("keeps the listener registrations resolving to functions the module publishes", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const registered = [...html.matchAll(/addEventListener\("(?:click|keydown)",\s*(kev\w+)\)/g)].map(
+      (m) => m[1],
+    );
+    expect(registered.length, "no KEV listener is registered — the check is vacuous").toBeGreaterThan(0);
+    for (const name of registered) expect(declaredFunctions("dashboard-kev.js")).toContain(name);
+  });
+
+  it("is loaded synchronously ahead of the inline script, and served by the whitelist", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const tag = /<script([^>]*)\ssrc="\/js\/dashboard-kev\.js"/.exec(html);
+    expect(tag).not.toBeNull();
+    expect(tag?.[1]).not.toMatch(/defer|type="module"|async/);
+    expect(html.indexOf('src="/js/dashboard-kev.js"')).toBeLessThan(html.lastIndexOf("<script nonce="));
+    expect(STATIC_ASSETS["/js/dashboard-kev.js"]).toBe("application/javascript; charset=utf-8");
+  });
+});
