@@ -2035,10 +2035,10 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
 
   // ── Live Velociraptor CLIENT_EVENT monitors (#84) ─────────────────────────────────────────────
   // Per-monitor self-rescheduling timers (setTimeout, not setInterval, so a slow poll can't overlap
-  // itself). Keyed `caseId monitorId`. Lost on restart, then re-armed from the persisted store by
+  // itself). Keyed `caseId\u0000monitorId`. Lost on restart, then re-armed from the persisted store by
   // resumeVeloMonitors(). .unref() so a pending poll never blocks process exit.
   const veloMonitorTimers = new Map<string, NodeJS.Timeout>();
-  const monitorKey = (caseId: string, id: string): string => `${caseId} ${id}`;
+  const monitorKey = (caseId: string, id: string): string => `${caseId}\u0000${id}`;
 
   // The ingest step a poll hands its rows to: wrap them as a Velociraptor artifact-map and run the
   // shared streamed-ingest path; return how many forensic events it added (for the running stat).

@@ -282,7 +282,7 @@ export const EMPTY_PERSISTED_HUNTS: PersistedPlaybookHunts = { generatedAt: "", 
 // Deterministic FNV-1a fingerprint of the task fields that drive a suggestion (title + description,
 // whitespace-normalized). A change here means the task was edited/reworded → its hunt is stale.
 export function taskFingerprint(task: { title?: string; description?: string }): string {
-  const norm = `${String(task?.title ?? "").replace(/\s+/g, " ").trim()} ${String(task?.description ?? "").replace(/\s+/g, " ").trim()}`;
+  const norm = `${String(task?.title ?? "").replace(/\s+/g, " ").trim()}\u0000${String(task?.description ?? "").replace(/\s+/g, " ").trim()}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < norm.length; i++) {
     h ^= norm.charCodeAt(i);
