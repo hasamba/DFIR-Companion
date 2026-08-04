@@ -574,6 +574,35 @@ export interface OwnerEscape {
  * either needs binding-aware analysis; neither has a use in this page, and both are one line to
  * avoid — so they are reported wherever they appear rather than resolved.
  */
+/**
+ * Is this the PROPERTY NAME half of `a.b`, rather than a reference to something called `b`?
+ *
+ * The bare identifier `DfirFacets` inside `window.DfirFacets` matches "denotes the namespace" on
+ * its own, and it sits at `parent.name` — not `parent.expression` — so the longer-path check does
+ * not cover it. Without this, every module was reported as smuggling out its own namespace.
+ */
+function isPropertyName(n: ts.Node): boolean {
+  const p = n.parent;
+  return !!p && (ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === n;
+}
+
+/** Is this node the `X` in `X(...)` — i.e. the thing actually being invoked? */
+function isCalleePosition(n: ts.Node): boolean {
+  const p = n.parent;
+  return !!p && (ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === n;
+}
+
+/** A sub-path like `DfirSelection.events` inside `DfirSelection.events.toggle(x)` is not itself an escape. */
+function isPartOfLongerPath(n: ts.Node): boolean {
+  const p = n.parent;
+  return !!p && (ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === n;
+}
+
+function nearbyText(n: ts.Node, sf: ts.SourceFile): string {
+  const target = n.parent && ts.isPropertyAccessExpression(n.parent) ? n.parent : n;
+  return target.getText(sf).slice(0, 90);
+}
+
 export function ownerEscapes(scripts: DashboardScript[], namespace: string): OwnerEscape[] {
   const hits: OwnerEscape[] = [];
   const denotesOwnerOrChild = (n: ts.Node): boolean => {
@@ -582,6 +611,18 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
   };
   for (const s of scripts) {
     const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
+    // Positions that DEFINE the namespace rather than reference it: the `window.DfirFacets` in
+    // `window.DfirFacets = { … }`. Collected in a pre-pass rather than read off node.parent, which
+    // did not match reliably here.
+    const definitionTargets = new Set<number>();
+    const findDefs = (n: ts.Node): void => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        definitionTargets.add(n.left.getStart(s.ast));
+      }
+      ts.forEachChild(n, findDefs);
+    };
+    ts.forEachChild(s.ast, findDefs);
+
     const visit = (n: ts.Node): void => {
       // const events = DfirSelection.events
       if (
@@ -601,15 +642,22 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
       ) {
         hits.push({ script: s.name, line: at(n), form: "alias", text: n.getText(s.ast).slice(0, 90) });
       }
-      // PASSED SOMEWHERE. An owner handed to another function is a writer this analysis stops
-      // following at the call. There is a supported alternative — a read-only view — so passing the
-      // owner itself is reported rather than resolved.
-      if (ts.isCallExpression(n)) {
-        for (const a of n.arguments) {
-          if (denotesOwnerOrChild(a)) {
-            hits.push({ script: s.name, line: at(a), form: "passed", text: n.getText(s.ast).slice(0, 90) });
-          }
-        }
+      // ANY reference to the owner that is NOT the callee of a call.
+      //
+      // Enumerating contexts (argument here, assignment there) is how this kept failing open —
+      // review found detached method references stashed in arrays, in object literals and returned
+      // from functions, none of which was in the list. So the rule is inverted: an owner or one of
+      // its members may appear as the thing being CALLED, and nowhere else. Everything else is a
+      // reference this analysis stops following, and there is a supported alternative for the one
+      // legitimate case (matcher(), a read-only view).
+      if (
+        denotesOwnerOrChild(n) &&
+        !isCalleePosition(n) &&
+        !isPartOfLongerPath(n) &&
+        !isPropertyName(n) &&
+        !definitionTargets.has(n.getStart(s.ast))
+      ) {
+        hits.push({ script: s.name, line: at(n), form: "passed", text: nearbyText(n, s.ast) });
       }
       // DfirSelection.events["toggle"](…) / DfirSelection.events[m](…)
       if (ts.isElementAccessExpression(n) && denotesOwnerOrChild(n.expression)) {

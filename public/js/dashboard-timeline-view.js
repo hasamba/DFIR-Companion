@@ -31,6 +31,15 @@
 // either.
 //
 //
+// ONE PAINTER, ONE PANEL — `falsePositives` PAINTS THE PANEL AND DOES NOT REDRAW.
+//
+// This is the correction that mattered most in review. renderFalsePositives() in the page ends with
+// its own `render(lastState())`, so wiring it directly meant `refresh("all", "falsePositives")` ran
+// TWO full renders — the exact double render this module claims to have collapsed, still happening
+// in production while the tests, which used independent spies, could not see it. The page now wires
+// the panel-only form; every action that needs the page redrawn asks for `all` explicitly.
+//
+//
 // THE REFRESH HANDLERS ARE INJECTED, ONCE
 //
 // This module knows WHICH panels an action must refresh; it does not know HOW to paint them. The
@@ -63,9 +72,12 @@
   const eventIdsLabel = cell("");
   // Three separate cells, not one object: the lenses are independent, they are read as bare
   // numbers at 21 comparison sites (`corrobTimeline > 1`), and they refresh different panels.
-  const corrobTimeline = cell(1);
-  const corrobIocs = cell(1);
-  const corrobFindings = cell(1);
+  // 0 is OFF, matching the <select> options (0 / 2 / 3) and the persisted value. An earlier draft
+  // defaulted these to 1 and normalised with `|| 1`, which made `sel.value = String(get())` select
+  // an option that does not exist — all three lenses rendered blank on load.
+  const corrobTimeline = cell(0);
+  const corrobIocs = cell(0);
+  const corrobFindings = cell(0);
   const corrobCells = { timeline: corrobTimeline, iocs: corrobIocs, findings: corrobFindings };
 
   /**
@@ -79,7 +91,8 @@
     timeline: noop, // renderTimelineEvents(lastFt())
     all: noop, // render(lastState()) — the whole page
     superTimeline: noop, // loadSuperTimeline()
-    falsePositives: noop, // renderFalsePositives(fpMarkers)
+    falsePositives: noop, // the False Positives PANEL only — never a full render, see below
+    iocs: noop, // renderIocs(lastState().iocs) — the IOC list on its own
     derivedViews: noop, // refreshFilteredViews(): Kill Chain, Attack Phases, the graphs
     excludeChips: noop, // renderExcludeChips()
     searchBox: noop, // the search input's own clear button + open state
@@ -87,6 +100,23 @@
     severityBoxes: noop, // the .sev-filter checkboxes
     starButton: noop, // #evStarFilterBtn label + active class
   };
+
+  /**
+   * Everything that goes stale when the view filters are cleared.
+   *
+   * Shared by clearFilters() and filterToEventIds() because they clear the same things — the two
+   * lists drifting apart is exactly how one of them ended up refreshing the timeline alone.
+   */
+  const CLEARED_FILTER_PANELS = [
+    "severityBoxes",
+    "starButton",
+    "searchBox",
+    "timeInputs",
+    "excludeChips",
+    "all",
+    "superTimeline",
+    "falsePositives",
+  ];
 
   /** Run a declared refresh set, each handler at most once. */
   function refresh(...names) {
@@ -112,7 +142,7 @@
       if (Array.isArray(st.excludeTerms)) exclude.set(Object.freeze([...st.excludeTerms]));
       if (st.corroboration) {
         for (const which of ["timeline", "iocs", "findings"]) {
-          if (st.corroboration[which] != null) corrobCells[which].set(Number(st.corroboration[which]) || 1);
+          if (st.corroboration[which] != null) corrobCells[which].set(Number(st.corroboration[which]) || 0);
         }
       }
     },
@@ -181,9 +211,13 @@
     setCorroboration(which, value) {
       const c = corrobCells[which];
       if (!c) return 0;
-      const n = Number(value) || 1;
+      const n = Number(value) || 0;
       c.set(n);
-      refresh(which === "timeline" ? "timeline" : "all");
+      // Three lenses, three costs — the reason this branches rather than being three setters.
+      // Routing the IOC lens to the full-page painter (an earlier draft did) refetches the
+      // collection plan, rebuilds every panel and resets the timeline to page one, for a change
+      // that only affects the IOC list.
+      refresh(which === "timeline" ? "timeline" : which === "iocs" ? "iocs" : "all");
       return n;
     },
 
@@ -200,7 +234,11 @@
       clearFilterState();
       eventIds.set(new Set(list));
       eventIdsLabel.set(label || "");
-      refresh("severityBoxes", "starButton", "searchBox", "timeInputs", "excludeChips", "timeline");
+      // The SAME set as clearFilters(), because this clears the same filters — and those filters
+      // scope Findings, IOCs, False Positives and the super-timeline, not just the event list.
+      // Refreshing only the timeline (an earlier draft did) left every other panel showing filters
+      // the controls now said were cleared. `all` paints the timeline, so it is not listed twice.
+      refresh(...CLEARED_FILTER_PANELS);
       return list.length;
     },
 
@@ -219,16 +257,7 @@
       clearFilterState();
       eventIds.set(null);
       eventIdsLabel.set("");
-      refresh(
-        "severityBoxes",
-        "starButton",
-        "searchBox",
-        "timeInputs",
-        "excludeChips",
-        "all",
-        "superTimeline",
-        "falsePositives",
-      );
+      refresh(...CLEARED_FILTER_PANELS);
     },
 
     /**
@@ -242,6 +271,14 @@
       from.set(null);
       to.set(null);
       starredOnly.set(false);
+      // The id filter goes too. It is DERIVED FROM A CASE — an anomaly bucket, a session's rows —
+      // so carrying it into another case either blanks the new timeline or, on an id collision,
+      // shows unrelated evidence under the previous case's label. proceedConnect never cleared it,
+      // and an earlier draft of this module documented and TESTED that omission as intended, which
+      // is worse than leaving it alone. The exclude terms and severity boxes really are deliberate:
+      // those are the analyst's standing preferences, not this case's.
+      eventIds.set(null);
+      eventIdsLabel.set("");
     },
   };
 

@@ -3607,7 +3607,8 @@
       timeline: () => renderTimelineEvents(DfirState.lastFt() || []),
       all: () => { if (DfirState.lastState()) render(DfirState.lastState()); },
       superTimeline: () => { if (DfirState.lastSuperData()) loadSuperTimeline(); },
-      falsePositives: () => renderFalsePositives(fpMarkers),
+      falsePositives: () => renderFalsePositives(fpMarkers, false),   // panel only — the action asks for `all` itself
+      iocs: () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); },
       derivedViews: () => refreshFilteredViews(),
       excludeChips: () => renderExcludeChips(),
       searchBox: () => {
@@ -12893,6 +12894,10 @@
       DfirFacets.origins.showAll(); _originMenuSig = "";
       DfirFacets.hosts.showAll(); _hostMenuSig = "";
       DfirTimelineView.clearFilters();
+      forgetPersistedExcludeTerms();
+    }
+    // Both filter-clearing paths drop the exclude terms, so both must drop the saved copy.
+    function forgetPersistedExcludeTerms() {
       try { localStorage.setItem("dfir.excludeTerms", "[]"); } catch {}
     }
 
@@ -12908,6 +12913,7 @@
       // ONE paint, with the id filter already committed. This used to reset (two full renders, both
       // showing the filter it had just cleared) and only apply the ids on a third.
       DfirTimelineView.filterToEventIds(list, label);
+      forgetPersistedExcludeTerms();   // cleared in memory; must not return on reload
       const sec = document.getElementById("sec-timeline");
       if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
     }
@@ -13347,7 +13353,7 @@
         .catch(e => { msg.textContent = "failed: " + e.message; });
     }
 
-    function renderFalsePositives(markers) {
+    function renderFalsePositives(markers, redraw) {
       fpMarkers = markers || [];
       const el = document.getElementById("false-positive");
       // The global filter toolbar (search + exclude terms) scopes this panel too, same as the
@@ -13381,8 +13387,9 @@
           ? `(${visible.length} of ${fpMarkers.length})`
           : (fpMarkers.length ? `(${fpMarkers.length})` : "");
       }
-      // FP events are hidden from the timeline — re-render it with the new set.
-      if (DfirState.lastState()) render(DfirState.lastState());
+      // FP events are hidden from the timeline — re-render it with the new set. `redraw === false`
+      // is DfirTimelineView's painter, whose action asks for `all` itself; see that module.
+      if (redraw !== false && DfirState.lastState()) render(DfirState.lastState());
     }
     // Event ids the client confirmed as a false positive (hidden from the forensic timeline view).
     function fpEventIdSet() {
