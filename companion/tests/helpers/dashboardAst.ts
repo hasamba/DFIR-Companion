@@ -180,7 +180,49 @@ export interface SetterRef {
  * to another name, or indexing it with anything but a string literal, is reported wherever it
  * appears. Both are one line to avoid and neither has a use here, so the cost of the blunt rule is
  * zero and the alternative is a gate that keeps being almost right.
+ *
+ *   round 3 — and it still was. `window.DfirScope.confirm(…)` is the SAME namespace by the spelling
+ *             the browser itself uses (these are classic scripts publishing onto `window`), and the
+ *             matcher required a bare Identifier, so it returned zero references and a fourth writer
+ *             would have passed CI. That is exactly the failure the two rounds above describe, found
+ *             a third time in review rather than by the gate. Hence `denotesNamespace` below: the
+ *             question "does this expression mean the store" now has ONE answer that every check
+ *             shares, instead of each check re-deciding it and stopping at a different spelling.
  */
+/**
+ * The roots a classic script's namespace is reachable through besides its bare name.
+ *
+ * These files publish onto `window`, so `window.DfirScope` is not a clever bypass — it is the
+ * spelling the module itself writes and the one any reader would consider equivalent. A check that
+ * accepts only the bare identifier is not being strict, it is being wrong.
+ */
+const GLOBAL_ROOTS = new Set(["window", "globalThis", "self"]);
+
+/**
+ * Does this expression denote the namespace itself?
+ *
+ * `DfirState` · `window.DfirState` · `globalThis["DfirState"]` — all the same object. ONE definition,
+ * shared by every check below, because the last three holes in these gates were each a check that
+ * had its own idea of what "the store" looks like.
+ */
+function denotesNamespace(n: ts.Node, namespace: string): boolean {
+  if (ts.isIdentifier(n)) return n.text === namespace;
+  if (ts.isPropertyAccessExpression(n)) {
+    return ts.isIdentifier(n.expression) && GLOBAL_ROOTS.has(n.expression.text) && n.name.text === namespace;
+  }
+  if (ts.isElementAccessExpression(n)) {
+    const arg = n.argumentExpression;
+    return (
+      ts.isIdentifier(n.expression) &&
+      GLOBAL_ROOTS.has(n.expression.text) &&
+      !!arg &&
+      ts.isStringLiteral(arg) &&
+      arg.text === namespace
+    );
+  }
+  return false;
+}
+
 export function setterRefs(scripts: DashboardScript[], member: string, namespace = "DfirState"): SetterRef[] {
   const hits: SetterRef[] = [];
   for (const s of scripts) {
@@ -189,18 +231,13 @@ export function setterRefs(scripts: DashboardScript[], member: string, namespace
       // <namespace>.member — a call, or a bare reference someone can stash.
       if (
         ts.isPropertyAccessExpression(n) &&
-        ts.isIdentifier(n.expression) &&
-        n.expression.text === namespace &&
+        denotesNamespace(n.expression, namespace) &&
         n.name.text === member
       ) {
         const isCallee = n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n;
         hits.push({ script: s.name, line: at(n), form: isCallee ? "direct-call" : "property-reference" });
       }
-      if (
-        ts.isElementAccessExpression(n) &&
-        ts.isIdentifier(n.expression) &&
-        n.expression.text === namespace
-      ) {
+      if (ts.isElementAccessExpression(n) && denotesNamespace(n.expression, namespace)) {
         const arg = n.argumentExpression;
         if (arg && ts.isStringLiteral(arg) && arg.text === member) {
           hits.push({ script: s.name, line: at(n), form: "computed-access" });
@@ -210,12 +247,7 @@ export function setterRefs(scripts: DashboardScript[], member: string, namespace
         }
       }
       // const { member } = DfirState
-      if (
-        ts.isVariableDeclaration(n) &&
-        n.initializer &&
-        ts.isIdentifier(n.initializer) &&
-        n.initializer.text === namespace
-      ) {
+      if (ts.isVariableDeclaration(n) && n.initializer && denotesNamespace(n.initializer, namespace)) {
         if (ts.isObjectBindingPattern(n.name)) {
           for (const el of n.name.elements) {
             const source = el.propertyName ?? el.name;
@@ -226,6 +258,105 @@ export function setterRefs(scripts: DashboardScript[], member: string, namespace
         } else if (ts.isIdentifier(n.name)) {
           // const state = <namespace> — every member is now reachable under another name.
           hits.push({ script: s.name, line: at(n), form: "namespace-alias" });
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(s.ast, visit);
+  }
+  return hits;
+}
+
+/**
+ * Every name bound at the TOP LEVEL of a script — `let`/`const`/`var`, destructuring included.
+ *
+ * For asserting that a migrated binding is GONE rather than merely unused. The first version of that
+ * assertion was `expect(html).not.toMatch(/^\s*let scope = \{/m)`, which pinned one spelling of one
+ * initialiser: `let scope = null`, `let scope;`, `const scope = …` and `var scope` all sailed
+ * through, and any of them re-opens the second source of truth the migration existed to close.
+ * A declaration is an AST fact, so ask the AST.
+ */
+export function topLevelBindings(script: DashboardScript): Array<{ name: string; line: number }> {
+  const out: Array<{ name: string; line: number }> = [];
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  const collect = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      out.push({ name: name.text, line: at(name) });
+      return;
+    }
+    for (const el of name.elements) {
+      if (ts.isBindingElement(el)) collect(el.name);
+    }
+  };
+  for (const st of script.ast.statements) {
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) collect(d.name);
+    }
+  }
+  return out;
+}
+
+/** A property write through an owner's getter: `DfirScope.get().start = x`. */
+export interface GetterMutation {
+  script: string;
+  line: number;
+  /** `direct` is `owner.get().prop = v`; `via-alias` went through a local first. */
+  form: "direct" | "via-alias";
+  text: string;
+}
+
+/**
+ * Writes THROUGH an accessor to the object it returned.
+ *
+ * js/dashboard-scope.js hands back a frozen window and argues that closes the "a reader could mutate
+ * it in place" hazard tier 1 documented. Freezing alone does not close it: these are classic
+ * scripts, so they are not strict mode, so `DfirScope.get().start = x` silently does NOTHING. The
+ * caller's intent is lost and every subsequent read returns the old value — a wrong dashboard with a
+ * green CI, which is worse than the throw a strict realm would have given.
+ *
+ * So the runtime freeze stops the state from being corrupted and this stops the code from being
+ * written. Both halves are needed and neither substitutes for the other.
+ */
+export function getterMutations(
+  scripts: DashboardScript[],
+  namespace: string,
+  accessor: string,
+): GetterMutation[] {
+  const hits: GetterMutation[] = [];
+  const isAccessorCall = (e: ts.Node): boolean =>
+    ts.isCallExpression(e) &&
+    ts.isPropertyAccessExpression(e.expression) &&
+    denotesNamespace(e.expression.expression, namespace) &&
+    e.expression.name.text === accessor;
+
+  for (const s of scripts) {
+    const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
+    // Locals bound straight to the accessor's result, so the aliased form is reachable too.
+    const aliases = new Set<string>();
+    const findAliases = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && n.initializer && ts.isIdentifier(n.name)) {
+        if (isAccessorCall(n.initializer)) aliases.add(n.name.text);
+      }
+      ts.forEachChild(n, findAliases);
+    };
+    ts.forEachChild(s.ast, findAliases);
+
+    const visit = (n: ts.Node): void => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const lhs = n.left;
+        if (ts.isPropertyAccessExpression(lhs) || ts.isElementAccessExpression(lhs)) {
+          const target = lhs.expression;
+          if (isAccessorCall(target)) {
+            hits.push({ script: s.name, line: at(n), form: "direct", text: n.getText(s.ast).slice(0, 90) });
+          } else if (ts.isIdentifier(target) && aliases.has(target.text)) {
+            hits.push({
+              script: s.name,
+              line: at(n),
+              form: "via-alias",
+              text: n.getText(s.ast).slice(0, 90),
+            });
+          }
         }
       }
       ts.forEachChild(n, visit);
@@ -248,13 +379,12 @@ export interface CachedSnapshot {
  * a scalar rather than caching the snapshot, and without that distinction the gate fires on every
  * derived value.
  */
-export function cachedSnapshots(node: ts.Node, member: string): CachedSnapshot[] {
+export function cachedSnapshots(node: ts.Node, member: string, namespace = "DfirState"): CachedSnapshot[] {
   const out: CachedSnapshot[] = [];
   const isAccessorCall = (e: ts.Expression): boolean =>
     ts.isCallExpression(e) &&
     ts.isPropertyAccessExpression(e.expression) &&
-    ts.isIdentifier(e.expression.expression) &&
-    e.expression.expression.text === "DfirState" &&
+    denotesNamespace(e.expression.expression, namespace) &&
     e.expression.name.text === member;
   const visit = (n: ts.Node): void => {
     if (ts.isVariableDeclaration(n) && n.initializer && ts.isIdentifier(n.name)) {

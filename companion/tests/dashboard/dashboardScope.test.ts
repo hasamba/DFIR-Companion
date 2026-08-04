@@ -6,7 +6,13 @@ import { projectScope as serverProjectScope } from "../../src/analysis/scopeProj
 import { NO_SCOPE, type ScopeWindow } from "../../src/analysis/scope.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { ScopeApi } from "./dashboardApi.js";
-import { dashboardScripts, functionsOf, setterRefs } from "../helpers/dashboardAst.js";
+import {
+  dashboardScripts,
+  functionsOf,
+  getterMutations,
+  setterRefs,
+  topLevelBindings,
+} from "../helpers/dashboardAst.js";
 import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-scope.js — the first TIER 2 cell to move (#415).
@@ -330,12 +336,54 @@ describe("who may write the window", () => {
     ).toEqual(WRITERS.map((w) => `${w.op} <- ${w.owner}`).sort());
   });
 
-  // The binding is gone, not merely wrapped. While `let scope` still existed at the top of the
-  // inline script every one of the gates above could pass with the old variable still being read.
-  it("leaves no `scope` binding behind in the inline script", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    expect(html).not.toMatch(/^\s*let scope = \{/m);
-    expect(html).not.toMatch(/^\s*function (?:inScope|projectScope|renderScopeInfo)\s*\(/m);
+  // The binding is GONE, not merely wrapped. While a top-level `scope` still existed every gate
+  // above could pass with the old variable still being read.
+  //
+  // Asked of the AST, not of the text. The first version of this was
+  // `expect(html).not.toMatch(/^\s*let scope = \{/m)` — one spelling of one initialiser. `let scope
+  // = null`, `let scope;`, `const scope = …` and `var scope` all passed it, and any of them is the
+  // second source of truth this migration exists to remove.
+  it("leaves no top-level `scope` binding behind, in any spelling", () => {
+    const offenders = scripts
+      .filter((s) => s.name.startsWith("dashboard.html#inline"))
+      .flatMap((s) =>
+        topLevelBindings(s)
+          .filter((b) => b.name === "scope")
+          .map((b) => `${s.name}:${b.line}`),
+      );
+    expect(
+      offenders,
+      "the investigation window is owned by js/dashboard-scope.js; a top-level `scope` in the page " +
+        "is a second source of truth regardless of how it is declared",
+    ).toEqual([]);
+  });
+
+  it("leaves none of the moved functions behind", () => {
+    const moved = new Set(["inScope", "projectScope", "renderScopeInfo"]);
+    const offenders = scripts
+      .filter((s) => s.name.startsWith("dashboard.html#inline"))
+      .flatMap((s) =>
+        functionsOf(s)
+          .filter((f) => moved.has(f.name))
+          .map((f) => `${s.name}:${f.line} ${f.name}`),
+      );
+    expect(offenders).toEqual([]);
+  });
+
+  // THE OTHER HALF OF FREEZING. Object.freeze stops the state being corrupted; it does NOT stop the
+  // code being written, because a classic script is not strict mode and the assignment silently
+  // no-ops. That is a caller whose intent vanished, every later read returning the old value, and a
+  // green CI — strictly worse than the throw a strict realm would have raised. The module's header
+  // claims this gate exists, so it had better.
+  it("never writes through get() to the window it returned", () => {
+    const offenders = getterMutations(scripts, "DfirScope", "get").map(
+      (m) => `${m.script}:${m.line} (${m.form}) ${m.text}`,
+    );
+    expect(
+      offenders,
+      "DfirScope.get() returns a frozen window; assigning to it silently does nothing in a " +
+        "non-strict classic script. Commit through receive()/confirm() instead.",
+    ).toEqual([]);
   });
 });
 
@@ -373,10 +421,21 @@ describe("wiring", () => {
   it("is loaded by dashboard.html, ahead of the inline script, and served by the whitelist", async () => {
     const html = await readFile(DASHBOARD, "utf8");
     expect(html).toContain('<script src="/js/dashboard-scope.js"></script>');
-    // After the store it builds on at load time, and before the inline script that calls it.
-    expect(html.indexOf('src="/js/dashboard-state.js"')).toBeLessThan(
-      html.indexOf('src="/js/dashboard-scope.js"'),
-    );
+    const tag = html.indexOf('src="/js/dashboard-scope.js"');
+    // AFTER the store whose cell() it builds on at load time.
+    expect(html.indexOf('src="/js/dashboard-state.js"')).toBeLessThan(tag);
+    // ...and BEFORE the inline script that calls it. Asserting only the first half let the tag move
+    // anywhere later in the document — including past the inline script, where every DfirScope call
+    // is a ReferenceError. These are synchronous classic scripts, so document order IS load order.
+    //
+    // The block is found by looking INSIDE each one, not with a single regex spanning the file: a
+    // pattern like /<script[^>]*>[\s\S]*?function render\s*\(/ happily starts at the first tiny
+    // bootstrap block in <head> and runs past its </script> to find render() in a later one, which
+    // is how the first version of this assertion pointed at offset 652 instead of the real script.
+    const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)];
+    const main = blocks.find((m) => /\n\s*function render\s*\(/.test(m[1]));
+    expect(main, "could not locate the inline dashboard script").toBeDefined();
+    expect(tag).toBeLessThan(main!.index);
     expect(STATIC_ASSETS["/js/dashboard-scope.js"]).toBe("application/javascript; charset=utf-8");
   });
 

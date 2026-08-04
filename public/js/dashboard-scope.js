@@ -80,9 +80,15 @@
 // and accepted — "a reader could mutate the value in place" — is therefore just closed here.
 //
 // It closes it at runtime only in strict mode; a classic script is not strict, so a stray
-// `DfirScope.get().start = x` silently no-ops rather than throwing. That is why the AST gate checks
-// it statically as well. Belt and braces, because the whole point of freezing is that the "0
-// property mutations" measurement above stays true without anyone having to re-measure.
+// `DfirScope.get().start = x` silently NO-OPS rather than throwing — the caller's intent vanishes,
+// every later read returns the old value, and CI stays green. That is strictly worse than the throw
+// a strict realm would have raised, so freezing alone is not the guarantee.
+//
+// The other half is a gate: getterMutations() in tests/helpers/dashboardAst.ts, asserted by "never
+// writes through get() to the window it returned". It catches the direct form, the aliased form
+// (`const w = DfirScope.get(); w.start = x`) and the window-rooted spelling. Freezing stops the
+// state being corrupted; the gate stops the code being written. Both are needed — an earlier draft
+// of this comment promised the gate before it existed, which review caught.
 //
 //
 // NO onScopeChange. The cell has subscribe() and this module deliberately does not publish it.
