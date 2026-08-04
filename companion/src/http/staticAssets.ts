@@ -55,6 +55,9 @@ export const STATIC_ASSETS: Record<string, string> = {
   // other filters is deliberate: four renderers used to MUTATE them mid-render, and that had to
   // stop before any "one commit per user action" API could be built.
   "/js/dashboard-facets.js": "application/javascript; charset=utf-8",
+  // The timeline view's composite actions — the last tier-2 owner (#415). Unlike the others this
+  // one takes injected painters, so a 404 leaves every filter gesture committing to nothing.
+  "/js/dashboard-timeline-view.js": "application/javascript; charset=utf-8",
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",
