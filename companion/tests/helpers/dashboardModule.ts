@@ -184,9 +184,17 @@ function freshSandbox(extraGlobals: DashboardGlobals = {}): DashboardGlobals {
  * Lexical bindings are invisible here by construction, so this checks the property side and the
  * companion test proves the lexical side by trying the bypass and expecting a ReferenceError.
  */
-export function globalsAddedBy(file: string): string[] {
-  const before = new Set(Object.keys(freshSandbox()));
-  const after = loadDashboardModule<DashboardGlobals>(file);
+export function globalsAddedBy(file: string, preload: string[] = []): string[] {
+  // `preload` for the same reason loadDashboardModule takes one, and it is not optional for every
+  // module: js/dashboard-scope.js builds its cell from DfirState.cell at LOAD time, so without its
+  // dependency present it does not merely fail to publish — it throws while loading. Baselining
+  // AFTER the dependencies have run is what keeps the answer "what did THIS file add".
+  const before = new Set(
+    preload.length
+      ? Object.keys(loadDashboardModule<DashboardGlobals>(preload[preload.length - 1], preload.slice(0, -1)))
+      : Object.keys(freshSandbox()),
+  );
+  const after = loadDashboardModule<DashboardGlobals>(file, preload);
   return Object.keys(after).filter((name) => !before.has(name));
 }
 

@@ -272,3 +272,32 @@ export interface StateApi {
     onLastSuperDataChange(fn: (data: Snapshot) => void): () => void;
   };
 }
+
+/** An investigation window. Mirrors the server's ScopeWindow (src/analysis/scope.ts). */
+export interface ScopeWindow {
+  start: string | null;
+  end: string | null;
+}
+
+/**
+ * public/js/dashboard-scope.js — tier 2's first owner (#415).
+ *
+ * Note what is NOT here: there is no `set`, and no `onScopeChange`. The three call sites that write
+ * this window want three different refreshes, so the module publishes the two COMMIT shapes they
+ * actually differ by — `receive` (the server told us; push into the controls) and `confirm` (the
+ * analyst typed it; leave the controls alone) — and leaves the redraw at the call site. A generic
+ * setter plus a subscriber would have to be the union of the three, which is the behaviour change
+ * this design exists to avoid. If a `set` or an `onScopeChange` ever appears here, that is the
+ * design being lost, not extended.
+ */
+export interface ScopeApi {
+  DfirScope: {
+    get(): Readonly<ScopeWindow>;
+    isEmpty(): boolean;
+    contains(ts: unknown): boolean;
+    /** The client-side mirror of the server's projectScope(). Same object back when no window is set. */
+    project<T>(state: T): T;
+    receive(start: unknown, end: unknown): void;
+    confirm(start: unknown, end: unknown): void;
+  };
+}
