@@ -3258,3 +3258,6 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   #sec-playbook .pbh-regen:disabled{opacity:.6;cursor:default}
   #sec-playbook .pbh-res{margin-top:6px}
   #sec-playbook .pbh-caveat{color:var(--badge-warning-text);font-size:11px;margin:8px 0 0}
+/* A tier-3 feature whose file failed to load (#415): loud, because absent is otherwise indistinguishable from empty. */
+.feature-warnings { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 0; }
+.feature-warn { background: var(--sev-high, #e5484d); color: #fff; border-radius: 4px; padding: 6px 10px; font-size: 12px; }

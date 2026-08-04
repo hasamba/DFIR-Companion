@@ -61,9 +61,16 @@
       .catch((err) => showToast(`${label} push failed: ` + err.message, "warn"));
   }
 
+  // Guards against a second call. Nothing calls it twice today, but it is a published entry point
+  // now, and running it again would fire seven status requests a second time and stack a duplicate
+  // listener on each of the four overlays — every "click outside to close" would then run twice.
+  let initialised = false;
+
   // Everything below ran at top level in the inline script, in this order. It stays in that order,
   // inside a function the page calls at the same point — the ordering is the behaviour.
   function initTicketIntegrations() {
+    if (initialised) return;
+    initialised = true;
     // ── Push to an external platform (DFIR-IRIS / Timesketch / MISP) ──────────
     // Each option appears in the Push menu only when the server has that target configured
     // (GET /iris/status, /timesketch/status, /misp/status); the menu stays hidden until at least one does.
@@ -255,6 +262,12 @@
         .finally(() => { btn.disabled = false; });
     };
 
+    // Published HERE, the moment its own section is wired, rather than at the end of init. The
+    // Import-case chooser is already registered by this point, and an exception in the reconnect,
+    // ClickUp or IRIS-push wiring below would otherwise leave that control calling a name that was
+    // never published — the one feature the analyst can already see, broken by an unrelated one.
+    window.openIrisImportModal = openIrisImportModal;
+
     // Settings → DFIR-IRIS "Test / reconnect": save any unsaved field edits first, then re-read
     // .env, rebuild the client, and ping. Applies a saved URL/key (or IRIS coming back online)
     // without the #1-gotcha restart.
@@ -365,10 +378,6 @@
         .finally(() => { btn.disabled = false; });
     };
 
-    // Published here rather than at module load because it is declared inside this function. Its
-    // only caller is an onclick arrow (the Import-case chooser), which resolves the name when the
-    // analyst clicks, long after this has run.
-    window.openIrisImportModal = openIrisImportModal;
   }
 
   // The names the inline script calls by bare name. Everything else — all six bindings and eleven

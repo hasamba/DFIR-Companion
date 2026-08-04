@@ -905,6 +905,133 @@ export function commitsInsideLoops(script: DashboardScript, commitNames: readonl
   return out;
 }
 
+/**
+ * Calls to `name` that are NOT wrapped in a `typeof name === "function"` guard.
+ *
+ * A tier-3 feature module is a separate <script src>. If that request fails the name is undeclared,
+ * and an unguarded call throws a ReferenceError that aborts the rest of the inline script — which
+ * is how blocking one file left the dashboard disconnected with unrelated controls unwired. `typeof`
+ * is the one operation that does not throw on an undeclared identifier, so it is the guard, and
+ * this finds any call that skipped it.
+ */
+export function unguardedCalls(script: DashboardScript, name: string): number[] {
+  const out: number[] = [];
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  const guardsName = (cond: ts.Node): boolean => {
+    let found = false;
+    const walk = (n: ts.Node): void => {
+      if (ts.isTypeOfExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
+        found = true;
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(cond);
+    return found;
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
+      let p: ts.Node | undefined = n.parent;
+      let guarded = false;
+      while (p) {
+        if (ts.isIfStatement(p) && guardsName(p.expression)) {
+          guarded = true;
+          break;
+        }
+        if (ts.isConditionalExpression(p) && guardsName(p.condition)) {
+          guarded = true;
+          break;
+        }
+        p = p.parent;
+      }
+      if (!guarded) out.push(at(n));
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(script.ast, visit);
+  return out;
+}
+
+/** Does this script contain a real CALL to `name`? A comment mentioning it does not count. */
+export function callsByName(script: DashboardScript, name: string): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(script.ast, visit);
+  return found;
+}
+
+/**
+ * Every DOM access that runs at module scope rather than inside a function.
+ *
+ * These files are <head> scripts, so anything here executes before the body is parsed: a capture is
+ * null, a listener attaches to nothing, and the feature is silently absent. The indentation-based
+ * check this replaced missed `window.document?.getElementById(...)`, which is the same access by a
+ * spelling a pattern does not recognise — so the question is asked structurally: is this a member
+ * access rooted at `document`, and is it outside every function?
+ */
+export function domAccessOutsideFunctions(script: DashboardScript): string[] {
+  const out: string[] = [];
+  const rootsAtDocument = (n: ts.Node): boolean => {
+    let cur: ts.Node = n;
+    for (;;) {
+      if (ts.isIdentifier(cur)) return cur.text === "document";
+      // `window.document?.getElementById(...)` roots at `window`, not `document` — the spelling
+      // review used to slip past this. A global root followed by `.document` IS the document.
+      if (
+        ts.isPropertyAccessExpression(cur) &&
+        cur.name.text === "document" &&
+        ts.isIdentifier(cur.expression) &&
+        GLOBAL_ROOTS.has(cur.expression.text)
+      ) {
+        return true;
+      }
+      if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) cur = cur.expression;
+      else if (ts.isNonNullExpression(cur) || ts.isParenthesizedExpression(cur)) cur = cur.expression;
+      else return false;
+    }
+  };
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  // AN IIFE WRAPPER IS STILL MODULE SCOPE. Every one of these modules is `(function () { … })()`,
+  // so treating any enclosing function as "inside a function" made this check vacuous — it could
+  // never fire, on any module. The wrapper runs at load exactly as bare top-level code would.
+  /** The function an IIFE invokes, unwrapping the parentheses, or null if this is not one. */
+  const iifeBody = (n: ts.Node): ts.Node | null => {
+    if (!ts.isCallExpression(n)) return null;
+    let callee: ts.Node = n.expression;
+    while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+    return ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) ? callee.body : null;
+  };
+
+  const visit = (n: ts.Node, inFunction: boolean): void => {
+    // Descend into the wrapper's BODY at the CURRENT scope. Walking its children generically hits
+    // the FunctionExpression itself, which then sets inFunction — which is why the first attempt at
+    // this still reported nothing for a DOM read sitting directly inside the wrapper.
+    const body = iifeBody(n);
+    if (body) {
+      ts.forEachChild(body, (c) => visit(c, inFunction));
+      return;
+    }
+    if (isFunctionLike(n)) {
+      ts.forEachChild(n, (c) => visit(c, true));
+      return;
+    }
+    if (!inFunction && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) {
+      if (rootsAtDocument(n)) out.push(`${script.name}:${at(n)} ${n.getText(script.ast).slice(0, 70)}`);
+    }
+    ts.forEachChild(n, (c) => visit(c, inFunction));
+  };
+  ts.forEachChild(script.ast, (c) => visit(c, false));
+  return out;
+}
+
 /** A property write through an owner's getter: `DfirScope.get().start = x`. */
 export interface GetterMutation {
   script: string;

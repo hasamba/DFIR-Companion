@@ -2,7 +2,15 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import { runInContext } from "node:vm";
-import { dashboardScripts, functionsOf, topLevelBindings } from "../helpers/dashboardAst.js";
+import {
+  callsByName,
+  dashboardScripts,
+  domAccessOutsideFunctions,
+  functionsOf,
+  scriptFromSource,
+  topLevelBindings,
+  unguardedCalls,
+} from "../helpers/dashboardAst.js";
 import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // TIER 3 (#415): whole features moved out of the inline script, each owning its own state.
@@ -28,6 +36,10 @@ interface Feature {
   publish: string[];
   /** State that must NOT be reachable from outside the closure. */
   private: string[];
+  /** A published entry point that does the feature's load-time work, if it has one. */
+  initializer?: string;
+  /** Names that only exist AFTER the initializer has run. */
+  postInitPublish?: string[];
 }
 
 const FEATURES: Feature[] = [
@@ -93,7 +105,20 @@ const FEATURES: Feature[] = [
     // otherwise fail, which is the honest signal that it appears later rather than at load.
     file: "dashboard-tickets.js",
     publish: ["pushFindingToTicket", "bulkPushFindingsToTicket", "initTicketIntegrations"],
-    private: ["notionHasDefault", "clickupDefaultList", "notionOverlay", "clickupOverlay"],
+    private: [
+      "pushSelect",
+      "notionHasDefault",
+      "clickupDefaultList",
+      "notionOverlay",
+      "irisImportOverlay",
+      "irisReconnectBtn",
+      "clickupOverlay",
+      "irisPushOverlay",
+    ],
+    // Everything this module does happens when the page calls initTicketIntegrations(), so the
+    // checks that matter have to RUN it — see the block at the bottom of this file.
+    initializer: "initTicketIntegrations",
+    postInitPublish: ["openIrisImportModal"],
   },
   {
     file: "dashboard-collection-plan.js",
@@ -101,6 +126,17 @@ const FEATURES: Feature[] = [
     private: [],
   },
 ];
+
+/**
+ * The names a loaded module put on the global object, ignoring the sandbox's own furniture.
+ *
+ * The vm context is seeded with `window`/`globalThis`, the host globals the loader borrows live
+ * (Date, btoa, atob, console — see dashboardModule.ts) and whatever `extraGlobals` the caller
+ * supplied. None of those are the module's doing.
+ */
+const SANDBOX_FURNITURE = new Set(["window", "globalThis", "Date", "btoa", "atob", "console"]);
+const globalsOf = (api: Record<string, unknown>, seeded: string[] = []): string[] =>
+  Object.keys(api).filter((k) => !SANDBOX_FURNITURE.has(k) && !seeded.includes(k));
 
 const read = (f: string) => readFile(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
 const scripts = dashboardScripts();
@@ -140,7 +176,10 @@ describe.each(FEATURES)("$file", (feat) => {
   // referring to it. A name left behind in the page resolves to undefined at call time.
   it("leaves nothing behind in the inline script", async () => {
     const src = await read(feat.file);
-    const declared = [...src.matchAll(/^ {2}(?:async )?function (\w+)\s*\(/gm)].map((m) => m[1]);
+    // ANY indentation: dashboard-tickets.js declares fourteen of its functions inside
+    // initTicketIntegrations(), and an IIFE-level pattern saw none of them — so a duplicate left
+    // behind in the page went unnoticed.
+    const declared = [...src.matchAll(/^\s*(?:async )?function (\w+)\s*\(/gm)].map((m) => m[1]);
     expect(declared.length, "no functions found — the extraction produced an empty module").toBeGreaterThan(
       0,
     );
@@ -205,6 +244,158 @@ describe.each(FEATURES)("$file", (feat) => {
   });
 });
 
+// ── RUNNING THE INITIALIZER ──────────────────────────────────────────────────────────────────────
+//
+// Everything above stops at module LOAD. For dashboard-tickets.js that is almost nothing: four DOM
+// captures, seven status fetches, a dozen listener registrations and the fourth public function all
+// appear only when initTicketIntegrations() runs. Review proved what load-time-only checks certify
+// here — deleting `window.openIrisImportModal`, deleting the irisImportOverlay declaration, and
+// leaking `window.debugTickets` from inside the initializer ALL passed the whole suite.
+//
+// So the initializer is executed against a DOM fixture and the global delta is asserted on both
+// sides of it.
+describe("initTicketIntegrations", () => {
+  const feat = FEATURES.find((f) => f.file === "dashboard-tickets.js")!;
+  const SEEDED = ["document", "fetch"];
+
+  /** Enough of a browser for the initializer to wire itself up, and a counter for what it fetched. */
+  function fixture() {
+    const els = new Map<string, Record<string, unknown>>();
+    const listeners: string[] = [];
+    const fetched: string[] = [];
+    const el = (id: string): Record<string, unknown> => {
+      if (!els.has(id)) {
+        els.set(id, {
+          id,
+          value: "",
+          textContent: "",
+          innerHTML: "",
+          disabled: false,
+          hidden: false,
+          style: {},
+          options: [],
+          classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+          addEventListener: (type: string) => listeners.push(`${id}:${type}`),
+          // Most of this feature wires itself with `el.onclick = …` rather than addEventListener,
+          // so counting only the latter reported four handlers for a feature that installs dozens.
+          set onclick(fn: unknown) {
+            if (typeof fn === "function") listeners.push(`${id}:onclick`);
+          },
+          set onchange(fn: unknown) {
+            if (typeof fn === "function") listeners.push(`${id}:onchange`);
+          },
+          appendChild() {},
+          querySelector: () => null,
+          querySelectorAll: () => [],
+        });
+      }
+      return els.get(id) as Record<string, unknown>;
+    };
+    const document = {
+      getElementById: el,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElement: () => el("__created"),
+      body: { classList: { add() {}, remove() {} }, insertBefore() {}, firstChild: null },
+      addEventListener() {},
+    };
+    const fetchStub = (url: string) => {
+      fetched.push(url);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ configured: false }) });
+    };
+    return { document, fetch: fetchStub, listeners, fetched };
+  }
+
+  const load = () => {
+    const fx = fixture();
+    const api = loadDashboardModule<Record<string, unknown>>("dashboard-tickets.js", [], {
+      document: fx.document,
+      fetch: fx.fetch,
+    });
+    return { api, fx };
+  };
+
+  it("publishes nothing extra before it runs", () => {
+    const { api } = load();
+    expect(globalsOf(api, SEEDED).sort()).toEqual([...feat.publish].sort());
+  });
+
+  // THE CHECK THE LOAD-TIME ONES CANNOT MAKE. An extra `window.debugTickets` inside the initializer
+  // is invisible until the initializer has actually run.
+  it("adds exactly its post-init globals, and nothing else", () => {
+    const { api } = load();
+    (api[feat.initializer!] as () => void)();
+    expect(globalsOf(api, SEEDED).sort()).toEqual([...feat.publish, ...feat.postInitPublish!].sort());
+  });
+
+  it("leaves the late-published entry point callable", () => {
+    const { api } = load();
+    (api[feat.initializer!] as () => void)();
+    for (const name of feat.postInitPublish!) {
+      expect(typeof api[name], `${name} is not callable after init`).toBe("function");
+    }
+  });
+
+  it("keeps its state private even after wiring itself up", () => {
+    const { api } = load();
+    (api[feat.initializer!] as () => void)();
+    for (const name of feat.private) {
+      expect(() => runInContext(name, api as object), `${name} escaped the closure`).toThrow(
+        new RegExp(`${name} is not defined`),
+      );
+    }
+  });
+
+  it("actually wires the overlays and asks the server what is configured", () => {
+    const { api, fx } = load();
+    (api[feat.initializer!] as () => void)();
+    expect(fx.fetched.length, "no status request — the Push menu would never populate").toBeGreaterThan(4);
+    expect(fx.listeners.length, "no listener registered — every control would be dead").toBeGreaterThan(4);
+  });
+
+  // Hardening rather than a live bug: nothing calls it twice today, but it is a published entry
+  // point, and a second run would re-fire every status request and stack a duplicate listener on
+  // each overlay.
+  it("is idempotent", () => {
+    const { api, fx } = load();
+    (api[feat.initializer!] as () => void)();
+    const after = { fetched: fx.fetched.length, listeners: fx.listeners.length };
+    (api[feat.initializer!] as () => void)();
+    expect({ fetched: fx.fetched.length, listeners: fx.listeners.length }).toEqual(after);
+  });
+});
+
+// ── A MISSING MODULE MUST NOT TAKE THE PAGE WITH IT ──────────────────────────────────────────────
+//
+// Each of these is a separate <script src>. Blocking just one in Chromium threw a ReferenceError at
+// its call site, and because that call sits at the top level of the inline script the throw aborted
+// EVERYTHING AFTER IT: URL case restoration never ran, unrelated toggles stayed unwired, and the
+// dashboard sat disconnected. That failure mode did not exist while the code was inline, so it is a
+// regression this tier introduced rather than a pre-existing risk.
+describe("a feature script that fails to load", () => {
+  const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline"));
+
+  // The entry points called where a throw would abort the rest of the script, rather than from
+  // inside a handler where it is contained to that one interaction.
+  const ENTRY_POINTS = ["initTicketIntegrations", "initCustodyButtons", "verifyCustodyOnOpen"];
+
+  it.each(ENTRY_POINTS)("guards every tier-3 entry point: %s", (name) => {
+    const bad = inline.flatMap((s) => unguardedCalls(s, name).map((line) => `${s.name}:${line}`));
+    expect(
+      bad,
+      `${name}() is called without a typeof guard — if its script 404s this throws and takes the ` +
+        "rest of the inline script with it",
+    ).toEqual([]);
+  });
+
+  it("says so on screen rather than failing silently", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    expect(html).toMatch(/function dfirFeatureUnavailable\(/);
+    // A missing feature must be distinguishable from a feature with nothing to show.
+    expect(html).toMatch(/featureWarnings/);
+  });
+});
+
 // ── THE TWO THINGS THAT DELIBERATELY DID NOT MOVE ────────────────────────────────────────────────
 describe("what stayed behind, on purpose", () => {
   // `sessionsCollapsed` lives inside the sessions block but the timeline header's collapse-all
@@ -224,19 +415,28 @@ describe("what stayed behind, on purpose", () => {
     expect(code).not.toContain("sessionsCollapsed");
   });
 
-  // The same hazard, and the reason ticket integrations was held back from the first eight: almost
-  // everything it does happens at LOAD time — four getElementById captures, three status fetches
-  // and a dozen listener registrations. In a <head> module those would run before the markup
-  // exists, wiring nothing and reporting no error at all.
-  it("calls initTicketIntegrations from the page rather than on module load", async () => {
-    const src = await read("dashboard-tickets.js");
-    const body = src.slice(src.indexOf("(function () {"));
-    // No bare `document.` outside a function: every DOM touch must be inside init or a handler.
-    expect(body, "a load-time DOM query would run before the markup exists").not.toMatch(
-      /\n {2}(?:const|let|var)\s+\w+\s*=\s*document\./,
-    );
-    const html = await readFile(DASHBOARD, "utf8");
-    expect(html).toContain("initTicketIntegrations();");
+  // THE PAGE MUST REALLY CALL IT, and the module must really defer its DOM work.
+  //
+  // The first version checked that the HTML CONTAINED the text "initTicketIntegrations();" and that
+  // an indentation-sensitive regex found no `const x = document.` — and review walked past both:
+  // commenting the call out left the text present (a comment satisfying a check on prose, for the
+  // eighth time in this issue), and moving a listener into the module with
+  // `window.document?.getElementById(...)` slipped the regex while dying at browser load. Both
+  // questions are structural, so both are asked of the AST.
+  it("is called from the page as a real call, not a comment", () => {
+    const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline"));
+    const called = inline.some((s) => callsByName(s, "initTicketIntegrations"));
+    expect(called, "no CALL to initTicketIntegrations in the page — a comment does not count").toBe(true);
+  });
+
+  it("touches no DOM outside a function", async () => {
+    const module = scriptFromSource("dashboard-tickets.js", await read("dashboard-tickets.js"));
+    const offenders = domAccessOutsideFunctions(module);
+    expect(
+      offenders,
+      "a DOM read at module scope runs before the markup exists — the captures would be null and " +
+        "the listeners would attach to nothing, with no error anywhere",
+    ).toEqual([]);
   });
 
   // initCustodyButtons ran at its old position in the inline script, AFTER the custody markup.

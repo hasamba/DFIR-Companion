@@ -11713,7 +11713,29 @@
 
 
 
-    initCustodyButtons();   // js/dashboard-custody.js — called here, where its IIFE used to run
+    // A tier-3 feature (#415) is fetched as its own file. If that request fails its name is simply
+    // undeclared, and an unguarded call throws a ReferenceError that aborts THE REST OF THIS SCRIPT:
+    // blocking one 26 KB file left the dashboard disconnected, case restoration never run and
+    // unrelated toggles unwired. That could not happen while the code was inline, so every entry
+    // point is guarded — `typeof name` is the one operation that does not throw on an undeclared
+    // identifier — and a missing feature SAYS SO, since "the Push menu does nothing" is otherwise
+    // indistinguishable from "no targets are configured".
+    function dfirFeatureUnavailable(label) {
+      console.error(`dashboard feature unavailable: ${label} (its script failed to load)`);
+      let box = document.getElementById("featureWarnings");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "featureWarnings"; box.className = "feature-warnings";
+        document.body.insertBefore(box, document.body.firstChild);
+      }
+      const chip = document.createElement("div");
+      chip.className = "feature-warn";
+      chip.textContent = `⚠ ${label} is unavailable — reload, and check the server is serving /js/.`;
+      box.appendChild(chip);
+    }
+
+    if (typeof initCustodyButtons === "function") initCustodyButtons();   // js/dashboard-custody.js
+    else dfirFeatureUnavailable("Chain of custody");
 
     // ── Hunting Profile (#157) ────────────────────────────────────────────────────────────
     // The per-case hunt feedback loop, surfaced read-only: every hunt deployed in this case (fleet /
@@ -14495,7 +14517,7 @@
           // this replaced: the overlay hides via allSettled below and the dashboard stays as-is.
         }
       })();
-      verifyCustodyOnOpen(caseId);
+      if (typeof verifyCustodyOnOpen === "function") verifyCustodyOnOpen(caseId);   // never block a case connect
       applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
       DfirStarred.replace([]); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
       DfirSelection.events.clear();
@@ -16919,7 +16941,8 @@
       });
     });
 
-    initTicketIntegrations();   // js/dashboard-tickets.js — where this block used to run
+    if (typeof initTicketIntegrations === "function") initTicketIntegrations();   // js/dashboard-tickets.js
+    else dfirFeatureUnavailable("Ticket integrations");
 
     // ── Collapsible sections ──────────────────────────────────────────────────
     // Click a section header to collapse/expand it; state is keyed by the section's
@@ -18472,7 +18495,10 @@
     // The AI-test button is re-rendered with the diagnostics body, so delegate from the pane.
     document.getElementById("diagBody").addEventListener("click", e => { if (e.target.closest("#diagAiTestBtn")) diagAiTest(); });
     // Case backup restore (#180) — load button is static; restore buttons are in the dynamically rendered list.
-    document.getElementById("diagLoadBackupsBtn").addEventListener("click", loadCaseBackups);
+    document.getElementById("diagLoadBackupsBtn").addEventListener("click", () => {
+      if (typeof loadCaseBackups === "function") loadCaseBackups();
+      else dfirFeatureUnavailable("Case backups");
+    });
     document.getElementById("diagBackupsList").addEventListener("click", e => {
       const btn = e.target.closest(".bk-restore-btn");
       if (btn) restoreCaseBackup(btn.dataset.filename);
