@@ -68,12 +68,21 @@ export function dashboardStylesheet(): string {
 export function dashboardClientSource(): string {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
   const html = read("../../../public/dashboard.html");
-  // EVERY first-party script the page tags, read from the markup rather than from a list.
+  // The dashboard-*.js scripts the page tags, read from the MARKUP rather than from a list.
   //
-  // This was DASHBOARD_HELPER_FILES, and the list went stale exactly as a hard-coded list does:
-  // it named the original eight helpers and none of the tier-2 owners or tier-3 feature modules,
-  // so four suites that assert "the dashboard does X" started failing the moment X moved into a
-  // file the list did not mention. dashboardScripts() reads the markup for the same reason.
+  // This was DASHBOARD_HELPER_FILES, and the list went stale exactly as a hard-coded list does: it
+  // named the original eight helpers and none of the tier-2 owners or tier-3 feature modules, so
+  // four suites asserting "the dashboard does X" broke the moment X moved into a file it did not
+  // mention. dashboardScripts() reads the markup for the same reason.
+  //
+  // NOT "every first-party script", which an earlier version of this comment claimed: graph-view,
+  // the command palette, settings-search, the a11y modules and every transitive import are outside
+  // it. Use dashboardScripts() where the question is about all of the client code; this exists for
+  // suites whose subject is the dashboard's own feature code.
+  //
+  // AND IT IS A CONCATENATION, so a location-sensitive assertion can pass on an occurrence in a
+  // different file. Where a test cares WHERE something lives — the CSP nonce on inline blocks, the
+  // report logo's FileReader — read that file directly instead.
   const tagged = [...html.matchAll(/<script[^>]*\ssrc="\/js\/(dashboard-[^"]+)"/g)].map((m) => m[1]);
   return [
     html,

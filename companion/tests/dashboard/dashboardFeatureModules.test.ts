@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
+import { runInContext } from "node:vm";
 import { dashboardScripts, functionsOf, topLevelBindings } from "../helpers/dashboardAst.js";
+import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // TIER 3 (#415): whole features moved out of the inline script, each owning its own state.
 //
@@ -66,7 +68,17 @@ const FEATURES: Feature[] = [
       "geoFocusIp",
       "geoDownloadCsv",
     ],
-    private: ["geoMapData", "geoMap", "geoLayer", "geoFlowLayer", "geoMapTimer", "geoMapInitializing"],
+    private: [
+      "geoMapData",
+      "geoMap",
+      "geoLayer",
+      "geoFlowLayer",
+      "geoMapTimer",
+      "geoMapInitializing",
+      // Missing from the first inventory, which is its own argument for asserting the EXACT global
+      // set rather than listing names by hand and hoping the list is complete.
+      "geoTileUrl",
+    ],
   },
   {
     file: "dashboard-custody.js",
@@ -85,22 +97,33 @@ const read = (f: string) => readFile(new URL(`../../../public/js/${f}`, import.m
 const scripts = dashboardScripts();
 
 describe.each(FEATURES)("$file", (feat) => {
-  it("declares and publishes every name the page calls", async () => {
-    const src = await read(feat.file);
+  // THESE RUN THE MODULE. The first version asserted on the file's TEXT — that it contained
+  // `(function () {` and one `window.x = x` line per published name — and review showed what that
+  // certifies: nothing. Changing `})();` to `});` leaves a valid, never-invoked function expression
+  // that publishes not one global, and every text assertion still passed. So did leaking state as
+  // `window.debugFeatureState`, and so did deleting a private declaration while its references
+  // remained. These files sit outside the TypeScript build AND outside eslint, so actually running
+  // them is the only check here that means anything.
+  it("adds exactly the globals it promises, and nothing else", () => {
+    expect(globalsAddedBy(feat.file).sort()).toEqual([...feat.publish].sort());
+  });
+
+  it("publishes a callable function for every name", () => {
+    const api = loadDashboardModule<Record<string, unknown>>(feat.file);
     for (const name of feat.publish) {
-      expect(src, `${name} is published but never declared`).toMatch(new RegExp(`function ${name}\\s*\\(`));
-      expect(src, `${name} is declared but never published`).toContain(`window.${name} = ${name};`);
+      expect(typeof api[name], `${name} is not a function on the global object`).toBe("function");
     }
   });
 
-  // THE POINT OF THE CLOSURE. A top-level `let` in a classic script is reachable by name from every
-  // later script, so "feature-local" would be a claim rather than a fact. Wrapped, it is a fact.
-  it("keeps its state inside the closure", async () => {
-    const src = await read(feat.file);
-    expect(src.trimStart(), "the module must be wrapped").toMatch(/\(function \(\) \{/);
+  // THE POINT OF THE CLOSURE. A top-level `let` in a classic script joins the shared global lexical
+  // environment, so "feature-local" would be a claim rather than a fact. Asked of the RUNNING
+  // module: a bare reference from a second script in the same context must not resolve.
+  it("puts its state out of reach of another script on the page", () => {
+    const api = loadDashboardModule<Record<string, unknown>>(feat.file);
     for (const name of feat.private) {
-      expect(src, `${name} must be declared`).toMatch(new RegExp(`\\b${name}\\b`));
-      expect(src, `${name} must not be published`).not.toContain(`window.${name}`);
+      expect(() => runInContext(name, api as object), `${name} escaped the closure`).toThrow(
+        new RegExp(`${name} is not defined`),
+      );
     }
   });
 
@@ -124,13 +147,35 @@ describe.each(FEATURES)("$file", (feat) => {
     expect(leftBehind, "the feature must move as a unit or not at all").toEqual([]);
   });
 
-  it("takes its bindings with it, leaving none in the page", () => {
-    const inline = scripts.filter((s) => s.name.startsWith("dashboard.html#inline"));
-    const stranded = inline.flatMap((s) =>
-      topLevelBindings(s)
-        .filter((b) => feat.private.includes(b.name))
-        .map((b) => `${s.name}:${b.line} ${b.name}`),
-    );
+  // AND EACH PRIVATE NAME MUST ACTUALLY BE DECLARED.
+  //
+  // The out-of-reach check above cannot see this one: delete `let anomaliesTimer = null` and the
+  // name simply becomes an implicit global the first time the function ASSIGNS to it. Nothing
+  // happens at load, so the global set is unchanged and a bare reference still throws — the module
+  // only starts leaking once the analyst uses it. Comments are stripped first, because a module
+  // header that explains why a binding stayed behind is not a declaration.
+  it("declares every one of its private bindings", async () => {
+    const code = (await read(feat.file))
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    for (const name of feat.private) {
+      expect(code, `${name} is referenced but never declared — it would become an implicit global`).toMatch(
+        new RegExp(`(?:let|const|var)[^;\n]*\\b${name}\\b`),
+      );
+    }
+  });
+
+  // EVERY script the page loads, not the inline blocks alone: a duplicate of one of these bindings
+  // in another loaded /js/ file is the same page global, and scoping the search to the page missed it.
+  it("takes its bindings with it, leaving none anywhere else", () => {
+    const stranded = scripts
+      .filter((s) => s.name !== `js/${feat.file}`)
+      .flatMap((s) =>
+        topLevelBindings(s)
+          .filter((b) => feat.private.includes(b.name))
+          .map((b) => `${s.name}:${b.line} ${b.name}`),
+      );
     expect(stranded).toEqual([]);
   });
 

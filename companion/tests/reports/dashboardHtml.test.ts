@@ -129,7 +129,10 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="rm-logoPreview"');
     expect(html).toContain('id="rm-removeLogo"');
     expect(html).toContain("companyLogo:"); // sent in the report-meta PUT body
-    expect(html).toContain("readAsDataURL"); // logo is base64-encoded client-side
+    // Read from the MARKUP, not the aggregate: dashboard-values.js also calls readAsDataURL, so
+    // this would pass against that occurrence even if the logo's own encoder were deleted.
+    const markup = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(markup).toContain("readAsDataURL"); // logo is base64-encoded client-side
   });
 
   it("offers Markdown and HTML export links after generating the report", async () => {
@@ -297,7 +300,8 @@ describe("dashboard.html", () => {
     expect(html).toContain('id="importFile"');
     expect(html).toContain("multiple"); // multi-select enabled
     expect(html).toContain('fetch("/captures"'); // images go through the capture ingest path
-    expect(html).toContain("readAsDataURL"); // base64-encodes each image
+    const markup2 = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(markup2).toContain("readAsDataURL"); // base64-encodes each image
     expect(html).toContain("/import"); // data files are auto-detected + routed
     // Restored minimum-severity floor: the import prompts once and forwards the chosen floor.
     expect(html).toContain("Minimum severity to import");
