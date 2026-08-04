@@ -318,6 +318,43 @@ export interface SelectionApi {
 }
 
 /**
+ * public/js/dashboard-timeline-view.js — the timeline's view filters, as ACTIONS.
+ *
+ * The reads are scalars and membership tests; no Set or array the caller can write ever comes out.
+ * The actions each declare their own refresh set, which is why there is no generic setter and no
+ * subscription — see the module header.
+ */
+export interface TimelineViewApi {
+  DfirTimelineView: {
+    wire(handlers: Record<string, () => void>): void;
+    hydrate(state?: { excludeTerms?: string[]; corroboration?: Record<string, number> }): void;
+
+    search(): string;
+    excludeTerms(): readonly string[];
+    from(): string | null;
+    to(): string | null;
+    starredOnly(): boolean;
+    hasEventId(id: unknown): boolean;
+    eventIdFilterActive(): boolean;
+    eventIdCount(): number;
+    eventIdLabel(): string;
+    corrobTimeline(): number;
+    corrobIocs(): number;
+    corrobFindings(): number;
+
+    setSearch(term: unknown): void;
+    setExcludeTerms(terms?: Iterable<string> | null): void;
+    setTimeWindow(from: string | null, to: string | null): void;
+    showOnlyStarred(on: boolean): void;
+    setCorroboration(which: string, value: unknown): number;
+    filterToEventIds(ids?: Iterable<unknown> | null, label?: string): number;
+    clearEventIds(): void;
+    clearFilters(): void;
+    resetForCase(): void;
+  };
+}
+
+/**
  * One facet filter (public/js/dashboard-facets.js): the names the analyst UNCHECKED.
  *
  * `has` rather than `isHidden` on purpose — realSourceCount(sources, hidden) needs an object with

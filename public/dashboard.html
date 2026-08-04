@@ -127,6 +127,7 @@
   <!-- Tier 2's selection owners (#415). After dashboard-state.js, whose cell() they build on. -->
   <script src="/js/dashboard-selection.js"></script>
   <script src="/js/dashboard-facets.js"></script>
+  <script src="/js/dashboard-timeline-view.js"></script>
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
@@ -3565,48 +3566,81 @@
         return { key: key === "severity" ? "severity" : "date", dir: dir === "desc" ? "desc" : "asc" };
       } catch { return { key: "date", dir: "asc" }; }
     })();
-    let searchTerm = "";                      // active text search (lower-cased; empty = no filter)
     let fpReasonFilter = "";                  // False Positives panel: reason code to filter to ("" = all)
     // Exclude filter (#216): hide events/IOCs/findings matching ANY of these terms — a view-only lens,
     // never touches InvestigationState. Persisted per-browser so it survives reloads.
-    let excludeTerms = (() => {
-      try { return JSON.parse(localStorage.getItem("dfir.excludeTerms") || "[]"); } catch { return []; }
+    (() => {
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("dfir.excludeTerms") || "[]"); } catch { saved = []; }
+      // hydrate(), not setExcludeTerms(): this runs while the script is still parsing, so there is
+      // nothing to refresh yet — see js/dashboard-timeline-view.js.
+      DfirTimelineView.hydrate({ excludeTerms: Array.isArray(saved) ? saved : [] });
     })();
-    if (!Array.isArray(excludeTerms)) excludeTerms = [];
     // Persist + re-render the exclude-term chip list, then re-apply filters to whatever's on screen.
+    // Persistence stays here — the owner holds the value, the page decides it survives a reload.
+    // The refresh is the owner's: ONE render where there were two (see js/dashboard-timeline-view.js).
     function setExcludeTerms(terms) {
-      excludeTerms = terms;
-      try { localStorage.setItem("dfir.excludeTerms", JSON.stringify(excludeTerms)); } catch {}
-      renderExcludeChips();
-      if (DfirState.lastState()) render(DfirState.lastState());
-      if (DfirState.lastSuperData()) loadSuperTimeline();   // the main filter's exclude terms scope the super-timeline too
-      renderFalsePositives(fpMarkers);   // exclude terms scope the False Positives panel too
+      DfirTimelineView.setExcludeTerms(terms);
+      try { localStorage.setItem("dfir.excludeTerms", JSON.stringify(DfirTimelineView.excludeTerms())); } catch {}
     }
     function renderExcludeChips() {
       const box = document.getElementById("excludeChips");
       const clearBtn = document.getElementById("clearExcludeBtn");
       if (!box) return;
-      box.innerHTML = excludeTerms.map((t, i) =>
+      box.innerHTML = DfirTimelineView.excludeTerms().map((t, i) =>
         `<span class="exclude-chip"><span title="${escAttr(t)}">${esc(t)}</span><button type="button" data-i="${i}" title="Remove this exclude term">✕</button></span>`
       ).join("");
-      if (clearBtn) clearBtn.hidden = excludeTerms.length === 0;
+      if (clearBtn) clearBtn.hidden = DfirTimelineView.excludeTerms().length === 0;
     }
     // Corroboration lens (#35): 0 = off; 2/3 = show only items observed by ≥N distinct tools. A LENS,
     // not a gate — it narrows the view but never drops state, so single-source evidence (a Sysmon-only
     // process, a syslog-only logon) is always one click away. Each of the three sections (Timeline /
     // IOCs / Findings) has its OWN control in its title bar, persisted independently per-browser.
     const _corrobOf = (k) => { const v = parseInt(localStorage.getItem("dfir.corrob." + k) || "0", 10); return v === 2 || v === 3 ? v : 0; };
-    let corrobTimeline = _corrobOf("timeline");
-    let corrobIocs = _corrobOf("iocs");
-    let corrobFindings = _corrobOf("findings");
+    DfirTimelineView.hydrate({
+      corroboration: { timeline: _corrobOf("timeline"), iocs: _corrobOf("iocs"), findings: _corrobOf("findings") },
+    });
+    // The page's painters, registered once. DfirTimelineView decides WHICH of these an action makes
+    // stale; it does not know how to paint any of them. Arrows, so the names resolve at call time —
+    // every one of these is declared later in this script.
+    DfirTimelineView.wire({
+      timeline: () => renderTimelineEvents(DfirState.lastFt() || []),
+      all: () => { if (DfirState.lastState()) render(DfirState.lastState()); },
+      superTimeline: () => { if (DfirState.lastSuperData()) loadSuperTimeline(); },
+      falsePositives: () => renderFalsePositives(fpMarkers),
+      derivedViews: () => refreshFilteredViews(),
+      excludeChips: () => renderExcludeChips(),
+      searchBox: () => {
+        const gs = document.getElementById("globalSearch");
+        if (gs) gs.value = DfirTimelineView.search();
+        const cs = document.getElementById("clearSearch");
+        if (cs) cs.hidden = !DfirTimelineView.search();
+      },
+      timeInputs: () => {
+        const ff = document.getElementById("filterFrom");
+        if (ff) ff.value = isoToUtcInput(DfirTimelineView.from());
+        const ft = document.getElementById("filterTo");
+        if (ft) ft.value = isoToUtcInput(DfirTimelineView.to());
+        const cf = document.getElementById("clearFiltersBtn");
+        if (cf) cf.hidden = !DfirTimelineView.from() && !DfirTimelineView.to();
+      },
+      severityBoxes: () => document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; }),
+      starButton: () => {
+        const b = document.getElementById("evStarFilterBtn");
+        if (!b) return;
+        const on = DfirTimelineView.starredOnly();
+        b.textContent = on ? "★ Starred" : "☆ Starred";
+        b.classList.toggle("active", on);
+      },
+    });
     // The four facet filters moved to js/dashboard-facets.js as DfirFacets (#415, tier 2). The
     // stale-facet prune each renderer used to perform is now derived — see that file.
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
     let _originMenuSig = "";                   // signature of the origin-filter menu's last build
     let _hostMenuSig = "";                     // signature of the host-filter menu's last build
     let _iocTypeMenuSig = "";                  // signature of the IOC-type-filter menu's last build (skip rebuild when unchanged)
-    let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
-    let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
+    // searchTerm / filterFrom / filterTo / excludeTerms / the three corroboration lenses moved to
+    // js/dashboard-timeline-view.js (#415, tier 2): the unit there is the ACTION, not the field.
     let _searchDebounce = null;
     let tlPage = 0;                           // current timeline page (0-based)
     let tlPageSize = 50;                      // rows per page; user-selectable
@@ -3616,15 +3650,15 @@
     let _iocKeepPage = false;                 // pagination buttons set this to avoid resetting to page 0
     let _lastRenderedIocs = [];               // exact array last passed to renderIocs, so pagination can re-render the same data
 
-    function _hasActiveFilter() { return !!(searchTerm || filterFrom || filterTo || excludeTerms.length); }
+    function _hasActiveFilter() { return !!(DfirTimelineView.search() || DfirTimelineView.from() || DfirTimelineView.to() || DfirTimelineView.excludeTerms().length); }
     // True when an event passes the GLOBAL search-bar filter (text search + time range + exclude terms).
     // This is the filter the toolbar search applies to the timeline; we also feed it to the timeline-DERIVED
     // views (Kill Chain, Attack Phases) so "I searched an IP" narrows every event-based section, not just the
     // timeline list. (Severity-legend + source toggles stay timeline-local — they're list facets.)
     function _matchesGlobalFilter(e) {
-      if (searchTerm && !_evMatchesSearch(e, searchTerm)) return false;
-      if (excludeTerms.length && _evMatchesExclude(e, excludeTerms)) return false;
-      if ((filterFrom || filterTo) && !_evMatchesTimeRange(e, filterFrom, filterTo)) return false;
+      if (DfirTimelineView.search() && !_evMatchesSearch(e, DfirTimelineView.search())) return false;
+      if (DfirTimelineView.excludeTerms().length && _evMatchesExclude(e, DfirTimelineView.excludeTerms())) return false;
+      if ((DfirTimelineView.from() || DfirTimelineView.to()) && !_evMatchesTimeRange(e, DfirTimelineView.from(), DfirTimelineView.to())) return false;
       return true;
     }
     function applyGlobalEventFilter(events) {
@@ -3873,8 +3907,8 @@
     // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
     function _graphTimeQuery() {
       const p = new URLSearchParams();
-      if (filterFrom) p.set("from", filterFrom);
-      if (filterTo) p.set("until", filterTo);
+      if (DfirTimelineView.from()) p.set("from", DfirTimelineView.from());
+      if (DfirTimelineView.to()) p.set("until", DfirTimelineView.to());
       const q = p.toString();
       return q ? `?${q}` : "";
     }
@@ -4024,7 +4058,7 @@
       // super-timeline when it has been loaded before, so pre-reset the pagination cursor and only
       // load explicitly when the section has never been opened.
       superOffset = 0;
-      applySearch();                     // sets searchTerm + rescopes the whole dashboard (window-exposed by the search IIFE)
+      applySearch();                     // commits the search term + rescopes the whole dashboard (window-exposed by the search IIFE)
       if (!DfirState.lastSuperData()) loadSuperTimeline();
       const sec = document.getElementById("sec-super-timeline");
       if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
@@ -5347,13 +5381,13 @@
       const stToIso = utcInputToIso((document.getElementById("stTo") || {}).value || "");
       // Intersect with the main dashboard filter bar's time range (#8) — ISO UTC strings sort
       // lexically, so max()/min() picks the tighter bound on each side without a Date parse.
-      const from = [stFromIso, filterFrom].filter(Boolean).sort().pop() || "";
-      const to = [stToIso, filterTo].filter(Boolean).sort()[0] || "";
+      const from = [stFromIso, DfirTimelineView.from()].filter(Boolean).sort().pop() || "";
+      const to = [stToIso, DfirTimelineView.to()].filter(Boolean).sort()[0] || "";
       const p = new URLSearchParams();
       if (from) p.set("from", from);
       if (to) p.set("to", to);
-      if (searchTerm) p.set("q", searchTerm);
-      if (excludeTerms.length) p.set("excludeText", excludeTerms.join(","));
+      if (DfirTimelineView.search()) p.set("q", DfirTimelineView.search());
+      if (DfirTimelineView.excludeTerms().length) p.set("excludeText", DfirTimelineView.excludeTerms().join(","));
       // Origins + hosts are EXCLUDE-model checklists: send the UNCHECKED items as the exclude list, so
       // all checked → exclude nothing → all shown; some unchecked → those hidden; ALL unchecked → 0
       // events. (An include list would treat "none checked" as "show all" — the bug this avoids.)
@@ -6360,12 +6394,10 @@
     // migrated up once per case, then the key is deleted.
     // starredEvents moved to js/dashboard-selection.js as DfirStarred (#415).
     let starredTagIds = new Map();   // eventId -> tag id (needed for DELETE /cases/:id/tags/:tagId)
-    let showStarredOnly = false;
     // Transient "show only this set of event ids" filter — set by the Timeline Anomalies
     // "view N events" link (and reusable by any panel that points at a group of events) so the
     // analyst sees EXACTLY the events behind a bucket, not just the first. null = inactive.
-    let evIdFilter = null;        // Set<string> of event ids, or null
-    let evIdFilterLabel = "";     // human label shown in the chip (e.g. the anomaly bucket)
+    // showStarredOnly / evIdFilter / evIdFilterLabel moved to js/dashboard-timeline-view.js (#415).
     let showFlaggedIocsOnly = false;   // IOCs section: show only malicious/suspicious (any enrichment engine)
     // Noise-reduction defaults for a case with hundreds/thousands of IOCs (every file/process/hash seen
     // anywhere becomes one — see the "too many IOCs" discussion): hide false-positive-marked + no-intel IOCs,
@@ -12854,21 +12886,14 @@
     // Reset the forensic-timeline VIEW filters (severity / source / starred / search / time range) so a
     // targeted event can't be hidden. Used by jumpToEvent when the event isn't on the current page —
     // only called when the row is genuinely hidden, so a no-filter view is left untouched.
+    // The analyst's "clear filters", now one commit and one redraw. The facets are a separate owner
+    // so they are cleared alongside; everything else belongs to DfirTimelineView.
     function resetTimelineViewFilters() {
-      document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
       DfirFacets.sources.showAll(); _srcMenuSig = "";
       DfirFacets.origins.showAll(); _originMenuSig = "";
       DfirFacets.hosts.showAll(); _hostMenuSig = "";
-      showStarredOnly = false;
-      evIdFilter = null; evIdFilterLabel = "";
-      const sfBtn = document.getElementById("evStarFilterBtn");
-      if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
-      searchTerm = ""; filterFrom = null; filterTo = null;
-      setExcludeTerms([]);   // also un-hides anything the exclude filter was suppressing
-      const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
-      const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
-      const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
-      const csBtn = document.getElementById("clearSearch"); if (csBtn) csBtn.hidden = true;
+      DfirTimelineView.clearFilters();
+      try { localStorage.setItem("dfir.excludeTerms", "[]"); } catch {}
     }
 
     // Filter the forensic timeline to EXACTLY a set of event ids (e.g. every event behind a Timeline
@@ -12877,28 +12902,26 @@
     function filterTimelineToEventIds(ids, label) {
       const list = (ids || []).map(String).filter(Boolean);
       if (!list.length) return;
-      resetTimelineViewFilters();              // also clears any prior id filter
-      evIdFilter = new Set(list);
-      evIdFilterLabel = label || "";
+      DfirFacets.sources.showAll(); _srcMenuSig = "";
+      DfirFacets.origins.showAll(); _originMenuSig = "";
+      DfirFacets.hosts.showAll(); _hostMenuSig = "";
+      // ONE paint, with the id filter already committed. This used to reset (two full renders, both
+      // showing the filter it had just cleared) and only apply the ids on a third.
+      DfirTimelineView.filterToEventIds(list, label);
       const sec = document.getElementById("sec-timeline");
-      if (sec) sec.classList.remove("collapsed");
-      renderTimelineEvents(DfirState.lastFt() || []);
-      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (sec) { sec.classList.remove("collapsed"); sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
     }
-    function clearEvIdFilter() {
-      evIdFilter = null; evIdFilterLabel = "";
-      renderTimelineEvents(DfirState.lastFt() || []);
-    }
+    function clearEvIdFilter() { DfirTimelineView.clearEventIds(); }
     // Render (or hide) the chip that shows the active "only these N events" filter + a Clear button.
     function renderEvIdFilterChip(shown, _total) {
       const el = document.getElementById("evIdFilterChip");
       if (!el) return;
-      if (!evIdFilter) { el.style.display = "none"; el.innerHTML = ""; return; }
-      const n = evIdFilter.size;
+      if (!DfirTimelineView.eventIdFilterActive()) { el.style.display = "none"; el.innerHTML = ""; return; }
+      const n = DfirTimelineView.eventIdCount();
       el.style.display = "";
       el.innerHTML =
         `<span data-safe-style="color:var(--accent)">⧉ Showing ${shown} of ${n} event${n !== 1 ? "s" : ""} in this group` +
-        `${evIdFilterLabel ? " — " + esc(evIdFilterLabel) : ""}</span>` +
+        `${DfirTimelineView.eventIdLabel() ? " — " + esc(DfirTimelineView.eventIdLabel()) : ""}</span>` +
         ` <button type="button" data-act="clearEvIdFilter" data-safe-style="margin-left:8px;font-size:11px;background:var(--border-color);border:none;color:var(--text-primary);border-radius:3px;padding:2px 8px;cursor:pointer" title="Clear this filter and show the whole timeline">✕ Clear, show all</button>`;
     }
 
@@ -13088,15 +13111,7 @@
           const x0 = Math.min(tb.x0, tb.x1), x1 = Math.max(tb.x0, tb.x1);
           if (x1 - x0 > 4) {
             const ms0 = swXToTs(x0, canvas.width), ms1 = swXToTs(x1, canvas.width);
-            const ff = document.getElementById("filterFrom"), ft = document.getElementById("filterTo");
-            const cfBtn = document.getElementById("clearFiltersBtn");
-            if (ff) ff.value = isoToUtcInput(new Date(ms0).toISOString());
-            if (ft) ft.value = isoToUtcInput(new Date(ms1).toISOString());
-            filterFrom = new Date(ms0).toISOString();
-            filterTo = new Date(ms1).toISOString();
-            if (cfBtn) cfBtn.hidden = false;
-            renderTimelineEvents(DfirState.lastFt());
-            refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the brushed range
+            DfirTimelineView.setTimeWindow(new Date(ms0).toISOString(), new Date(ms1).toISOString());
             const sec = document.getElementById("sec-timeline");
             if (sec && sec.classList.contains("collapsed")) sec.classList.remove("collapsed");
           }
@@ -13337,13 +13352,13 @@
       const el = document.getElementById("false-positive");
       // The global filter toolbar (search + exclude terms) scopes this panel too, same as the
       // Timeline/Findings/IOCs — matched against kind/ref/label/reason/note (see _fpMatchesSearch).
-      const q = searchTerm;
+      const q = DfirTimelineView.search();
       // Most-recently-marked first, so a fresh mark-as-FP surfaces at the top instead of getting
       // buried at the bottom of a long list (markedAt is an ISO timestamp; unparsable sorts last).
       const sorted = [...fpMarkers].sort((a, b) => (Date.parse(b.markedAt) || 0) - (Date.parse(a.markedAt) || 0));
       const visible = sorted.filter(m =>
         (!q || _fpMatchesSearch(m, q)) &&
-        !(excludeTerms.length && _fpMatchesExclude(m, excludeTerms)) &&
+        !(DfirTimelineView.excludeTerms().length && _fpMatchesExclude(m, DfirTimelineView.excludeTerms())) &&
         (!fpReasonFilter || m.reason === fpReasonFilter));
       // For event markers, prefer the human-readable label (the event description)
       // over the opaque event id stored as ref.
@@ -13362,7 +13377,7 @@
             : "<div data-safe-style='color:var(--text-muted)'>Nothing marked false positive.</div>");
       const fpCountEl = document.getElementById("fpCount");
       if (fpCountEl) {
-        fpCountEl.textContent = (q || excludeTerms.length || fpReasonFilter)
+        fpCountEl.textContent = (q || DfirTimelineView.excludeTerms().length || fpReasonFilter)
           ? `(${visible.length} of ${fpMarkers.length})`
           : (fpMarkers.length ? `(${fpMarkers.length})` : "");
       }
@@ -13517,10 +13532,10 @@
       renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
-      if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
-      if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
+      if (DfirTimelineView.search()) visible = visible.filter(i => _iocMatchesSearch(i, DfirTimelineView.search()));
+      if (DfirTimelineView.excludeTerms().length) visible = visible.filter(i => !_iocMatchesExclude(i, DfirTimelineView.excludeTerms()));
       if (iocTypeHidden > 0) visible = visible.filter(i => !DfirFacets.iocTypes.has(i.type || "other"));
-      if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
+      if (DfirTimelineView.corrobIocs() > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= DfirTimelineView.corrobIocs());   // corroboration lens (#35)
       if (iocProvenanceFilter !== "all") visible = visible.filter(i => iocProvenanceOf(i.id) === iocProvenanceFilter);   // provenance lens
       if (riskIocsFilter > 0) visible = visible.filter(i => iocRiskRankOf(i.id) >= riskIocsFilter);   // risk lens (#63)
       // Noise reduction (two independent, composable lenses — nothing is deleted, both persisted
@@ -13561,7 +13576,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div data-safe-style='color:var(--text-muted)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || excludeTerms.length > 0 || iocTypeHidden > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
+          : (DfirTimelineView.search() || DfirTimelineView.excludeTerms().length > 0 || iocTypeHidden > 0 || DfirTimelineView.corrobIocs() > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
             ? `<div data-safe-style='color:var(--text-muted)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div data-safe-style='color:var(--text-muted)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -13885,21 +13900,11 @@
     // search-bar date inputs and the swimlane time-brush already use, so a heatmap click behaves
     // identically to typing a date range (and composes with every other active filter).
     function zoomToTimeWindow(fromIso, toIso) {
-      const ffEl = document.getElementById("filterFrom");
-      const ftEl = document.getElementById("filterTo");
-      const cfBtn = document.getElementById("clearFiltersBtn");
-      if (ffEl) ffEl.value = isoToUtcInput(fromIso);
-      if (ftEl) ftEl.value = isoToUtcInput(toIso);
-      filterFrom = fromIso;
-      filterTo = toIso;
-      if (cfBtn) cfBtn.hidden = false;
       // Open the (possibly collapsed) filter panel so the populated from/to fields and the Clear
       // button are actually visible — otherwise the zoom silently narrows the timeline with no
       // obvious way back (the Clear button lives inside that panel).
       setSearchBarOpen(true, false);
-      renderTimelineEvents(DfirState.lastFt());
-      refreshFilteredViews();
-      if (DfirState.lastSuperData()) loadSuperTimeline();
+      DfirTimelineView.setTimeWindow(fromIso, toIso);
     }
     function renderTimelineHeatmap(visible) {
       const el = document.getElementById("timelineHeatmap");
@@ -13943,8 +13948,8 @@
       // When the corroboration lens is on, scope the Sources menu to the tools present on events that
       // CLEAR the lens (≥N distinct sources, counting all of them — so the facet list is stable as the
       // analyst toggles sources). Drives renderSourceFilter's display list.
-      const lensFt = corrobTimeline > 1
-        ? ft.filter(e => realSourceCount(e.sources) >= corrobTimeline)
+      const lensFt = DfirTimelineView.corrobTimeline() > 1
+        ? ft.filter(e => realSourceCount(e.sources) >= DfirTimelineView.corrobTimeline())
         : null;
       // These return the EFFECTIVE hidden count, so the "N of M events" label below agrees with the
       // buttons the analyst sees — see js/dashboard-facets.js.
@@ -13959,11 +13964,11 @@
       const allSevs = ['Critical', 'High', 'Medium', 'Low'];
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
-      if (evIdFilter) visible = visible.filter(e => evIdFilter.has(String(e.id)));
-      if (showStarredOnly) visible = visible.filter(e => DfirStarred.has(String(e.id)));
-      if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
-      if (excludeTerms.length) visible = visible.filter(e => !_evMatchesExclude(e, excludeTerms));
-      if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
+      if (DfirTimelineView.eventIdFilterActive()) visible = visible.filter(e => DfirTimelineView.hasEventId(e.id));
+      if (DfirTimelineView.starredOnly()) visible = visible.filter(e => DfirStarred.has(String(e.id)));
+      if (DfirTimelineView.search()) visible = visible.filter(e => _evMatchesSearch(e, DfirTimelineView.search()));
+      if (DfirTimelineView.excludeTerms().length) visible = visible.filter(e => !_evMatchesExclude(e, DfirTimelineView.excludeTerms()));
+      if (DfirTimelineView.from() || DfirTimelineView.to()) visible = visible.filter(e => _evMatchesTimeRange(e, DfirTimelineView.from(), DfirTimelineView.to()));
       const sourceFiltering = srcHidden > 0;
       if (sourceFiltering) visible = visible.filter(e => {
         const real = (e.sources || []).filter(s => s && s !== "unknown source");
@@ -13976,7 +13981,7 @@
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
-      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= corrobTimeline);
+      if (DfirTimelineView.corrobTimeline() > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= DfirTimelineView.corrobTimeline());
       const view = DfirState.activeView();
       const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
@@ -13995,7 +14000,7 @@
       const countEl = document.getElementById('timelineCount');
       if (countEl) {
         const total = ft.length;
-        const baseText = (filtering || showStarredOnly || sourceFiltering || originFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter())
+        const baseText = (filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter())
           ? `${totalFiltered} of ${total} events`
           : `${total} event${total !== 1 ? 's' : ''}`;
         countEl.textContent = (tlPageSize > 0 && totalFiltered > tlPageSize)
@@ -14008,7 +14013,7 @@
 
       if (!totalFiltered) {
         document.getElementById("forensicTimeline").innerHTML =
-          ((filtering || showStarredOnly || sourceFiltering || originFiltering || viewSevFiltering || evIdFilter || corrobTimeline > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : "—";
+          ((filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter()) && ft.length > 0) ? "<div data-safe-style='color:var(--text-muted)'>No events match the current filters.</div>" : "—";
         return;
       }
 
@@ -14843,15 +14848,15 @@
       const activeDashView = DfirState.activeView();   // read once; this function consults it three times
       // Corroboration lens (#35): a finding's sources are the union of its supporting events' tools.
       const _findingCorrob = (f) => {
-        if (corrobFindings <= 1) return true;
+        if (DfirTimelineView.corrobFindings() <= 1) return true;
         const srcs = new Set();
         for (const e of (suppEventsByFinding[f.id] || [])) for (const s of (e.sources || [])) if (s && s !== "unknown source") srcs.add(s);
-        return srcs.size >= corrobFindings;
+        return srcs.size >= DfirTimelineView.corrobFindings();
       };
       const filtered = sorted.filter(f =>
         (f.confidence === undefined || f.confidence >= minConf) &&
-        (!searchTerm || _findingMatchesSearch(f, searchTerm)) &&
-        !(excludeTerms.length && _findingMatchesExclude(f, excludeTerms)) &&
+        (!DfirTimelineView.search() || _findingMatchesSearch(f, DfirTimelineView.search())) &&
+        !(DfirTimelineView.excludeTerms().length && _findingMatchesExclude(f, DfirTimelineView.excludeTerms())) &&
         _findingCorrob(f) &&
         viewMeetsMinSev(f.severity));   // dashboard-view severity floor (#142)
       const capped = viewTopN() > 0 ? filtered.slice(0, viewTopN()) : filtered;   // view top-N cap
@@ -14860,7 +14865,7 @@
       if (findingsCountEl) {
         const totalFindings = sorted.length;
         const shownFindings = capped.length;
-        const findingsFiltering = minConf > 0 || !!searchTerm || excludeTerms.length > 0 || corrobFindings > 1
+        const findingsFiltering = minConf > 0 || !!DfirTimelineView.search() || DfirTimelineView.excludeTerms().length > 0 || DfirTimelineView.corrobFindings() > 1
           || !!(activeDashView && activeDashView.filters && (activeDashView.filters.minSeverity || viewTopN()));
         findingsCountEl.textContent = findingsFiltering
           ? `(${shownFindings} of ${totalFindings} findings)`
@@ -14929,7 +14934,7 @@
             `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
             (hasEvidence ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>` : "") +
             `</div>`;
-        }).join("")) || (searchTerm && sorted.length > 0 ? `<span data-safe-style="color:var(--text-muted)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span data-safe-style="color:var(--text-muted)">No findings above ${minConf}% confidence.</span>` : (activeDashView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span data-safe-style="color:var(--text-muted)">No findings match the “${esc(activeDashView.name)}” view filter.</span>` : "—");
+        }).join("")) || (DfirTimelineView.search() && sorted.length > 0 ? `<span data-safe-style="color:var(--text-muted)">No findings match the filter.</span>` : minConf > 0 && sorted.length > 0 ? `<span data-safe-style="color:var(--text-muted)">No findings above ${minConf}% confidence.</span>` : (activeDashView && (viewFilters().minSeverity || viewTopN()) && sorted.length > 0) ? `<span data-safe-style="color:var(--text-muted)">No findings match the “${esc(activeDashView.name)}” view filter.</span>` : "—");
       const findingSelAllEl = document.getElementById("findingSelectAll");
       if (findingSelAllEl && findingSomeSel && !findingAllSel) findingSelAllEl.indeterminate = true;
       updateFindingBulkBar();
@@ -15179,7 +15184,6 @@
       DfirFacets.sources.showAll(); _srcMenuSig = "";
       DfirFacets.origins.showAll(); _originMenuSig = "";
       DfirFacets.hosts.showAll(); _hostMenuSig = "";
-      showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
       showFlaggedIocsOnly = false;
@@ -15191,7 +15195,7 @@
       // hideFpNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
       // controls, they're per-browser preferences (localStorage-backed), not per-case session state.
       DfirFacets.iocTypes.showAll(); _iocTypeMenuSig = "";
-      searchTerm = ""; filterFrom = null; filterTo = null;
+      DfirTimelineView.resetForCase();   // NOT clearFilters(): keeps the id filter, severity boxes and exclude terms
       const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
       const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
       const ftEl = document.getElementById("filterTo"); if (ftEl) ftEl.value = "";
@@ -16395,10 +16399,7 @@
       }
       // Star filter toggle
       if (e.target.id === "evStarFilterBtn") {
-        showStarredOnly = !showStarredOnly;
-        e.target.textContent = showStarredOnly ? "★ Starred" : "☆ Starred";
-        e.target.classList.toggle("active", showStarredOnly);
-        renderTimelineEvents(DfirState.lastFt());
+        DfirTimelineView.showOnlyStarred(!DfirTimelineView.starredOnly());
         return;
       }
       // IOC verdict filter — only malicious/suspicious (from any enrichment engine)
@@ -16904,8 +16905,8 @@
       function addExcludeTerm(raw) {
         const term = raw.trim();
         if (!term) return;
-        if (excludeTerms.some(t => t.toLowerCase() === term.toLowerCase())) return;   // no dupes
-        setExcludeTerms([...excludeTerms, term]);
+        if (DfirTimelineView.excludeTerms().some(t => t.toLowerCase() === term.toLowerCase())) return;   // no dupes
+        setExcludeTerms([...DfirTimelineView.excludeTerms(), term]);
       }
       if (exIn) {
         exIn.addEventListener("keydown", (e) => {
@@ -16913,8 +16914,8 @@
             e.preventDefault();
             addExcludeTerm(exIn.value);
             exIn.value = "";
-          } else if (e.key === "Backspace" && !exIn.value && excludeTerms.length) {
-            setExcludeTerms(excludeTerms.slice(0, -1));   // Backspace on empty input pops the last chip
+          } else if (e.key === "Backspace" && !exIn.value && DfirTimelineView.excludeTerms().length) {
+            setExcludeTerms(DfirTimelineView.excludeTerms().slice(0, -1));   // Backspace on empty input pops the last chip
           } else if (e.key === "Escape") {
             exIn.value = ""; exIn.blur();
           }
@@ -16926,26 +16927,15 @@
           const btn = e.target.closest("button[data-i]");
           if (!btn) return;
           const i = parseInt(btn.dataset.i, 10);
-          setExcludeTerms(excludeTerms.filter((_, idx) => idx !== i));
+          setExcludeTerms(DfirTimelineView.excludeTerms().filter((_, idx) => idx !== i));
         });
       }
       if (exClearBtn) exClearBtn.addEventListener("click", () => setExcludeTerms([]));
 
-      function applySearch() {
-        searchTerm = gs.value.trim().toLowerCase();
-        cs.hidden = !searchTerm;
-        if (DfirState.lastState()) render(DfirState.lastState());
-        if (DfirState.lastSuperData()) loadSuperTimeline();   // the main filter's search term scopes the super-timeline too
-        renderFalsePositives(fpMarkers);   // search term scopes the False Positives panel too
-      }
+      function applySearch() { DfirTimelineView.setSearch(gs.value); }
       window.applySearch = applySearch;   // exposed for cross-section pivots (Login Graph "Open in Timeline")
       function applyTimeRange() {
-        filterFrom = utcInputToIso(ff.value);
-        filterTo = utcInputToIso(ft.value);
-        cfBtn.hidden = !filterFrom && !filterTo;
-        renderTimelineEvents(DfirState.lastFt());
-        refreshFilteredViews();   // keep Kill Chain + Attack Phases in sync with the time range
-        if (DfirState.lastSuperData()) loadSuperTimeline();   // and the super-timeline's own (intersected) time range
+        DfirTimelineView.setTimeWindow(utcInputToIso(ff.value), utcInputToIso(ft.value));
       }
 
       gs.addEventListener("input", () => {
@@ -16990,15 +16980,15 @@
           rerender();
         });
       };
-      wire("corrobTimeline", () => corrobTimeline,
-        (v) => { corrobTimeline = v; localStorage.setItem("dfir.corrob.timeline", String(v)); },
-        () => { if (DfirState.lastFt()) renderTimelineEvents(DfirState.lastFt()); });
-      wire("corrobIocs", () => corrobIocs,
-        (v) => { corrobIocs = v; localStorage.setItem("dfir.corrob.iocs", String(v)); },
-        () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); });
-      wire("corrobFindings", () => corrobFindings,
-        (v) => { corrobFindings = v; localStorage.setItem("dfir.corrob.findings", String(v)); },
-        () => { if (DfirState.lastState()) { _tlKeepPage = true; render(DfirState.lastState()); } });
+      wire("corrobTimeline", () => DfirTimelineView.corrobTimeline(),
+        (v) => { DfirTimelineView.setCorroboration("timeline", v); localStorage.setItem("dfir.corrob.timeline", String(v)); },
+        () => {});   // the owner refreshes
+      wire("corrobIocs", () => DfirTimelineView.corrobIocs(),
+        (v) => { DfirTimelineView.setCorroboration("iocs", v); localStorage.setItem("dfir.corrob.iocs", String(v)); },
+        () => {});
+      wire("corrobFindings", () => DfirTimelineView.corrobFindings(),
+        (v) => { _tlKeepPage = true; DfirTimelineView.setCorroboration("findings", v); localStorage.setItem("dfir.corrob.findings", String(v)); },
+        () => {});
       // Risk lens (#63) — dedicated handler (accepts tier 2/3/4, which `wire` doesn't).
       const riskSel = document.getElementById("riskIocs");
       if (riskSel) {

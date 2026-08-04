@@ -430,8 +430,11 @@ describe("dashboard.html", () => {
     // slice), not the paginated page or the raw unfiltered `ft` — so density reflects every active filter
     // and the full dataset across all pages, not just the current page.
     expect(html).toMatch(/visible = sortTimelineEvents\(visible\);\s*\n\s*renderTimelineHeatmap\(visible\)/);
-    // Click-to-zoom reuses the same filterFrom/filterTo path as the search-bar date filters.
-    expect(html).toMatch(/zoomToTimeWindow[\s\S]{0,400}filterFrom = fromIso/);
+    // Click-to-zoom reuses the same time-window path as the search-bar date filters. This used to
+    // be asserted as `filterFrom = fromIso` inside zoomToTimeWindow; both now commit through the
+    // owner (#415 tier 2), so BOTH sides of "the same path" are named rather than implied.
+    expect(html).toMatch(/zoomToTimeWindow[\s\S]{0,600}DfirTimelineView\.setTimeWindow\(fromIso, toIso\)/);
+    expect(html).toMatch(/function applyTimeRange[\s\S]{0,200}DfirTimelineView\.setTimeWindow\(/);
     // Each bar carries its own bucket window for the zoom. This used to be an inline
     // onclick="zoomToTimeWindow('${from}','${to}')"; inline handlers are now blocked by the CSP
     // (script-src), so the window rides in data-* and the click is dispatched from the ACTIONS table.

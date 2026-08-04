@@ -481,6 +481,7 @@
     "ROUTE GET /js/dashboard-scope.js",
     "ROUTE GET /js/dashboard-selection.js",
     "ROUTE GET /js/dashboard-facets.js",
+    "ROUTE GET /js/dashboard-timeline-view.js",
     "ROUTE GET /js/dashboard-tagger.js",
     "ROUTE GET /js/dashboard-kev.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
