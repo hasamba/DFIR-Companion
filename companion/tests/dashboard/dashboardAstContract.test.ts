@@ -14,10 +14,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCallGraph,
+  ownerEscapes,
   calleesInsideLoops,
   commitsInsideLoops,
   ownerCalls,
-  reachableWithin,
+  reachableFrom,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -25,7 +26,7 @@ import {
 const COMMITS = ["toggle", "addAll", "removeAll", "clear", "showAll", "hideAll"];
 
 describe("the loop rule follows a wrapper, but not a deferred callback", () => {
-  it("catches a commit two hops from a loop callee", () => {
+  it("catches a commit several hops from a loop callee", () => {
     const s = scriptFromSource(
       "p.js",
       `
@@ -37,7 +38,7 @@ describe("the loop rule follows a wrapper, but not a deferred callback", () => {
     const graph = buildCallGraph([s]);
     let caught = false;
     for (const callee of calleesInsideLoops([s])) {
-      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      const reach = new Set([callee, ...reachableFrom(graph, [callee])]);
       for (const c of committers) if (reach.has(c)) caught = true;
     }
     expect(caught, "two-hop wrapper still invisible").toBe(true);
@@ -54,7 +55,7 @@ describe("the loop rule follows a wrapper, but not a deferred callback", () => {
     const graph = buildCallGraph([s]);
     const hits: string[] = [];
     for (const callee of calleesInsideLoops([s])) {
-      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      const reach = new Set([callee, ...reachableFrom(graph, [callee])]);
       for (const c of committers) if (reach.has(c)) hits.push(`${callee}->${c}`);
     }
     expect(hits, "a keystroke handler is not a per-element commit").toEqual([]);
@@ -93,6 +94,81 @@ describe("the loop rule follows a wrapper, but not a deferred callback", () => {
       const src = await readFile(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
       expect(commitsInsideLoops(scriptFromSource(f, src), ["commit", "set"])).toEqual([]);
     }
+  });
+
+  // Every form review found walking past the gates, each kept as the regression test it should
+  // always have been.
+  it("catches a commit inside an iteration callback within a bulk operation", () => {
+    const s = scriptFromSource(
+      "m.js",
+      `
+      function idSet() {
+        const cell = window.DfirState.cell(new Set());
+        return { addAll(ids) { ids.forEach((id) => cell.set(new Set([id]))); } };
+      }`,
+    );
+    expect(commitsInsideLoops(s, ["commit", "set"]).map((c) => c.fn)).toContain("addAll");
+  });
+
+  it.each([
+    [
+      "a synchronous IIFE",
+      `for (const id of ids) (function () { DfirSelection.events.toggle(id, true); })();`,
+    ],
+    ["a parenthesised callback", `ids.forEach((id) => { DfirSelection.events.toggle(id, true); });`],
+    [
+      "one queued commit per item",
+      `for (const id of ids) queueMicrotask(() => DfirSelection.events.toggle(id, true));`,
+    ],
+  ])("still counts %s as per-element", (_label, src) => {
+    expect(ownerCalls([scriptFromSource("p.js", src)], "DfirSelection", COMMITS).some((c) => c.inLoop)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [
+      "an inline listener",
+      `for (const id of ids) el(id).addEventListener("click", () => DfirSelection.events.clear());`,
+    ],
+    [
+      "a named handler",
+      `function h() { DfirSelection.events.clear(); }\nfor (const id of ids) el(id).addEventListener("click", h);`,
+    ],
+    ["an on* assignment", `for (const id of ids) { el(id).onclick = () => DfirSelection.events.clear(); }`],
+  ])("does not count %s, which runs on an event and not per element", (_label, src) => {
+    const s = scriptFromSource("p.js", src);
+    expect(ownerCalls([s], "DfirSelection", COMMITS).some((c) => c.inLoop)).toBe(false);
+    const committers = new Set(
+      ownerCalls([s], "DfirSelection", COMMITS)
+        .map((c) => c.fn)
+        .filter((f) => !f.startsWith("<")),
+    );
+    const graph = buildCallGraph([s]);
+    const viaCallee = [...calleesInsideLoops([s])].some((c) => {
+      const reach = new Set([c, ...reachableFrom(graph, [c])]);
+      return [...committers].some((x) => reach.has(x));
+    });
+    expect(viaCallee).toBe(false);
+  });
+
+  it.each([
+    ["a var in a for-of head", `for (var selectedEvents of sets) {}`],
+    ["a logical-assignment global", `window.hiddenSources ??= new Set();`],
+    ["a template-literal key", 'globalThis[`searchTerm`] = "";'],
+  ])("counts %s as a binding", (_label, src) => {
+    const name = ["selectedEvents", "hiddenSources", "searchTerm"].find((n) => src.includes(n))!;
+    expect(topLevelBindings(scriptFromSource("p.js", src)).map((b) => b.name)).toContain(name);
+  });
+
+  it.each([
+    ["a reflective invoke", `DfirSelection.events.toggle.call(null, "x");`],
+    ["a method overwrite", `DfirSelection.events.toggle = function () {};`],
+  ])("does not let %s past both gates", (_label, src) => {
+    const s = scriptFromSource("p.js", src);
+    const seen =
+      ownerCalls([s], "DfirSelection", COMMITS).length > 0 || ownerEscapes([s], "DfirSelection").length > 0;
+    expect(seen, "reaches a writable member and is reported by neither gate").toBe(true);
   });
 
   it("counts a computed global assignment as a binding", () => {

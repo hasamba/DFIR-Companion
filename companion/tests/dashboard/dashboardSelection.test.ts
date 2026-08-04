@@ -10,7 +10,7 @@ import {
   dashboardScripts,
   ownerCalls,
   ownerEscapes,
-  reachableWithin,
+  reachableFrom,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -305,21 +305,23 @@ describe("no commit happens inside a loop", () => {
   // with names this generic, "can eventually reach" stops predicting "runs per iteration", and a
   // gate whose output is mostly allowlist teaches people to extend the allowlist. The bound is
   // stated here so the next reader knows what is NOT covered rather than assuming it is.
-  it("no function reachable from a loop within two hops commits", () => {
+  it("no function reachable from a loop through any number of hops commits", () => {
     const committers = new Set(
       ["DfirSelection", "DfirStarred"]
         .flatMap((ns) => ownerCalls(scriptsForPins, ns, COMMITS))
         .map((c) => c.fn)
         .filter((f) => !f.startsWith("<")),
     );
-    // TWO hops, not one. Review found `for (…) outer(x)` where outer() calls inner() which
-    // commits — invisible to a direct-callee check. Still bounded rather than full reachability,
-    // for the reason recorded above; the bound is stated so nobody assumes more coverage.
+    // FULL reachability, no bound. An earlier version stopped at one hop, then at two, because
+    // unbounded reachability reported noise — and the noise turned out to be a modelling error
+    // rather than a fact about the code: a handler registered inside a loop was being counted as
+    // running per element. With that fixed (see isEventHandlerArg) the unbounded rule reports
+    // nothing on this page, so there is no reason to keep a bound that only limits what is caught.
     const graph = buildCallGraph(scriptsForPins);
     const offenders: string[] = [];
     for (const callee of calleesInsideLoops(scriptsForPins)) {
       if (ALLOWED_IN_LOOP.includes(callee)) continue;
-      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      const reach = new Set([callee, ...reachableFrom(graph, [callee])]);
       for (const c of committers) {
         if (reach.has(c) && !ALLOWED_IN_LOOP.includes(c)) {
           offenders.push(`${callee}() is called in a loop and reaches ${c}(), which commits`);
@@ -396,14 +398,15 @@ describe("the old bindings are gone", () => {
     expect(found).not.toContain("selectedEvents");
   });
 
-  it.each(MOVED)("%s has no top-level binding left in the page", (name) => {
-    const offenders = scripts
-      .filter((s) => s.name.startsWith("dashboard.html#inline"))
-      .flatMap((s) =>
-        topLevelBindings(s)
-          .filter((b) => b.name === name)
-          .map((b) => `${s.name}:${b.line}`),
-      );
+  it.each(MOVED)("%s has no binding left in any script the page loads", (name) => {
+    // EVERY script, not just the inline blocks. Scoping this to the page meant the same legacy
+    // binding re-created in a loaded /js/ module passed — the single-file hole, still open here
+    // after the facet and timeline-view suites had closed it.
+    const offenders = scripts.flatMap((s) =>
+      topLevelBindings(s)
+        .filter((b) => b.name === name)
+        .map((b) => `${s.name}:${b.line}`),
+    );
     expect(offenders).toEqual([]);
   });
 });

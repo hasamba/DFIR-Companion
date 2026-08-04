@@ -12,7 +12,6 @@ import {
   ownerCalls,
   ownerEscapes,
   reachableFrom,
-  reachableWithin,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -260,7 +259,7 @@ describe("no renderer writes a facet", () => {
 
   // Two hops, matching the selection owner's rule — a direct-callee check misses
   // `for (…) outer(x)` where outer() calls inner() which commits.
-  it("has no function reachable from a loop within two hops that commits", () => {
+  it("has no function reachable from a loop through any number of hops that commits", () => {
     const committers = new Set(
       ownerCalls(scripts, "DfirFacets", COMMITS)
         .map((c) => c.fn)
@@ -269,7 +268,7 @@ describe("no renderer writes a facet", () => {
     const graph = buildCallGraph(scripts);
     const offenders: string[] = [];
     for (const callee of calleesInsideLoops(scripts)) {
-      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      const reach = new Set([callee, ...reachableFrom(graph, [callee])]);
       for (const c of committers) if (reach.has(c)) offenders.push(`${callee}() reaches ${c}()`);
     }
     expect([...new Set(offenders)]).toEqual([]);

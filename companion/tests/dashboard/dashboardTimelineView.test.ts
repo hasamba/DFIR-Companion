@@ -25,6 +25,7 @@ const PANELS = [
   "derivedViews",
   "excludeChips",
   "searchBox",
+  "searchInput",
   "timeInputs",
   "severityBoxes",
   "starButton",
@@ -479,6 +480,32 @@ describe("wiring", () => {
         `${panel}:`,
       );
     }
+  });
+
+  // A RUNTIME DEFECT THIS BRANCH FIXES, gated so it cannot come back.
+  //
+  // setSearch() trims and lower-cases the term. An earlier painter wrote that committed value back
+  // into the live <input>, so 300ms after typing "foo " the box read "foo" and the next keystrokes
+  // appended to that: "foo " then "bar" produced "foobar", with the caret moved. The original
+  // applySearch() read the input and never wrote it.
+  it("never rewrites the analyst's search box while they are typing", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const painter = html.slice(html.indexOf("searchBox: () =>"), html.indexOf("searchInput: () =>"));
+    expect(painter, "could not locate the searchBox painter").toContain("clearSearch");
+    expect(
+      painter,
+      "the per-search painter must not assign to #globalSearch — it corrupts what is being typed",
+    ).not.toMatch(/globalSearch[\s\S]*?\.value\s*=/);
+  });
+
+  it("still empties the box when the analyst clears filters", () => {
+    const { view, refreshed } = load();
+    view.setSearch("noise");
+    const after = load();
+    after.view.clearFilters();
+    expect(after.refreshed()).toContain("searchInput");
+    void refreshed;
+    void view;
   });
 
   it("stays a classic script", async () => {

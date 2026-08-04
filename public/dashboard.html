@@ -3611,12 +3611,10 @@
       iocs: () => { if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); },
       derivedViews: () => refreshFilteredViews(),
       excludeChips: () => renderExcludeChips(),
-      searchBox: () => {
-        const gs = document.getElementById("globalSearch");
-        if (gs) gs.value = DfirTimelineView.search();
-        const cs = document.getElementById("clearSearch");
-        if (cs) cs.hidden = !DfirTimelineView.search();
-      },
+      // Clear button only — writing the committed (trimmed, lower-cased) term back would corrupt
+      // what the analyst is typing. Emptying the box is a RESET, hence the separate painter.
+      searchBox: () => { const cs = document.getElementById("clearSearch"); if (cs) cs.hidden = !DfirTimelineView.search(); },
+      searchInput: () => { const gs = document.getElementById("globalSearch"); if (gs) gs.value = ""; },
       timeInputs: () => {
         const ff = document.getElementById("filterFrom");
         if (ff) ff.value = isoToUtcInput(DfirTimelineView.from());
