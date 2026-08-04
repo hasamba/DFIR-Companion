@@ -67,10 +67,18 @@ export function dashboardStylesheet(): string {
  */
 export function dashboardClientSource(): string {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+  const html = read("../../../public/dashboard.html");
+  // EVERY first-party script the page tags, read from the markup rather than from a list.
+  //
+  // This was DASHBOARD_HELPER_FILES, and the list went stale exactly as a hard-coded list does:
+  // it named the original eight helpers and none of the tier-2 owners or tier-3 feature modules,
+  // so four suites that assert "the dashboard does X" started failing the moment X moved into a
+  // file the list did not mention. dashboardScripts() reads the markup for the same reason.
+  const tagged = [...html.matchAll(/<script[^>]*\ssrc="\/js\/(dashboard-[^"]+)"/g)].map((m) => m[1]);
   return [
-    read("../../../public/dashboard.html"),
+    html,
     read("../../../public/css/dashboard.css"),
-    ...DASHBOARD_HELPER_FILES.map((f) => read(`../../../public/js/${f}`)),
+    ...tagged.map((f) => read(`../../../public/js/${f}`)),
   ].join("\n");
 }
 

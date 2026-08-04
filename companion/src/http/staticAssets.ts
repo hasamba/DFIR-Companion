@@ -58,6 +58,17 @@ export const STATIC_ASSETS: Record<string, string> = {
   // The timeline view's composite actions — the last tier-2 owner (#415). Unlike the others this
   // one takes injected painters, so a 404 leaves every filter gesture committing to nothing.
   "/js/dashboard-timeline-view.js": "application/javascript; charset=utf-8",
+  // TIER 3 (#415): whole features, each owning its state behind a closure. Unlike the tier-1/2
+  // owners these are self-contained panels, so a 404 removes one panel rather than breaking the
+  // page — which is exactly why they must be pinned here, since nothing else would notice.
+  "/js/dashboard-anomalies.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-sessions.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-compliance.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-d3fend.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-geo.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-custody.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-backup.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-collection-plan.js": "application/javascript; charset=utf-8",
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",

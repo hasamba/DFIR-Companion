@@ -99,6 +99,15 @@ export interface FunctionInfo {
   name: string;
   line: number;
   node: ts.Node;
+  /**
+   * True only for a real `function foo() {}` DECLARATION.
+   *
+   * `nameOf` gives an arrow its variable or property name, which is right for failure messages and
+   * wrong for "was this left behind": the ACTIONS dispatch table is full of
+   * `setComplianceDiscovered: (el) => setComplianceDiscovered(el)` entries that must STAY when the
+   * function they call moves out. Without this distinction those entries read as leftovers.
+   */
+  declaration: boolean;
 }
 
 const isFunctionLike = (n: ts.Node): boolean =>
@@ -132,7 +141,13 @@ export function functionsOf(script: DashboardScript): FunctionInfo[] {
   const visit = (n: ts.Node): void => {
     if (isFunctionLike(n)) {
       const { line } = script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast));
-      out.push({ script: script.name, name: nameOf(n, script.ast), line: line + 1, node: n });
+      out.push({
+        script: script.name,
+        name: nameOf(n, script.ast),
+        line: line + 1,
+        node: n,
+        declaration: ts.isFunctionDeclaration(n),
+      });
     }
     ts.forEachChild(n, visit);
   };
