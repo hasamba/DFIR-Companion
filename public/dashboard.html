@@ -124,6 +124,8 @@
        time, and after dashboard-time.js, whose isoToUtcInput it calls (at call time, so this is
        documentation rather than a constraint). -->
   <script src="/js/dashboard-scope.js"></script>
+  <!-- Tier 2's selection owners (#415). After dashboard-state.js, whose cell() they build on. -->
+  <script src="/js/dashboard-selection.js"></script>
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
@@ -5480,7 +5482,7 @@
       el.innerHTML = rows.map(e => {
         const origin = e.artifactName || (Array.isArray(e.sources) && e.sources[0]) || "Unknown";
         const sev = e.severity || "Info";
-        const starred = starredEvents.has(e.id);
+        const starred = DfirStarred.has(e.id);
         // Affected host as a leading chip (like the forensic timeline), with the redundant trailing
         // "@ <host>" many importers append stripped off the description.
         let desc = String(e.description || "");
@@ -5700,7 +5702,7 @@
     function genStarredReport() {
       const caseId = superCaseId();
       if (!caseId) return;
-      if (!starredEvents.size) {
+      if (!DfirStarred.count()) {
         stRenderNote("No starred events yet — star rows (☆) in the timeline first; the report runs over only the starred set.");
         return;
       }
@@ -6357,7 +6359,7 @@
     // browsers/analysts (TimeSketch's model: its star is the __ts_star label). starredEvents /
     // starredTagIds are DERIVED from tagsByTarget in loadTags(); legacy localStorage stars are
     // migrated up once per case, then the key is deleted.
-    let starredEvents = new Set();
+    // starredEvents moved to js/dashboard-selection.js as DfirStarred (#415).
     let starredTagIds = new Map();   // eventId -> tag id (needed for DELETE /cases/:id/tags/:tagId)
     let showStarredOnly = false;
     // Transient "show only this set of event ids" filter — set by the Timeline Anomalies
@@ -6389,14 +6391,14 @@
 
     // Rebuild the star lookup from the freshly-loaded tags (called by loadTags()).
     function deriveStarred() {
-      starredEvents = new Set();
-      starredTagIds = new Map();
+      const starred = []; starredTagIds = new Map();
       tagsByTarget.forEach(list => list.forEach(t => {
         if (t.targetType === "event" && t.label === "starred") {
-          starredEvents.add(t.targetId);
+          starred.push(t.targetId);
           starredTagIds.set(t.targetId, t.id);
         }
       }));
+      DfirStarred.replace(starred);
     }
 
     // One-time migration: pre-server-side stars lived in localStorage — push any not already
@@ -6408,7 +6410,7 @@
       let legacy = [];
       try { legacy = JSON.parse(localStorage.getItem(starredKey(caseId)) || "[]"); } catch {}
       if (!legacy.length) return;
-      const toMigrate = legacy.filter(id => !starredEvents.has(id));
+      const toMigrate = legacy.filter(id => !DfirStarred.has(id));
       try {
         for (const id of toMigrate) {
           const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
@@ -6421,13 +6423,13 @@
     }
 
     function toggleStar(caseId, id) {
-      const wasStarred = starredEvents.has(id);
+      const wasStarred = DfirStarred.has(id);
       // Optimistic flip for instant feedback; loadTags() re-derives the truth after the server call.
-      if (wasStarred) starredEvents.delete(id); else starredEvents.add(id);
+      DfirStarred.toggle(id, !wasStarred);
       renderTimelineEvents(DfirState.lastFt());
       refreshSuperRows();   // the star may belong to a super-timeline row (shared ("event", id) key)
       const revert = () => {
-        if (wasStarred) starredEvents.add(id); else starredEvents.delete(id);
+        DfirStarred.toggle(id, wasStarred);
         renderTimelineEvents(DfirState.lastFt()); refreshSuperRows();
       };
       const req = wasStarred
@@ -6441,50 +6443,48 @@
     }
 
     // --- Multi-select (session-only, cleared on re-render) ----------------------
-    let selectedEvents = new Set();
-    let selectedIocs = new Set();
-    let selectedFindings = new Set();
+    // The three selections moved to js/dashboard-selection.js as DfirSelection (#415, tier 2).
     function updateBulkBar() {
       const bar = document.getElementById("evBulkBar");
       if (!bar) return;
-      if (selectedEvents.size > 0) {
+      if (DfirSelection.events.count() > 0) {
         bar.classList.add("active");
-        document.getElementById("evBulkCount").textContent = `${selectedEvents.size} event${selectedEvents.size !== 1 ? "s" : ""} selected`;
+        document.getElementById("evBulkCount").textContent = `${DfirSelection.events.count()} event${DfirSelection.events.count() !== 1 ? "s" : ""} selected`;
       } else {
         bar.classList.remove("active");
       }
     }
-    function clearSelection() { selectedEvents.clear(); updateBulkBar(); renderTimelineEvents(DfirState.lastFt()); swSelToolbar(); swRenderCanvas(); }
+    function clearSelection() { DfirSelection.events.clear(); updateBulkBar(); renderTimelineEvents(DfirState.lastFt()); swSelToolbar(); swRenderCanvas(); }
     function updateIocBulkBar() {
       const bar = document.getElementById("iocBulkBar");
       if (!bar) return;
-      if (selectedIocs.size > 0) {
+      if (DfirSelection.iocs.count() > 0) {
         bar.classList.add("active");
-        document.getElementById("iocBulkCount").textContent = `${selectedIocs.size} IOC${selectedIocs.size !== 1 ? "s" : ""} selected`;
+        document.getElementById("iocBulkCount").textContent = `${DfirSelection.iocs.count()} IOC${DfirSelection.iocs.count() !== 1 ? "s" : ""} selected`;
       } else {
         bar.classList.remove("active");
       }
     }
-    function clearIocSelection() { selectedIocs.clear(); if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); }
+    function clearIocSelection() { DfirSelection.iocs.clear(); if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); }
     // Bulk star/unstar N events: any unstarred → star all, else unstar all. SERIALIZED requests —
     // TagsStore.add() is read-modify-write on tags.json (same reason addTag()'s bulk mode awaits
     // each call). Set updates are reconciled into the UI by the per-tag ws broadcasts and the final loadTags().
     async function bulkStarIds(caseId, ids, msgEl) {
       if (!caseId || !ids.length) return;
-      const anyUnstarred = ids.some(id => !starredEvents.has(id));
+      const anyUnstarred = ids.some(id => !DfirStarred.has(id));
       try {
         for (let i = 0; i < ids.length; i++) {
           const id = ids[i];
           if (msgEl) { msgEl.style.color = "var(--text-muted)"; msgEl.textContent = `${anyUnstarred ? "starring" : "unstarring"}… (${i + 1}/${ids.length})`; }
-          if (anyUnstarred && !starredEvents.has(id)) {
+          if (anyUnstarred && !DfirStarred.has(id)) {
             const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
               body: JSON.stringify({ targetType: "event", targetId: id, author: investigatorName(), label: "starred" }) });
             if (!r.ok) throw new Error("HTTP " + r.status);
-            starredEvents.add(id);
+            DfirStarred.toggle(id, true);
           } else if (!anyUnstarred && starredTagIds.has(id)) {
             const r = await fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`, { method: "DELETE" });
             if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);   // 404 = already gone
-            starredEvents.delete(id);
+            DfirStarred.toggle(id, false);
           }
         }
         if (msgEl) msgEl.textContent = "";
@@ -6495,7 +6495,7 @@
     }
     function bulkToggleStar() {
       const caseId = document.getElementById("caseId").value.trim();
-      bulkStarIds(caseId, [...selectedEvents], document.getElementById("evBulkCount"));
+      bulkStarIds(caseId, DfirSelection.events.ids(), document.getElementById("evBulkCount"));
     }
     function openBulkTagModal(ids, targetType) {
       tagTarget = { bulk: true, ids, targetType: targetType || "event" };
@@ -6511,13 +6511,13 @@
     // what's checked in the modal.
     function bulkMarkFalsePositive() {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedEvents.size) return;
-      const ids = [...selectedEvents];
+      if (!caseId || !DfirSelection.events.count()) return;
+      const ids = DfirSelection.events.ids();
       const descById = new Map((DfirState.lastFt() || []).map(e => [String(e.id), String(e.description || "")]));
       const [firstId, ...restIds] = ids;
       const extraRefs = restIds.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
       openFalsePositiveModal("event", firstId, descById.get(firstId) ?? "", extraRefs, () => {
-        selectedEvents.clear();
+        DfirSelection.events.clear();
         renderTimelineEvents(DfirState.lastFt());
         swSelToolbar(); swRenderCanvas();   // clear the rings + hide the swimlane selection bar
       });
@@ -6526,8 +6526,8 @@
     // --- Bulk IOC operations -------------------------------------------------------
     async function bulkEnrichIocs() {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedIocs.size) return;
-      const ids = [...selectedIocs];
+      if (!caseId || !DfirSelection.iocs.count()) return;
+      const ids = DfirSelection.iocs.ids();
       const statusEl = document.getElementById("status");
       statusEl.textContent = `enriching ${ids.length} IOC${ids.length !== 1 ? "s" : ""}…`;
       try {
@@ -6543,21 +6543,21 @@
       }
     }
     function bulkTagIocs() {
-      if (selectedIocs.size) openBulkTagModal([...selectedIocs], "ioc");
+      if (DfirSelection.iocs.count()) openBulkTagModal(DfirSelection.iocs.ids(), "ioc");
     }
     // Opens the mark-FP modal on the first selected IOC as the anchor; the rest ride along as
     // extraRefs regardless of what's checked in the modal (bulk IOC marking has no per-item
     // whitelist-promotion — see the "Confirm" handler's addToWhitelist note).
     function bulkMarkIocsFalsePositive() {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedIocs.size) return;
-      const ids = [...selectedIocs];
+      if (!caseId || !DfirSelection.iocs.count()) return;
+      const ids = DfirSelection.iocs.ids();
       const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
       const [firstId, ...restIds] = ids;
       const firstVal = iocById.get(firstId) ?? firstId;
       const extraRefs = restIds.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
       openFalsePositiveModal("ioc", firstVal, firstVal, extraRefs, () => {
-        selectedIocs.clear();
+        DfirSelection.iocs.clear();
         if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
       });
     }
@@ -6566,15 +6566,15 @@
     function updateFindingBulkBar() {
       const bar = document.getElementById("findingBulkBar");
       if (!bar) return;
-      if (selectedFindings.size > 0) {
+      if (DfirSelection.findings.count() > 0) {
         bar.classList.add("active");
-        document.getElementById("findingBulkCount").textContent = `${selectedFindings.size} finding${selectedFindings.size !== 1 ? "s" : ""} selected`;
+        document.getElementById("findingBulkCount").textContent = `${DfirSelection.findings.count()} finding${DfirSelection.findings.count() !== 1 ? "s" : ""} selected`;
       } else {
         bar.classList.remove("active");
       }
     }
     function clearFindingSelection() {
-      selectedFindings.clear();
+      DfirSelection.findings.clear();
       document.querySelectorAll(".finding-row-cb").forEach(cb => {
         cb.checked = false;
         const row = cb.closest(".finding");
@@ -6585,21 +6585,21 @@
       updateFindingBulkBar();
     }
     function bulkTagFindings() {
-      if (selectedFindings.size) openBulkTagModal([...selectedFindings], "finding");
+      if (DfirSelection.findings.count()) openBulkTagModal(DfirSelection.findings.ids(), "finding");
     }
     // Opens the mark-FP modal on the first selected finding as the anchor; the rest ride along as
     // extraRefs. Findings are marked by TITLE (not id) — see fpBtn("finding", f.title) above and
     // buildFalsePositiveMarker on the server, which uses `ref` as the marker key for this kind.
     function bulkMarkFindingsFalsePositive() {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedFindings.size) return;
-      const ids = [...selectedFindings];
+      if (!caseId || !DfirSelection.findings.count()) return;
+      const ids = DfirSelection.findings.ids();
       const titleById = new Map((DfirState.lastState()?.findings || []).map(f => [f.id, f.title]));
       const [firstId, ...restIds] = ids;
       const firstTitle = titleById.get(firstId) ?? firstId;
       const extraRefs = restIds.map(id => ({ kind: "finding", ref: titleById.get(id) ?? id, label: titleById.get(id) ?? id }));
       openFalsePositiveModal("finding", firstTitle, firstTitle, extraRefs, () => {
-        selectedFindings.clear();
+        DfirSelection.findings.clear();
         if (DfirState.lastState()) render(DfirState.lastState());
       });
     }
@@ -6625,8 +6625,8 @@
     // to name the skipped ones — otherwise a half-pushed selection reads as a clean success.
     function bulkPushFindingsToTicket(target) {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedFindings.size) return;
-      const findingIds = [...selectedFindings];
+      if (!caseId || !DfirSelection.findings.count()) return;
+      const findingIds = DfirSelection.findings.ids();
       const label = ticketLabel(target);
       showToast(`pushing ${findingIds.length} finding(s) to ${label}…`);
       fetch(`/cases/${encodeURIComponent(caseId)}/push/${target}/bulk`, {
@@ -6649,9 +6649,9 @@
     // has no dedicated batch route either). The server purges + pushes updated state per call.
     async function bulkExcludeIocs() {
       const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !selectedIocs.size) return;
+      if (!caseId || !DfirSelection.iocs.count()) return;
       const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
-      const values = [...selectedIocs].map(id => iocById.get(id)).filter(Boolean);
+      const values = DfirSelection.iocs.ids().map(id => iocById.get(id)).filter(Boolean);
       if (!values.length) return;
       if (!confirm(`Permanently exclude ${values.length} IOC value(s) from this case?\n\nThey are removed now and will never be re-imported or enriched. This cannot be undone (deleting the exclude rule later will not bring them back).`)) return;
       const statusEl = document.getElementById("status");
@@ -6670,15 +6670,15 @@
       statusEl.textContent = succeeded === values.length
         ? `excluded ${succeeded} value(s), purged ${purged} IOC(s) total`
         : `excluded ${succeeded} of ${values.length} value(s) (${values.length - succeeded} failed), purged ${purged} IOC(s) total`;
-      selectedIocs.clear();
+      DfirSelection.iocs.clear();
       if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
     }
     function bulkCopyIocs() {
       const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
-      const text = [...selectedIocs].map(id => iocById.get(id) ?? id).join("\n");
+      const text = DfirSelection.iocs.ids().map(id => iocById.get(id) ?? id).join("\n");
       navigator.clipboard.writeText(text).then(() => {
         const statusEl = document.getElementById("status");
-        statusEl.textContent = `copied ${selectedIocs.size} IOC value${selectedIocs.size !== 1 ? "s" : ""} to clipboard`;
+        statusEl.textContent = `copied ${DfirSelection.iocs.count()} IOC value${DfirSelection.iocs.count() !== 1 ? "s" : ""} to clipboard`;
       }).catch(() => {});
     }
 
@@ -12726,7 +12726,7 @@
             ctx.strokeStyle = themeColor("--text-bright"); ctx.lineWidth = 1.5; ctx.stroke();
           }
           // Multi-select ring (events chosen for a batch action; bidirectional with the table).
-          if (selectedEvents.has(e.id)) {
+          if (DfirSelection.events.has(e.id)) {
             ctx.beginPath(); ctx.arc(x, cy, r+3, 0, 2*Math.PI);
             ctx.strokeStyle = themeColor("--accent"); ctx.lineWidth = 2; ctx.stroke();
           }
@@ -12794,7 +12794,7 @@
     function swSelToolbar() {
       const bar = document.getElementById("swimlaneSelBar");
       if (!bar) return;
-      const n = selectedEvents.size;
+      const n = DfirSelection.events.count();
       if (n > 0) {
         bar.classList.add("active");
         document.getElementById("swimlaneSelCount").textContent = `${n} event${n !== 1 ? "s" : ""} selected`;
@@ -12819,17 +12819,19 @@
       const y0 = Math.min(swRubber.y0, swRubber.y1), y1 = Math.max(swRubber.y0, swRubber.y1);
       if ((x1 - x0) < 4 && (y1 - y0) < 4) {
         const hit = swHitTest(canvas, swRubber.x1, swRubber.y1);
-        if (hit) { selectedEvents.has(hit.id) ? selectedEvents.delete(hit.id) : selectedEvents.add(hit.id); }
+        if (hit) DfirSelection.events.toggle(hit.id);
       } else {
+        const hits = [];   // collected first, committed once — see js/dashboard-selection.js
         swLanes.forEach((lane, i) => {
           const cy = i * SW_LANE_H + SW_LANE_H / 2;
           if (cy < y0 || cy > y1) return;
           for (const e of lane.events) {
             const ms = Date.parse(e.timestamp); if (Number.isNaN(ms)) continue;
             const x = swTsToX(ms, canvas.width);
-            if (x >= x0 && x <= x1) selectedEvents.add(e.id);
+            if (x >= x0 && x <= x1) hits.push(e.id);
           }
         });
+        DfirSelection.events.addAll(hits);
       }
       swSelectionChanged();
     }
@@ -13170,10 +13172,10 @@
       document.getElementById("swimlaneScopeView").addEventListener("click", swScopeToView);
       document.getElementById("swimlanePng").addEventListener("click", swExportPng);
       document.getElementById("swimlaneSelFp").addEventListener("click", function() {
-        if (selectedEvents.size) bulkMarkFalsePositive();   // shared with the table's bulk bar
+        if (DfirSelection.events.count()) bulkMarkFalsePositive();   // shared with the table's bulk bar
       });
       document.getElementById("swimlaneSelClear").addEventListener("click", function() {
-        selectedEvents.clear(); swSelectionChanged();
+        DfirSelection.events.clear(); swSelectionChanged();
       });
       if (typeof ResizeObserver !== "undefined") {
         new ResizeObserver(() => swRenderCanvas()).observe(document.getElementById("swimlaneWrap"));
@@ -13569,8 +13571,8 @@
       // Select-all is page-scoped (matches the forensic timeline): the header checkbox reflects only the
       // rows actually rendered on this page, since the select-all click handler acts on the rendered rows.
       const allIds = pageVisible.map(i => i.id);
-      const allSel = allIds.length > 0 && allIds.every(id => selectedIocs.has(id));
-      const someSel = allIds.some(id => selectedIocs.has(id));
+      const allSel = allIds.length > 0 && allIds.every(id => DfirSelection.iocs.has(id));
+      const someSel = allIds.some(id => DfirSelection.iocs.has(id));
       const countLabel = visible.length === iocs.length
         ? `${visible.length} IOC${visible.length !== 1 ? "s" : ""}`
         : `${visible.length} of ${iocs.length} IOC${iocs.length !== 1 ? "s" : ""} shown`;
@@ -13590,7 +13592,7 @@
         + `</div>`;
       const rows = pageVisible.map(i => {
         const isNew = newIocKeys.has(i.value);
-        const isSel = selectedIocs.has(i.id);
+        const isSel = DfirSelection.iocs.has(i.id);
         const isFp = fpVals.has(String(i.value).trim().toLowerCase());
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
         // Already marked false-positive: show it (strikethrough) even when the "Hide FP/no-intel"
@@ -13957,7 +13959,7 @@
       const filtering = activeSevs.size < allSevs.length;
       let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
       if (evIdFilter) visible = visible.filter(e => evIdFilter.has(String(e.id)));
-      if (showStarredOnly) visible = visible.filter(e => starredEvents.has(String(e.id)));
+      if (showStarredOnly) visible = visible.filter(e => DfirStarred.has(String(e.id)));
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
       if (excludeTerms.length) visible = visible.filter(e => !_evMatchesExclude(e, excludeTerms));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
@@ -14010,8 +14012,8 @@
       }
 
       const allIds = pageVisible.map(e => String(e.id));
-      const allSelected = allIds.length > 0 && allIds.every(id => selectedEvents.has(id));
-      const someSelected = allIds.some(id => selectedEvents.has(id));
+      const allSelected = allIds.length > 0 && allIds.every(id => DfirSelection.events.has(id));
+      const someSelected = allIds.some(id => DfirSelection.events.has(id));
 
       // Pagination controls bar (shown only when content exceeds one page).
       const pageSizes = [50, 100, 250, 500, 0];
@@ -14036,8 +14038,8 @@
       const tld = loadTlDisplay();   // per-browser timeline-row display toggles (Settings → General)
       const rows = pageVisible.map(e => {
         const id = String(e.id);
-        const starred = starredEvents.has(id);
-        const isSelected = selectedEvents.has(id);
+        const starred = DfirStarred.has(id);
+        const isSelected = DfirSelection.events.has(id);
         const isNew = newEventKeys.has(evKey(e));   // added by the last import (see #importMeta)
         const newBadge = isNew ? ` <span class="ev-new-badge" title="Added by the last import">NEW</span>` : "";
 
@@ -14864,8 +14866,8 @@
           : `(${totalFindings} finding${totalFindings !== 1 ? "s" : ""})`;
       }
       const findingAllIds = capped.map(f => f.id);
-      const findingAllSel = findingAllIds.length > 0 && findingAllIds.every(id => selectedFindings.has(id));
-      const findingSomeSel = findingAllIds.some(id => selectedFindings.has(id));
+      const findingAllSel = findingAllIds.length > 0 && findingAllIds.every(id => DfirSelection.findings.has(id));
+      const findingSomeSel = findingAllIds.some(id => DfirSelection.findings.has(id));
       const findingHeaderRow = capped.length
         ? `<div class="finding-header-row">` +
             `<span data-safe-style="grid-column:1/3;display:flex;align-items:center;gap:6px">` +
@@ -14893,7 +14895,7 @@
             const confTitle = `AI confidence: ${f.confidence}%` + (f.confidenceReason ? ` — ${f.confidenceReason}` : "");
             confMeter = `<span class="fcbar" title="${escAttr(confTitle)}"><span data-safe-style="width:${f.confidence}%;background:${barColor}"></span></span><span class="fcpct">${f.confidence}%</span>`;
           }
-          const isSelFinding = selectedFindings.has(f.id);
+          const isSelFinding = DfirSelection.findings.has(f.id);
           const evidenceBody = findingEvidenceDetails(f, state.caseId, evidence, suppEventsByFinding[f.id] || [], state.iocs, citeIds);
           const hasEvidence = !!evidenceBody;
           // A plain <button>, not a native <summary> — <details> hides ALL non-summary children
@@ -15169,10 +15171,10 @@
       })();
       verifyCustodyOnOpen(caseId);
       applySavedViewForCase();   // restore this case's dashboard-view preset (#142)
-      starredEvents = new Set(); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
-      selectedEvents.clear();
-      selectedIocs.clear();
-      selectedFindings.clear();
+      DfirStarred.replace([]); starredTagIds = new Map();   // reset synchronously; loadTags re-derives for the new case
+      DfirSelection.events.clear();
+      DfirSelection.iocs.clear();
+      DfirSelection.findings.clear();
       hiddenSources.clear(); _srcMenuSig = "";
       hiddenOrigins.clear(); _originMenuSig = "";
       hiddenHosts.clear(); _hostMenuSig = "";
@@ -16337,7 +16339,7 @@
       if (geoLi) { geoFocusIp(geoLi.getAttribute("data-geo-ip")); return; }
       // Bulk action bar buttons (events)
       if (e.target.id === "evBulkStarBtn") { bulkToggleStar(); return; }
-      if (e.target.id === "evBulkTagBtn") { if (selectedEvents.size) openBulkTagModal([...selectedEvents]); return; }
+      if (e.target.id === "evBulkTagBtn") { if (DfirSelection.events.count()) openBulkTagModal(DfirSelection.events.ids()); return; }
       if (e.target.id === "evBulkFpBtn") { bulkMarkFalsePositive(); return; }
       if (e.target.id === "evBulkClearBtn") { clearSelection(); return; }
       // Super-timeline bulk actions + filter toggles
@@ -16519,14 +16521,14 @@
       const rowCb = e.target.classList.contains("ev-row-cb") && e.target;
       if (rowCb) {
         const id = rowCb.getAttribute("data-evid");
-        if (e.target.checked) selectedEvents.add(id); else selectedEvents.delete(id);
+        DfirSelection.events.toggle(id, e.target.checked);
         const row = rowCb.closest(".ev-row");
         if (row) row.classList.toggle("ev-selected", e.target.checked);
         updateBulkBar();
         // keep select-all checkbox in sync
         const allIds = [...document.querySelectorAll(".ev-row-cb")].map(cb => cb.getAttribute("data-evid"));
-        const allSel = allIds.every(id => selectedEvents.has(id));
-        const someSel = allIds.some(id => selectedEvents.has(id));
+        const allSel = allIds.every(id => DfirSelection.events.has(id));
+        const someSel = allIds.some(id => DfirSelection.events.has(id));
         const sa = document.getElementById("evSelectAll");
         if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
         swReflectSelection();   // mirror onto the swimlane dots
@@ -16534,12 +16536,12 @@
       }
       if (e.target.id === "stSelectAll") { toggleSuperSelectAll(e.target.checked); return; }
       if (e.target.id === "evSelectAll") {
-        document.querySelectorAll(".ev-row-cb").forEach(cb => {
-          const id = cb.getAttribute("data-evid");
-          if (e.target.checked) selectedEvents.add(id); else selectedEvents.delete(id);
+        const boxes = [...document.querySelectorAll(".ev-row-cb")];
+        const ids = boxes.map((cb) => cb.getAttribute("data-evid"));
+        if (e.target.checked) DfirSelection.events.addAll(ids); else DfirSelection.events.removeAll(ids);
+        boxes.forEach((cb) => {
           cb.checked = e.target.checked;
-          const row = cb.closest(".ev-row");
-          if (row) row.classList.toggle("ev-selected", e.target.checked);
+          const row = cb.closest(".ev-row"); if (row) row.classList.toggle("ev-selected", e.target.checked);
         });
         updateBulkBar();
         swReflectSelection();   // mirror onto the swimlane dots
@@ -16548,25 +16550,25 @@
       const iocRowCb = e.target.closest && e.target.closest(".ioc-row-cb");
       if (iocRowCb) {
         const id = iocRowCb.getAttribute("data-iocid");
-        if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+        DfirSelection.iocs.toggle(id, e.target.checked);
         const row = iocRowCb.closest(".ioc-row");
         if (row) row.classList.toggle("ioc-selected", e.target.checked);
         updateIocBulkBar();
         const allIds = [...document.querySelectorAll(".ioc-row-cb")].map(cb => cb.getAttribute("data-iocid"));
-        const allSel = allIds.every(id => selectedIocs.has(id));
-        const someSel = allIds.some(id => selectedIocs.has(id));
+        const allSel = allIds.every(id => DfirSelection.iocs.has(id));
+        const someSel = allIds.some(id => DfirSelection.iocs.has(id));
         const sa = document.getElementById("iocSelectAll");
         if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
         return;
       }
       // IOC select-all checkbox
       if (e.target.id === "iocSelectAll") {
-        document.querySelectorAll(".ioc-row-cb").forEach(cb => {
-          const id = cb.getAttribute("data-iocid");
-          if (e.target.checked) selectedIocs.add(id); else selectedIocs.delete(id);
+        const boxes = [...document.querySelectorAll(".ioc-row-cb")];
+        const ids = boxes.map((cb) => cb.getAttribute("data-iocid"));
+        if (e.target.checked) DfirSelection.iocs.addAll(ids); else DfirSelection.iocs.removeAll(ids);
+        boxes.forEach((cb) => {
           cb.checked = e.target.checked;
-          const row = cb.closest(".ioc-row");
-          if (row) row.classList.toggle("ioc-selected", e.target.checked);
+          const row = cb.closest(".ioc-row"); if (row) row.classList.toggle("ioc-selected", e.target.checked);
         });
         updateIocBulkBar();
       }
@@ -16574,25 +16576,25 @@
       const findingRowCb = e.target.closest && e.target.closest(".finding-row-cb");
       if (findingRowCb) {
         const id = findingRowCb.getAttribute("data-fid");
-        if (e.target.checked) selectedFindings.add(id); else selectedFindings.delete(id);
+        DfirSelection.findings.toggle(id, e.target.checked);
         const row = findingRowCb.closest(".finding");
         if (row) row.classList.toggle("finding-selected", e.target.checked);
         updateFindingBulkBar();
         const allIds = [...document.querySelectorAll(".finding-row-cb")].map(cb => cb.getAttribute("data-fid"));
-        const allSel = allIds.every(id => selectedFindings.has(id));
-        const someSel = allIds.some(id => selectedFindings.has(id));
+        const allSel = allIds.every(id => DfirSelection.findings.has(id));
+        const someSel = allIds.some(id => DfirSelection.findings.has(id));
         const sa = document.getElementById("findingSelectAll");
         if (sa) { sa.checked = allSel; sa.indeterminate = someSel && !allSel; }
         return;
       }
       // Finding select-all checkbox
       if (e.target.id === "findingSelectAll") {
-        document.querySelectorAll(".finding-row-cb").forEach(cb => {
-          const id = cb.getAttribute("data-fid");
-          if (e.target.checked) selectedFindings.add(id); else selectedFindings.delete(id);
+        const boxes = [...document.querySelectorAll(".finding-row-cb")];
+        const ids = boxes.map((cb) => cb.getAttribute("data-fid"));
+        if (e.target.checked) DfirSelection.findings.addAll(ids); else DfirSelection.findings.removeAll(ids);
+        boxes.forEach((cb) => {
           cb.checked = e.target.checked;
-          const row = cb.closest(".finding");
-          if (row) row.classList.toggle("finding-selected", e.target.checked);
+          const row = cb.closest(".finding"); if (row) row.classList.toggle("finding-selected", e.target.checked);
         });
         updateFindingBulkBar();
       }

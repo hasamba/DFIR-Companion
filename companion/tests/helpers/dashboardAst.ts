@@ -297,6 +297,93 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
   return out;
 }
 
+/** One call of an owner's method, and whether a loop encloses it. */
+export interface OwnerCall {
+  script: string;
+  line: number;
+  /** The dotted path as written, e.g. `DfirSelection.events.addAll`. */
+  path: string;
+  method: string;
+  inLoop: boolean;
+  /** The innermost NAMED enclosing function, for allowlisting a documented exception. */
+  fn: string;
+}
+
+/**
+ * Every call to `<namespace>.….<method>` for the named methods, flagged if a loop encloses it.
+ *
+ * THE LOOP FLAG IS THE POINT, and it is specific to replace-on-write owners. A set behind
+ * replace-on-write costs O(n) per commit, so a commit inside a loop is O(n^2) for the gesture —
+ * and js/dashboard-selection.js exists partly because four of the sites it replaced were exactly
+ * that, over data no page size bounds. The bulk operations (addAll/removeAll/replace) are the
+ * supported way to write many ids, so "no commit in a loop" is a rule a test can hold, unlike
+ * "remember that this is O(n)".
+ *
+ * Matches at any depth under the namespace, so `DfirSelection.events.toggle` and a hypothetical
+ * `DfirSelection.toggle` both count; `denotesNamespace` handles the window-rooted spelling.
+ */
+export function ownerCalls(
+  scripts: DashboardScript[],
+  namespace: string,
+  methods: readonly string[],
+): OwnerCall[] {
+  const want = new Set(methods);
+  const out: Array<{ call: OwnerCall; depth: number }> = [];
+  // Walk down a property-access chain to its root, collecting the names on the way.
+  const chain = (n: ts.Node): string[] | null => {
+    if (denotesNamespace(n, namespace)) return [namespace];
+    if (ts.isPropertyAccessExpression(n)) {
+      const head = chain(n.expression);
+      return head ? [...head, n.name.text] : null;
+    }
+    return null;
+  };
+  for (const s of scripts) {
+    const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
+    for (const fn of functionsOf(s)) {
+      const visit = (n: ts.Node): void => {
+        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+          const path = chain(n.expression);
+          if (path && want.has(path[path.length - 1])) {
+            out.push({
+              call: {
+                script: s.name,
+                line: at(n),
+                path: path.join("."),
+                method: path[path.length - 1],
+                inLoop: insideLoop(fn.node, n.getStart(s.ast)),
+                fn: fn.name,
+              },
+              // How deeply nested the enclosing function is, so the innermost NAMED one wins below.
+              depth: fn.node.getStart(s.ast),
+            });
+          }
+        }
+        ts.forEachChild(n, visit);
+      };
+      ts.forEachChild(fn.node, visit);
+    }
+  }
+  // functionsOf() yields nested functions too, so the same call is seen once per enclosing
+  // function. Collapse them: the loop flag is true if ANY enclosing scope saw a loop (a call in an
+  // arrow inside a for-loop is still in a loop), and the reported function is the innermost NAMED
+  // one, which is what an allowlist entry has to be written against.
+  const byKey = new Map<string, { call: OwnerCall; depth: number }>();
+  for (const c of out) {
+    const key = `${c.call.script}:${c.call.line}:${c.call.path}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, c);
+      continue;
+    }
+    if (c.call.inLoop) prev.call.inLoop = true;
+    const named = (n: string): boolean => !n.startsWith("<");
+    if (c.depth > prev.depth && named(c.call.fn)) prev.call.fn = c.call.fn;
+    else if (!named(prev.call.fn) && named(c.call.fn)) prev.call.fn = c.call.fn;
+  }
+  return [...byKey.values()].map((c) => c.call);
+}
+
 /** A property write through an owner's getter: `DfirScope.get().start = x`. */
 export interface GetterMutation {
   script: string;

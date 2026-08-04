@@ -273,6 +273,32 @@ export interface StateApi {
   };
 }
 
+/**
+ * One owned set of ids (public/js/dashboard-selection.js).
+ *
+ * Note the absence of anything returning a Set. Every read is a copy or a scalar, which is the
+ * whole point: replace-on-write is only enforceable if the container never leaves the owner.
+ */
+export interface IdSet {
+  has(id: string): boolean;
+  count(): number;
+  /** A frozen COPY, fresh each call. */
+  ids(): readonly string[];
+  /** `on` omitted flips, like classList.toggle. Returns the new size. */
+  toggle(id: string, on?: boolean): number;
+  /** Union in a batch — select-all, the rubber band. ONE commit. */
+  addAll(ids: Iterable<string>): number;
+  removeAll(ids: Iterable<string>): number;
+  replace(ids?: Iterable<string>): number;
+  clear(): number;
+}
+
+export interface SelectionApi {
+  DfirSelection: { events: IdSet; iocs: IdSet; findings: IdSet };
+  /** Starred is a CACHE of server tags, not view state, so it is a separate owner. */
+  DfirStarred: Pick<IdSet, "has" | "count" | "ids" | "toggle" | "replace">;
+}
+
 /** An investigation window. Mirrors the server's ScopeWindow (src/analysis/scope.ts). */
 export interface ScopeWindow {
   start: string | null;
