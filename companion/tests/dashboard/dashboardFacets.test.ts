@@ -6,13 +6,13 @@ import type { FacetsApi, FiltersApi } from "./dashboardApi.js";
 import {
   buildCallGraph,
   calleesInsideLoops,
+  commitsInsideLoops,
   dashboardScripts,
   functionsOf,
-  insideLoop,
-  ownerCallPositions,
   ownerCalls,
   ownerEscapes,
   reachableFrom,
+  reachableWithin,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -258,14 +258,21 @@ describe("no renderer writes a facet", () => {
     expect(offenders, '"hide none" used to add one facet at a time; hideAll() commits once.').toEqual([]);
   });
 
-  it("has no function called from inside a loop that commits", () => {
+  // Two hops, matching the selection owner's rule — a direct-callee check misses
+  // `for (…) outer(x)` where outer() calls inner() which commits.
+  it("has no function reachable from a loop within two hops that commits", () => {
     const committers = new Set(
       ownerCalls(scripts, "DfirFacets", COMMITS)
         .map((c) => c.fn)
         .filter((f) => !f.startsWith("<")),
     );
-    const offenders = [...calleesInsideLoops(scripts)].filter((c) => committers.has(c));
-    expect(offenders).toEqual([]);
+    const graph = buildCallGraph(scripts);
+    const offenders: string[] = [];
+    for (const callee of calleesInsideLoops(scripts)) {
+      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      for (const c of committers) if (reach.has(c)) offenders.push(`${callee}() reaches ${c}()`);
+    }
+    expect([...new Set(offenders)]).toEqual([]);
   });
 
   it("is never aliased or reached dynamically", () => {
@@ -275,14 +282,11 @@ describe("no renderer writes a facet", () => {
   // The same hazard one level down: hideAll() written as a loop of commits is the quadratic cost
   // moved inside the module, where no call-site check sees it. Checked against the AST, because a
   // textual count of `commit(` passes this exact mutation — one call in a loop is one occurrence.
-  it("has no bulk operation looping around its own commit", async () => {
+  it("makes no commit once per element, in any spelling", async () => {
     const script = scriptFromSource("dashboard-facets.js", await readFile(MODULE, "utf8"));
-    const offenders: string[] = [];
-    for (const fn of functionsOf(script).filter((f) => ["hideAll", "showAll", "toggle"].includes(f.name))) {
-      for (const pos of ownerCallPositions(fn.node, "commit")) {
-        if (insideLoop(fn.node, pos)) offenders.push(`${fn.name}() commits inside a loop`);
-      }
-    }
+    const offenders = commitsInsideLoops(script, ["commit", "set"]).map(
+      (c) => `${c.fn}():${c.line} commits per element${c.via ? ` via ${c.via}()` : ""}`,
+    );
     expect(offenders).toEqual([]);
   });
 

@@ -373,6 +373,19 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
         out.push({ name: n.left.name.text, line: at(n.left.name) });
         declared.add(n.left.name.text);
       }
+      // ...and `globalThis["hiddenSources"] = new Set()`, which is the same global by the one
+      // spelling the property-access branch above cannot see.
+      if (
+        ts.isElementAccessExpression(n.left) &&
+        ts.isIdentifier(n.left.expression) &&
+        GLOBAL_ROOTS.has(n.left.expression.text) &&
+        n.left.argumentExpression &&
+        ts.isStringLiteral(n.left.argumentExpression) &&
+        !declared.has(n.left.argumentExpression.text)
+      ) {
+        out.push({ name: n.left.argumentExpression.text, line: at(n.left) });
+        declared.add(n.left.argumentExpression.text);
+      }
     }
     ts.forEachChild(n, assignWalk);
   };
@@ -477,6 +490,19 @@ export function ownerCalls(
       }
       // An iteration callback is a loop body, so its ARGUMENTS are walked at depth+1 while the
       // receiver is not: in `xs.forEach(cb)` the `xs` expression runs once.
+      // A FUNCTION BODY IS ONLY "IN THE LOOP" IF THE LOOP CALLS IT PER ELEMENT.
+      //
+      // `["a","b"].forEach(id => el(id).addEventListener("keydown", () => createNewCase()))` puts
+      // createNewCase() three frames inside a forEach, but it runs on a KEYSTROKE — once, later,
+      // and not once per element. Counting it produced exactly one offender on this page and it was
+      // noise, which is how a gate teaches people to extend its allowlist.
+      //
+      // So loop depth resets when entering a function that is NOT an iteration callback. The
+      // iteration case is handled below, where the arguments are walked at depth + 1.
+      if (isFunctionLike(n) && !isIterationCallback(n)) {
+        ts.forEachChild(n, (c) => visit(c, 0));
+        return;
+      }
       if (isIterationCall(n)) {
         visit(n.expression, inner);
         for (const a of n.arguments) visit(a, inner + 1);
@@ -533,6 +559,19 @@ export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
         if (ts.isIdentifier(n.expression)) out.add(n.expression.text);
         else if (ts.isPropertyAccessExpression(n.expression)) out.add(n.expression.name.text);
       }
+      // A FUNCTION BODY IS ONLY "IN THE LOOP" IF THE LOOP CALLS IT PER ELEMENT.
+      //
+      // `["a","b"].forEach(id => el(id).addEventListener("keydown", () => createNewCase()))` puts
+      // createNewCase() three frames inside a forEach, but it runs on a KEYSTROKE — once, later,
+      // and not once per element. Counting it produced exactly one offender on this page and it was
+      // noise, which is how a gate teaches people to extend its allowlist.
+      //
+      // So loop depth resets when entering a function that is NOT an iteration callback. The
+      // iteration case is handled below, where the arguments are walked at depth + 1.
+      if (isFunctionLike(n) && !isIterationCallback(n)) {
+        ts.forEachChild(n, (c) => visit(c, 0));
+        return;
+      }
       if (isIterationCall(n)) {
         // A CALLBACK PASSED BY NAME IS STILL CALLED PER ELEMENT. `xs.forEach(hideOne)` has no call
         // expression anywhere inside it, so walking the arguments finds nothing — the identifier
@@ -584,6 +623,12 @@ export interface OwnerEscape {
 function isPropertyName(n: ts.Node): boolean {
   const p = n.parent;
   return !!p && (ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === n;
+}
+
+/** Is this function the callback argument of `xs.forEach(...)` and friends? */
+function isIterationCallback(n: ts.Node): boolean {
+  const p = n.parent;
+  return !!p && isIterationCall(p) && p.arguments.some((a) => a === n);
 }
 
 /** Is this node the `X` in `X(...)` — i.e. the thing actually being invoked? */
@@ -674,6 +719,86 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
     ts.forEachChild(s.ast, visit);
   }
   return hits;
+}
+
+/** A commit made once per element, inside an owner module itself. */
+export interface LoopedCommit {
+  fn: string;
+  line: number;
+  /** `direct` is the commit call itself in the loop; `via` names the helper that reaches one. */
+  via: string | null;
+}
+
+/**
+ * Commits an owner module makes once per element, in ANY spelling.
+ *
+ * The narrow version of this check looked for a bare `commit(` inside a named bulk operation, and
+ * review showed two ways past it that both produce the quadratic cost the bulk operations exist to
+ * avoid:
+ *
+ *     addAll(ids)  { for (const id of ids) cell.set(new Set([id])); }   // member call, not `commit(`
+ *     hideAll(ids) { for (const id of ids) put(id); }                    // helper that commits
+ *
+ * So: a function "commits" if it calls any of `commitNames` by bare name OR as a member (`cell.set`),
+ * closed transitively over the module's own functions; and a loop enclosing a call to any committer
+ * is an offender. Every function in the module is examined, not a hand-listed few — the list was
+ * itself a way to be wrong.
+ */
+export function commitsInsideLoops(script: DashboardScript, commitNames: readonly string[]): LoopedCommit[] {
+  const want = new Set(commitNames);
+  const fns = functionsOf(script);
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+
+  /** Names called from inside `node`, bare or as a member, WITHOUT descending into nested functions. */
+  const ownCalls = (node: ts.Node): string[] => {
+    const out: string[] = [];
+    const visit = (n: ts.Node): void => {
+      if (n !== node && isFunctionLike(n)) return;
+      if (ts.isCallExpression(n)) {
+        if (ts.isIdentifier(n.expression)) out.push(n.expression.text);
+        else if (ts.isPropertyAccessExpression(n.expression)) out.push(n.expression.name.text);
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(node, visit);
+    return out;
+  };
+
+  // Which of the module's own functions reach a commit — closed to a fixpoint, so a helper behind a
+  // helper counts.
+  const commits = new Set<string>();
+  for (const f of fns) if (ownCalls(f.node).some((c) => want.has(c))) commits.add(f.name);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const f of fns) {
+      if (commits.has(f.name)) continue;
+      if (ownCalls(f.node).some((c) => commits.has(c))) {
+        commits.add(f.name);
+        changed = true;
+      }
+    }
+  }
+
+  const out: LoopedCommit[] = [];
+  for (const f of fns) {
+    const visit = (n: ts.Node): void => {
+      if (n !== f.node && isFunctionLike(n)) return; // that function is judged on its own
+      if (ts.isCallExpression(n)) {
+        const name = ts.isIdentifier(n.expression)
+          ? n.expression.text
+          : ts.isPropertyAccessExpression(n.expression)
+            ? n.expression.name.text
+            : null;
+        if (name && (want.has(name) || commits.has(name)) && insideLoop(f.node, n.getStart(script.ast))) {
+          out.push({ fn: f.name, line: at(n), via: want.has(name) ? null : name });
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(f.node, visit);
+  }
+  return out;
 }
 
 /** A property write through an owner's getter: `DfirScope.get().start = x`. */
@@ -939,6 +1064,36 @@ export function buildCallGraph(scripts: DashboardScript[]): Map<string, Set<stri
     }
   }
   return graph;
+}
+
+/**
+ * Reachability with a HOP BOUND.
+ *
+ * The loop rule needs more than one hop (review found `for (…) outer(x)` where outer() calls
+ * inner() which commits) and less than all of them: run unbounded over this call graph it reports
+ * things like createNewCase() reaching proceedConnect(), where "can eventually reach" has stopped
+ * predicting "runs per iteration". A small bound is the honest middle, and the bound is stated at
+ * the call site so nobody assumes coverage that is not there.
+ */
+export function reachableWithin(
+  graph: Map<string, Set<string>>,
+  starts: Iterable<string>,
+  maxHops: number,
+): Set<string> {
+  let frontier = new Set(starts);
+  const seen = new Set<string>();
+  for (let hop = 0; hop < maxHops && frontier.size > 0; hop++) {
+    const next = new Set<string>();
+    for (const name of frontier) {
+      for (const callee of graph.get(name) || []) {
+        if (seen.has(callee)) continue;
+        seen.add(callee);
+        next.add(callee);
+      }
+    }
+    frontier = next;
+  }
+  return seen;
 }
 
 export function reachableFrom(graph: Map<string, Set<string>>, start: Iterable<string>): Set<string> {

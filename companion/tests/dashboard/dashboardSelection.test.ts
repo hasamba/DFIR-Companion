@@ -4,13 +4,13 @@ import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { SelectionApi } from "./dashboardApi.js";
 import {
+  buildCallGraph,
   calleesInsideLoops,
-  functionsOf,
-  insideLoop,
-  ownerCallPositions,
+  commitsInsideLoops,
   dashboardScripts,
   ownerCalls,
   ownerEscapes,
+  reachableWithin,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -305,17 +305,28 @@ describe("no commit happens inside a loop", () => {
   // with names this generic, "can eventually reach" stops predicting "runs per iteration", and a
   // gate whose output is mostly allowlist teaches people to extend the allowlist. The bound is
   // stated here so the next reader knows what is NOT covered rather than assuming it is.
-  it("no function called directly from inside a loop commits", () => {
+  it("no function reachable from a loop within two hops commits", () => {
     const committers = new Set(
       ["DfirSelection", "DfirStarred"]
         .flatMap((ns) => ownerCalls(scriptsForPins, ns, COMMITS))
         .map((c) => c.fn)
         .filter((f) => !f.startsWith("<")),
     );
-    const offenders = [...calleesInsideLoops(scriptsForPins)]
-      .filter((callee) => committers.has(callee) && !ALLOWED_IN_LOOP.includes(callee))
-      .map((callee) => `${callee}() commits and is called from inside a loop`);
-    expect(offenders).toEqual([]);
+    // TWO hops, not one. Review found `for (…) outer(x)` where outer() calls inner() which
+    // commits — invisible to a direct-callee check. Still bounded rather than full reachability,
+    // for the reason recorded above; the bound is stated so nobody assumes more coverage.
+    const graph = buildCallGraph(scriptsForPins);
+    const offenders: string[] = [];
+    for (const callee of calleesInsideLoops(scriptsForPins)) {
+      if (ALLOWED_IN_LOOP.includes(callee)) continue;
+      const reach = new Set([callee, ...reachableWithin(graph, [callee], 2)]);
+      for (const c of committers) {
+        if (reach.has(c) && !ALLOWED_IN_LOOP.includes(c)) {
+          offenders.push(`${callee}() is called in a loop and reaches ${c}(), which commits`);
+        }
+      }
+    }
+    expect([...new Set(offenders)]).toEqual([]);
   });
 
   // THE MODULE'S OWN BULK OPERATIONS MUST NOT LOOP AROUND A COMMIT.
@@ -325,15 +336,15 @@ describe("no commit happens inside a loop", () => {
   // badly as what it replaced. Checked against the AST rather than by counting `commit(` in the
   // text, because the counting version passed this exact mutation — one call, inside a loop, is
   // still one occurrence.
-  it("has no bulk operation looping around its own commit", async () => {
+  // EVERY function in the module, and every spelling of a commit. The narrow version looked for a
+  // bare `commit(` inside a hand-listed set of bulk operations; review showed `cell.set(...)` in a
+  // loop and a helper that commits both walked past it, either of which restores the quadratic cost
+  // the bulk operations exist to avoid.
+  it("makes no commit once per element, in any spelling", async () => {
     const script = scriptFromSource("dashboard-selection.js", await readFile(MODULE, "utf8"));
-    const BULK = ["addAll", "removeAll", "replace", "clear", "toggle"];
-    const offenders: string[] = [];
-    for (const fn of functionsOf(script).filter((f) => BULK.includes(f.name))) {
-      for (const call of ownerCallPositions(fn.node, "commit")) {
-        if (insideLoop(fn.node, call)) offenders.push(`${fn.name}() commits inside a loop`);
-      }
-    }
+    const offenders = commitsInsideLoops(script, ["commit", "set"]).map(
+      (c) => `${c.fn}():${c.line} commits per element${c.via ? ` via ${c.via}()` : ""}`,
+    );
     expect(offenders).toEqual([]);
   });
 
