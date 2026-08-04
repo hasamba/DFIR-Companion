@@ -324,6 +324,22 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
   const declared = new Set(out.map((b) => b.name));
   const varWalk = (n: ts.Node): void => {
     if (isFunctionLike(n)) return; // `var` inside a function is that function's, not the script's
+    // `for (var selectedEvents of sets)` and its for/for-in siblings: the declaration lives in the
+    // loop head, not in a VariableStatement, so the branch below never saw it.
+    if (
+      (ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      n.initializer &&
+      ts.isVariableDeclarationList(n.initializer)
+    ) {
+      const list = n.initializer;
+      if (!(list.flags & ts.NodeFlags.BlockScoped)) {
+        for (const d of list.declarations) {
+          const before = out.length;
+          collect(d.name);
+          for (const b of out.slice(before)) declared.add(b.name);
+        }
+      }
+    }
     if (ts.isVariableStatement(n) && n.declarationList.flags & ts.NodeFlags.Let) {
       // let/const in a nested block is genuinely block-scoped; not ours.
     } else if (ts.isVariableStatement(n) && !(n.declarationList.flags & ts.NodeFlags.BlockScoped)) {
@@ -355,8 +371,15 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
   };
   ts.forEachChild(script.ast, declWalk);
 
+  const ASSIGN_OPS = new Set([
+    ts.SyntaxKind.EqualsToken,
+    // `window.hiddenSources ??= new Set()` creates the global just as surely as `=` does.
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ]);
   const assignWalk = (n: ts.Node): void => {
-    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    if (ts.isBinaryExpression(n) && ASSIGN_OPS.has(n.operatorToken.kind)) {
       // `selectedEvents = new Set()` with no declaration anywhere — an implicit global.
       if (ts.isIdentifier(n.left) && !declaredAnywhere.has(n.left.text) && !declared.has(n.left.text)) {
         out.push({ name: n.left.text, line: at(n.left) });
@@ -372,6 +395,20 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
       ) {
         out.push({ name: n.left.name.text, line: at(n.left.name) });
         declared.add(n.left.name.text);
+      }
+      // ...and `globalThis["hiddenSources"] = new Set()`, which is the same global by the one
+      // spelling the property-access branch above cannot see.
+      if (
+        ts.isElementAccessExpression(n.left) &&
+        ts.isIdentifier(n.left.expression) &&
+        GLOBAL_ROOTS.has(n.left.expression.text) &&
+        n.left.argumentExpression &&
+        (ts.isStringLiteral(n.left.argumentExpression) ||
+          ts.isNoSubstitutionTemplateLiteral(n.left.argumentExpression)) &&
+        !declared.has(n.left.argumentExpression.text)
+      ) {
+        out.push({ name: n.left.argumentExpression.text, line: at(n.left) });
+        declared.add(n.left.argumentExpression.text);
       }
     }
     ts.forEachChild(n, assignWalk);
@@ -433,6 +470,10 @@ export function ownerCalls(
     }
     return null;
   };
+  // `DfirSelection.events.toggle.call(null, x)` still invokes toggle. Dropping the reflective tail
+  // is what makes the path end at the member the rule is about, instead of at "call".
+  const withoutReflection = (path: string[]): string[] =>
+    path.length > 1 && FUNCTION_INVOKERS.has(path[path.length - 1]) ? path.slice(0, -1) : path;
 
   for (const s of scripts) {
     const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
@@ -463,7 +504,7 @@ export function ownerCalls(
         inner = loops + 1;
       }
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
-        const path = chain(n.expression);
+        const path = chain(n.expression) && withoutReflection(chain(n.expression) as string[]);
         if (path && want.has(path[path.length - 1])) {
           out.push({
             script: s.name,
@@ -477,6 +518,21 @@ export function ownerCalls(
       }
       // An iteration callback is a loop body, so its ARGUMENTS are walked at depth+1 while the
       // receiver is not: in `xs.forEach(cb)` the `xs` expression runs once.
+      // ONLY AN EVENT-DRIVEN CALLBACK IS DECOUPLED FROM THE LOOP.
+      //
+      // `["a","b"].forEach(id => el(id).addEventListener("keydown", () => createNewCase()))` puts a
+      // commit three frames inside a forEach, but it runs on a KEYSTROKE — once, later, not once
+      // per element. That one is genuinely not per-element.
+      //
+      // An earlier version reset depth at EVERY nested function that was not an iteration callback,
+      // which was far too broad: a synchronous IIFE, an unknown helper's callback, and
+      // `for (…) queueMicrotask(() => commit())` all became invisible, and the last of those really
+      // does run N times. Deferral is not the property that matters — being driven by something
+      // other than the loop is — so only listener registration qualifies.
+      if (isFunctionLike(n) && isEventHandlerArg(n)) {
+        ts.forEachChild(n, (c) => visit(c, 0));
+        return;
+      }
       if (isIterationCall(n)) {
         visit(n.expression, inner);
         for (const a of n.arguments) visit(a, inner + 1);
@@ -533,6 +589,21 @@ export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
         if (ts.isIdentifier(n.expression)) out.add(n.expression.text);
         else if (ts.isPropertyAccessExpression(n.expression)) out.add(n.expression.name.text);
       }
+      // ONLY AN EVENT-DRIVEN CALLBACK IS DECOUPLED FROM THE LOOP.
+      //
+      // `["a","b"].forEach(id => el(id).addEventListener("keydown", () => createNewCase()))` puts a
+      // commit three frames inside a forEach, but it runs on a KEYSTROKE — once, later, not once
+      // per element. That one is genuinely not per-element.
+      //
+      // An earlier version reset depth at EVERY nested function that was not an iteration callback,
+      // which was far too broad: a synchronous IIFE, an unknown helper's callback, and
+      // `for (…) queueMicrotask(() => commit())` all became invisible, and the last of those really
+      // does run N times. Deferral is not the property that matters — being driven by something
+      // other than the loop is — so only listener registration qualifies.
+      if (isFunctionLike(n) && isEventHandlerArg(n)) {
+        ts.forEachChild(n, (c) => visit(c, 0));
+        return;
+      }
       if (isIterationCall(n)) {
         // A CALLBACK PASSED BY NAME IS STILL CALLED PER ELEMENT. `xs.forEach(hideOne)` has no call
         // expression anywhere inside it, so walking the arguments finds nothing — the identifier
@@ -546,8 +617,10 @@ export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
         return;
       }
       // The same by-name hand-off inside a real loop: `for (…) xs.map(hideOne)` is covered above,
-      // but `for (…) run(hideOne)` passes it to something that will call it.
-      if (loops > 0 && ts.isCallExpression(n)) {
+      // but `for (…) run(hideOne)` passes it to something that will call it. NOT for a listener
+      // registration — `for (…) el.addEventListener("click", handler)` registers N handlers that
+      // each run on a click, not N calls, and treating it as a call reported handlers falsely.
+      if (loops > 0 && ts.isCallExpression(n) && !isEventRegistration(n)) {
         for (const a of n.arguments) if (ts.isIdentifier(a)) out.add(a.text);
       }
       ts.forEachChild(n, (c) => visit(c, inner));
@@ -586,6 +659,53 @@ function isPropertyName(n: ts.Node): boolean {
   return !!p && (ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === n;
 }
 
+/** Names whose callback is invoked by something OTHER than the surrounding code's control flow. */
+/** Reflective invokers: `f.call(…)`, `f.apply(…)`, `f.bind(…)` still reach `f`. */
+const FUNCTION_INVOKERS = new Set(["call", "apply", "bind"]);
+
+/** `el.addEventListener("click", fn)` — the call itself, not its callback. */
+function isEventRegistration(n: ts.CallExpression): boolean {
+  return ts.isPropertyAccessExpression(n.expression) && EVENT_REGISTRARS.has(n.expression.name.text);
+}
+
+const EVENT_REGISTRARS = new Set(["addEventListener", "removeEventListener", "on", "once"]);
+
+/**
+ * Is this function registered as an event handler, rather than called by the code around it?
+ *
+ * Deliberately narrow. setTimeout/queueMicrotask/Promise.then all invoke their callback ONCE PER
+ * CALL, so N registrations in a loop are still N commits — they are not on this list. Only handlers
+ * driven by an external event are, plus `el.onclick = fn`.
+ */
+function isEventHandlerArg(n: ts.Node): boolean {
+  const p = n.parent;
+  if (!p) return false;
+  if (
+    ts.isCallExpression(p) &&
+    ts.isPropertyAccessExpression(p.expression) &&
+    EVENT_REGISTRARS.has(p.expression.name.text) &&
+    p.arguments.some((a) => a === n)
+  ) {
+    return true;
+  }
+  // el.onclick = () => …
+  return (
+    ts.isBinaryExpression(p) &&
+    p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    p.right === n &&
+    ts.isPropertyAccessExpression(p.left) &&
+    /^on[a-z]/.test(p.left.name.text)
+  );
+}
+
+/** Is this function the callback argument of `xs.forEach(...)` and friends? Parentheses unwrapped. */
+function isIterationCallback(n: ts.Node): boolean {
+  let node: ts.Node = n;
+  while (node.parent && ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const p = node.parent;
+  return !!p && isIterationCall(p) && p.arguments.some((a) => a === node);
+}
+
 /** Is this node the `X` in `X(...)` — i.e. the thing actually being invoked? */
 function isCalleePosition(n: ts.Node): boolean {
   const p = n.parent;
@@ -595,7 +715,11 @@ function isCalleePosition(n: ts.Node): boolean {
 /** A sub-path like `DfirSelection.events` inside `DfirSelection.events.toggle(x)` is not itself an escape. */
 function isPartOfLongerPath(n: ts.Node): boolean {
   const p = n.parent;
-  return !!p && (ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === n;
+  if (!p || !(ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p))) return false;
+  if (p.expression !== n) return false;
+  // `DfirSelection.events.toggle.call` is NOT a longer path in the sense that matters: the tail is
+  // reflection, so the owner's method is still what gets invoked and must stay reportable.
+  return !(ts.isPropertyAccessExpression(p) && FUNCTION_INVOKERS.has(p.name.text));
 }
 
 function nearbyText(n: ts.Node, sf: ts.SourceFile): string {
@@ -617,7 +741,13 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
     const definitionTargets = new Set<number>();
     const findDefs = (n: ts.Node): void => {
       if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-        definitionTargets.add(n.left.getStart(s.ast));
+        // The namespace's OWN definition (`window.DfirFacets = {…}`) only. Assigning to a MEMBER —
+        // `DfirSelection.events.toggle = fn` — is a method being replaced, which is the opposite of
+        // a definition and must stay reportable; treating every assignment target as a definition
+        // let that through.
+        if (denotesNamespace(n.left, namespace) || !denotesOwnerOrChild(n.left)) {
+          definitionTargets.add(n.left.getStart(s.ast));
+        }
       }
       ts.forEachChild(n, findDefs);
     };
@@ -674,6 +804,90 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
     ts.forEachChild(s.ast, visit);
   }
   return hits;
+}
+
+/** A commit made once per element, inside an owner module itself. */
+export interface LoopedCommit {
+  fn: string;
+  line: number;
+  /** `direct` is the commit call itself in the loop; `via` names the helper that reaches one. */
+  via: string | null;
+}
+
+/**
+ * Commits an owner module makes once per element, in ANY spelling.
+ *
+ * The narrow version of this check looked for a bare `commit(` inside a named bulk operation, and
+ * review showed two ways past it that both produce the quadratic cost the bulk operations exist to
+ * avoid:
+ *
+ *     addAll(ids)  { for (const id of ids) cell.set(new Set([id])); }   // member call, not `commit(`
+ *     hideAll(ids) { for (const id of ids) put(id); }                    // helper that commits
+ *
+ * So: a function "commits" if it calls any of `commitNames` by bare name OR as a member (`cell.set`),
+ * closed transitively over the module's own functions; and a loop enclosing a call to any committer
+ * is an offender. Every function in the module is examined, not a hand-listed few — the list was
+ * itself a way to be wrong.
+ */
+export function commitsInsideLoops(script: DashboardScript, commitNames: readonly string[]): LoopedCommit[] {
+  const want = new Set(commitNames);
+  const fns = functionsOf(script);
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+
+  /** Names called from inside `node`, bare or as a member, WITHOUT descending into nested functions. */
+  const ownCalls = (node: ts.Node): string[] => {
+    const out: string[] = [];
+    const visit = (n: ts.Node): void => {
+      if (n !== node && isFunctionLike(n) && !isIterationCallback(n)) return;
+      if (ts.isCallExpression(n)) {
+        if (ts.isIdentifier(n.expression)) out.push(n.expression.text);
+        else if (ts.isPropertyAccessExpression(n.expression)) out.push(n.expression.name.text);
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(node, visit);
+    return out;
+  };
+
+  // Which of the module's own functions reach a commit — closed to a fixpoint, so a helper behind a
+  // helper counts.
+  const commits = new Set<string>();
+  for (const f of fns) if (ownCalls(f.node).some((c) => want.has(c))) commits.add(f.name);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const f of fns) {
+      if (commits.has(f.name)) continue;
+      if (ownCalls(f.node).some((c) => commits.has(c))) {
+        commits.add(f.name);
+        changed = true;
+      }
+    }
+  }
+
+  const out: LoopedCommit[] = [];
+  for (const f of fns) {
+    const visit = (n: ts.Node): void => {
+      // Descend into ITERATION callbacks — `ids.forEach(id => cell.set(…))` is the same per-element
+      // commit as `for (const id of ids) cell.set(…)`, and skipping every nested function made this
+      // blind to it. insideLoop() already treats an iteration callback's body as a loop body.
+      // Other nested functions are judged on their own pass.
+      if (n !== f.node && isFunctionLike(n) && !isIterationCallback(n)) return;
+      if (ts.isCallExpression(n)) {
+        const name = ts.isIdentifier(n.expression)
+          ? n.expression.text
+          : ts.isPropertyAccessExpression(n.expression)
+            ? n.expression.name.text
+            : null;
+        if (name && (want.has(name) || commits.has(name)) && insideLoop(f.node, n.getStart(script.ast))) {
+          out.push({ fn: f.name, line: at(n), via: want.has(name) ? null : name });
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(f.node, visit);
+  }
+  return out;
 }
 
 /** A property write through an owner's getter: `DfirScope.get().start = x`. */

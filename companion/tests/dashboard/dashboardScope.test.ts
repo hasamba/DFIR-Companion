@@ -344,13 +344,12 @@ describe("who may write the window", () => {
   // = null`, `let scope;`, `const scope = …` and `var scope` all passed it, and any of them is the
   // second source of truth this migration exists to remove.
   it("leaves no top-level `scope` binding behind, in any spelling", () => {
-    const offenders = scripts
-      .filter((s) => s.name.startsWith("dashboard.html#inline"))
-      .flatMap((s) =>
-        topLevelBindings(s)
-          .filter((b) => b.name === "scope")
-          .map((b) => `${s.name}:${b.line}`),
-      );
+    // EVERY script the page loads — see the note in dashboardSelection.test.ts.
+    const offenders = scripts.flatMap((s) =>
+      topLevelBindings(s)
+        .filter((b) => b.name === "scope")
+        .map((b) => `${s.name}:${b.line}`),
+    );
     expect(
       offenders,
       "the investigation window is owned by js/dashboard-scope.js; a top-level `scope` in the page " +
@@ -360,13 +359,11 @@ describe("who may write the window", () => {
 
   it("leaves none of the moved functions behind", () => {
     const moved = new Set(["inScope", "projectScope", "renderScopeInfo"]);
-    const offenders = scripts
-      .filter((s) => s.name.startsWith("dashboard.html#inline"))
-      .flatMap((s) =>
-        functionsOf(s)
-          .filter((f) => moved.has(f.name))
-          .map((f) => `${s.name}:${f.line} ${f.name}`),
-      );
+    const offenders = scripts.flatMap((s) =>
+      functionsOf(s)
+        .filter((f) => moved.has(f.name))
+        .map((f) => `${s.name}:${f.line} ${f.name}`),
+    );
     expect(offenders).toEqual([]);
   });
 

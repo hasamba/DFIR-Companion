@@ -95,7 +95,8 @@
     iocs: noop, // renderIocs(lastState().iocs) — the IOC list on its own
     derivedViews: noop, // refreshFilteredViews(): Kill Chain, Attack Phases, the graphs
     excludeChips: noop, // renderExcludeChips()
-    searchBox: noop, // the search input's own clear button + open state
+    searchBox: noop, // the search input's own clear button — NOT its value; see dashboard.html
+    searchInput: noop, // empties the search box; a RESET only, never a per-keystroke write
     timeInputs: noop, // #filterFrom / #filterTo and the Clear button
     severityBoxes: noop, // the .sev-filter checkboxes
     starButton: noop, // #evStarFilterBtn label + active class
@@ -111,6 +112,7 @@
     "severityBoxes",
     "starButton",
     "searchBox",
+    "searchInput",
     "timeInputs",
     "excludeChips",
     "all",
