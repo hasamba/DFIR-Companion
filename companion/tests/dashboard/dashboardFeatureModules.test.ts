@@ -87,6 +87,15 @@ const FEATURES: Feature[] = [
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
+    // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),
+    // which the page calls where the block used to sit. openIrisImportModal is published from
+    // INSIDE that function, so it is not on this list — the exact-globals check below would
+    // otherwise fail, which is the honest signal that it appears later rather than at load.
+    file: "dashboard-tickets.js",
+    publish: ["pushFindingToTicket", "bulkPushFindingsToTicket", "initTicketIntegrations"],
+    private: ["notionHasDefault", "clickupDefaultList", "notionOverlay", "clickupOverlay"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
@@ -213,6 +222,21 @@ describe("what stayed behind, on purpose", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(code).not.toContain("sessionsCollapsed");
+  });
+
+  // The same hazard, and the reason ticket integrations was held back from the first eight: almost
+  // everything it does happens at LOAD time — four getElementById captures, three status fetches
+  // and a dozen listener registrations. In a <head> module those would run before the markup
+  // exists, wiring nothing and reporting no error at all.
+  it("calls initTicketIntegrations from the page rather than on module load", async () => {
+    const src = await read("dashboard-tickets.js");
+    const body = src.slice(src.indexOf("(function () {"));
+    // No bare `document.` outside a function: every DOM touch must be inside init or a handler.
+    expect(body, "a load-time DOM query would run before the markup exists").not.toMatch(
+      /\n {2}(?:const|let|var)\s+\w+\s*=\s*document\./,
+    );
+    const html = await readFile(DASHBOARD, "utf8");
+    expect(html).toContain("initTicketIntegrations();");
   });
 
   // initCustodyButtons ran at its old position in the inline script, AFTER the custody markup.
