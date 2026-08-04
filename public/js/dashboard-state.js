@@ -51,9 +51,25 @@
 //   2. THE SELECTION — the filter and selection cells that genuinely cross features: filterFrom,
 //      filterTo, searchTerm, excludeTerms, scope, selectedEvents/Iocs/Findings, starredEvents,
 //      hiddenSources/Origins/Hosts, activeView. Roughly fifteen bindings, 4-6 writers and 6-13
-//      readers each. Owned here too, but as cells with change notification, because a write has to
-//      make other panels re-render and today that is done by each writer remembering to call the
-//      right render function.
+//      readers each.
+//
+//      THIS PARAGRAPH USED TO SAY "owned here too, but as cells with change notification". Both
+//      halves turned out to be wrong once the tier was measured rather than sketched, and the note
+//      is kept rather than quietly rewritten because the reasoning is the useful part:
+//
+//        - NOT HERE. Each of these cells has its own domain, its own refresh cost and its own
+//          server contract. `scope` is server-persisted with three distinct refresh paths;
+//          the selections are ephemeral; starred is a cache of server tags. They live in
+//          js/dashboard-scope.js and js/dashboard-selection.js, as named owners.
+//        - NOT CHANGE NOTIFICATION. A subscriber is ONE fixed reaction to a write, and the
+//          measurement says these writes want different ones: loadScope commits without
+//          redrawing, the websocket branch redraws, applyScope refetches and reloads twenty
+//          panels. A single subscriber would have to be the union of all three, which is a
+//          behaviour change wearing a refactor's clothes. So refresh stays at the call sites and
+//          neither owner publishes a subscription.
+//
+//      What tier 2 kept from this file is `cell` itself — the factory below — which is exactly
+//      what it is exported for.
 //
 //   3. EVERYTHING ELSE — the 231 bindings read by five functions or fewer. NOT owned here. They
 //      are feature-local variables that look global because the whole page shares one scope; they
@@ -97,11 +113,15 @@
 //
 // WHAT IS LEFT, in order:
 //
-//   TIER 2, the ~15 selection cells. Harder than tier 1 despite being smaller: 4-6 writers each,
-//   so migrating one means deciding which of its writers is the owner, or accepting that some cells
-//   have several and the single-writer gate does not apply to them. The subscriber list exists for
-//   this tier and is still unused — today every writer re-renders by remembering to call the right
-//   function, which is the coupling `onLastStateChange` is meant to replace.
+//   TIER 2 IS UNDER WAY, in its own modules rather than here. `scope` moved first
+//   (js/dashboard-scope.js): three writers, one per refresh path, gated by an allowlist rather than
+//   by a count, because the single-writer rule cannot express a cell that three routes legitimately
+//   write. The three selections and the star cache followed (js/dashboard-selection.js) as
+//   replace-on-write owners, where the gate is "no commit inside a loop" — the cost of the
+//   mechanism rather than the number of writers. What is left of tier 2 is the timeline view.
+//
+//   The subscriber list is still unused, and the tier-2 work is the reason it will stay that way:
+//   see the note in tier 2 above.
 //
 //   TIER 3, the 231 feature-local bindings. The bulk of the remaining inline script, and the reason
 //   tiers 1 and 2 came first: a function that reads only its own feature's state can move into that

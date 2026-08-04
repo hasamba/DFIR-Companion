@@ -72,6 +72,18 @@ export function dashboardScripts(): DashboardScript[] {
   return out;
 }
 
+/**
+ * Parse a snippet as if it were one of the dashboard's scripts.
+ *
+ * Exported so the ANALYSER can be tested directly. Every hole found in these gates so far — the
+ * `async function` shape, the transitive call, the window-rooted namespace, the callback loop — was
+ * found by a human reading the code, never by a test, because there was no way to ask "what does
+ * this helper say about this snippet". There is now.
+ */
+export function scriptFromSource(name: string, source: string): DashboardScript {
+  return makeScript(name, source);
+}
+
 function makeScript(name: string, source: string): DashboardScript {
   return {
     name,
@@ -289,12 +301,284 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
       if (ts.isBindingElement(el)) collect(el.name);
     }
   };
+
+  // let/const/class/function at the very top of the script.
   for (const st of script.ast.statements) {
     if (ts.isVariableStatement(st)) {
       for (const d of st.declarationList.declarations) collect(d.name);
     }
   }
+
+  // `var` ANYWHERE outside a function, because it hoists to the script scope regardless of the
+  // block it is written in. `if (ready) { var selectedEvents = new Set(); }` is a script-level
+  // binding, and the first version of this helper — which looked only at direct children of the
+  // SourceFile — reported nothing for it.
+  const declared = new Set(out.map((b) => b.name));
+  const varWalk = (n: ts.Node): void => {
+    if (isFunctionLike(n)) return; // `var` inside a function is that function's, not the script's
+    if (ts.isVariableStatement(n) && n.declarationList.flags & ts.NodeFlags.Let) {
+      // let/const in a nested block is genuinely block-scoped; not ours.
+    } else if (ts.isVariableStatement(n) && !(n.declarationList.flags & ts.NodeFlags.BlockScoped)) {
+      for (const d of n.declarationList.declarations) {
+        const before = out.length;
+        collect(d.name);
+        for (const b of out.slice(before)) declared.add(b.name);
+      }
+    }
+    ts.forEachChild(n, varWalk);
+  };
+  ts.forEachChild(script.ast, varWalk);
+
+  // IMPLICIT GLOBALS. These scripts are not strict, so a bare `selectedEvents = new Set()` with no
+  // declaration anywhere creates a property on the global object — a binding by any useful
+  // definition, and invisible to every declaration-shaped check. Collected by finding assignments
+  // whose target is declared NOWHERE in this script (parameters and nested `let`s included).
+  const declaredAnywhere = new Set<string>();
+  const declWalk = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n)) collectInto(n.name, declaredAnywhere);
+    if (isFunctionLike(n)) {
+      const fn = n as ts.FunctionLikeDeclaration;
+      if (fn.name && ts.isIdentifier(fn.name)) declaredAnywhere.add(fn.name.text);
+      for (const p of fn.parameters) collectInto(p.name, declaredAnywhere);
+    }
+    if (ts.isCatchClause(n) && n.variableDeclaration)
+      collectInto(n.variableDeclaration.name, declaredAnywhere);
+    ts.forEachChild(n, declWalk);
+  };
+  ts.forEachChild(script.ast, declWalk);
+
+  const assignWalk = (n: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      !declaredAnywhere.has(n.left.text) &&
+      !declared.has(n.left.text)
+    ) {
+      out.push({ name: n.left.text, line: at(n.left) });
+      declared.add(n.left.text);
+    }
+    ts.forEachChild(n, assignWalk);
+  };
+  ts.forEachChild(script.ast, assignWalk);
+
   return out;
+}
+
+/** Names bound by a binding pattern, into an existing set. */
+function collectInto(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  for (const el of name.elements) {
+    if (ts.isBindingElement(el)) collectInto(el.name, into);
+  }
+}
+
+/** One call of an owner's method, and whether a loop encloses it. */
+export interface OwnerCall {
+  script: string;
+  line: number;
+  /** The dotted path as written, e.g. `DfirSelection.events.addAll`. */
+  path: string;
+  method: string;
+  inLoop: boolean;
+  /** The innermost NAMED enclosing function, for allowlisting a documented exception. */
+  fn: string;
+}
+
+/**
+ * Every call to `<namespace>.….<method>` for the named methods, flagged if a loop encloses it.
+ *
+ * THE LOOP FLAG IS THE POINT, and it is specific to replace-on-write owners. A set behind
+ * replace-on-write costs O(n) per commit, so a commit inside a loop is O(n^2) for the gesture —
+ * and js/dashboard-selection.js exists partly because four of the sites it replaced were exactly
+ * that, over data no page size bounds. The bulk operations (addAll/removeAll/replace) are the
+ * supported way to write many ids, so "no commit in a loop" is a rule a test can hold, unlike
+ * "remember that this is O(n)".
+ *
+ * Matches at any depth under the namespace, so `DfirSelection.events.toggle` and a hypothetical
+ * `DfirSelection.toggle` both count; `denotesNamespace` handles the window-rooted spelling.
+ */
+export function ownerCalls(
+  scripts: DashboardScript[],
+  namespace: string,
+  methods: readonly string[],
+): OwnerCall[] {
+  const want = new Set(methods);
+  const out: OwnerCall[] = [];
+  // Walk down a property-access chain to its root, collecting the names on the way.
+  const chain = (n: ts.Node): string[] | null => {
+    if (denotesNamespace(n, namespace)) return [namespace];
+    if (ts.isPropertyAccessExpression(n)) {
+      const head = chain(n.expression);
+      return head ? [...head, n.name.text] : null;
+    }
+    return null;
+  };
+
+  for (const s of scripts) {
+    const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
+    // Innermost NAMED function enclosing a position, for allowlisting a documented exception.
+    const named = functionsOf(s).filter((f) => !f.name.startsWith("<"));
+    const enclosing = (n: ts.Node): string => {
+      let best: FunctionInfo | null = null;
+      const p = n.getStart(s.ast);
+      for (const f of named) {
+        if (f.node.getStart(s.ast) <= p && f.node.getEnd() >= p) {
+          if (!best || f.node.getStart(s.ast) > best.node.getStart(s.ast)) best = f;
+        }
+      }
+      return best ? best.name : "<top-level>";
+    };
+
+    // ONE walk from the SourceFile, carrying loop depth. Walking per-function (the first version)
+    // skipped every commit at top level, where a classic script does most of its wiring.
+    const visit = (n: ts.Node, loops: number): void => {
+      let inner = loops;
+      if (
+        ts.isForStatement(n) ||
+        ts.isForOfStatement(n) ||
+        ts.isForInStatement(n) ||
+        ts.isWhileStatement(n) ||
+        ts.isDoStatement(n)
+      ) {
+        inner = loops + 1;
+      }
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        const path = chain(n.expression);
+        if (path && want.has(path[path.length - 1])) {
+          out.push({
+            script: s.name,
+            line: at(n),
+            path: path.join("."),
+            method: path[path.length - 1],
+            inLoop: loops > 0,
+            fn: enclosing(n),
+          });
+        }
+      }
+      // An iteration callback is a loop body, so its ARGUMENTS are walked at depth+1 while the
+      // receiver is not: in `xs.forEach(cb)` the `xs` expression runs once.
+      if (isIterationCall(n)) {
+        visit(n.expression, inner);
+        for (const a of n.arguments) visit(a, inner + 1);
+        return;
+      }
+      ts.forEachChild(n, (c) => visit(c, inner));
+    };
+    ts.forEachChild(s.ast, (c) => visit(c, 0));
+  }
+  return out;
+}
+
+/**
+ * Positions of every call to a bare `name(...)` within `node`.
+ *
+ * For asking questions about a module's INTERNALS — specifically whether an owner's own bulk
+ * operation loops around its private commit, which no call-site analysis can see.
+ */
+export function ownerCallPositions(node: ts.Node, name: string): number[] {
+  const out: number[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
+      out.push(n.getStart());
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(node, visit);
+  return out;
+}
+
+/**
+ * Names called from inside a loop body, anywhere in these scripts.
+ *
+ * The indirect half of the loop rule: a commit does not stop being per-iteration because a function
+ * call sits between it and the loop. Feed these to reachableFrom() against the set of functions
+ * that commit, and `for (const id of ids) selectOne(id)` is caught even though the commit is a hop
+ * away — the same direct-vs-transitive distinction that cleared jumpToEvent earlier in #415.
+ */
+export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of scripts) {
+    const visit = (n: ts.Node, loops: number): void => {
+      let inner = loops;
+      if (
+        ts.isForStatement(n) ||
+        ts.isForOfStatement(n) ||
+        ts.isForInStatement(n) ||
+        ts.isWhileStatement(n) ||
+        ts.isDoStatement(n)
+      ) {
+        inner = loops + 1;
+      }
+      if (loops > 0 && ts.isCallExpression(n)) {
+        if (ts.isIdentifier(n.expression)) out.add(n.expression.text);
+        else if (ts.isPropertyAccessExpression(n.expression)) out.add(n.expression.name.text);
+      }
+      if (isIterationCall(n)) {
+        visit(n.expression, inner);
+        for (const a of n.arguments) visit(a, inner + 1);
+        return;
+      }
+      ts.forEachChild(n, (c) => visit(c, inner));
+    };
+    ts.forEachChild(s.ast, (c) => visit(c, 0));
+  }
+  return out;
+}
+
+/** A construct that puts an owner's methods beyond what ownerCalls() can follow. */
+export interface OwnerEscape {
+  script: string;
+  line: number;
+  form: "alias" | "computed-member" | "dynamic-member";
+  text: string;
+}
+
+/**
+ * Ways of reaching an owner that defeat ownerCalls(), reported so they can be REJECTED.
+ *
+ * Same argument as setterRefs' rejection list, for the same reason. `const events =
+ * DfirSelection.events; ids.forEach(id => events.toggle(id))` is a commit in a loop that no
+ * path-matching analysis sees, and `DfirSelection.events["toggle"](id)` is another. Following
+ * either needs binding-aware analysis; neither has a use in this page, and both are one line to
+ * avoid — so they are reported wherever they appear rather than resolved.
+ */
+export function ownerEscapes(scripts: DashboardScript[], namespace: string): OwnerEscape[] {
+  const hits: OwnerEscape[] = [];
+  const denotesOwnerOrChild = (n: ts.Node): boolean => {
+    if (denotesNamespace(n, namespace)) return true;
+    return ts.isPropertyAccessExpression(n) && denotesOwnerOrChild(n.expression);
+  };
+  for (const s of scripts) {
+    const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
+    const visit = (n: ts.Node): void => {
+      // const events = DfirSelection.events
+      if (
+        ts.isVariableDeclaration(n) &&
+        n.initializer &&
+        denotesOwnerOrChild(n.initializer) &&
+        !denotesNamespace(n.initializer, namespace)
+      ) {
+        hits.push({ script: s.name, line: at(n), form: "alias", text: n.getText(s.ast).slice(0, 90) });
+      }
+      // DfirSelection.events["toggle"](…) / DfirSelection.events[m](…)
+      if (ts.isElementAccessExpression(n) && denotesOwnerOrChild(n.expression)) {
+        const arg = n.argumentExpression;
+        hits.push({
+          script: s.name,
+          line: at(n),
+          form: arg && ts.isStringLiteral(arg) ? "computed-member" : "dynamic-member",
+          text: n.getText(s.ast).slice(0, 90),
+        });
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(s.ast, visit);
+  }
+  return hits;
 }
 
 /** A property write through an owner's getter: `DfirScope.get().start = x`. */
@@ -470,6 +754,40 @@ export function usesAfter(node: ts.Node, name: string, pos: number): number[] {
  * enclosing function can refresh the cell, that is a fault. Conservative by design — a deferred
  * read of a snapshot is worth writing differently even when it happens to be safe.
  */
+/**
+ * Array methods whose callback runs once per element — a loop written as a call.
+ *
+ * These are here because leaving them out made the loop check miss the very shape it was written
+ * for. Three of the four sites js/dashboard-selection.js replaced were `.forEach(cb => …)`, so a
+ * gate that recognised only `for`/`while` reported `inLoop: false` for a re-introduction of the
+ * exact quadratic regression it exists to prevent. Syntax is not the property being tested;
+ * "does this run once per element" is.
+ */
+const ITERATION_METHODS = new Set([
+  "forEach",
+  "map",
+  "filter",
+  "reduce",
+  "reduceRight",
+  "some",
+  "every",
+  "flatMap",
+  "find",
+  "findLast",
+  "findIndex",
+  "findLastIndex",
+  "sort",
+]);
+
+/** Is this node a call whose callback argument runs per element? */
+function isIterationCall(n: ts.Node): n is ts.CallExpression {
+  return (
+    ts.isCallExpression(n) &&
+    ts.isPropertyAccessExpression(n.expression) &&
+    ITERATION_METHODS.has(n.expression.name.text)
+  );
+}
+
 export function insideLoop(node: ts.Node, pos: number): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
@@ -479,7 +797,10 @@ export function insideLoop(node: ts.Node, pos: number): boolean {
       ts.isForOfStatement(n) ||
       ts.isForInStatement(n) ||
       ts.isWhileStatement(n) ||
-      ts.isDoStatement(n);
+      ts.isDoStatement(n) ||
+      // `xs.forEach(x => …)` — the callback body is a loop body. Only the ARGUMENTS count, not the
+      // receiver: `getIds().forEach(…)` does not put getIds() itself in a loop.
+      (isIterationCall(n) && n.arguments.some((a) => a.pos <= pos && a.end >= pos));
     if (isLoop && n.pos <= pos && n.end >= pos) {
       found = true;
       return;
