@@ -51,6 +51,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   // (DfirStarred). Same failure mode as the scope module — these hold state, so a 404 is not a
   // missing helper, it is every selection read throwing.
   "/js/dashboard-selection.js": "application/javascript; charset=utf-8",
+  // The facet filters (source / origin / host / IOC type). Splitting these from the timeline view's
+  // other filters is deliberate: four renderers used to MUTATE them mid-render, and that had to
+  // stop before any "one commit per user action" API could be built.
+  "/js/dashboard-facets.js": "application/javascript; charset=utf-8",
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",

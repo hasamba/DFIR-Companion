@@ -302,10 +302,18 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
     }
   };
 
-  // let/const/class/function at the very top of the script.
+  // let/const at the very top of the script, AND the declaration forms that also bind a name there:
+  // `function hiddenSources() {}` and `class hiddenSources {}` are page globals every bit as much
+  // as `let` is, and the first version of this helper looked only at variable statements.
   for (const st of script.ast.statements) {
     if (ts.isVariableStatement(st)) {
       for (const d of st.declarationList.declarations) collect(d.name);
+    } else if (
+      (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
+      st.name &&
+      ts.isIdentifier(st.name)
+    ) {
+      out.push({ name: st.name.text, line: at(st.name) });
     }
   }
 
@@ -348,15 +356,23 @@ export function topLevelBindings(script: DashboardScript): Array<{ name: string;
   ts.forEachChild(script.ast, declWalk);
 
   const assignWalk = (n: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(n) &&
-      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(n.left) &&
-      !declaredAnywhere.has(n.left.text) &&
-      !declared.has(n.left.text)
-    ) {
-      out.push({ name: n.left.text, line: at(n.left) });
-      declared.add(n.left.text);
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // `selectedEvents = new Set()` with no declaration anywhere — an implicit global.
+      if (ts.isIdentifier(n.left) && !declaredAnywhere.has(n.left.text) && !declared.has(n.left.text)) {
+        out.push({ name: n.left.text, line: at(n.left) });
+        declared.add(n.left.text);
+      }
+      // `window.selectedEvents = new Set()` — the explicit form of the same thing, and the one a
+      // declaration-shaped check will never see however carefully it is written.
+      if (
+        ts.isPropertyAccessExpression(n.left) &&
+        ts.isIdentifier(n.left.expression) &&
+        GLOBAL_ROOTS.has(n.left.expression.text) &&
+        !declared.has(n.left.name.text)
+      ) {
+        out.push({ name: n.left.name.text, line: at(n.left.name) });
+        declared.add(n.left.name.text);
+      }
     }
     ts.forEachChild(n, assignWalk);
   };
@@ -518,9 +534,21 @@ export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
         else if (ts.isPropertyAccessExpression(n.expression)) out.add(n.expression.name.text);
       }
       if (isIterationCall(n)) {
+        // A CALLBACK PASSED BY NAME IS STILL CALLED PER ELEMENT. `xs.forEach(hideOne)` has no call
+        // expression anywhere inside it, so walking the arguments finds nothing — the identifier
+        // IS the per-element call, and review found this failing open exactly that way.
+        for (const a of n.arguments) {
+          if (ts.isIdentifier(a)) out.add(a.text);
+          else if (ts.isPropertyAccessExpression(a)) out.add(a.name.text);
+        }
         visit(n.expression, inner);
         for (const a of n.arguments) visit(a, inner + 1);
         return;
+      }
+      // The same by-name hand-off inside a real loop: `for (…) xs.map(hideOne)` is covered above,
+      // but `for (…) run(hideOne)` passes it to something that will call it.
+      if (loops > 0 && ts.isCallExpression(n)) {
+        for (const a of n.arguments) if (ts.isIdentifier(a)) out.add(a.text);
       }
       ts.forEachChild(n, (c) => visit(c, inner));
     };
@@ -533,7 +561,7 @@ export function calleesInsideLoops(scripts: DashboardScript[]): Set<string> {
 export interface OwnerEscape {
   script: string;
   line: number;
-  form: "alias" | "computed-member" | "dynamic-member";
+  form: "alias" | "passed" | "computed-member" | "dynamic-member";
   text: string;
 }
 
@@ -563,6 +591,25 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
         !denotesNamespace(n.initializer, namespace)
       ) {
         hits.push({ script: s.name, line: at(n), form: "alias", text: n.getText(s.ast).slice(0, 90) });
+      }
+      // evs = DfirSelection.events  (assignment, not declaration)
+      if (
+        ts.isBinaryExpression(n) &&
+        n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        denotesOwnerOrChild(n.right) &&
+        !denotesNamespace(n.right, namespace)
+      ) {
+        hits.push({ script: s.name, line: at(n), form: "alias", text: n.getText(s.ast).slice(0, 90) });
+      }
+      // PASSED SOMEWHERE. An owner handed to another function is a writer this analysis stops
+      // following at the call. There is a supported alternative — a read-only view — so passing the
+      // owner itself is reported rather than resolved.
+      if (ts.isCallExpression(n)) {
+        for (const a of n.arguments) {
+          if (denotesOwnerOrChild(a)) {
+            hits.push({ script: s.name, line: at(a), form: "passed", text: n.getText(s.ast).slice(0, 90) });
+          }
+        }
       }
       // DfirSelection.events["toggle"](…) / DfirSelection.events[m](…)
       if (ts.isElementAccessExpression(n) && denotesOwnerOrChild(n.expression)) {
