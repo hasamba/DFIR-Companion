@@ -286,15 +286,25 @@ export interface IdSet {
   ids(): readonly string[];
   /** `on` omitted flips, like classList.toggle. Returns the new size. */
   toggle(id: string, on?: boolean): number;
+  // All three guard with `ids || []`, so the parameter is optional and nullable here to match.
+  // Tightening it would make the "tolerates an empty or absent batch" case fail to compile, which
+  // is the type lying about the code rather than checking it.
   /** Union in a batch — select-all, the rubber band. ONE commit. */
-  addAll(ids: Iterable<string>): number;
-  removeAll(ids: Iterable<string>): number;
-  replace(ids?: Iterable<string>): number;
+  addAll(ids?: Iterable<string> | null): number;
+  removeAll(ids?: Iterable<string> | null): number;
+  replace(ids?: Iterable<string> | null): number;
   clear(): number;
 }
 
+/**
+ * A selection cannot be replaced wholesale — see js/dashboard-selection.js. Select-all ticks the
+ * rendered rows, so an operation that drops the rest would silently lose off-page ticks, and no
+ * caller wants one.
+ */
+export type SelectionSet = Omit<IdSet, "replace">;
+
 export interface SelectionApi {
-  DfirSelection: { events: IdSet; iocs: IdSet; findings: IdSet };
+  DfirSelection: { events: SelectionSet; iocs: SelectionSet; findings: SelectionSet };
   /** Starred is a CACHE of server tags, not view state, so it is a separate owner. */
   DfirStarred: Pick<IdSet, "has" | "count" | "ids" | "toggle" | "replace">;
 }

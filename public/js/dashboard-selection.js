@@ -32,8 +32,15 @@
 // so O(n^2) for the gesture. That is not a micro-optimisation worry: `tlPageSize` is analyst-
 // selectable and 0 means "show every row" (see renderTimelineEvents), so select-all is NOT bounded
 // by a page, and neither is the swimlane's lane data. On a real case that is a hung tab, not a slow
-// one. So the bulk gestures commit ONCE, through replace(), and the loops build a plain collection
-// first. That is also fewer commits than today, not more.
+// one. So the bulk gestures collect the ids first and commit ONCE, through addAll()/removeAll().
+// That is also fewer commits than today, not more.
+//
+// addAll/removeAll and NOT replace, which is why the selections do not publish a replace() at all.
+// Select-all ticks the RENDERED rows and the timeline paginates, so rows ticked on another page
+// have to survive the gesture — the per-row `.add()` loop did that for free and `replace()` would
+// silently drop them. An operation with no caller that can quietly lose the analyst's selection is
+// not worth having on the surface, so it is not on it. DfirStarred keeps replace() because
+// deriveStarred() genuinely does rebuild the whole set from the server's tags.
 //
 //
 // NO LIVE SET LEAVES THIS CLOSURE, AND FREEZING IS NOT HOW THAT IS ACHIEVED
@@ -123,10 +130,17 @@
    * and a finding id are different namespaces, the bulk bars are three different elements, and the
    * three "clear" gestures already cost three different amounts to repaint.
    */
+  const selection = () => {
+    // Everything the factory offers EXCEPT replace(): see the header. Spelled out rather than
+    // deleted from the factory because DfirStarred does need it.
+    const { has, count, ids, toggle, addAll, removeAll, clear } = idSet();
+    return { has, count, ids, toggle, addAll, removeAll, clear };
+  };
+
   window.DfirSelection = {
-    events: idSet(),
-    iocs: idSet(),
-    findings: idSet(),
+    events: selection(),
+    iocs: selection(),
+    findings: selection(),
   };
 
   /**

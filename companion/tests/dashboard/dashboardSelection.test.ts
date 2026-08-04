@@ -3,7 +3,17 @@ import { runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { SelectionApi } from "./dashboardApi.js";
-import { dashboardScripts, ownerCalls, topLevelBindings } from "../helpers/dashboardAst.js";
+import {
+  calleesInsideLoops,
+  functionsOf,
+  insideLoop,
+  ownerCallPositions,
+  dashboardScripts,
+  ownerCalls,
+  ownerEscapes,
+  scriptFromSource,
+  topLevelBindings,
+} from "../helpers/dashboardAst.js";
 import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // public/js/dashboard-selection.js — tier 2's second and third owners (#415).
@@ -18,6 +28,9 @@ const MODULE = new URL("../../../public/js/dashboard-selection.js", import.meta.
 const DASHBOARD = new URL("../../../public/dashboard.html", import.meta.url);
 
 const load = () => loadDashboardModule<SelectionApi>("dashboard-selection.js", ["dashboard-state.js"]);
+
+/** Parsed once — the call-site pins and the loop gate both read it. */
+const scriptsForPins = dashboardScripts();
 
 describe("a selection set", () => {
   it("starts empty", () => {
@@ -72,20 +85,54 @@ describe("bulk gestures union and subtract rather than replace", () => {
     expect(DfirSelection.events.ids()).toEqual(["offpage"]);
   });
 
-  it("replace and clear DO drop everything, which is why select-all does not use them", () => {
+  it("clear DOES drop everything, which is why select-all does not use it", () => {
     const { DfirSelection } = load();
     DfirSelection.events.addAll(["a", "b"]);
-    DfirSelection.events.replace(["c"]);
-    expect(DfirSelection.events.ids()).toEqual(["c"]);
     DfirSelection.events.clear();
     expect(DfirSelection.events.count()).toBe(0);
+  });
+
+  // A replace() on a selection could only ever lose an off-page tick, and nothing calls one, so it
+  // is not published. Removing the operation is stronger than testing that nobody uses it.
+  it("publishes no replace() on a selection, only on the star cache", () => {
+    const { DfirSelection, DfirStarred } = load();
+    for (const set of [DfirSelection.events, DfirSelection.iocs, DfirSelection.findings]) {
+      expect(set).not.toHaveProperty("replace");
+    }
+    expect(DfirStarred).toHaveProperty("replace");
   });
 
   it("tolerates an empty or absent batch", () => {
     const { DfirSelection } = load();
     DfirSelection.events.addAll([]);
-    DfirSelection.events.replace(undefined);
+    DfirSelection.events.removeAll(undefined);
     expect(DfirSelection.events.count()).toBe(0);
+  });
+
+  // PIN THE PRODUCTION CALL SITES, not just the API. The off-page semantic lives in which operation
+  // the three select-all handlers call, and an API-level test alone would pass if one of them were
+  // switched to a set-clearing operation.
+  it("has all three select-all handlers committing through addAll and removeAll", () => {
+    for (const panel of ["events", "iocs", "findings"]) {
+      // `events` legitimately has TWO addAll sites — select-all and the swimlane rubber band — so
+      // this pins the OPERATIONS each panel reaches for, not how many times.
+      const methods = new Set(
+        ownerCalls(scriptsForPins, "DfirSelection", ["addAll", "removeAll"])
+          .filter((c) => c.path.startsWith(`DfirSelection.${panel}.`))
+          .map((c) => c.method),
+      );
+      expect(
+        [...methods].sort(),
+        `select-all for ${panel} must union and subtract, never drop the rest`,
+      ).toEqual(["addAll", "removeAll"]);
+    }
+  });
+
+  it("never calls a replace() on a selection anywhere in the page", () => {
+    const calls = ownerCalls(scriptsForPins, "DfirSelection", ["replace"]).map(
+      (c) => `${c.script}:${c.line} ${c.path}()`,
+    );
+    expect(calls, "selections publish no replace(); such a call would throw at runtime").toEqual([]);
   });
 });
 
@@ -189,6 +236,107 @@ describe("no commit happens inside a loop", () => {
     ).toEqual([]);
   });
 
+  // A CALLBACK LOOP IS A LOOP, asserted against the analyser directly.
+  //
+  // The first version of this gate recognised only `for`/`while`, so
+  // `ids.forEach(id => DfirSelection.events.toggle(id))` — the exact shape of three of the four
+  // sites this migration replaced — reported inLoop: false. The gate could not see the regression
+  // it exists to prevent. These cases are the analyser's own contract, and they are here rather
+  // than in a page assertion because the page currently contains none of them, so a page-level
+  // check would pass whether the analyser worked or not.
+  const probe = (body: string) => ownerCalls([scriptFromSource("probe.js", body)], "DfirSelection", COMMITS);
+
+  it.each([
+    ["a for-of loop", "for (const id of ids) DfirSelection.events.toggle(id);"],
+    ["a while loop", "while (n--) DfirSelection.events.toggle('x');"],
+    ["a forEach callback", "ids.forEach((id) => DfirSelection.events.toggle(id));"],
+    ["a map callback", "ids.map((id) => DfirSelection.events.toggle(id));"],
+    ["a sort comparator", "ids.sort((a, b) => DfirSelection.events.toggle(a));"],
+    [
+      "a nested callback inside a loop",
+      "for (const g of gs) g.ids.forEach((id) => DfirSelection.events.toggle(id));",
+    ],
+  ])("counts a commit in %s as in-loop", (_label, body) => {
+    const [call] = probe(body);
+    expect(call, "the analyser did not see the commit at all").toBeDefined();
+    expect(call.inLoop).toBe(true);
+  });
+
+  it.each([
+    ["a plain statement", "DfirSelection.events.toggle('a', true);"],
+    ["the receiver of a forEach", "DfirSelection.events.ids().forEach((x) => x);"],
+    ["a callback that commits nothing", "ids.forEach((id) => other.toggle(id));"],
+  ])("does not count %s as in-loop", (_label, body) => {
+    for (const call of probe(body)) expect(call.inLoop).toBe(false);
+  });
+
+  it("sees a commit at top level, outside any function", () => {
+    expect(probe("DfirSelection.events.clear();")).toHaveLength(1);
+  });
+
+  it.each([
+    ["an alias", "const evs = DfirSelection.events; evs.toggle('a');"],
+    ["a computed member", "DfirSelection.events['toggle']('a');"],
+    ["a dynamic member", "DfirSelection.events[m]('a');"],
+  ])("reports %s as an escape the loop gate cannot follow", (_label, body) => {
+    expect(ownerEscapes([scriptFromSource("probe.js", body)], "DfirSelection").length).toBeGreaterThan(0);
+  });
+
+  // Reaching an owner by a name this analysis cannot follow defeats every rule above, so those
+  // spellings are rejected outright rather than resolved — the same trade setterRefs makes.
+  it.each(["DfirSelection", "DfirStarred"])("%s is never aliased or reached dynamically", (ns) => {
+    const escapes = ownerEscapes(scripts, ns).map((e) => `${e.script}:${e.line} (${e.form}) ${e.text}`);
+    expect(
+      escapes,
+      "an alias or a computed member puts the commit beyond the loop gate. Call the owner by name.",
+    ).toEqual([]);
+  });
+
+  // THE INDIRECT HALF, and its deliberate limit.
+  //
+  // A commit does not stop being per-iteration because a thin wrapper sits between it and the loop:
+  // `for (const id of ids) selectOne(id)` is the shape this catches.
+  //
+  // ONE HOP, NOT FULL REACHABILITY, and that is a judgement rather than an oversight. Run
+  // transitively over this call graph it reports four things today, and not one is a per-element
+  // cost: addTag()/deleteTag() reach deriveStarred() only through loadTags(), which is a fetch, so
+  // each iteration is already a network round-trip (the same reason bulkStarIds is allowlisted);
+  // and createNewCase() reaches proceedConnect(), a whole case connect. In a 19,000-line script
+  // with names this generic, "can eventually reach" stops predicting "runs per iteration", and a
+  // gate whose output is mostly allowlist teaches people to extend the allowlist. The bound is
+  // stated here so the next reader knows what is NOT covered rather than assuming it is.
+  it("no function called directly from inside a loop commits", () => {
+    const committers = new Set(
+      ["DfirSelection", "DfirStarred"]
+        .flatMap((ns) => ownerCalls(scriptsForPins, ns, COMMITS))
+        .map((c) => c.fn)
+        .filter((f) => !f.startsWith("<")),
+    );
+    const offenders = [...calleesInsideLoops(scriptsForPins)]
+      .filter((callee) => committers.has(callee) && !ALLOWED_IN_LOOP.includes(callee))
+      .map((callee) => `${callee}() commits and is called from inside a loop`);
+    expect(offenders).toEqual([]);
+  });
+
+  // THE MODULE'S OWN BULK OPERATIONS MUST NOT LOOP AROUND A COMMIT.
+  //
+  // `addAll` implemented as `for (const id of ids) commit(...)` is the same quadratic cost moved one
+  // level down, where no call-site check sees it: the API would look right and behave exactly as
+  // badly as what it replaced. Checked against the AST rather than by counting `commit(` in the
+  // text, because the counting version passed this exact mutation — one call, inside a loop, is
+  // still one occurrence.
+  it("has no bulk operation looping around its own commit", async () => {
+    const script = scriptFromSource("dashboard-selection.js", await readFile(MODULE, "utf8"));
+    const BULK = ["addAll", "removeAll", "replace", "clear", "toggle"];
+    const offenders: string[] = [];
+    for (const fn of functionsOf(script).filter((f) => BULK.includes(f.name))) {
+      for (const call of ownerCallPositions(fn.node, "commit")) {
+        if (insideLoop(fn.node, call)) offenders.push(`${fn.name}() commits inside a loop`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   // The allowlist must not outlive what it excuses: an entry that no longer matches anything is a
   // stale exemption that would silently cover a future commit-in-loop in a function of that name.
   it("has no stale entry in the loop allowlist", () => {
@@ -210,8 +358,32 @@ describe("no commit happens inside a loop", () => {
 });
 
 describe("the old bindings are gone", () => {
-  const scripts = dashboardScripts();
+  const scripts = scriptsForPins;
   const MOVED = ["selectedEvents", "selectedIocs", "selectedFindings", "starredEvents"];
+
+  // THE HELPER'S OWN CONTRACT. "Top level" is not the same as "written at the top": in a classic
+  // non-strict script a `var` inside a block hoists to the script, and a bare assignment with no
+  // declaration creates a global outright. Both are the binding this migration removed, wearing a
+  // different hat, and both were invisible to the first version of this check.
+  it.each([
+    ["a plain let", "let selectedEvents = new Set();"],
+    ["a const", "const selectedEvents = new Set();"],
+    ["a bare let", "let selectedEvents;"],
+    ["a var in a block", "if (ready) { var selectedEvents = new Set(); }"],
+    ["a var in a loop body", "for (;;) { var selectedEvents = new Set(); }"],
+    ["an implicit global", "function f() { selectedEvents = new Set(); }"],
+  ])("counts %s as a binding", (_label, src) => {
+    const found = topLevelBindings(scriptFromSource("probe.js", src)).map((b) => b.name);
+    expect(found).toContain("selectedEvents");
+  });
+
+  it.each([
+    ["a let inside a function", "function f() { let selectedEvents = new Set(); }"],
+    ["a parameter", "function f(selectedEvents) { return selectedEvents; }"],
+  ])("does not count %s", (_label, src) => {
+    const found = topLevelBindings(scriptFromSource("probe.js", src)).map((b) => b.name);
+    expect(found).not.toContain("selectedEvents");
+  });
 
   it.each(MOVED)("%s has no top-level binding left in the page", (name) => {
     const offenders = scripts
@@ -251,7 +423,6 @@ describe("nothing but the namespaces escapes", () => {
         "has",
         "ids",
         "removeAll",
-        "replace",
         "toggle",
       ]);
     }
