@@ -157,8 +157,13 @@ export interface SetterRef {
 }
 
 /**
- * Every reference to `DfirState.<member>`, AND every construct that puts the setter out of reach
+ * Every reference to `<namespace>.<member>`, AND every construct that puts the setter out of reach
  * of that question.
+ *
+ * `namespace` defaults to DfirState because that was the only store when this was written. Tier 2
+ * added a second owner with its own namespace (DfirScope), and the alternative to a parameter here
+ * was a second copy of the rejection rules below — which is how two gates drift into checking
+ * different things while both claiming to check writers.
  *
  * This has been widened twice, and each time by the same discovery: the gate was answering "how
  * many times is it written this one way" while presenting itself as "how many writers are there".
@@ -176,16 +181,16 @@ export interface SetterRef {
  * appears. Both are one line to avoid and neither has a use here, so the cost of the blunt rule is
  * zero and the alternative is a gate that keeps being almost right.
  */
-export function setterRefs(scripts: DashboardScript[], member: string): SetterRef[] {
+export function setterRefs(scripts: DashboardScript[], member: string, namespace = "DfirState"): SetterRef[] {
   const hits: SetterRef[] = [];
   for (const s of scripts) {
     const at = (n: ts.Node): number => s.ast.getLineAndCharacterOfPosition(n.getStart(s.ast)).line + 1;
     const visit = (n: ts.Node): void => {
-      // DfirState.member — a call, or a bare reference someone can stash.
+      // <namespace>.member — a call, or a bare reference someone can stash.
       if (
         ts.isPropertyAccessExpression(n) &&
         ts.isIdentifier(n.expression) &&
-        n.expression.text === "DfirState" &&
+        n.expression.text === namespace &&
         n.name.text === member
       ) {
         const isCallee = n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n;
@@ -194,7 +199,7 @@ export function setterRefs(scripts: DashboardScript[], member: string): SetterRe
       if (
         ts.isElementAccessExpression(n) &&
         ts.isIdentifier(n.expression) &&
-        n.expression.text === "DfirState"
+        n.expression.text === namespace
       ) {
         const arg = n.argumentExpression;
         if (arg && ts.isStringLiteral(arg) && arg.text === member) {
@@ -209,7 +214,7 @@ export function setterRefs(scripts: DashboardScript[], member: string): SetterRe
         ts.isVariableDeclaration(n) &&
         n.initializer &&
         ts.isIdentifier(n.initializer) &&
-        n.initializer.text === "DfirState"
+        n.initializer.text === namespace
       ) {
         if (ts.isObjectBindingPattern(n.name)) {
           for (const el of n.name.elements) {
@@ -219,7 +224,7 @@ export function setterRefs(scripts: DashboardScript[], member: string): SetterRe
             }
           }
         } else if (ts.isIdentifier(n.name)) {
-          // const state = DfirState — every member is now reachable under another name.
+          // const state = <namespace> — every member is now reachable under another name.
           hits.push({ script: s.name, line: at(n), form: "namespace-alias" });
         }
       }

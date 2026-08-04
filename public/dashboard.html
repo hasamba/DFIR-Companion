@@ -120,6 +120,10 @@
   <script src="/js/dashboard-ioc.js"></script>
   <script src="/js/dashboard-values.js"></script>
   <script src="/js/dashboard-fragments.js"></script>
+  <!-- Tier 2's first owner (#415). After dashboard-state.js, whose cell() it builds on at load
+       time, and after dashboard-time.js, whose isoToUtcInput it calls (at call time, so this is
+       documentation rather than a constraint). -->
+  <script src="/js/dashboard-scope.js"></script>
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
@@ -3539,7 +3543,9 @@
     let countTimer = null;
     let countUpdate = null;   // current capture-count poll fn (set by pollCount)
     let aiEnabled = false;   // AI defaults OFF per case; loadAiToggle() syncs the real state
-    let scope = { start: null, end: null };  // active investigation window (ISO or null)
+    // The investigation scope window moved to js/dashboard-scope.js (#415, tier 2) — it is
+    // server-persisted state with three different refresh paths, so it owns them rather than
+    // sharing a generic setter. Read it through DfirScope.
     // The case snapshot moved to js/dashboard-state.js (#415). Read it through DfirState; only
     // render() and renderSuperTimeline() may write, and never cache a snapshot in a local inside a
     // function that can re-fetch — 16 readers call their own writer, where a bare `let` never went stale.
@@ -3664,44 +3670,10 @@
       }
     }
 
-    function inScope(ts) {
-      if (!scope.start && !scope.end) return true;
-      const t = Date.parse(ts); if (isNaN(t)) return true;
-      if (scope.start && t < Date.parse(scope.start)) return false;
-      if (scope.end && t > Date.parse(scope.end)) return false;
-      return true;
-    }
-
-    // Deterministic scope projection — the client-side mirror of the server's
-    // projectScope(). Drops out-of-scope events AND the findings/IOCs/MITRE backed
-    // ONLY by them, so the dashboard is scope-consistent instantly, without waiting
-    // on (or depending on) AI re-synthesis. "No links → can't prove out of scope → keep".
-    function projectScope(state) {
-      if (!scope.start && !scope.end) return state;
-      const events = state.forensicTimeline || [];
-      const forensicTimeline = events.filter(e => inScope(e.timestamp));
-
-      const backedIn = new Set(), backedOut = new Set();
-      for (const e of events) {
-        const tgt = inScope(e.timestamp) ? backedIn : backedOut;
-        for (const fid of (e.relatedFindingIds || [])) tgt.add(fid);
-      }
-      const findings = (state.findings || []).filter(f => backedIn.has(f.id) || !backedOut.has(f.id));
-      const surviving = new Set(findings.map(f => f.id));
-
-      const citedBySurviving = new Set(), citedByAny = new Set();
-      for (const f of (state.findings || [])) for (const iid of (f.relatedIocs || [])) {
-        citedByAny.add(iid);
-        if (surviving.has(f.id)) citedBySurviving.add(iid);
-      }
-      const iocs = (state.iocs || []).filter(i => citedBySurviving.has(i.id) || !citedByAny.has(i.id));
-
-      const mitreTechniques = (state.mitreTechniques || [])
-        .map(t => ({ ...t, findingIds: (t.findingIds || []).filter(id => surviving.has(id)) }))
-        .filter((t, idx) => t.findingIds.length > 0 || (state.mitreTechniques[idx].findingIds || []).length === 0);
-
-      return { ...state, forensicTimeline, findings, iocs, mitreTechniques };
-    }
+    // inScope() and projectScope() moved to js/dashboard-scope.js (#415) — they are pure functions
+    // of (window, state), and moving them with the value is what leaves `scope` with no readers
+    // outside its owner. DfirScope.project() is the same function; a parity suite now checks it
+    // against companion/src/analysis/scopeProject.ts, the server copy it has always mirrored.
 
     // The latest forensic event time anchors the relative-scope presets (DFIR data
     // is historical, so "last 24h" means the last 24h of ACTIVITY, not of wall-clock).
@@ -3712,21 +3684,16 @@
       return isNaN(max) ? Date.now() : max;
     }
 
-    function renderScopeInfo() {
-      const el = document.getElementById("scopeInfo");
-      const utc = (iso) => isoToUtcInput(iso).replace("T", " ") + " UTC";
-      el.textContent = (scope.start || scope.end)
-        ? `active: ${scope.start ? utc(scope.start) : "−∞"} → ${scope.end ? utc(scope.end) : "now"}`
-        : "none (all events)";
-      el.style.color = (scope.start || scope.end) ? "#ffd93b" : "#9aa4b2";
-    }
+    // renderScopeInfo() moved into js/dashboard-scope.js: its three call sites were exactly the
+    // three writers, so an owner that could be written without repainting its own indicator was a
+    // bug waiting to be written. DfirScope.receive()/confirm() each repaint as part of committing.
 
     function loadScope(caseId) {
       fetch(`/cases/${caseId}/scope`).then(r => r.json()).then(s => {
-        scope = { start: s.start || null, end: s.end || null };
-        document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
-        document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
-        renderScopeInfo();
+        // No redraw, deliberately — the case is still loading and render() arrives separately.
+        // The websocket branch performs the identical commit and then DOES redraw; that difference
+        // is real (see the scope_changed handler) and is preserved rather than levelled out.
+        DfirScope.receive(s.start, s.end);
       }).catch(() => {});
     }
 
@@ -9030,11 +8997,13 @@
       fetch(`/cases/${caseId}/scope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(s => {
-          scope = { start: s.start || null, end: s.end || null };
-          renderScopeInfo();
+          // confirm(), not receive(): the two inputs are where this window was READ from, so
+          // writing them back is not this path's business. (The server's own scope_changed echo
+          // does write them, with its normalised ISO form — see the handler.)
+          DfirScope.confirm(s.start, s.end);
           // The view is scope-consistent immediately (client-side projection); AI
           // re-synthesis continues in the background and is reported via AI status.
-          document.getElementById("status").textContent = (scope.start || scope.end)
+          document.getElementById("status").textContent = !DfirScope.isEmpty()
             ? "scope applied — AI re-synthesizing in background (see AI status)"
             : "scope cleared — AI re-synthesizing in background (see AI status)";
           fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
@@ -10670,7 +10639,7 @@
     function loadIocSources(caseId) {
       fetch(`/cases/${caseId}/ioc-sources`).then(r => r.json()).then(m => {
         iocSourcesById = (m && typeof m === "object") ? m : {};
-        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
+        if (DfirState.lastState()) renderIocs((DfirScope.project(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocSourcesReload() {
@@ -10691,7 +10660,7 @@
     function loadIocProvenance(caseId) {
       fetch(`/cases/${caseId}/ioc-provenance`).then(r => r.json()).then(m => {
         iocProvenance = (m && typeof m === "object") ? m : {};
-        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
+        if (DfirState.lastState()) renderIocs((DfirScope.project(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocProvenanceReload() {
@@ -10729,7 +10698,7 @@
     function loadIocRisk(caseId) {
       fetch(`/cases/${caseId}/ioc-risk`).then(r => r.json()).then(m => {
         iocRisk = (m && typeof m === "object") ? m : {};
-        if (DfirState.lastState()) renderIocs((projectScope(DfirState.lastState()).iocs) || []);
+        if (DfirState.lastState()) renderIocs((DfirScope.project(DfirState.lastState()).iocs) || []);
       }).catch(() => {});
     }
     function scheduleIocRiskReload() {
@@ -14361,7 +14330,7 @@
       const btn = document.getElementById("iocTypeFilterBtn");
       const menu = document.getElementById("iocTypeFilterMenu");
       if (!wrap || !btn || !menu) return;
-      const scopedIocs = () => (DfirState.lastState() ? (projectScope(DfirState.lastState()).iocs || []) : []);
+      const scopedIocs = () => (DfirState.lastState() ? (DfirScope.project(DfirState.lastState()).iocs || []) : []);
       const rerender = () => renderIocs(scopedIocs());
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
@@ -14737,7 +14706,7 @@
       renderCollectionPlan();
       // Keep the raw state so scope-preset clicks can re-project without a refetch.
       DfirState.setLastState(rawState);
-      const state = projectScope(rawState);
+      const state = DfirScope.project(rawState);
       document.getElementById("summary").textContent = state.lastSummary || "—";
       document.getElementById("attackerPath").textContent = state.attackerPath || "—";
       document.getElementById("narrativeView").textContent = state.narrativeTimeline || "—";
@@ -15393,13 +15362,18 @@
         else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
         else if (msg.type === "clock_skew_changed") loadClockSkew(caseId);
         else if (msg.type === "scope_changed") {
-          scope = { start: msg.start ?? null, end: msg.end ?? null };
-          document.getElementById("scopeStart").value = isoToUtcInput(scope.start);
-          document.getElementById("scopeEnd").value = isoToUtcInput(scope.end);
-          renderScopeInfo();
-          // render() projects with the freshly-updated `scope` global AND caches its argument
-          // as `DfirState.lastState()`, so pass the RAW state — passing projectScope(DfirState.lastState()) would cache
-          // a scope-narrowed subset, permanently dropping out-of-window events on the next
+          // The same commit loadScope makes — the window came from the server either way, so the
+          // two controls are a sink here. Unlike loadScope this path then redraws, because the
+          // change came from outside and nothing else is going to.
+          //
+          // The hub broadcasts to every subscriber with no sender exclusion (src/live/hub.ts:67-80),
+          // so applyScope receives its own echo and this runs a second time after it — which is why
+          // applying a scope renders twice and the analyst's typed input is replaced by the
+          // server's normalised form. Pre-existing behaviour, preserved.
+          DfirScope.receive(msg.start, msg.end);
+          // render() projects with the freshly-updated window AND caches its argument as
+          // `DfirState.lastState()`, so pass the RAW state — passing an already-projected one would
+          // cache a scope-narrowed subset, permanently dropping out-of-window events on the next
           // scope widen/clear until a fresh server state arrives.
           if (DfirState.lastState()) render(DfirState.lastState());
         }
