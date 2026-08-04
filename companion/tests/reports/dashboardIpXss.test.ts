@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFile } from "node:fs/promises";
+import { dashboardClientSource } from "../helpers/dashboardModule.js";
 
-const dashboard = (): Promise<string> =>
-  readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+const dashboard = (): Promise<string> => Promise.resolve(dashboardClientSource());
 
 // Pull a function's source straight out of the shipped page and make it callable, so these assert
 // the real behaviour of the code that ships rather than a copy of it that could drift.
@@ -16,11 +15,14 @@ async function extractFn(name: string): Promise<(s: unknown) => string> {
   let end = open;
   for (let i = open; i < html.length; i++) {
     if (html[i] === "{") depth++;
-    else if (html[i] === "}" && --depth === 0) { end = i; break; }
+    else if (html[i] === "}" && --depth === 0) {
+      end = i;
+      break;
+    }
   }
   const src = html.slice(start, end + 1);
   // esc() is escAttr's dependency; include it so the extracted source resolves.
-  const escSrc = name === "esc" ? "" : (await extractSource("esc"));
+  const escSrc = name === "esc" ? "" : await extractSource("esc");
   // Compiling the dashboard's own esc()/escAttr() out of the shipped HTML is the point: the test
   // asserts the REAL escaper's behaviour rather than a copy of it that can drift.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -35,11 +37,18 @@ async function extractSource(name: string): Promise<string> {
   let end = open;
   for (let i = open; i < html.length; i++) {
     if (html[i] === "{") depth++;
-    else if (html[i] === "}" && --depth === 0) { end = i; break; }
+    else if (html[i] === "}" && --depth === 0) {
+      end = i;
+      break;
+    }
   }
   return html.slice(start, end + 1);
 }
 
+// Reads the whole CLIENT SOURCE, not dashboard.html alone: #415 moved this behaviour into
+// public/js/dashboard-*.js, and the question these assertions ask is "does the dashboard do
+// this", not "is this string in that file". Markup assertions still hold — the HTML is the
+// first thing dashboardClientSource() concatenates.
 describe("dashboard IP rendering (#217)", () => {
   it("escapes apostrophes, so a value cannot close a JS string literal", async () => {
     const escAttr = await extractFn("escAttr");
