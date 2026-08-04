@@ -13513,13 +13513,13 @@
       if (!_iocKeepPage) iocPage = 0;           // any non-pagination re-render (import, filter, state push) resets to page 1
       _iocKeepPage = false;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
-      renderIocTypeFilter(iocs);
+      const iocTypeHidden = renderIocTypeFilter(iocs);   // effective count, so the chip below cannot claim a filter that is not there
       renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
-      if (DfirFacets.iocTypes.any()) visible = visible.filter(i => !DfirFacets.iocTypes.has(i.type || "other"));
+      if (iocTypeHidden > 0) visible = visible.filter(i => !DfirFacets.iocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
       if (iocProvenanceFilter !== "all") visible = visible.filter(i => iocProvenanceOf(i.id) === iocProvenanceFilter);   // provenance lens
       if (riskIocsFilter > 0) visible = visible.filter(i => iocRiskRankOf(i.id) >= riskIocsFilter);   // risk lens (#63)
@@ -13561,7 +13561,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div data-safe-style='color:var(--text-muted)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || excludeTerms.length > 0 || DfirFacets.iocTypes.any() || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
+          : (searchTerm || excludeTerms.length > 0 || iocTypeHidden > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
             ? `<div data-safe-style='color:var(--text-muted)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div data-safe-style='color:var(--text-muted)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -13671,13 +13671,11 @@
       const wrap = document.getElementById("iocTypeLegendWrap");
       const menu = document.getElementById("iocTypeFilterMenu");
       const btn = document.getElementById("iocTypeFilterBtn");
-      if (!wrap || !menu || !btn) return;
+      if (!wrap || !menu || !btn) return 0;
       const types = iocTypeFacets(iocs);
-      // No prune here any more: the effective set is derived as `hidden ∩ available` at read time,
-      // so a renderer no longer writes the filter it is about to read. See js/dashboard-facets.js.
-      if (types.length < 2) { wrap.style.display = "none"; menu.hidden = true; _iocTypeMenuSig = ""; return; }
+      const hiddenHere = DfirFacets.iocTypes.countIn(types);   // derived; also keeps the picker up while it filters
+      if (types.length < 2 && hiddenHere === 0) { wrap.style.display = "none"; menu.hidden = true; _iocTypeMenuSig = ""; return 0; }
       wrap.style.display = "";
-      const hiddenHere = DfirFacets.iocTypes.countIn(types);   // derived, so it cannot go stale
       const shown = types.length - hiddenHere;
       const active = hiddenHere > 0;
       btn.classList.toggle("active", active);
@@ -13694,6 +13692,7 @@
       } else {
         menu.querySelectorAll(".ioc-type-cb").forEach(cb => { cb.checked = !DfirFacets.iocTypes.has(cb.value); });
       }
+      return hiddenHere;
     }
 
     // Order the (already filtered) timeline rows per the per-column sort arrows (#104). Pure —
@@ -13761,14 +13760,13 @@
       const wrap = document.getElementById("srcLegendWrap");
       const menu = document.getElementById("srcFilterMenu");
       const btn = document.getElementById("srcFilterBtn");
-      if (!wrap || !menu || !btn) return;
+      if (!wrap || !menu || !btn) return 0;
       const allSources = sourceFacets(ft);
-      // The stale-facet prune is gone: countIn() derives `hidden ∩ available`, which also keeps a
-      // lens-excluded hidden source remembered rather than forgotten. See js/dashboard-facets.js.
+      // Prune gone; countIn() derives `hidden ∩ available`. See js/dashboard-facets.js.
       const sources = lensFt ? sourceFacets(lensFt) : allSources;
-      if (sources.length < 1) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
+      const hiddenInView = DfirFacets.sources.countIn(sources);
+      if (sources.length < 1 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return 0; }
       wrap.style.display = "";
-      const hiddenInView = sources.filter(s => DfirFacets.sources.has(s)).length;
       const shown = sources.length - hiddenInView;
       const active = hiddenInView > 0;
       btn.classList.toggle("active", active);
@@ -13783,6 +13781,7 @@
       } else {
         menu.querySelectorAll(".src-filter").forEach(cb => { cb.checked = !DfirFacets.sources.has(cb.value); });
       }
+      return hiddenInView;
     }
 
     // Build/refresh the origin-filter dropdown. Hidden when there are fewer than 2 origins (nothing to
@@ -13791,11 +13790,11 @@
       const wrap = document.getElementById("originLegendWrap");
       const menu = document.getElementById("originFilterMenu");
       const btn = document.getElementById("originFilterBtn");
-      if (!wrap || !menu || !btn) return;
+      if (!wrap || !menu || !btn) return 0;
       const origins = originFacets(ft);
-      if (origins.length < 2) { wrap.style.display = "none"; menu.hidden = true; _originMenuSig = ""; return; }
+      const hiddenInView = DfirFacets.origins.countIn(origins);   // derived; also keeps the picker up while it filters
+      if (origins.length < 2 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _originMenuSig = ""; return 0; }
       wrap.style.display = "";
-      const hiddenInView = origins.filter(o => DfirFacets.origins.has(o)).length;
       const shown = origins.length - hiddenInView;
       btn.classList.toggle("active", hiddenInView > 0);
       btn.textContent = hiddenInView > 0 ? `⛏ Origins (${shown}/${origins.length})` : "⛏ Origins";
@@ -13809,6 +13808,7 @@
       } else {
         menu.querySelectorAll(".origin-filter").forEach(cb => { cb.checked = !DfirFacets.origins.has(cb.value); });
       }
+      return hiddenInView;
     }
 
     // Forensic host filter (mirrors the source filter): the distinct affected hosts across the in-scope
@@ -13829,11 +13829,12 @@
       const wrap = document.getElementById("hostLegendWrap");
       const menu = document.getElementById("hostFilterMenu");
       const btn = document.getElementById("hostFilterBtn");
-      if (!wrap || !menu || !btn) return;
+      if (!wrap || !menu || !btn) return 0;
       const hosts = hostFacets(ft);
-      if (hosts.length < 2) { wrap.style.display = "none"; menu.hidden = true; _hostMenuSig = ""; return; }
+      // A control the analyst cannot see must not be filtering — see js/dashboard-facets.js.
+      const hiddenInView = DfirFacets.hosts.countIn(hosts);   // derived; also keeps the picker up while it filters
+      if (hosts.length < 2 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _hostMenuSig = ""; return 0; }
       wrap.style.display = "";
-      const hiddenInView = hosts.filter(h => DfirFacets.hosts.has(h)).length;
       const shown = hosts.length - hiddenInView;
       btn.classList.toggle("active", hiddenInView > 0);
       btn.textContent = hiddenInView > 0 ? `🖥 Hosts (${shown}/${hosts.length})` : "🖥 Hosts";
@@ -13847,6 +13848,7 @@
       } else {
         menu.querySelectorAll(".host-filter").forEach(cb => { cb.checked = !DfirFacets.hosts.has(cb.value); });
       }
+      return hiddenInView;
     }
 
     // --- Event-density heatmap (#219) -------------------------------------------------
@@ -13944,9 +13946,11 @@
       const lensFt = corrobTimeline > 1
         ? ft.filter(e => realSourceCount(e.sources) >= corrobTimeline)
         : null;
-      renderSourceFilter(ft, lensFt);
-      renderOriginFilter(ft);
-      renderHostFilter(ft);
+      // These return the EFFECTIVE hidden count, so the "N of M events" label below agrees with the
+      // buttons the analyst sees — see js/dashboard-facets.js.
+      const srcHidden = renderSourceFilter(ft, lensFt);
+      const originHidden = renderOriginFilter(ft);
+      const hostHidden = renderHostFilter(ft);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
@@ -13960,19 +13964,19 @@
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
       if (excludeTerms.length) visible = visible.filter(e => !_evMatchesExclude(e, excludeTerms));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
-      const sourceFiltering = DfirFacets.sources.any();
+      const sourceFiltering = srcHidden > 0;
       if (sourceFiltering) visible = visible.filter(e => {
         const real = (e.sources || []).filter(s => s && s !== "unknown source");
         if (!real.length) return !DfirFacets.sources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
         return real.some(s => !DfirFacets.sources.has(s));                   // hidden only when ALL its sources are unchecked
       });
-      const originFiltering = DfirFacets.origins.any();
+      const originFiltering = originHidden > 0;
       if (originFiltering) visible = visible.filter(e => !DfirFacets.origins.has(ftOriginOf(e)));
-      if (DfirFacets.hosts.any()) visible = visible.filter(e => !DfirFacets.hosts.has(e.asset || NO_HOST_FACET));
+      if (hostHidden > 0) visible = visible.filter(e => !DfirFacets.hosts.has(e.asset || NO_HOST_FACET));
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
-      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources) >= corrobTimeline);
+      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= corrobTimeline);
       const view = DfirState.activeView();
       const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)

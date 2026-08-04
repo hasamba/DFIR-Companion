@@ -20,6 +20,11 @@
 // suites unchecked and put an eslint suppression in the one helper every dashboard test imports,
 // which is how a deliberately small, fully-enforced rule set erodes.
 
+/** Membership, and nothing else. What a filter helper needs and all it should be given. */
+export interface HasOnly {
+  has(value: string): boolean;
+}
+
 /** A timeline event, as much of one as the helpers actually read. */
 export interface EventLike {
   timestamp?: string | null;
@@ -114,7 +119,10 @@ export interface GlyphsApi {
 }
 
 export interface FiltersApi {
-  realSourceCount(sources: Array<string | null | undefined> | null, hidden?: Set<string>): number;
+  // A HAS-ONLY SHAPE, not Set. The function only ever calls `hidden.has(s)`, and callers hand it
+  // DfirFacets.<facet>.matcher() — a frozen read-only view. Typing it as Set forced an
+  // `as unknown as Set<string>` at the call site, which is a cast covering for a wrong signature.
+  realSourceCount(sources: Array<string | null | undefined> | null, hidden?: HasOnly): number;
   _evMatchesSearch(e: EventLike, q: string): boolean;
   _iocMatchesSearch(i: IocLike, q: string): boolean;
   _findingMatchesSearch(f: FindingLike, q: string): boolean;
@@ -317,10 +325,16 @@ export interface SelectionApi {
  */
 export interface Facet {
   has(name: string): boolean;
-  /** Fast-path guard only. For anything the analyst reads, use countIn(). */
-  any(): boolean;
-  /** The derived `hidden ∩ available` count, which replaced the render-time prune. */
+  /**
+   * The derived `hidden ∩ available` count — the ONLY "how many" read.
+   *
+   * There is deliberately no `any()`. One existed as a cheap guard and review found it driving the
+   * timeline's "N of M events" label, where a facet hidden in a previous import made the dashboard
+   * claim it was filtering when it was not.
+   */
   countIn(available?: Iterable<string> | null): number;
+  /** A frozen `{ has }` view, for helpers that only need membership. The owner is never passed. */
+  matcher(): HasOnly;
   toggle(name: string, hidden?: boolean): number;
   hideAll(names?: Iterable<string> | null): number;
   showAll(): number;

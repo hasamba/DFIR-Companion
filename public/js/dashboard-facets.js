@@ -44,20 +44,21 @@
 // cannot be stale because it is not stored.
 //
 //
-// TWO READS, NOT ONE, and the difference matters.
+// ONE READ FOR "HOW MANY", AND IT IS ALWAYS THE DERIVED ONE.
 //
-//   any()             — "has the analyst hidden anything at all". A fast-path guard, so
-//                       renderTimelineEvents can skip a filter pass entirely. A stale entry makes
-//                       this true when nothing visible is hidden, which costs one wasted pass and
-//                       changes no output.
-//   countIn(list)     — the derived intersection, for anything the analyst SEES: the "3/7" in a
-//                       button label, and whether that button is highlighted. A stale entry must
-//                       not light a filter indicator, so these never use any().
+// An earlier draft also published `any()` — "has the analyst hidden anything at all" — as a cheap
+// guard that could skip a filter pass, on the argument that a remembered-but-absent facet would
+// only cost a wasted pass and change no output. That argument was wrong, and review caught it: the
+// same flag also drove the timeline's "N of M events" label and the IOC panel's filters-active
+// chip, so a facet the analyst hid in a previous import made the dashboard claim it was filtering
+// when it was not. The saving was one array pass; the cost was a lie about what the analyst is
+// looking at. So there is only countIn(available), the derived `hidden ∩ available`.
 //
-// `has(name)` is deliberately named `has` rather than `isHidden`, because
-// realSourceCount(sources, hidden) in js/dashboard-filters.js needs an object with `.has()` and
-// nothing else. Passing this owner satisfies that without handing out the Set — the owner IS the
-// safe view, so the one cross-module coupling the census found needs no adapter.
+// THE OWNER IS NEVER PASSED ANYWHERE — `matcher()` is. The one cross-module coupling the census
+// found (realSourceCount, which needs an object with `.has()`) takes that frozen read-only view
+// instead of this object, so "the owner is only ever called by name" stays checkable. An earlier
+// draft passed the owner itself, which works at runtime and quietly defeats every analysis that
+// tries to follow who can write.
 //
 // NOT AN ES MODULE, and an IIFE, for the reasons js/dashboard-state.js sets out.
 (function () {
@@ -71,10 +72,20 @@
     const cell = window.DfirState.cell(new Set());
     const commit = (next) => cell.set(next);
     return {
-      /** Named `has` so this object can BE the `hidden` argument of realSourceCount(). */
       has: (name) => cell.get().has(name),
-      /** Fast-path guard only — see the header. Never use for anything the analyst reads. */
-      any: () => cell.get().size > 0,
+      /**
+       * A frozen read-only view: `{ has }` and nothing else.
+       *
+       * realSourceCount(sources, hidden) in js/dashboard-filters.js needs an object with `.has()`.
+       * Handing it the OWNER would work — but the owner also carries toggle/hideAll/showAll, so
+       * every helper it is passed to becomes a place that could write, and an analysis that follows
+       * writes has to give up at the call. Handing out a view instead keeps "the owner is only ever
+       * called by name, never passed" a property a test can hold; ownerEscapes() enforces it.
+       */
+      matcher() {
+        const hidden = cell.get();
+        return Object.freeze({ has: (name) => hidden.has(name) });
+      },
       /**
        * How many of `available` are hidden. THE DERIVED PRUNE: a name the analyst hid that no
        * longer exists simply does not count, instead of being deleted from their choice.

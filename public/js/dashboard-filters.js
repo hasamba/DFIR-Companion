@@ -18,6 +18,8 @@
 // so a repeated source name can't inflate the count), the unit the corroboration lens counts. When a
 // `hidden` set is passed, sources unchecked in the Sources filter are excluded — so the lens counts
 // only the tools the analyst is currently looking at (the two filters compose as one question).
+// `hidden` is anything with a `.has()` — a Set, or DfirFacets.<facet>.matcher(). Deliberately not
+// typed to a Set: the caller hands over a read-only view precisely so this cannot write.
 function realSourceCount(sources, hidden) {
   const set = new Set();
   for (const s of (sources || [])) if (s && s !== "unknown source" && !(hidden && hidden.has(s))) set.add(s);

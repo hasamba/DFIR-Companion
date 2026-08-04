@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { FacetsApi, FiltersApi } from "./dashboardApi.js";
 import {
+  buildCallGraph,
   calleesInsideLoops,
   dashboardScripts,
   functionsOf,
@@ -11,6 +12,7 @@ import {
   ownerCallPositions,
   ownerCalls,
   ownerEscapes,
+  reachableFrom,
   scriptFromSource,
   topLevelBindings,
 } from "../helpers/dashboardAst.js";
@@ -31,7 +33,7 @@ const scripts = dashboardScripts();
 describe("a facet filter", () => {
   it("hides nothing to begin with", () => {
     const { DfirFacets } = load();
-    expect(DfirFacets.sources.any()).toBe(false);
+    expect(DfirFacets.sources.countIn(["velociraptor"])).toBe(0);
     expect(DfirFacets.sources.has("velociraptor")).toBe(false);
   });
 
@@ -48,7 +50,7 @@ describe("a facet filter", () => {
     DfirFacets.sources.hideAll(["a", "b", "c"]);
     expect(DfirFacets.sources.countIn(["a", "b", "c"])).toBe(3);
     DfirFacets.sources.showAll();
-    expect(DfirFacets.sources.any()).toBe(false);
+    expect(DfirFacets.sources.countIn(["a", "b", "c"])).toBe(0);
   });
 
   it("keeps the four facets independent", () => {
@@ -99,17 +101,69 @@ describe("the effective set is derived, not stored", () => {
   });
 });
 
+// ── A FILTER THE ANALYST CANNOT SEE ──────────────────────────────────────────────────────────────
+//
+// The regression review found, and the reason retention needed a guard rather than just a note.
+//
+// Each facet picker hides itself when there is nothing to choose (`origins.length < 2`, and so on)
+// while the FILTER applies regardless. So: hide A, A disappears on re-import, A comes back as the
+// only value — every row vanishes and the control that would undo it is not on screen. In a
+// forensics tool that is evidence disappearing with no way to get it back.
+//
+// It is not purely a retention bug either: hide one of two facets, let the other disappear, and the
+// same trap springs on code that predates DfirFacets. Both paths are closed by the same rule —
+// A CONTROL THE ANALYST CANNOT SEE MUST NOT BE FILTERING — enforced in dashboard.html by keeping
+// the picker up whenever the effective count is non-zero, and asserted here on the arithmetic the
+// renderers use to decide.
+describe("a hidden facet never leaves the analyst without a control", () => {
+  it("reports a live filter when the sole remaining facet is the hidden one", () => {
+    const { DfirFacets } = load();
+    DfirFacets.origins.toggle("A", true);
+    // A vanished, then came back alone. The renderer's threshold is `length < 2`, so without the
+    // guard the picker hides — and this count is what now keeps it on screen.
+    expect(DfirFacets.origins.countIn(["A"])).toBe(1);
+  });
+
+  it("reports no filter once the analyst clears it, so the control may hide again", () => {
+    const { DfirFacets } = load();
+    DfirFacets.origins.toggle("A", true);
+    DfirFacets.origins.showAll();
+    expect(DfirFacets.origins.countIn(["A"])).toBe(0);
+  });
+
+  it("keeps the picker's threshold and the filter's flag reading the SAME number", () => {
+    // The two used to disagree: the button used `hidden ∩ available` while the filter used the raw
+    // size, which is how a remembered-but-absent facet lit "N of N events" with the button dark.
+    const { DfirFacets } = load();
+    DfirFacets.hosts.hideAll(["gone-a", "gone-b"]);
+    expect(DfirFacets.hosts.countIn(["present"])).toBe(0);
+    expect(DfirFacets.hosts.countIn(["present", "gone-a"])).toBe(1);
+  });
+});
+
 // The one cross-module coupling the census found: realSourceCount(sources, hidden) needs an object
 // with `.has()`. The owner satisfies that itself, so no Set is handed out and no adapter is needed —
 // which is why the read is named `has` rather than `isHidden`.
 describe("the owner can stand in for the hidden set it replaced", () => {
+  // No cast: matcher() IS the has-only shape realSourceCount declares. An earlier version passed
+  // the owner behind `as unknown as Set<string>`, which hid the fact that the parameter type was
+  // wrong AND handed a writable object to a helper that only reads.
   it("works as the `hidden` argument of realSourceCount", () => {
     const { DfirFacets } = load();
     const { realSourceCount } = loadDashboardModule<FiltersApi>("dashboard-filters.js");
     const sources = ["evtx", "mft", "unknown source"];
-    expect(realSourceCount(sources, undefined)).toBe(2);
+    expect(realSourceCount(sources)).toBe(2);
     DfirFacets.sources.toggle("evtx", true);
-    expect(realSourceCount(sources, DfirFacets.sources as unknown as Set<string>)).toBe(1);
+    expect(realSourceCount(sources, DfirFacets.sources.matcher())).toBe(1);
+  });
+
+  it("hands out a frozen view that cannot write the facet", () => {
+    const { DfirFacets } = load();
+    DfirFacets.sources.toggle("evtx", true);
+    const view = DfirFacets.sources.matcher();
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(Object.keys(view)).toEqual(["has"]);
+    expect(view.has("evtx")).toBe(true);
   });
 });
 
@@ -117,10 +171,10 @@ describe("the container never escapes", () => {
   it("publishes no way to obtain the Set", () => {
     const { DfirFacets } = load();
     expect(Object.keys(DfirFacets.sources).sort()).toEqual([
-      "any",
       "countIn",
       "has",
       "hideAll",
+      "matcher",
       "showAll",
       "toggle",
     ]);
@@ -146,15 +200,49 @@ describe("no renderer writes a facet", () => {
   // renderIocTypeFilter each edited the filter they were about to read — a write during a render,
   // inside a loop, which no "one commit per user action" API can be layered on top of. A renderer
   // that commits again is that coupling coming back.
-  it("has no render* function committing to DfirFacets", () => {
-    const offenders = ownerCalls(scripts, "DfirFacets", COMMITS)
-      .filter((c) => /^render/i.test(c.fn))
-      .map((c) => `${c.script}:${c.line} ${c.fn}() -> ${c.path}()`);
+  // FOLLOWED THROUGH THE CALL GRAPH, not just the function holding the literal call. Review showed
+  // `function renderHosts() { mutate(); }` with the commit one hop away reported no offender at
+  // all — the same direct-vs-transitive hole that cleared jumpToEvent earlier in #415. Full
+  // reachability is right HERE (unlike the loop rule, which is bounded): the source set is the
+  // named render* functions and the target is "commits to DfirFacets", both specific.
+  it("has no render* function reaching a commit to DfirFacets", () => {
+    const graph = buildCallGraph(scripts);
+    const committers = new Set(
+      ownerCalls(scripts, "DfirFacets", COMMITS)
+        .map((c) => c.fn)
+        .filter((f) => !f.startsWith("<")),
+    );
+    const renderers = scripts.flatMap((s) =>
+      functionsOf(s)
+        .map((f) => f.name)
+        .filter((n) => /^render/i.test(n)),
+    );
+    const offenders: string[] = [];
+    for (const r of new Set(renderers)) {
+      if (committers.has(r)) offenders.push(`${r}() commits directly`);
+      for (const reached of reachableFrom(graph, [r])) {
+        if (committers.has(reached)) offenders.push(`${r}() reaches ${reached}(), which commits`);
+      }
+    }
     expect(
-      offenders,
+      [...new Set(offenders)],
       "a renderer that writes the filter it draws is the coupling js/dashboard-facets.js removed; " +
         "derive the effective set with countIn() instead.",
     ).toEqual([]);
+  });
+
+  // THE GUARD, PINNED IN THE PAGE. The arithmetic tests above cannot see whether the renderers
+  // actually consult it, and that is exactly the gap review flagged: the suite was green while two
+  // visible regressions sat in the production renderers.
+  it("gates every picker's hide-condition on the effective hidden count", async () => {
+    const html = await readFile(DASHBOARD, "utf8");
+    const hides = [...html.matchAll(/if \((\w+)\.length < \d[^)]*\) \{ wrap\.style\.display = "none"/g)];
+    expect(hides.length, "expected the four facet pickers").toBe(4);
+    for (const m of hides) {
+      expect(m[0], `${m[1]} hides its picker without checking whether a filter is still live on it`).toMatch(
+        /hidden\w* === 0/,
+      );
+    }
   });
 
   it("no longer prunes the analyst's choice from inside a render", async () => {
@@ -207,13 +295,13 @@ describe("the old bindings are gone", () => {
   it.each(["hiddenSources", "hiddenOrigins", "hiddenHosts", "hiddenIocTypes"])(
     "%s has no binding left in the page",
     (name) => {
-      const offenders = scripts
-        .filter((s) => s.name.startsWith("dashboard.html#inline"))
-        .flatMap((s) =>
-          topLevelBindings(s)
-            .filter((b) => b.name === name)
-            .map((b) => `${s.name}:${b.line}`),
-        );
+      // EVERY script the page loads, not just the inline blocks: a legacy binding re-created in a
+      // /js/ module is the same page global, and scoping this to the inline script was a hole.
+      const offenders = scripts.flatMap((s) =>
+        topLevelBindings(s)
+          .filter((b) => b.name === name)
+          .map((b) => `${s.name}:${b.line}`),
+      );
       expect(offenders).toEqual([]);
     },
   );
