@@ -309,6 +309,27 @@ export interface SelectionApi {
   DfirStarred: Pick<IdSet, "has" | "count" | "ids" | "toggle" | "replace">;
 }
 
+/**
+ * One facet filter (public/js/dashboard-facets.js): the names the analyst UNCHECKED.
+ *
+ * `has` rather than `isHidden` on purpose — realSourceCount(sources, hidden) needs an object with
+ * `.has()`, so the owner itself can be that argument without a Set escaping.
+ */
+export interface Facet {
+  has(name: string): boolean;
+  /** Fast-path guard only. For anything the analyst reads, use countIn(). */
+  any(): boolean;
+  /** The derived `hidden ∩ available` count, which replaced the render-time prune. */
+  countIn(available?: Iterable<string> | null): number;
+  toggle(name: string, hidden?: boolean): number;
+  hideAll(names?: Iterable<string> | null): number;
+  showAll(): number;
+}
+
+export interface FacetsApi {
+  DfirFacets: { sources: Facet; origins: Facet; hosts: Facet; iocTypes: Facet };
+}
+
 /** An investigation window. Mirrors the server's ScopeWindow (src/analysis/scope.ts). */
 export interface ScopeWindow {
   start: string | null;

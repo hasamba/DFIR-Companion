@@ -126,6 +126,7 @@
   <script src="/js/dashboard-scope.js"></script>
   <!-- Tier 2's selection owners (#415). After dashboard-state.js, whose cell() they build on. -->
   <script src="/js/dashboard-selection.js"></script>
+  <script src="/js/dashboard-facets.js"></script>
   <!-- The AI tagger-rule feature (#415 tier 3). A whole feature, not the movable half of one —
        js/dashboard-tagger.js explains why that distinction decides what moves next. -->
   <script src="/js/dashboard-tagger.js"></script>
@@ -3598,13 +3599,11 @@
     let corrobTimeline = _corrobOf("timeline");
     let corrobIocs = _corrobOf("iocs");
     let corrobFindings = _corrobOf("findings");
-    let hiddenSources = new Set();            // source/tool names the user unchecked in the source filter (empty = show all)
+    // The four facet filters moved to js/dashboard-facets.js as DfirFacets (#415, tier 2). The
+    // stale-facet prune each renderer used to perform is now derived — see that file.
     let _srcMenuSig = "";                      // signature of the source-filter menu's last build (skip rebuild when unchanged)
-    let hiddenOrigins = new Set();            // origins (artifact names) the user unchecked in the forensic origin filter (empty = show all)
     let _originMenuSig = "";                   // signature of the origin-filter menu's last build
-    let hiddenHosts = new Set();              // host names the user unchecked in the forensic host filter (empty = show all)
     let _hostMenuSig = "";                     // signature of the host-filter menu's last build
-    let hiddenIocTypes = new Set();           // IOC types the user unchecked in the IOC type filter (#169; empty = show all)
     let _iocTypeMenuSig = "";                  // signature of the IOC-type-filter menu's last build (skip rebuild when unchanged)
     let filterFrom = null;                    // timeline view lower bound (ISO UTC string or null)
     let filterTo = null;                      // timeline view upper bound (ISO UTC string or null)
@@ -12857,9 +12856,9 @@
     // only called when the row is genuinely hidden, so a no-filter view is left untouched.
     function resetTimelineViewFilters() {
       document.querySelectorAll(".sev-filter").forEach(cb => { cb.checked = true; });
-      hiddenSources.clear(); _srcMenuSig = "";
-      hiddenOrigins.clear(); _originMenuSig = "";
-      hiddenHosts.clear(); _hostMenuSig = "";
+      DfirFacets.sources.showAll(); _srcMenuSig = "";
+      DfirFacets.origins.showAll(); _originMenuSig = "";
+      DfirFacets.hosts.showAll(); _hostMenuSig = "";
       showStarredOnly = false;
       evIdFilter = null; evIdFilterLabel = "";
       const sfBtn = document.getElementById("evStarFilterBtn");
@@ -13520,7 +13519,7 @@
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (searchTerm) visible = visible.filter(i => _iocMatchesSearch(i, searchTerm));
       if (excludeTerms.length) visible = visible.filter(i => !_iocMatchesExclude(i, excludeTerms));
-      if (hiddenIocTypes.size > 0) visible = visible.filter(i => !hiddenIocTypes.has(i.type || "other"));
+      if (DfirFacets.iocTypes.any()) visible = visible.filter(i => !DfirFacets.iocTypes.has(i.type || "other"));
       if (corrobIocs > 1) visible = visible.filter(i => (iocSourcesById[i.id] || []).length >= corrobIocs);   // corroboration lens (#35)
       if (iocProvenanceFilter !== "all") visible = visible.filter(i => iocProvenanceOf(i.id) === iocProvenanceFilter);   // provenance lens
       if (riskIocsFilter > 0) visible = visible.filter(i => iocRiskRankOf(i.id) >= riskIocsFilter);   // risk lens (#63)
@@ -13562,7 +13561,7 @@
       if (!visible.length) {
         el.innerHTML = showFlaggedIocsOnly
           ? "<div data-safe-style='color:var(--text-muted)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (searchTerm || excludeTerms.length > 0 || hiddenIocTypes.size > 0 || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
+          : (searchTerm || excludeTerms.length > 0 || DfirFacets.iocTypes.any() || corrobIocs > 1 || iocProvenanceFilter !== "all" || riskIocsFilter > 0 || noiseFiltersActive) && iocs.length > 0
             ? `<div data-safe-style='color:var(--text-muted)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
           : "<div data-safe-style='color:var(--text-muted)'>No IOCs yet</div>";
         updateIocBulkBar();
@@ -13674,12 +13673,13 @@
       const btn = document.getElementById("iocTypeFilterBtn");
       if (!wrap || !menu || !btn) return;
       const types = iocTypeFacets(iocs);
-      // Drop any unchecked types that no longer exist (keeps the active state honest across imports).
-      for (const t of [...hiddenIocTypes]) if (!types.includes(t)) hiddenIocTypes.delete(t);
+      // No prune here any more: the effective set is derived as `hidden ∩ available` at read time,
+      // so a renderer no longer writes the filter it is about to read. See js/dashboard-facets.js.
       if (types.length < 2) { wrap.style.display = "none"; menu.hidden = true; _iocTypeMenuSig = ""; return; }
       wrap.style.display = "";
-      const shown = types.length - hiddenIocTypes.size;
-      const active = hiddenIocTypes.size > 0;
+      const hiddenHere = DfirFacets.iocTypes.countIn(types);   // derived, so it cannot go stale
+      const shown = types.length - hiddenHere;
+      const active = hiddenHere > 0;
       btn.classList.toggle("active", active);
       btn.textContent = active ? `▾ Types (${shown}/${types.length})` : "▾ Types";
       const counts = {};
@@ -13687,12 +13687,12 @@
       const sig = types.map(t => `${t}:${counts[t]}`).join(",");
       if (sig !== _iocTypeMenuSig) {
         const items = types.map(t =>
-          `<label class="src-item"><input type="checkbox" class="ioc-type-cb" value="${escAttr(t)}"${hiddenIocTypes.has(t) ? "" : " checked"}><span>${esc(t)} <span data-safe-style="color:var(--text-muted)">(${counts[t]})</span></span></label>`
+          `<label class="src-item"><input type="checkbox" class="ioc-type-cb" value="${escAttr(t)}"${DfirFacets.iocTypes.has(t) ? "" : " checked"}><span>${esc(t)} <span data-safe-style="color:var(--text-muted)">(${counts[t]})</span></span></label>`
         ).join("");
         menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-ioctype-all="1">All</button><button type="button" class="src-menu-link" data-ioctype-none="1">None</button></div>${items}`;
         _iocTypeMenuSig = sig;
       } else {
-        menu.querySelectorAll(".ioc-type-cb").forEach(cb => { cb.checked = !hiddenIocTypes.has(cb.value); });
+        menu.querySelectorAll(".ioc-type-cb").forEach(cb => { cb.checked = !DfirFacets.iocTypes.has(cb.value); });
       }
     }
 
@@ -13763,13 +13763,12 @@
       const btn = document.getElementById("srcFilterBtn");
       if (!wrap || !menu || !btn) return;
       const allSources = sourceFacets(ft);
-      // Drop unchecked sources that no longer exist anywhere (cross-import hygiene) — full timeline, not
-      // the lens subset, so a lens-excluded hidden source isn't forgotten when the lens toggles.
-      for (const s of [...hiddenSources]) if (!allSources.includes(s)) hiddenSources.delete(s);
+      // The stale-facet prune is gone: countIn() derives `hidden ∩ available`, which also keeps a
+      // lens-excluded hidden source remembered rather than forgotten. See js/dashboard-facets.js.
       const sources = lensFt ? sourceFacets(lensFt) : allSources;
       if (sources.length < 1) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return; }
       wrap.style.display = "";
-      const hiddenInView = sources.filter(s => hiddenSources.has(s)).length;
+      const hiddenInView = sources.filter(s => DfirFacets.sources.has(s)).length;
       const shown = sources.length - hiddenInView;
       const active = hiddenInView > 0;
       btn.classList.toggle("active", active);
@@ -13777,12 +13776,12 @@
       const sig = sources.join("");
       if (sig !== _srcMenuSig) {
         const items = sources.map(s =>
-          `<label class="src-item${s === NO_SOURCE_FACET ? " src-item-none" : ""}"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${hiddenSources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
+          `<label class="src-item${s === NO_SOURCE_FACET ? " src-item-none" : ""}"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${DfirFacets.sources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
         ).join("");
         menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-src-all="1">All</button><button type="button" class="src-menu-link" data-src-none="1">None</button></div>${items}`;
         _srcMenuSig = sig;
       } else {
-        menu.querySelectorAll(".src-filter").forEach(cb => { cb.checked = !hiddenSources.has(cb.value); });
+        menu.querySelectorAll(".src-filter").forEach(cb => { cb.checked = !DfirFacets.sources.has(cb.value); });
       }
     }
 
@@ -13794,22 +13793,21 @@
       const btn = document.getElementById("originFilterBtn");
       if (!wrap || !menu || !btn) return;
       const origins = originFacets(ft);
-      for (const o of [...hiddenOrigins]) if (!origins.includes(o)) hiddenOrigins.delete(o);   // drop stale
       if (origins.length < 2) { wrap.style.display = "none"; menu.hidden = true; _originMenuSig = ""; return; }
       wrap.style.display = "";
-      const hiddenInView = origins.filter(o => hiddenOrigins.has(o)).length;
+      const hiddenInView = origins.filter(o => DfirFacets.origins.has(o)).length;
       const shown = origins.length - hiddenInView;
       btn.classList.toggle("active", hiddenInView > 0);
       btn.textContent = hiddenInView > 0 ? `⛏ Origins (${shown}/${origins.length})` : "⛏ Origins";
       const sig = origins.join("");
       if (sig !== _originMenuSig) {
         const items = origins.map(o =>
-          `<label class="src-item"><input type="checkbox" class="origin-filter" value="${escAttr(o)}"${hiddenOrigins.has(o) ? "" : " checked"}><span>${esc(o)}</span></label>`
+          `<label class="src-item"><input type="checkbox" class="origin-filter" value="${escAttr(o)}"${DfirFacets.origins.has(o) ? "" : " checked"}><span>${esc(o)}</span></label>`
         ).join("");
         menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-origin-all="1">All</button><button type="button" class="src-menu-link" data-origin-none="1">None</button></div>${items}`;
         _originMenuSig = sig;
       } else {
-        menu.querySelectorAll(".origin-filter").forEach(cb => { cb.checked = !hiddenOrigins.has(cb.value); });
+        menu.querySelectorAll(".origin-filter").forEach(cb => { cb.checked = !DfirFacets.origins.has(cb.value); });
       }
     }
 
@@ -13833,22 +13831,21 @@
       const btn = document.getElementById("hostFilterBtn");
       if (!wrap || !menu || !btn) return;
       const hosts = hostFacets(ft);
-      for (const h of [...hiddenHosts]) if (!hosts.includes(h)) hiddenHosts.delete(h);   // drop hosts that no longer exist
       if (hosts.length < 2) { wrap.style.display = "none"; menu.hidden = true; _hostMenuSig = ""; return; }
       wrap.style.display = "";
-      const hiddenInView = hosts.filter(h => hiddenHosts.has(h)).length;
+      const hiddenInView = hosts.filter(h => DfirFacets.hosts.has(h)).length;
       const shown = hosts.length - hiddenInView;
       btn.classList.toggle("active", hiddenInView > 0);
       btn.textContent = hiddenInView > 0 ? `🖥 Hosts (${shown}/${hosts.length})` : "🖥 Hosts";
       const sig = hosts.join("");
       if (sig !== _hostMenuSig) {
         const items = hosts.map(h =>
-          `<label class="src-item${h === NO_HOST_FACET ? " src-item-none" : ""}"><input type="checkbox" class="host-filter" value="${escAttr(h)}"${hiddenHosts.has(h) ? "" : " checked"}><span>${esc(h)}</span></label>`
+          `<label class="src-item${h === NO_HOST_FACET ? " src-item-none" : ""}"><input type="checkbox" class="host-filter" value="${escAttr(h)}"${DfirFacets.hosts.has(h) ? "" : " checked"}><span>${esc(h)}</span></label>`
         ).join("");
         menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-host-all="1">All</button><button type="button" class="src-menu-link" data-host-none="1">None</button></div>${items}`;
         _hostMenuSig = sig;
       } else {
-        menu.querySelectorAll(".host-filter").forEach(cb => { cb.checked = !hiddenHosts.has(cb.value); });
+        menu.querySelectorAll(".host-filter").forEach(cb => { cb.checked = !DfirFacets.hosts.has(cb.value); });
       }
     }
 
@@ -13963,19 +13960,19 @@
       if (searchTerm) visible = visible.filter(e => _evMatchesSearch(e, searchTerm));
       if (excludeTerms.length) visible = visible.filter(e => !_evMatchesExclude(e, excludeTerms));
       if (filterFrom || filterTo) visible = visible.filter(e => _evMatchesTimeRange(e, filterFrom, filterTo));
-      const sourceFiltering = hiddenSources.size > 0;
+      const sourceFiltering = DfirFacets.sources.any();
       if (sourceFiltering) visible = visible.filter(e => {
         const real = (e.sources || []).filter(s => s && s !== "unknown source");
-        if (!real.length) return !hiddenSources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
-        return real.some(s => !hiddenSources.has(s));                   // hidden only when ALL its sources are unchecked
+        if (!real.length) return !DfirFacets.sources.has(NO_SOURCE_FACET);  // unsourced events ride the "(no source)" facet
+        return real.some(s => !DfirFacets.sources.has(s));                   // hidden only when ALL its sources are unchecked
       });
-      const originFiltering = hiddenOrigins.size > 0;
-      if (originFiltering) visible = visible.filter(e => !hiddenOrigins.has(ftOriginOf(e)));
-      if (hiddenHosts.size > 0) visible = visible.filter(e => !hiddenHosts.has(e.asset || NO_HOST_FACET));
+      const originFiltering = DfirFacets.origins.any();
+      if (originFiltering) visible = visible.filter(e => !DfirFacets.origins.has(ftOriginOf(e)));
+      if (DfirFacets.hosts.any()) visible = visible.filter(e => !DfirFacets.hosts.has(e.asset || NO_HOST_FACET));
       // Corroboration lens (#35): count only DISTINCT sources the analyst is still looking at (excludes
       // ones unchecked in the Sources filter), so the two filters compose — isolating to a single source
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
-      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, hiddenSources) >= corrobTimeline);
+      if (corrobTimeline > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources) >= corrobTimeline);
       const view = DfirState.activeView();
       const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
       if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
@@ -14267,12 +14264,12 @@
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("src-filter")) return;
-        if (e.target.checked) hiddenSources.delete(e.target.value); else hiddenSources.add(e.target.value);
+        DfirFacets.sources.toggle(e.target.value, !e.target.checked);
         renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.srcAll) { hiddenSources.clear(); renderTimelineEvents(DfirState.lastFt()); }
-        else if (e.target.dataset.srcNone) { sourceFacets(DfirState.lastFt()).forEach(s => hiddenSources.add(s)); renderTimelineEvents(DfirState.lastFt()); }
+        if (e.target.dataset.srcAll) { DfirFacets.sources.showAll(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.srcNone) { DfirFacets.sources.hideAll(sourceFacets(DfirState.lastFt())); renderTimelineEvents(DfirState.lastFt()); }
       });
       // Close the menu when clicking outside it (clicks inside #srcLegendWrap are stopped at the wrap).
       document.addEventListener("click", (e) => {
@@ -14291,12 +14288,12 @@
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("origin-filter")) return;
-        if (e.target.checked) hiddenOrigins.delete(e.target.value); else hiddenOrigins.add(e.target.value);
+        DfirFacets.origins.toggle(e.target.value, !e.target.checked);
         renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.originAll) { hiddenOrigins.clear(); renderTimelineEvents(DfirState.lastFt()); }
-        else if (e.target.dataset.originNone) { originFacets(DfirState.lastFt()).forEach(o => hiddenOrigins.add(o)); renderTimelineEvents(DfirState.lastFt()); }
+        if (e.target.dataset.originAll) { DfirFacets.origins.showAll(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.originNone) { DfirFacets.origins.hideAll(originFacets(DfirState.lastFt())); renderTimelineEvents(DfirState.lastFt()); }
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -14312,12 +14309,12 @@
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("host-filter")) return;
-        if (e.target.checked) hiddenHosts.delete(e.target.value); else hiddenHosts.add(e.target.value);
+        DfirFacets.hosts.toggle(e.target.value, !e.target.checked);
         renderTimelineEvents(DfirState.lastFt());
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.hostAll) { hiddenHosts.clear(); renderTimelineEvents(DfirState.lastFt()); }
-        else if (e.target.dataset.hostNone) { hostFacets(DfirState.lastFt()).forEach(h => hiddenHosts.add(h)); renderTimelineEvents(DfirState.lastFt()); }
+        if (e.target.dataset.hostAll) { DfirFacets.hosts.showAll(); renderTimelineEvents(DfirState.lastFt()); }
+        else if (e.target.dataset.hostNone) { DfirFacets.hosts.hideAll(hostFacets(DfirState.lastFt())); renderTimelineEvents(DfirState.lastFt()); }
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -14337,12 +14334,12 @@
       btn.addEventListener("click", () => { menu.hidden = !menu.hidden; });
       menu.addEventListener("change", (e) => {
         if (!e.target.classList.contains("ioc-type-cb")) return;
-        if (e.target.checked) hiddenIocTypes.delete(e.target.value); else hiddenIocTypes.add(e.target.value);
+        DfirFacets.iocTypes.toggle(e.target.value, !e.target.checked);
         rerender();
       });
       menu.addEventListener("click", (e) => {
-        if (e.target.dataset.ioctypeAll) { hiddenIocTypes.clear(); rerender(); }
-        else if (e.target.dataset.ioctypeNone) { iocTypeFacets(scopedIocs()).forEach(t => hiddenIocTypes.add(t)); rerender(); }
+        if (e.target.dataset.ioctypeAll) { DfirFacets.iocTypes.showAll(); rerender(); }
+        else if (e.target.dataset.ioctypeNone) { DfirFacets.iocTypes.hideAll(iocTypeFacets(scopedIocs())); rerender(); }
       });
       document.addEventListener("click", (e) => {
         if (!menu.hidden && !wrap.contains(e.target)) menu.hidden = true;
@@ -15175,9 +15172,9 @@
       DfirSelection.events.clear();
       DfirSelection.iocs.clear();
       DfirSelection.findings.clear();
-      hiddenSources.clear(); _srcMenuSig = "";
-      hiddenOrigins.clear(); _originMenuSig = "";
-      hiddenHosts.clear(); _hostMenuSig = "";
+      DfirFacets.sources.showAll(); _srcMenuSig = "";
+      DfirFacets.origins.showAll(); _originMenuSig = "";
+      DfirFacets.hosts.showAll(); _hostMenuSig = "";
       showStarredOnly = false;
       const sfBtn = document.getElementById("evStarFilterBtn");
       if (sfBtn) { sfBtn.textContent = "☆ Starred"; sfBtn.classList.remove("active"); }
@@ -15189,7 +15186,7 @@
       document.querySelectorAll(".ioc-prov-btn").forEach(b => b.classList.toggle("active", b.getAttribute("data-prov") === "all"));
       // hideFpNoIntel / showSignalIocsOnly are NOT reset here — like the corroboration lens
       // controls, they're per-browser preferences (localStorage-backed), not per-case session state.
-      hiddenIocTypes.clear(); _iocTypeMenuSig = "";
+      DfirFacets.iocTypes.showAll(); _iocTypeMenuSig = "";
       searchTerm = ""; filterFrom = null; filterTo = null;
       const gsEl = document.getElementById("globalSearch"); if (gsEl) gsEl.value = "";
       const ffEl = document.getElementById("filterFrom"); if (ffEl) ffEl.value = "";
