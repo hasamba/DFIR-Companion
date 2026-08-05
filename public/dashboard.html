@@ -148,6 +148,11 @@
        script calls where the old IIFE sat: #sec-swimlane's markup does not exist yet when this
        head script runs, so the wiring cannot self-invoke here. -->
   <script src="/js/dashboard-swimlane.js"></script>
+  <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
+       otherwise leave undefined, and it can only tell missing from present after they have all run.
+       Not deferred, for the same reason the features are not — the inline script below calls these
+       names during its own parse, long before DOMContentLoaded. -->
+  <script src="/js/dashboard-facade.js"></script>
   <script defer src="/vendor/leaflet/leaflet.js"></script>
   <script defer src="/vendor/cytoscape/cytoscape.min.js"></script>
   <script defer src="/vendor/cytoscape/dagre.min.js"></script>
@@ -3595,17 +3600,17 @@
       // hydrate(), not setExcludeTerms(): this runs while the script is still parsing, so there is
       // nothing to refresh yet — see js/dashboard-timeline-view.js.
       //
-      // GUARDED, AND THIS IS THE ONE THAT REPORTS. js/dashboard-timeline-view.js is a tier-2 OWNER,
-      // not a feature: three sites in this script reach it at LOAD (here, and the hydrate + wire
-      // below), so if that file 404s the first of them throws and the remaining ~13,000 lines of
-      // wiring never run. The other two guards are silent, because one missing file is one chip.
-      // It is reported rather than skipped quietly because this is not a degraded feature: ~80
-      // more sites read the search term, time window, exclude terms and corroboration lenses from
-      // inside the renderers, so without it the timeline, the IOCs and the findings all come up
-      // empty — which looks exactly like a case with no evidence in it, and that is the one
-      // failure mode an investigator must never be allowed to mistake for a finding.
+      // GUARDED, AND THIS ONE REPORTS AND THEN STOPS THE PAGE ON PURPOSE. dashboard-timeline-view.js
+      // is a tier-2 OWNER, not a feature: 38 references to it run during LOAD, most from inside the
+      // renderers themselves, so a 404 here is not one dark panel. Guarding all 38 would leave a
+      // dashboard whose timeline, IOCs and findings are merely EMPTY — and an empty case is exactly
+      // what a case with no evidence looks like, the one failure mode an investigator must never be
+      // allowed to mistake for a finding. So it halts where the chip is already on screen saying
+      // why, rather than limping on telling a quiet lie. Everything below is unreachable when the
+      // owner is gone; that is the point. The other two guards stay silent — one file, one chip —
+      // and the throw names the file for whoever opens DevTools.
       if (typeof DfirTimelineView !== "undefined") DfirTimelineView.hydrate({ excludeTerms: Array.isArray(saved) ? saved : [] });
-      else dfirFeatureUnavailable("Timeline filters — the dashboard cannot show evidence without them");
+      else { dfirFeatureUnavailable("Timeline filters — the dashboard cannot show evidence without them"); throw new Error("dashboard halted: /js/dashboard-timeline-view.js did not load"); }
     })();
     // Persist + re-render the exclude-term chip list, then re-apply filters to whatever's on screen.
     // Persistence stays here — the owner holds the value, the page decides it survives a reload.
@@ -11740,12 +11745,12 @@
     // point is guarded — `typeof name` is the one operation that does not throw on an undeclared
     // identifier — and a missing feature SAYS SO, since "the Push menu does nothing" is otherwise
     // indistinguishable from "no targets are configured".
-    // One chip per feature, ever: the Case-backups guard runs inside a click handler, so without
-    // this the same warning stacks once per click. The console line is deliberately not deduped.
-    const dfirFeaturesWarned = new Set();
+    // One chip per feature, ever: the Case-backups guard runs inside a click handler, so without this
+    // the same warning stacks once per click (the console line is deliberately not deduped). The Set
+    // hangs off the FUNCTION: the earliest caller is 8,137 lines up, inside a `const`'s dead zone.
     function dfirFeatureUnavailable(label) {
       console.error(`dashboard feature unavailable: ${label} (its script failed to load)`);
-      if (dfirFeaturesWarned.has(label)) return; dfirFeaturesWarned.add(label);
+      const warned = (dfirFeatureUnavailable.warned = dfirFeatureUnavailable.warned || new Set()); if (warned.has(label)) return; warned.add(label);
       let box = document.getElementById("featureWarnings");
       if (!box) {
         box = document.createElement("div");

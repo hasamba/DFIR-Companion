@@ -670,7 +670,13 @@ describe("a feature script that fails to load", () => {
     // Painted is not announced: role="alert" is what makes a screen reader read the chip out.
     expect(html).toMatch(/box\.setAttribute\("role", "alert"\)/);
     // And once per feature — the Case-backups guard fires on every click of a live button.
-    expect(html).toMatch(/if \(dfirFeaturesWarned\.has\(label\)\) return;/);
+    expect(html).toMatch(/if \(warned\.has\(label\)\) return;/);
+    // THE DEDUPE STATE MAY NOT BE A TOP-LEVEL `const`. It was, and Chromium proved what that costs:
+    // the earliest caller is the Timeline-filters guard 8,137 lines ABOVE the declaration, so the
+    // read happened inside the `const`'s temporal dead zone and threw AFTER the console line and
+    // BEFORE the chip — the page logged the missing feature and then died of the very top-level
+    // abort this entire guard exists to prevent, taking ~16,200 lines of wiring with it.
+    expect(html).not.toMatch(/const dfirFeaturesWarned\b/);
   });
 });
 
