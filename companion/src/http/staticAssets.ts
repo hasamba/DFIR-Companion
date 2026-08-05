@@ -83,6 +83,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   // used to take every later refresh in the same statement with it. js/dashboard-facade.js below is
   // what makes the rest of that sentence true.
   "/js/dashboard-swimlane.js": "application/javascript; charset=utf-8",
+  // MCP Analysis (#296) — the agent-driven tool runner. Guarded entry point, and every name it
+  // calls out to (esc, fileToBase64, mcpJobDuration) is published by a tier-1 helper above, so a
+  // 404 here costs this panel and nothing else.
+  "/js/dashboard-mcp.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

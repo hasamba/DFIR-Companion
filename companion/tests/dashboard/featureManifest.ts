@@ -128,6 +128,23 @@ export const FEATURES: Feature[] = [
     postInitPublish: ["openIrisImportModal"],
   },
   {
+    // MCP Analysis (#296) — the agent-driven tool runner. The cleanest tier-3 candidate left when
+    // this was measured: 29 top-level declarations in the block and exactly ONE name crossing the
+    // boundary (loadMcpRun, called by the lazy-section table). Its three outward calls — esc,
+    // fileToBase64, mcpJobDuration — all resolve to tier-1 helper modules tagged before it.
+    file: "dashboard-mcp.js",
+    publish: ["loadMcpRun", "initMcp"],
+    private: [
+      "_mcpRunServers",
+      "_mcpWatchToken",
+      "_mcpActiveJobId",
+      "_mcpRetry",
+      "_mcpPreviewJob",
+      "MCP_BROWSER_FILE_MAX_MB",
+    ],
+    initializer: "initMcp",
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
