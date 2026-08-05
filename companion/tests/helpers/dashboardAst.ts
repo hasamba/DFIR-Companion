@@ -1911,22 +1911,18 @@ export function unguardedTopLevelRefs(
     script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
   walkLoadTime(script, (n) => {
     if (!ts.isIdentifier(n) || !names.has(n.text)) return;
-    const parent = n.parent;
-    if (!parent) return;
-    // `typeof N` is the guard itself, and the one place the name may appear undeclared.
-    if (ts.isTypeOfExpression(parent)) return;
-    // Not a reference to the global: a property called `search`, a key called `from`, a binding
-    // that happens to share the name. Every one of these appears in the page.
-    if (ts.isPropertyAccessExpression(parent) && parent.name === n) return;
-    if ((ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)) && parent.name === n) {
-      return;
-    }
-    if (ts.isVariableDeclaration(parent) && parent.name === n) return;
-    if (ts.isFunctionDeclaration(parent) && parent.name === n) return;
-    if (ts.isClassDeclaration(parent) && parent.name === n) return;
-    if (ts.isParameter(parent) && parent.name === n) return;
-    if (ts.isBindingElement(parent) && parent.name === n) return;
-    // ONE guard predicate, not two. This function and topLevelUnguardedRefs were written
+    if (!n.parent) return;
+    // ONE REFERENCE PREDICATE, NOT TWO — the same argument the guard comment below makes, and it
+    // took a second rot to apply it here. A bespoke exclusion list lived at this line and drifted
+    // from isValueRef() in three places: it grouped ShorthandPropertyAssignment with
+    // PropertyAssignment, so `{ initTicketIntegrations }` — which desugars to `{ N: N }` and
+    // EVALUATES the binding — was excluded as if it were a property name, and a missing module
+    // threw there with the gate reporting zero; and it missed a renamed destructuring key
+    // (`const { N: local } = q`) and a loop label, reporting both as hazards. isValueRef() answered
+    // all three correctly and says so in its own comment: "`{ kevClear }` shorthand is deliberately
+    // absent: it reads the value." The wrong copy was the one wired in.
+    if (!isValueRef(n)) return;
+    // ONE GUARD PREDICATE, NOT TWO. This function and topLevelUnguardedRefs were written
     // independently against the same question and kept two answers to it, which differed on
     // `try { N(); } catch {}` — this one demanded a typeof guard the other correctly did not,
     // because a catch already stops the ReferenceError aborting the script. Two implementations of

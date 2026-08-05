@@ -16,6 +16,7 @@ import {
   buildCallGraph,
   callsByName,
   domAccessOutsideFunctions,
+  functionsOf,
   ownerEscapes,
   calleesInsideLoops,
   commitsInsideLoops,
@@ -219,6 +220,13 @@ describe("the guard analyser reads the branch, not just the condition", () => {
     ["the ELSE of a === function test", `if (typeof Foo === "function") { a(); } else { Foo(); }`],
     ["a call inside a template literal", "const s = `${Foo()}`;"],
     ["a spread of the bare name", `go(...Foo);`],
+    // SHORTHAND IS A READ, not a property name. `{ Foo }` desugars to `{ Foo: Foo }` and evaluates
+    // the binding, so it throws exactly like a bare reference — but the analyser grouped
+    // ShorthandPropertyAssignment with PropertyAssignment, where excluding the name IS right, and
+    // fell straight through the hole. isValueRef() at the top of the helper had it correct all
+    // along and said so in a comment; two implementations of one rule, and the wrong one was wired.
+    ["a shorthand property that evaluates the binding", `const wiring = { Foo };`],
+    ["a shorthand inside a load-time IIFE", `(() => { register({ Foo }); })();`],
   ])("reports %s", (_label, src) => {
     expect(refs(src), "a missing module throws here and aborts the rest of the script").toContain("Foo");
   });
@@ -248,12 +256,55 @@ describe("the guard analyser reads the branch, not just the condition", () => {
     ["a call from inside an object method", `const o = { go() { Foo(); } };`],
     ["a property that shares the name", `const o = { Foo: 1 }; go(o.Foo);`],
     ["a parameter that shares the name", `function go(Foo) { return Foo; }`],
+    // Both of these were REPORTED before the analyser deferred to isValueRef(). A gate that flags
+    // correct code gets switched off, so a false positive costs the same as a false negative here.
+    ["a renamed destructuring key", `const { Foo: local } = q;`],
+    ["a loop label that shares the name", `Foo: for (;;) { break Foo; }`],
   ])("ignores %s", (_label, src) => {
     expect(
       refs(src),
       "contained to one interaction, or not a reference to the global at all — reporting it would " +
         "bury the six that can abort the page",
     ).not.toContain("Foo");
+  });
+});
+
+// The feature-module suite asks "did this module leave a duplicate of one of its functions behind
+// in the page?" It harvests the module's declared names, then looks for those names in the inline
+// script. The inline half always used the parser; the module half was a regex over the source, and
+// a regex reads text. Every row below is a declaration the regex missed or misread — and a name
+// missing from the census is a duplicate the gate cannot look for.
+describe("the declaration census reads the parser, not the text", () => {
+  const declared = (src: string): string[] =>
+    functionsOf(scriptFromSource("m.js", src))
+      .filter((f) => f.declaration)
+      .map((f) => f.name);
+
+  it.each([
+    ["a plain declaration", `function wire() {}`],
+    ["an async declaration", `async function wire() {}`],
+    // The mutation that motivated this: legal, invisible to /^\s*(?:async )?function (\w+)\s*\(/.
+    ["a comment between the keyword and the name", `function /* moved out */ wire() {}`],
+    ["a comment between the name and its parens", `function wire /* (#415) */ () {}`],
+    ["a newline between the keyword and the name", `function\nwire() {}`],
+    ["a generator declaration", `function* wire() {}`],
+    ["a declaration nested inside another function", `function outer() { function wire() {} }`],
+    ["a declaration inside a block", `{ function wire() {} }`],
+  ])("sees %s", (_label, src) => {
+    expect(declared(src), "a name missing from the census is a duplicate the gate cannot hunt").toContain(
+      "wire",
+    );
+  });
+
+  it.each([
+    // These are not declarations, and counting them would make the census hunt for names the module
+    // never owned — every false name is a chance to fail a PR for nothing.
+    ["a function expression assigned to a const", `const wire = function () {};`],
+    ["an arrow assigned to a const", `const wire = () => {};`],
+    ["a method shorthand in an object literal", `const o = { wire() {} };`],
+    ["the word function inside a string", `const s = "function wire() {}";`],
+  ])("does not count %s", (_label, src) => {
+    expect(declared(src)).not.toContain("wire");
   });
 });
 

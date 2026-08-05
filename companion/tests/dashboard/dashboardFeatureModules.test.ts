@@ -263,10 +263,15 @@ describe.each(FEATURES)("$file", (feat) => {
   // referring to it. A name left behind in the page resolves to undefined at call time.
   it("leaves nothing behind in the inline script", async () => {
     const src = await read(feat.file);
-    // ANY indentation: dashboard-tickets.js declares fourteen of its functions inside
-    // initTicketIntegrations(), and an IIFE-level pattern saw none of them — so a duplicate left
-    // behind in the page went unnoticed.
-    const declared = [...src.matchAll(/^\s*(?:async )?function (\w+)\s*\(/gm)].map((m) => m[1]);
+    // ANY DEPTH, AND ASKED OF THE AST: dashboard-tickets.js declares fourteen of its functions
+    // inside initTicketIntegrations(), and an IIFE-level pattern saw none of them — so a duplicate
+    // left behind in the page went unnoticed. This was a regex, and a regex reads text: a comment
+    // between the keyword and the name, `function /* moved */ initTicketIntegrations()`, dropped
+    // the name from the census and the duplicate went unnoticed again, one layer further in. The
+    // parser is already imported eight lines below for the inline half of this very check.
+    const declared = functionsOf(scriptFromSource(feat.file, src))
+      .filter((f) => f.declaration)
+      .map((f) => f.name);
     expect(declared.length, "no functions found — the extraction produced an empty module").toBeGreaterThan(
       0,
     );
