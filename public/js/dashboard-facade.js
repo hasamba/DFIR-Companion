@@ -51,14 +51,36 @@
     "swReflectSelection",
     "swRenderCanvas",
     "swSelToolbar",
+    // #415 tier 3, added with their modules. Every extraction has to land here too: these names are
+    // called bare from the load-time refresh chains, and the gate in dashboardFeatureLifecycle.test.ts
+    // ("every module name the page calls bare is stubbed or guarded") is what makes that not a thing
+    // you have to remember.
+    "loadBeacons",
+    "scheduleBeaconsReload",
+    "loadEvidenceGaps",
+    "scheduleEvidenceGapsReload",
+    "loadPlaybookMatch",
+    "schedulePlaybookMatchReload",
+    "loadAttackMitigations",
+    "scheduleAttackMitigationsReload",
+    "generateRemediation",
+    "loadHuntProfile",
+    "loadMcpRun",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
+  // FILLED is the interesting half: which names were actually absent, i.e. which modules did not
+  // load. A stub keeps the page alive but is silent by construction — a no-op panel looks exactly
+  // like a panel with nothing to show — so a feature with no initializer of its own has no way to
+  // say it is gone. Recording what we filled in gives it one. See the two checks in
+  // dashboard.html that read this.
+  var filled = [];
   for (var i = 0; i < STUBBED.length; i++) {
     var name = STUBBED[i];
     if (typeof window[name] !== "function") {
       window[name] = function () {};
+      filled.push(name);
     }
   }
-  window.DfirFacade = { stubbed: STUBBED };
+  window.DfirFacade = { stubbed: STUBBED, filled: filled };
 })();

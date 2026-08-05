@@ -1,3 +1,5 @@
+import ts from "typescript";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -566,5 +568,79 @@ describe("initMcp", () => {
       setTimeout: () => 0,
     });
     expect(wired, "the module wired controls at load, before #sec-mcp exists").toEqual([]);
+  });
+});
+
+// ── THE TAX EVERY EXTRACTION PAYS, AND NOBODY ENFORCED ───────────────────────────────────────────
+//
+// Moving a feature out creates names the page calls BARE — `scheduleBeaconsReload()` sits in the
+// middle of the load-time refresh chain — and a ReferenceError there takes every later call in the
+// same statement with it. js/dashboard-facade.js exists to stop that, by stubbing those names when
+// their file is absent.
+//
+// Nothing checked that an extraction actually updated it. This was found the only way it could be:
+// blocking the new module in a browser and noticing the page said nothing. Four panels went dark
+// silently, and the refresh chain past them would have died on the next case load.
+//
+// So: every name a feature module publishes and the page then calls WITHOUT a typeof guard must be
+// in the facade's list. Guarded names are exempt — a guard is the other correct answer, and is what
+// the initializers use so they can report.
+describe("every module name the page calls bare is stubbed by the facade", () => {
+  const facadeSrc = readFileSync(new URL("../../../public/js/dashboard-facade.js", import.meta.url), "utf8");
+  const stubbed = new Set([...facadeSrc.matchAll(/^\s*"([A-Za-z_$][\w$]*)",/gm)].map((m) => m[1]));
+
+  it("harvests the facade's list", () => {
+    expect(stubbed.size, "no stubbed names parsed — this check would pass vacuously").toBeGreaterThan(15);
+    expect(stubbed, "the list this check is built on lost a known member").toContain(
+      "scheduleSwimlaneReload",
+    );
+  });
+
+  it("covers every feature name in the load-time refresh fan-out", () => {
+    // THE FAN-OUT IS THE HAZARD, and it is checked directly rather than approximated.
+    //
+    // Two statements in the page call ~20 refreshes in a row — once on case restore, once in the
+    // WebSocket "state" handler. A ReferenceError at any one of them takes every LATER call in the
+    // same statement with it, which is the bug #475 fixed and the reason the facade exists.
+    //
+    // Not "every unguarded reference": a name reached from a click handler throws into that one
+    // interaction and is contained, which is the documented design, and there are eleven such names
+    // today. Not unguardedTopLevelRefs() either — the first version of this check used it and
+    // passed the mutation it was written for, because these calls sit one hop inside a handler,
+    // which is the blind spot #476 records. A chain is identifiable on its own terms: a single
+    // statement making three or more …Reload() calls.
+    const inline = scripts.filter((s) => s.name.startsWith("dashboard.html#inline"));
+    const inChains = new Set<string>();
+    for (const s of inline) {
+      const visit = (n: ts.Node): void => {
+        if (ts.isExpressionStatement(n) || ts.isBlock(n)) {
+          const calls = [...n.getText(s.ast).matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+          const reloads = calls.filter((c) => /Reload$/.test(c));
+          if (reloads.length >= 3) for (const c of calls) inChains.add(c);
+        }
+        ts.forEachChild(n, visit);
+      };
+      ts.forEachChild(s.ast, visit);
+    }
+    expect(inChains.size, "no refresh fan-out found — this check would pass vacuously").toBeGreaterThan(10);
+
+    // A STUB IS NOT THE ONLY CORRECT ANSWER. A typeof guard at the call site is the other one, and
+    // is what verifyCustodyOnOpen uses — deliberately, so a missing custody module never blocks a
+    // case connect. Either satisfies this; having neither is the bug.
+    const published = new Set(FEATURES.flatMap((f) => f.publish));
+    const guarded = new Set(
+      inline.flatMap((s) =>
+        [...s.source.matchAll(/typeof\s+([A-Za-z_$][\w$]*)\s*===\s*"function"/g)].map((m) => m[1]),
+      ),
+    );
+    const uncovered = [...inChains]
+      .filter((n) => published.has(n) && !stubbed.has(n) && !guarded.has(n))
+      .sort();
+    expect(
+      uncovered,
+      "these feature names sit in a load-time refresh chain and the facade does not stub them — one " +
+        "missing module ends the chain, and every refresh after it is silently skipped. Add them to " +
+        "STUBBED in js/dashboard-facade.js",
+    ).toEqual([]);
   });
 });

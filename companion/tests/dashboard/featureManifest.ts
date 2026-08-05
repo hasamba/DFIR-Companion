@@ -157,6 +157,33 @@ export const FEATURES: Feature[] = [
     private: ["HP_STATUS"],
   },
   {
+    // Four server-derived panels in one file — see the module header for why they are not four
+    // files. The manifest treats it as one module because that is what it is; the publish list is
+    // the union of the four load/schedule pairs the page calls.
+    file: "dashboard-derived-panels.js",
+    publish: [
+      "loadBeacons",
+      "scheduleBeaconsReload",
+      "loadEvidenceGaps",
+      "scheduleEvidenceGapsReload",
+      "loadPlaybookMatch",
+      "schedulePlaybookMatchReload",
+      "loadAttackMitigations",
+      "scheduleAttackMitigationsReload",
+      "generateRemediation",
+    ],
+    private: [
+      "beaconsData",
+      "beaconsTimer",
+      "evidenceGapsData",
+      "evidenceGapsTimer",
+      "playbookMatchData",
+      "playbookMatchTimer",
+      "mitigationsData",
+      "mitigationsTimer",
+    ],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
