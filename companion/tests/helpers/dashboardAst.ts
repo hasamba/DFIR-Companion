@@ -155,6 +155,49 @@ export function functionsOf(script: DashboardScript): FunctionInfo[] {
   return out;
 }
 
+/**
+ * EVERY NAME THIS SCRIPT BINDS TO A FUNCTION — the census behind "did the feature move as a unit?"
+ *
+ * Both halves of that check must ask the same question of the same shapes, or a duplicate slips
+ * through the difference. It used to be asked twice, differently: a regex over the module's text
+ * and `functionsOf().filter(f => f.declaration)` over the inline script.
+ *
+ * A DECLARATION IS NOT THE ONLY WAY TO BIND A FUNCTION, and the declaration-only rule missed the
+ * one that actually hurts. `const loadAnomalies = () => {}` left behind in the inline script is a
+ * top-level lexical binding, so it SHADOWS the module's published `window.loadAnomalies` for every
+ * call site in that script — the feature looks moved, its tests pass, and the page runs the stale
+ * copy. Restoring exactly that mutation passed the whole suite.
+ *
+ * WHAT IS DELIBERATELY NOT COUNTED, and why the naive "any function-valued node" rule is wrong: the
+ * ACTIONS dispatch table is full of `setComplianceDiscovered: (el) => setComplianceDiscovered(el)`
+ * entries, and those must STAY behind when the function they call moves out — they are how a click
+ * reaches the module. A property is not a binding; nothing can shadow through one. Same for class
+ * and object methods.
+ */
+export function functionBindingsOf(script: DashboardScript): Array<{ name: string; line: number }> {
+  const out: Array<{ name: string; line: number }> = [];
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name && ts.isIdentifier(n.name)) {
+      out.push({ name: n.name.text, line: at(n) });
+    }
+    // `const f = () => {}` / `let f = function () {}` / `var f = async () => {}`. The binding is the
+    // variable, so a destructured or array-pattern name is not one of these by construction.
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      out.push({ name: n.name.text, line: at(n) });
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(script.ast, visit);
+  return out;
+}
+
 /** Names called from inside `node`, including from functions nested within it. */
 export function callsWithin(node: ts.Node): Set<string> {
   const out = new Set<string>();
@@ -1023,6 +1066,46 @@ export function guarantees(cond: ts.Node, name: string, branch: boolean): boolea
  * is `DfirTimelineView`, which sits at `parent.expression` and so is not excluded by the
  * property-name rule that hides `hydrate`.
  */
+/**
+ * Is this node inside the TARGET of a destructuring assignment rather than a value being read?
+ *
+ * `({ Foo } = src)` and `[Foo] = xs` and `for ({ Foo } of xs)` all WRITE Foo. A write to a name a
+ * missing module would have declared does not throw — it is the read that throws — so reporting one
+ * is a false positive, and a gate that flags correct code gets switched off.
+ *
+ * Walks out through the pattern's own shapes only (object/array literals, the value half of a
+ * property, parens, spread) so that `({ a: Foo } = x)` and `({ Foo } = x)` both resolve, while a
+ * genuine read nested in an initializer — `const o = { Foo }` — stops at the variable declaration.
+ */
+function isAssignmentTarget(node: ts.Node): boolean {
+  let cur: ts.Node = node;
+  let parent = cur.parent;
+  while (parent) {
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return parent.left === cur;
+    }
+    // `for ({ Foo } of xs)` / `for ([Foo] in o)` — the initializer is a target, the expression is not.
+    if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === cur) {
+      return true;
+    }
+    if (
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isParenthesizedExpression(parent) ||
+      ts.isSpreadAssignment(parent) ||
+      ts.isSpreadElement(parent) ||
+      ts.isShorthandPropertyAssignment(parent) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === cur)
+    ) {
+      cur = parent;
+      parent = cur.parent;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 function isValueRef(n: ts.Identifier): boolean {
   const p = n.parent;
   if (!p) return true;
@@ -1050,6 +1133,11 @@ function isValueRef(n: ts.Identifier): boolean {
   // Labels are their own namespace.
   if (ts.isLabeledStatement(p) && p.label === n) return false;
   if ((ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n) return false;
+  // SHORTHAND IS A READ IN A LITERAL AND A WRITE IN A PATTERN, and TypeScript spells both
+  // `ShorthandPropertyAssignment`: `const w = { kevClear }` evaluates the binding, while
+  // `({ kevClear } = src)` assigns to it. Only the first can throw when the module is missing —
+  // the second is a destructuring assignment, which is how the node reaches an `=` from its left.
+  if (ts.isShorthandPropertyAssignment(p) && isAssignmentTarget(p)) return false;
   // A name being DECLARED. `{ kevClear }` shorthand is deliberately absent: it reads the value.
   const declares =
     ts.isVariableDeclaration(p) ||
