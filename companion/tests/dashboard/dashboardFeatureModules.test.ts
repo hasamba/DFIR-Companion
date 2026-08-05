@@ -3,15 +3,17 @@ import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import { runInContext } from "node:vm";
 import {
+  callsAfter,
   callsByName,
   dashboardScripts,
   domAccessOutsideFunctions,
   functionsOf,
+  moduleGlobals,
   scriptFromSource,
   topLevelBindings,
-  unguardedCalls,
+  unguardedTopLevelRefs,
 } from "../helpers/dashboardAst.js";
-import { globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
+import { globalNamesOf, globalsAddedBy, loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // TIER 3 (#415): whole features moved out of the inline script, each owning its own state.
 //
@@ -106,6 +108,10 @@ const FEATURES: Feature[] = [
     file: "dashboard-tickets.js",
     publish: ["pushFindingToTicket", "bulkPushFindingsToTicket", "initTicketIntegrations"],
     private: [
+      // The re-entry latch this PR added. It was missing from the first version of this list, and
+      // moving it out to shared global scope passed every test in the file — the same lesson the
+      // geoTileUrl note above records, one tier later.
+      "initialised",
       "pushSelect",
       "notionHasDefault",
       "clickupDefaultList",
@@ -125,6 +131,53 @@ const FEATURES: Feature[] = [
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
   },
+  {
+    // The canvas chart. Like dashboard-tickets.js, all of its load-time work is DOM wiring —
+    // eleven listeners on the canvas and toolbar plus a ResizeObserver — so it is wrapped in
+    // initSwimlane() and the page calls it where the old IIFE sat. Unlike tickets the initializer
+    // publishes nothing, so there is no postInitPublish list: all six names appear at load.
+    //
+    // swLocateInTable is NOT here on purpose. Its name says swimlane, its body scrolls a row in
+    // #forensicTimeline, and both callers are inside jumpToEvent, which stayed in the page.
+    file: "dashboard-swimlane.js",
+    publish: [
+      "loadSwimlane",
+      "scheduleSwimlaneReload",
+      "swRenderCanvas",
+      "swSelToolbar",
+      "swReflectSelection",
+      "initSwimlane",
+    ],
+    private: [
+      "SW_LANE_H",
+      "SW_AXIS_H",
+      "SW_DOT_R",
+      "SW_SEV_TOKEN",
+      "SW_LABEL_TOKEN",
+      "SW_AXIS_LABEL",
+      "swLanes",
+      "swDataMinMs",
+      "swDataMaxMs",
+      "swViewStartMs",
+      "swViewEndMs",
+      "swDrag",
+      "swDragMoved",
+      "swDragStartX",
+      "swDragViewStart",
+      "swHoverEvId",
+      "swSelEvId",
+      "swTimer",
+      "swRubber",
+      "swTimeBrush",
+    ],
+    // The thirteen private FUNCTIONS (swFitView, swUpdateSubtitle, swZoomRatio, swTsToX, swXToTs,
+    // swRenderLabels, swHitTest, swShowDetail, swUpdateZoomLabel, swSelectionChanged,
+    // swFinishRubber, swScopeToView, swExportPng) are deliberately not on that list: it exists to
+    // catch a binding that is assigned but never declared, and a function declaration cannot
+    // become an implicit global. That they stay off `window` is already asserted by the
+    // exact-globals check.
+    initializer: "initSwimlane",
+  },
 ];
 
 /**
@@ -136,7 +189,41 @@ const FEATURES: Feature[] = [
  */
 const SANDBOX_FURNITURE = new Set(["window", "globalThis", "Date", "btoa", "atob", "console"]);
 const globalsOf = (api: Record<string, unknown>, seeded: string[] = []): string[] =>
-  Object.keys(api).filter((k) => !SANDBOX_FURNITURE.has(k) && !seeded.includes(k));
+  globalNamesOf(api).filter((k) => !SANDBOX_FURNITURE.has(k) && !seeded.includes(k));
+
+// THE HELPER'S OWN CONTRACT.
+//
+// Both global-set checks in this file are only as good as the property enumeration under them, and
+// the first one was `Object.keys`. That cannot see a global published as
+// `Object.defineProperty(window, "debugTickets", { value: x, enumerable: false })` — which is
+// exactly how you write a debug handle you would rather not have show up in a console dir() of the
+// global object. The property is on `window`, every other script on the page can read it by bare
+// name, and the exact-globals gate reported a clean module. Reachability has nothing to do with
+// enumerability.
+describe("the global-name enumeration these checks rest on", () => {
+  it("sees a leak published as a non-enumerable property", () => {
+    const api: Record<string, unknown> = { window: {}, pushFindingToTicket: () => {} };
+    Object.defineProperty(api, "debugTickets", { value: { pushSelect: null }, enumerable: false });
+    expect(Object.keys(api), "the shape this test exists for is no longer non-enumerable").not.toContain(
+      "debugTickets",
+    );
+    expect(globalsOf(api), "a non-enumerable global is still reachable by bare name").toContain(
+      "debugTickets",
+    );
+  });
+
+  // globalsAddedBy() diffs the same enumeration, so the LOAD-time gate in the describe.each below
+  // inherits this fix or does not get it at all.
+  it("is the enumeration globalsAddedBy diffs", () => {
+    const sandbox: Record<string, unknown> = {};
+    Object.defineProperty(sandbox, "debugTickets", { value: 1, enumerable: false });
+    expect(globalNamesOf(sandbox)).toContain("debugTickets");
+  });
+
+  it("still reports an ordinary global exactly once", () => {
+    expect(globalsOf({ window: {}, loadAnomalies: () => {} })).toEqual(["loadAnomalies"]);
+  });
+});
 
 const read = (f: string) => readFile(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
 const scripts = dashboardScripts();
@@ -258,8 +345,43 @@ describe("initTicketIntegrations", () => {
   const feat = FEATURES.find((f) => f.file === "dashboard-tickets.js")!;
   const SEEDED = ["document", "fetch"];
 
+  // EVERY control this feature owns, named. This was `listeners.length > 4`, and a threshold cannot
+  // tell "all fifteen" from "any five": deleting the Notion backdrop listener, the Notion cancel
+  // button, the ClickUp push button, the Notion mode radios or the IRIS reconnect handler each left
+  // fourteen and passed. Naming them also catches the opposite mistake — a duplicate registration,
+  // which a `>` can only ever read as more evidence of success.
+  const WIRED = [
+    "clickupCancel:onclick",
+    "clickupOverlay:click",
+    "clickupPushBtn:onclick",
+    "irisImportCancel:onclick",
+    "irisImportOverlay:click",
+    "irisImportRun:onclick",
+    "irisPushBtn:onclick",
+    "irisPushCancel:onclick",
+    "irisPushOverlay:click",
+    "irisReconnectBtn:onclick",
+    "notionCancel:onclick",
+    "notionExportBtn:onclick",
+    "notionMode:onchange",
+    "notionOverlay:click",
+    "pushSelect:onchange",
+  ];
+
+  // And every status probe. `fetched.length > 4` passed with any two of these deleted, which is a
+  // Push menu missing two of its targets for every analyst whose server has them configured.
+  const STATUS_PROBES = [
+    "/clickup/status",
+    "/iris/status",
+    "/jira/status",
+    "/misp/status",
+    "/notion/status",
+    "/servicenow/status",
+    "/timesketch/status",
+  ];
+
   /** Enough of a browser for the initializer to wire itself up, and a counter for what it fetched. */
-  function fixture() {
+  function fixture(breakOn: () => string | null = () => null) {
     const els = new Map<string, Record<string, unknown>>();
     const listeners: string[] = [];
     const fetched: string[] = [];
@@ -291,10 +413,20 @@ describe("initTicketIntegrations", () => {
       }
       return els.get(id) as Record<string, unknown>;
     };
+    // The Notion mode radios are the ONE control this feature wires through a SELECTOR rather than
+    // an id, and a querySelectorAll answering [] for everything made them invisible — the fixture
+    // would have certified a Notion modal whose new-vs-existing switch was never wired.
+    const BY_SELECTOR: Record<string, string[]> = { 'input[name="notionMode"]': ["notionMode"] };
+    // A missing element is how this feature really breaks — `getElementById(x).onclick = …` on a
+    // null throws — so the fixture can be told to fail one lookup and then be repaired.
+    const getElementById = (id: string): Record<string, unknown> => {
+      if (breakOn() === id) throw new Error(`markup missing: ${id}`);
+      return el(id);
+    };
     const document = {
-      getElementById: el,
+      getElementById,
       querySelector: () => null,
-      querySelectorAll: () => [],
+      querySelectorAll: (sel: string) => (BY_SELECTOR[sel] ?? []).map(el),
       createElement: () => el("__created"),
       body: { classList: { add() {}, remove() {} }, insertBefore() {}, firstChild: null },
       addEventListener() {},
@@ -346,11 +478,24 @@ describe("initTicketIntegrations", () => {
     }
   });
 
-  it("actually wires the overlays and asks the server what is configured", () => {
+  it("wires every control it owns, named one by one", () => {
     const { api, fx } = load();
     (api[feat.initializer!] as () => void)();
-    expect(fx.fetched.length, "no status request — the Push menu would never populate").toBeGreaterThan(4);
-    expect(fx.listeners.length, "no listener registered — every control would be dead").toBeGreaterThan(4);
+    expect(
+      [...fx.listeners].sort(),
+      "a control this feature owns is unwired, or wired twice — either way the analyst sees a " +
+        "button that does the wrong thing, and no error anywhere",
+    ).toEqual([...WIRED].sort());
+  });
+
+  it("asks the server about every push target it can offer", () => {
+    const { api, fx } = load();
+    (api[feat.initializer!] as () => void)();
+    expect(
+      [...fx.fetched].sort(),
+      "a status probe is missing — that target never appears in the Push menu, however the server " +
+        "is configured",
+    ).toEqual([...STATUS_PROBES].sort());
   });
 
   // Hardening rather than a live bug: nothing calls it twice today, but it is a published entry
@@ -362,6 +507,62 @@ describe("initTicketIntegrations", () => {
     const after = { fetched: fx.fetched.length, listeners: fx.listeners.length };
     (api[feat.initializer!] as () => void)();
     expect({ fetched: fx.fetched.length, listeners: fx.listeners.length }).toEqual(after);
+  });
+
+  // ...AND IDEMPOTENT IS NOT THE SAME AS LATCHED.
+  //
+  // The flag used to be set on the initializer's FIRST line, which made the test above pass for a
+  // reason it never intended: a run that threw had already latched, so every later call returned —
+  // silently, with no second error and nothing on screen — and the feature was dead for the life of
+  // the page. Break the LAST section, repair the DOM, call again: the retry has to reach the wiring
+  // the first run never got to.
+  it("stays retryable after a run that threw", () => {
+    let broken = true;
+    const fx = fixture(() => (broken ? "irisPushCancel" : null));
+    const api = loadDashboardModule<Record<string, unknown>>("dashboard-tickets.js", [], {
+      document: fx.document,
+      fetch: fx.fetch,
+    });
+
+    expect(() => (api[feat.initializer!] as () => void)()).toThrow(/irisPushCancel/);
+    // The break has to be late enough to leave real wiring behind it, or the retry proves nothing.
+    expect(fx.listeners, "nothing was wired before the break — move it later").not.toEqual([]);
+    expect(fx.listeners).not.toContain("irisPushBtn:onclick");
+
+    broken = false;
+    (api[feat.initializer!] as () => void)();
+    expect(
+      fx.listeners,
+      "the initializer latched on entry, so one missing element killed all seven ticket " +
+        "integrations for the life of the page",
+    ).toContain("irisPushBtn:onclick");
+  });
+
+  // ORDER, NOT JUST FINAL STATE.
+  //
+  // Every other check here asserts what is on the global object once the initializer has finished,
+  // so moving `window.openIrisImportModal = …` back to the last line of init passes all of them.
+  // The comment at that line claims something stronger — that the Import-case chooser keeps working
+  // even when a LATER section throws — and the only way to observe an intermediate state is to stop
+  // the initializer in the middle of one. The break is the first DOM read after the publication, so
+  // this pins it to the IRIS-import section rather than merely "somewhere before the end".
+  it("publishes the Import-case entry point before the wiring that follows it", () => {
+    const fx = fixture(() => "irisReconnectBtn");
+    const api = loadDashboardModule<Record<string, unknown>>("dashboard-tickets.js", [], {
+      document: fx.document,
+      fetch: fx.fetch,
+    });
+
+    expect(() => (api[feat.initializer!] as () => void)()).toThrow(/irisReconnectBtn/);
+    expect(fx.listeners, "the run stopped before the Import-case section").toContain("irisImportRun:onclick");
+    expect(fx.listeners, "the run did not stop where this test needs it to").not.toContain(
+      "clickupCancel:onclick",
+    );
+    expect(
+      typeof api.openIrisImportModal,
+      "openIrisImportModal is published after the reconnect / ClickUp / IRIS-push wiring, so a throw " +
+        "in any of them leaves the Import-case button calling a name that was never published",
+    ).toBe("function");
   });
 });
 
@@ -375,16 +576,89 @@ describe("initTicketIntegrations", () => {
 describe("a feature script that fails to load", () => {
   const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline"));
 
-  // The entry points called where a throw would abort the rest of the script, rather than from
-  // inside a handler where it is contained to that one interaction.
-  const ENTRY_POINTS = ["initTicketIntegrations", "initCustodyButtons", "verifyCustodyOnOpen"];
+  // Every entry point whose throw is NOT contained to the interaction that caused it. Two shapes
+  // qualify: a call at the top level of the inline script (the rest of the script never runs), and
+  // a call at the head of a function whose own callers swallow the throw.
+  //
+  // renderCollectionPlan is the second shape, and it is why the ordering test below exists. render()
+  // called it on its first line, and render()'s two callers are the bare `catch {}` in
+  // proceedConnect's state load and ws.onmessage, which has no catch at all. A 404 on
+  // js/dashboard-collection-plan.js therefore aborted the whole of render(): the analyst got
+  // "connected (live)" over a dashboard whose summary was still "—", with nothing said anywhere.
+  // THE SET OF NAMES IS DERIVED FROM THE MODULES, not written by hand. The hand-written list this
+  // replaces named verifyCustodyOnOpen, which the page never calls at the top level, and omitted
+  // every name that was a live hazard on the day it was written — the three bare
+  // `addEventListener("click", kevImportUrl)` references and the three `DfirTimelineView.…()` calls.
+  // Neither mistake could ever have failed the gate, because the gate only looked at the list.
+  //
+  // IN-FUNCTION REFERENCES ARE NOT THIS GATE'S BUSINESS, which is why deriving the set does not
+  // drown it. The page reads these names some six hundred times from inside renderers and handlers,
+  // and a throw there is contained to that one interaction. Only a reference EVALUATED AT LOAD can
+  // abort the script and take the remaining wiring with it.
+  const owners = moduleGlobals(scripts);
 
-  it.each(ENTRY_POINTS)("guards every tier-3 entry point: %s", (name) => {
-    const bad = inline.flatMap((s) => unguardedCalls(s, name).map((line) => `${s.name}:${line}`));
+  // A derived gate's characteristic failure is harvesting nothing and passing vacuously, so the
+  // harvest is asserted before anything is asserted with it.
+  it("harvests the globals it is meant to be checking", () => {
+    expect(owners.size, "no module globals found — the harvest is broken, not the page").toBeGreaterThan(100);
+    for (const name of [
+      "DfirTimelineView", // an IIFE-wrapped namespace, published as `window.DfirTimelineView`
+      "initCustodyButtons", // a bare top-level function declaration
+      "initSwimlane",
+      "initTicketIntegrations",
+      "kevImportUrl",
+      "loadCaseBackups",
+    ]) {
+      expect([...owners.keys()], `${name} is published by a module but was not harvested`).toContain(name);
+    }
+  });
+
+  // Two modules publishing one name is a silent last-tag-wins overwrite, and it would also make
+  // "is this name guarded" ambiguous to answer. There are none today; this is what keeps it so.
+  it("has no two modules publishing the same global", () => {
+    const clashes = [...owners]
+      .filter(([, files]) => files.length > 1)
+      .map(([name, files]) => `${name}: ${files.join(" + ")}`);
+    expect(
+      clashes,
+      "the later <script> tag silently wins and the earlier module's version is simply gone",
+    ).toEqual([]);
+  });
+
+  it("guards every top-level reference to a name only a module declares", () => {
+    const names = new Set(owners.keys());
+    const bad = inline.flatMap((s) =>
+      unguardedTopLevelRefs(s, names).map(
+        (r) => `${s.name}:${r.line} ${r.name} (${owners.get(r.name)?.join(", ") ?? "?"})`,
+      ),
+    );
     expect(
       bad,
-      `${name}() is called without a typeof guard — if its script 404s this throws and takes the ` +
-        "rest of the inline script with it",
+      "each of these is evaluated while the page is loading, with nothing establishing that the " +
+        "name resolves. If that module 404s the reference throws a ReferenceError and THE REST OF " +
+        "THE INLINE SCRIPT NEVER RUNS — case restoration, the WebSocket, every listener after this " +
+        'point. Wrap the site in `if (typeof NAME !== "undefined")`, and where the analyst would ' +
+        "otherwise meet a dead control say so with dfirFeatureUnavailable() rather than skipping " +
+        "it in silence.",
+    ).toEqual([]);
+  });
+
+  // THE ORDER, WHICH A GUARD ALONE DOES NOT FIX. render() is the page's ONLY writer of
+  // DfirState.lastState, and a dozen refresh paths are `if (DfirState.lastState())
+  // render(DfirState.lastState())` — every one of them is a silent no-op until that write has
+  // happened once. So nothing that can throw may run ahead of it, guarded or not: a guard a later
+  // edit drops puts the page straight back where it was. Asserted as the general rule rather than
+  // about one name, because the next call inserted there will have a different one.
+  it("writes the case state before render() calls anything at all", () => {
+    const render = inline.flatMap(functionsOf).find((f) => f.declaration && f.name === "render");
+    expect(render, "no render() declaration in the inline script").toBeDefined();
+    const calls = callsAfter(render!.node, 0).sort((a, b) => a.pos - b.pos);
+    const save = calls.find((c) => c.name === "setLastState");
+    expect(save, "render() no longer writes DfirState.setLastState").toBeDefined();
+    expect(
+      calls.filter((c) => c.pos < save!.pos).map((c) => c.name),
+      "a call runs ahead of the state save — if it throws, lastState stays null and every " +
+        "`if (DfirState.lastState()) render(...)` refresh in the page is dead for the session",
     ).toEqual([]);
   });
 
@@ -393,6 +667,10 @@ describe("a feature script that fails to load", () => {
     expect(html).toMatch(/function dfirFeatureUnavailable\(/);
     // A missing feature must be distinguishable from a feature with nothing to show.
     expect(html).toMatch(/featureWarnings/);
+    // Painted is not announced: role="alert" is what makes a screen reader read the chip out.
+    expect(html).toMatch(/box\.setAttribute\("role", "alert"\)/);
+    // And once per feature — the Case-backups guard fires on every click of a live button.
+    expect(html).toMatch(/if \(dfirFeaturesWarned\.has\(label\)\) return;/);
   });
 });
 

@@ -77,6 +77,9 @@ export const STATIC_ASSETS: Record<string, string> = {
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
   "/js/dashboard-kev.js": "application/javascript; charset=utf-8",
+  // The Timeline Swimlane canvas chart (#415 tier 3). Its entry point is guarded, so a 404 here
+  // costs the chart and nothing else — but the guard is the only reason that is true.
+  "/js/dashboard-swimlane.js": "application/javascript; charset=utf-8",
   // Accessibility primitives (#386). modal-autowire is the only one dashboard.html loads directly;
   // the other two are its static imports, and the browser fetches those by URL too — so all three
   // need an entry here or the import chain 404s exactly as described above.

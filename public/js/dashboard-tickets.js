@@ -64,13 +64,24 @@
   // Guards against a second call. Nothing calls it twice today, but it is a published entry point
   // now, and running it again would fire seven status requests a second time and stack a duplicate
   // listener on each of the four overlays — every "click outside to close" would then run twice.
+  //
+  // SET ON THE INITIALIZER'S LAST LINE, NOT ITS FIRST. Latching on ENTRY turned one missing element
+  // into a permanent outage: the call that threw had already flipped the flag, so every later call
+  // returned without wiring anything — and returned SILENTLY, no second error, nothing on screen.
+  // Latching on SUCCESS instead leaves a failed run retryable.
+  //
+  // The retry re-runs the part that already succeeded, and that is the cheap half of the trade
+  // here, because this feature's wiring is almost all assignment: ten of the fourteen handlers go
+  // on as `el.onclick =` / `el.onchange =`, which a second pass overwrites rather than stacks. Only
+  // the four overlay `addEventListener("click", …)` calls really duplicate, and their handler does
+  // nothing but remove the .open class — running it twice is indistinguishable from once. The seven
+  // status GETs repeat too, and addPushOption() already ignores an option it has added before.
   let initialised = false;
 
   // Everything below ran at top level in the inline script, in this order. It stays in that order,
   // inside a function the page calls at the same point — the ordering is the behaviour.
   function initTicketIntegrations() {
     if (initialised) return;
-    initialised = true;
     // ── Push to an external platform (DFIR-IRIS / Timesketch / MISP) ──────────
     // Each option appears in the Push menu only when the server has that target configured
     // (GET /iris/status, /timesketch/status, /misp/status); the menu stays hidden until at least one does.
@@ -378,6 +389,8 @@
         .finally(() => { btn.disabled = false; });
     };
 
+    // LAST LINE, on purpose — see the declaration above.
+    initialised = true;
   }
 
   // The names the inline script calls by bare name. Everything else — all six bindings and eleven

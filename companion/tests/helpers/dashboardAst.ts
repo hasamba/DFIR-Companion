@@ -669,6 +669,21 @@ export interface OwnerEscape {
  * its own, and it sits at `parent.name` — not `parent.expression` — so the longer-path check does
  * not cover it. Without this, every module was reported as smuggling out its own namespace.
  */
+/**
+ * Is this the operand of a `typeof`? Then it is a GUARD, not an escape.
+ *
+ * `typeof DfirTimelineView !== "undefined"` neither aliases the namespace nor reaches it
+ * dynamically — it is the one operation that does not even evaluate the binding, which is exactly
+ * why it is the guard a 404-able module gets wrapped in. Before the tier-3 guards there was no
+ * `typeof` on any owner in the page, so this read as a bare reference being passed somewhere and
+ * the escape gate fired on the very construct added to make the page survive a missing module.
+ */
+function isTypeofOperand(n: ts.Node): boolean {
+  let cur: ts.Node = n;
+  while (cur.parent && ts.isParenthesizedExpression(cur.parent)) cur = cur.parent;
+  return !!cur.parent && ts.isTypeOfExpression(cur.parent) && cur.parent.expression === cur;
+}
+
 function isPropertyName(n: ts.Node): boolean {
   const p = n.parent;
   return !!p && (ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === n;
@@ -800,6 +815,7 @@ export function ownerEscapes(scripts: DashboardScript[], namespace: string): Own
         !isCalleePosition(n) &&
         !isPartOfLongerPath(n) &&
         !isPropertyName(n) &&
+        !isTypeofOperand(n) &&
         !definitionTargets.has(n.getStart(s.ast))
       ) {
         hits.push({ script: s.name, line: at(n), form: "passed", text: nearbyText(n, s.ast) });
@@ -905,46 +921,157 @@ export function commitsInsideLoops(script: DashboardScript, commitNames: readonl
   return out;
 }
 
+// ── IS A MISSING MODULE'S NAME SAFE TO TOUCH HERE? ───────────────────────────────────────────────
+//
+// A tier-3 feature module is a separate <script src>. If that request fails the name is simply
+// undeclared, and ANY evaluation of it — a call, or a bare reference handed to addEventListener —
+// throws a ReferenceError. At the top level of the inline script that throw aborts EVERYTHING AFTER
+// IT, which is how blocking one 26 KB file left the dashboard disconnected with unrelated controls
+// unwired. `typeof` is the one operation that does not throw on an undeclared identifier, so it is
+// the guard.
+//
+// THE FIRST VERSION OF THIS CHECK ASKED THE WRONG QUESTION. It asked whether some ancestor `if` or
+// `?:` MENTIONED `typeof N` anywhere in its condition; it never asked what the condition PROVES, nor
+// which BRANCH the reference sat in, and it only ever looked at `N(...)` with a bare identifier
+// callee. Seven shapes that all throw were reported as guarded, and mutation-testing the real suite
+// caught none of them:
+//
+//     if (typeof N !== "function") N();                 // inverted
+//     if (typeof N === "function") {} else N();          // else branch
+//     if (typeof N === "function" || ready) N();         // widened away by an ||
+//     if (typeof N === "undefined") N();                 // reads as a guard, means the opposite
+//     typeof N === "function" ? 0 : N();                 // wrong arm of the ternary
+//     el.addEventListener("click", N);                   // no CallExpression at all
+//     const h = N;                                       // nor here
+//
+// So the question is asked properly now: what does this condition prove about this name, in this
+// branch, and every VALUE REFERENCE is asked — which is also what makes `DfirTimelineView.hydrate()`
+// visible, since the fragile name there is the ROOT of the member expression, not the method.
+
+/** What a `typeof <name>` test proves, and in which branch it proves it. */
+export type TypeofVerdict = "declared-when-true" | "declared-when-false" | "none";
+
 /**
- * Calls to `name` that are NOT wrapped in a `typeof name === "function"` guard.
+ * Read one comparison as a statement about whether `name` is declared.
  *
- * A tier-3 feature module is a separate <script src>. If that request fails the name is undeclared,
- * and an unguarded call throws a ReferenceError that aborts the rest of the inline script — which
- * is how blocking one file left the dashboard disconnected with unrelated controls unwired. `typeof`
- * is the one operation that does not throw on an undeclared identifier, so it is the guard, and
- * this finds any call that skipped it.
+ * `"undefined"` is the only string that means UNDECLARED, so it is the pivot: comparing equal to it
+ * proves the name is missing when the test passes, comparing equal to anything else proves it is
+ * present. Negation swaps the branch. A NON-LITERAL comparand — `typeof N === want` — proves
+ * nothing at all, whatever `want` happens to hold at runtime, and saying so is the difference
+ * between a guard and a coincidence.
  */
-export function unguardedCalls(script: DashboardScript, name: string): number[] {
-  const out: number[] = [];
-  const at = (n: ts.Node): number =>
-    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
-  const guardsName = (cond: ts.Node): boolean => {
-    let found = false;
-    const walk = (n: ts.Node): void => {
-      if (ts.isTypeOfExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
-        found = true;
-      }
-      ts.forEachChild(n, walk);
-    };
-    walk(cond);
-    return found;
+export function typeofTest(cond: ts.Node, name: string): TypeofVerdict {
+  if (!ts.isBinaryExpression(cond)) return "none";
+  const op = cond.operatorToken.kind;
+  const negated =
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+  const positive = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
+  if (!negated && !positive) return "none";
+
+  const bare = (e: ts.Node): ts.Node => (ts.isParenthesizedExpression(e) ? bare(e.expression) : e);
+  const isTypeofName = (e: ts.Node): boolean => {
+    if (!ts.isTypeOfExpression(e)) return false;
+    const operand = bare(e.expression);
+    return ts.isIdentifier(operand) && operand.text === name;
   };
+  const left = bare(cond.left);
+  const right = bare(cond.right);
+  let literal: ts.Node | null = null;
+  if (isTypeofName(left)) literal = right;
+  else if (isTypeofName(right)) literal = left;
+  else return "none";
+  if (!ts.isStringLiteralLike(literal)) return "none";
+
+  const declaredWhenTrue = literal.text === "undefined" ? negated : positive;
+  return declaredWhenTrue ? "declared-when-true" : "declared-when-false";
+}
+
+/**
+ * Does taking `branch` out of `cond` GUARANTEE `name` is declared?
+ *
+ * The two logical operators are not symmetric and the old check treated them as if they were:
+ *
+ *   - the TRUE branch of `A && B` was reached only because BOTH held, so either conjunct proving the
+ *     name is enough. Its FALSE branch proves nothing — one of them failed and we cannot say which.
+ *   - the FALSE branch of `A || B` was reached only because BOTH failed, so either disjunct proving
+ *     the name (when false) is enough. Its TRUE branch proves nothing, which is exactly how
+ *     `typeof N === "function" || ready` used to pass.
+ */
+export function guarantees(cond: ts.Node, name: string, branch: boolean): boolean {
+  if (ts.isParenthesizedExpression(cond)) return guarantees(cond.expression, name, branch);
+  if (ts.isPrefixUnaryExpression(cond) && cond.operator === ts.SyntaxKind.ExclamationToken) {
+    return guarantees(cond.operand, name, !branch);
+  }
+  if (ts.isBinaryExpression(cond)) {
+    const op = cond.operatorToken.kind;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return branch && (guarantees(cond.left, name, true) || guarantees(cond.right, name, true));
+    }
+    if (op === ts.SyntaxKind.BarBarToken) {
+      return !branch && (guarantees(cond.left, name, false) || guarantees(cond.right, name, false));
+    }
+  }
+  return typeofTest(cond, name) === (branch ? "declared-when-true" : "declared-when-false");
+}
+
+/**
+ * Is this identifier a place the name's VALUE is read — the thing that throws when it is undeclared?
+ *
+ * `obj.kevClear` names a property and evaluates nothing; `typeof kevClear` is the guard itself, not a
+ * use of it; a declaration or a label is a name being bound rather than read. Everything else is a
+ * read, INCLUDING the root of a member expression: the fragile half of `DfirTimelineView.hydrate()`
+ * is `DfirTimelineView`, which sits at `parent.expression` and so is not excluded by the
+ * property-name rule that hides `hydrate`.
+ */
+function isValueRef(n: ts.Identifier): boolean {
+  const p = n.parent;
+  if (!p) return true;
+  // The guard's own test is not a use.
+  if (ts.isTypeOfExpression(p) && p.expression === n) return false;
+  // `obj.kevClear` / `{ kevClear: v }` / `class { kevClear() {} }` — a property NAME.
+  if (
+    (ts.isPropertyAccessExpression(p) ||
+      ts.isPropertyAssignment(p) ||
+      ts.isMethodDeclaration(p) ||
+      ts.isMethodSignature(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isGetAccessorDeclaration(p) ||
+      ts.isSetAccessorDeclaration(p) ||
+      ts.isEnumMember(p)) &&
+    p.name === n
+  ) {
+    return false;
+  }
+  // `const { kevClear: local } = o` — both halves bind, neither reads a global.
+  if (ts.isBindingElement(p) && (p.propertyName === n || p.name === n)) return false;
+  if ((ts.isImportSpecifier(p) || ts.isExportSpecifier(p)) && (p.propertyName === n || p.name === n)) {
+    return false;
+  }
+  // Labels are their own namespace.
+  if (ts.isLabeledStatement(p) && p.label === n) return false;
+  if ((ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n) return false;
+  // A name being DECLARED. `{ kevClear }` shorthand is deliberately absent: it reads the value.
+  const declares =
+    ts.isVariableDeclaration(p) ||
+    ts.isFunctionDeclaration(p) ||
+    ts.isFunctionExpression(p) ||
+    ts.isClassDeclaration(p) ||
+    ts.isClassExpression(p) ||
+    ts.isParameter(p) ||
+    ts.isNamespaceImport(p) ||
+    ts.isImportClause(p);
+  return !(declares && p.name === n);
+}
+
+/** Every place `name`'s value is read in this script, with its line. */
+function refsTo(script: DashboardScript, name: string): Array<{ node: ts.Identifier; line: number }> {
+  const out: Array<{ node: ts.Identifier; line: number }> = [];
   const visit = (n: ts.Node): void => {
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
-      let p: ts.Node | undefined = n.parent;
-      let guarded = false;
-      while (p) {
-        if (ts.isIfStatement(p) && guardsName(p.expression)) {
-          guarded = true;
-          break;
-        }
-        if (ts.isConditionalExpression(p) && guardsName(p.condition)) {
-          guarded = true;
-          break;
-        }
-        p = p.parent;
-      }
-      if (!guarded) out.push(at(n));
+    if (ts.isIdentifier(n) && n.text === name && isValueRef(n)) {
+      out.push({
+        node: n,
+        line: script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1,
+      });
     }
     ts.forEachChild(n, visit);
   };
@@ -952,19 +1079,232 @@ export function unguardedCalls(script: DashboardScript, name: string): number[] 
   return out;
 }
 
-/** Does this script contain a real CALL to `name`? A comment mentioning it does not count. */
-export function callsByName(script: DashboardScript, name: string): boolean {
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found) return;
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
-      found = true;
-      return;
+/** Does control always leave the enclosing block by the end of this statement? */
+function alwaysExits(s: ts.Statement | undefined): boolean {
+  if (!s) return false;
+  if (ts.isReturnStatement(s) || ts.isThrowStatement(s)) return true;
+  if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) return true;
+  if (ts.isBlock(s)) return s.statements.some(alwaysExits);
+  return false;
+}
+
+/** The statement list of a node that HAS one, so preceding siblings can be examined. */
+function statementsOf(n: ts.Node): readonly ts.Statement[] | null {
+  if (ts.isBlock(n) || ts.isSourceFile(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) {
+    return n.statements;
+  }
+  return null;
+}
+
+/**
+ * `if (typeof N !== "function") return; N();`
+ *
+ * THE IDIOM THIS FILE MUST NOT PUNISH. It is correct code and it is house style on this page and in
+ * js/graph-view.js and js/dashboard-geo.js — the guard is a preceding SIBLING, not an ancestor, so an
+ * ancestor walk alone reports every line after it. Anything reached after an earlier
+ * `if (C) return|throw|continue|break` was reached with C false, so a C that proves the name in its
+ * false branch guards the rest of the block. The mirror image (`else` exits, so C held) is the same
+ * argument and is accepted too.
+ */
+function precedingGuardExits(stmts: readonly ts.Statement[], child: ts.Node, name: string): boolean {
+  const idx = stmts.indexOf(child as ts.Statement);
+  if (idx < 0) return false;
+  for (let i = 0; i < idx; i++) {
+    const s = stmts[i];
+    if (!ts.isIfStatement(s)) continue;
+    if (alwaysExits(s.thenStatement) && guarantees(s.expression, name, false)) return true;
+    if (alwaysExits(s.elseStatement) && guarantees(s.expression, name, true)) return true;
+  }
+  return false;
+}
+
+/**
+ * Is this reference reached only when `name` is known to be declared?
+ *
+ * WHICH CHILD WE CAME FROM is the whole point: `thenStatement` and `elseStatement` of the same `if`
+ * are opposite claims, as are `whenTrue`/`whenFalse`, and the RIGHT operand of `&&` is the
+ * `typeof N === "function" && N()` idiom while its left operand is the test itself.
+ *
+ * The walk does NOT stop at a function boundary, on purpose: a listener registered inside a guarded
+ * branch is registered only when the guard held, so its body cannot run in the missing-module world.
+ */
+function isGuarded(ref: ts.Node, name: string): boolean {
+  let child: ts.Node = ref;
+  let p: ts.Node | undefined = ref.parent;
+  while (p) {
+    if (ts.isIfStatement(p)) {
+      if (child === p.thenStatement && guarantees(p.expression, name, true)) return true;
+      if (child === p.elseStatement && guarantees(p.expression, name, false)) return true;
+    } else if (ts.isConditionalExpression(p)) {
+      if (child === p.whenTrue && guarantees(p.condition, name, true)) return true;
+      if (child === p.whenFalse && guarantees(p.condition, name, false)) return true;
+    } else if (ts.isBinaryExpression(p) && child === p.right) {
+      const op = p.operatorToken.kind;
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken && guarantees(p.left, name, true)) return true;
+      if (op === ts.SyntaxKind.BarBarToken && guarantees(p.left, name, false)) return true;
     }
-    ts.forEachChild(n, visit);
+    const stmts = statementsOf(p);
+    if (stmts && precedingGuardExits(stmts, child, name)) return true;
+    child = p;
+    p = p.parent;
+  }
+  return false;
+}
+
+/**
+ * Every reference to `name` that is NOT proven safe by a `typeof` guard.
+ *
+ * A try/catch is deliberately NOT accepted here even though it does contain the throw: these entry
+ * points are meant to say so on screen when their module is missing, and a bare
+ * `try { N(); } catch {}` swallows that. topLevelUnguardedRefs() below, which asks the narrower
+ * question of what would abort the script, does honour it.
+ */
+export function unguardedRefs(script: DashboardScript, name: string): number[] {
+  return refsTo(script, name)
+    .filter((r) => !isGuarded(r.node, name))
+    .map((r) => r.line);
+}
+
+/** The historic name — kept so existing callers compile. Calls were never the only hazard. */
+export const unguardedCalls = unguardedRefs;
+
+/** `(function () { … })()` / `(() => { … })()` — a function that runs where it is written. */
+function isImmediatelyInvoked(fn: ts.Node): boolean {
+  let cur: ts.Node = fn;
+  while (cur.parent && ts.isParenthesizedExpression(cur.parent)) cur = cur.parent;
+  const p = cur.parent;
+  return !!p && ts.isCallExpression(p) && p.expression === cur;
+}
+
+/**
+ * Does this reference evaluate while the script is still parsing, with nothing to catch a throw?
+ *
+ * AN IIFE THAT RUNS AT LOAD COUNTS AS TOP LEVEL. This is the same call domAccessOutsideFunctions()
+ * makes and for the same reason: `(() => { … })()` executes exactly where bare top-level code would,
+ * and a ReferenceError inside one propagates straight out and takes the rest of the script with it.
+ * dashboard.html's DfirTimelineView.hydrate() sits inside one and IS a real hazard. A function that
+ * is merely DEFINED here is not — it runs later, on an event, where a throw is contained to that one
+ * interaction.
+ *
+ * A `try` WITH a catch clause contains the throw, so a reference inside one is not this hazard. A
+ * bare `try`/`finally` does not, and is not accepted.
+ */
+function runsAtLoad(ref: ts.Node): boolean {
+  let child: ts.Node = ref;
+  let p: ts.Node | undefined = ref.parent;
+  while (p) {
+    if (ts.isTryStatement(p) && p.catchClause && child === p.tryBlock) return false;
+    if (isFunctionLike(p) && !isImmediatelyInvoked(p)) return false;
+    child = p;
+    p = p.parent;
+  }
+  return true;
+}
+
+/**
+ * The unguarded references that would abort the rest of the script — top-level, uncaught.
+ *
+ * This is the set that matters for a <script src> that 404s. Everything else fails one feature.
+ */
+export function topLevelUnguardedRefs(script: DashboardScript, name: string): number[] {
+  return refsTo(script, name)
+    .filter((r) => !isGuarded(r.node, name) && runsAtLoad(r.node))
+    .map((r) => r.line);
+}
+
+/** A literal condition's truth value, or null if it is not decidable from the text. */
+function staticTruth(e: ts.Node): boolean | null {
+  if (ts.isParenthesizedExpression(e)) return staticTruth(e.expression);
+  if (e.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (e.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isNumericLiteral(e)) return Number(e.text) !== 0;
+  if (ts.isStringLiteralLike(e)) return e.text.length > 0;
+  if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) {
+    const inner = staticTruth(e.operand);
+    return inner === null ? null : !inner;
+  }
+  return null;
+}
+
+/** Is this child of `p` a branch the text itself rules out — `if (false) { … }`? */
+function isDeadBranch(p: ts.Node, child: ts.Node): boolean {
+  if (ts.isIfStatement(p)) {
+    const t = staticTruth(p.expression);
+    if (t === false && child === p.thenStatement) return true;
+    if (t === true && child === p.elseStatement) return true;
+  }
+  if (ts.isConditionalExpression(p)) {
+    const t = staticTruth(p.condition);
+    if (t === false && child === p.whenTrue) return true;
+    if (t === true && child === p.whenFalse) return true;
+  }
+  if (ts.isWhileStatement(p) && child === p.statement && staticTruth(p.expression) === false) return true;
+  if (ts.isForStatement(p) && child === p.statement && p.condition && staticTruth(p.condition) === false) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The name by which this function can be INVOKED as a bare identifier, or null if there is none.
+ *
+ * Only a declaration, a named function expression and `const f = () => …` qualify. An anonymous
+ * callback, an object-literal method and an IIFE are TRANSPARENT — nobody can call them by name, so
+ * they are not separately-reachable units; whether their body runs is entirely a question about the
+ * code that registered them, which is the enclosing unit.
+ */
+function invocableName(fn: ts.Node): string | null {
+  if (isImmediatelyInvoked(fn)) return null;
+  if (ts.isFunctionDeclaration(fn) && fn.name) return fn.name.text;
+  if (ts.isFunctionExpression(fn) && fn.name) return fn.name.text;
+  const p = fn.parent;
+  if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name) && p.initializer === fn) return p.name.text;
+  return null;
+}
+
+const TOP_LEVEL_UNIT = "<top-level>";
+
+/**
+ * Does this script make a REACHABLE call to `name`?
+ *
+ * A comment mentioning it never counted. Neither, now, do the two shapes review used to walk past
+ * this: a call inside `if (false)`, and a call inside a function that nothing in the script ever
+ * names. Both leave the text saying `initTicketIntegrations()` while the page never runs it, which
+ * is the exact failure the gate exists to catch.
+ *
+ * WHY NOT buildCallGraph()/reachableFrom() WHOLESALE. reachableFrom IS reused for the closure — that
+ * part fits exactly. buildCallGraph does not: it drops every `<anonymous…>` function, so a call made
+ * from a top-level callback would vanish; it records CALLS only, so `el.onclick = wire` never marks
+ * wire live; and it has no notion of a root, which is the half this question is actually about. So
+ * the edges are collected here, from top-level code outward, over every mention rather than calls
+ * alone — a function handed somewhere is a function that can run.
+ */
+export function callsByName(script: DashboardScript, name: string): boolean {
+  const mentions = new Map<string, Set<string>>([[TOP_LEVEL_UNIT, new Set<string>()]]);
+  const sites: Array<{ unit: string }> = [];
+
+  const walk = (n: ts.Node, unit: string): void => {
+    ts.forEachChild(n, (c) => {
+      if (isDeadBranch(n, c)) return;
+      let next = unit;
+      if (isFunctionLike(c)) {
+        const invocable = invocableName(c);
+        if (invocable !== null) {
+          next = invocable;
+          if (!mentions.has(next)) mentions.set(next, new Set<string>());
+        }
+      }
+      if (ts.isIdentifier(c) && isValueRef(c)) mentions.get(unit)?.add(c.text);
+      if (ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === name) {
+        sites.push({ unit });
+      }
+      walk(c, next);
+    });
   };
-  ts.forEachChild(script.ast, visit);
-  return found;
+  walk(script.ast, TOP_LEVEL_UNIT);
+
+  const live = reachableFrom(mentions, [TOP_LEVEL_UNIT]);
+  return sites.some((s) => live.has(s.unit));
 }
 
 /**
@@ -975,30 +1315,67 @@ export function callsByName(script: DashboardScript, name: string): boolean {
  * check this replaced missed `window.document?.getElementById(...)`, which is the same access by a
  * spelling a pattern does not recognise — so the question is asked structurally: is this a member
  * access rooted at `document`, and is it outside every function?
+ *
+ * "OUTSIDE EVERY FUNCTION" IS THE WRONG QUESTION, and asking it was the third hole in this check.
+ * What runs before the markup exists is what runs DURING LOAD, and a function the module calls on
+ * the way down runs during load exactly as bare top-level code does. Review moved the Notion
+ * listener into such a helper, deleted the initializer that used to wire it, and every one of the
+ * 180 tests stayed green while a runtime fixture found zero click handlers. So the walk carries a
+ * LOAD SCOPE instead of a boolean: the file's top level, the body of any IIFE it evaluates, and the
+ * body of any local function something in that scope CALLS.
+ *
+ * The same walk carries the locals bound to the document, because `const doc = document` renames
+ * the root and the chain no longer bottoms out at the identifier this was looking for.
+ *
+ * WHAT IT DELIBERATELY DOES NOT CLAIM. "Called during load" is decided structurally, from a call
+ * whose callee is a bare name declared in a scope already known to run at load — plus a function
+ * handed to one of the Array methods that invoke synchronously. Everything indirect is out of
+ * reach without a type system and is NOT reported: `table[key]()`, `(cond ? a : b)()`,
+ * `fn.call(...)` through a variable, `eval`/`new Function`, a helper reached only as a property of
+ * an object, and a document obtained from a function's return value. Deferred registration —
+ * `addEventListener`, `setTimeout`, `queueMicrotask`, a promise callback — is not load-time work
+ * and is correctly silent. A check that claimed those too would be guessing, and a gate that
+ * guesses is how this issue got here.
  */
 export function domAccessOutsideFunctions(script: DashboardScript): string[] {
+  const sf = script.ast;
   const out: string[] = [];
-  const rootsAtDocument = (n: ts.Node): boolean => {
+  const at = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const report = (n: ts.Node): void => {
+    out.push(`${script.name}:${at(n)} ${n.getText(sf).slice(0, 70)}`);
+  };
+
+  // `window.document` and its computed twin `window["document"]`. The dotted spelling was already
+  // covered; the bracketed one is the same access and was silent.
+  const isGlobalDocument = (n: ts.Node): boolean => {
+    if (ts.isPropertyAccessExpression(n)) {
+      return (
+        n.name.text === "document" && ts.isIdentifier(n.expression) && GLOBAL_ROOTS.has(n.expression.text)
+      );
+    }
+    if (ts.isElementAccessExpression(n)) {
+      return (
+        ts.isIdentifier(n.expression) &&
+        GLOBAL_ROOTS.has(n.expression.text) &&
+        ts.isStringLiteralLike(n.argumentExpression) &&
+        n.argumentExpression.text === "document"
+      );
+    }
+    return false;
+  };
+
+  /** Does this member chain bottom out at the document — directly, via a global, or via an alias? */
+  const rootsAtDocument = (n: ts.Node, aliases: ReadonlySet<string>): boolean => {
     let cur: ts.Node = n;
     for (;;) {
-      if (ts.isIdentifier(cur)) return cur.text === "document";
-      // `window.document?.getElementById(...)` roots at `window`, not `document` — the spelling
-      // review used to slip past this. A global root followed by `.document` IS the document.
-      if (
-        ts.isPropertyAccessExpression(cur) &&
-        cur.name.text === "document" &&
-        ts.isIdentifier(cur.expression) &&
-        GLOBAL_ROOTS.has(cur.expression.text)
-      ) {
-        return true;
-      }
+      if (ts.isIdentifier(cur)) return cur.text === "document" || aliases.has(cur.text);
+      if (isGlobalDocument(cur)) return true;
       if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) cur = cur.expression;
       else if (ts.isNonNullExpression(cur) || ts.isParenthesizedExpression(cur)) cur = cur.expression;
       else return false;
     }
   };
-  const at = (n: ts.Node): number =>
-    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+
   // AN IIFE WRAPPER IS STILL MODULE SCOPE. Every one of these modules is `(function () { … })()`,
   // so treating any enclosing function as "inside a function" made this check vacuous — it could
   // never fire, on any module. The wrapper runs at load exactly as bare top-level code would.
@@ -1007,28 +1384,117 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
     if (!ts.isCallExpression(n)) return null;
     let callee: ts.Node = n.expression;
     while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+    // `(function () { … }).call(this)` runs just as immediately as `(function () { … })()`.
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      (callee.name.text === "call" || callee.name.text === "apply")
+    ) {
+      callee = callee.expression;
+      while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+    }
     return ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) ? callee.body : null;
   };
 
-  const visit = (n: ts.Node, inFunction: boolean): void => {
-    // Descend into the wrapper's BODY at the CURRENT scope. Walking its children generically hits
-    // the FunctionExpression itself, which then sets inFunction — which is why the first attempt at
-    // this still reported nothing for a DOM read sitting directly inside the wrapper.
-    const body = iifeBody(n);
-    if (body) {
-      ts.forEachChild(body, (c) => visit(c, inFunction));
-      return;
+  // Array methods that invoke their callback SYNCHRONOUSLY, so `ids.forEach(wire)` at load scope
+  // runs wire at load. setTimeout/queueMicrotask/then are deliberately absent: those run after the
+  // parser is done, which is the whole point of deferring to them.
+  const SYNC_INVOKERS = new Set([
+    "forEach",
+    "map",
+    "filter",
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "flatMap",
+    "reduce",
+    "sort",
+  ]);
+
+  /** What a scope knows: its callable local functions, and its locals bound to the document. */
+  interface LoadScope {
+    fns: Map<string, ts.Node>;
+    docs: Set<string>;
+  }
+
+  const collect = (body: ts.Node, outer: LoadScope): LoadScope => {
+    const fns = new Map(outer.fns);
+    const docs = new Set(outer.docs);
+    const walk = (n: ts.Node): void => {
+      if (ts.isFunctionDeclaration(n)) {
+        if (n.name) fns.set(n.name.text, n);
+        return; // its body is a scope of its own, visited only if something calls it
+      }
+      if (isFunctionLike(n)) return;
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        let init: ts.Node = n.initializer;
+        while (ts.isParenthesizedExpression(init)) init = init.expression;
+        if (ts.isFunctionExpression(init) || ts.isArrowFunction(init)) fns.set(n.name.text, init);
+        // ONLY the document itself, never something derived from it: `const box =
+        // document.getElementById(...)` binds an element, and treating that as an alias would
+        // report every later use of a capture the module made perfectly legitimately.
+        else if ((ts.isIdentifier(init) || isGlobalDocument(init)) && rootsAtDocument(init, docs)) {
+          docs.add(n.name.text);
+        }
+      }
+      ts.forEachChild(n, walk);
+    };
+    // To a fixpoint, so `const d2 = doc` is an alias whichever order the two lines appear in.
+    for (let seen = -1; seen !== docs.size;) {
+      seen = docs.size;
+      ts.forEachChild(body, walk);
     }
-    if (isFunctionLike(n)) {
-      ts.forEachChild(n, (c) => visit(c, true));
-      return;
-    }
-    if (!inFunction && (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n))) {
-      if (rootsAtDocument(n)) out.push(`${script.name}:${at(n)} ${n.getText(script.ast).slice(0, 70)}`);
-    }
-    ts.forEachChild(n, (c) => visit(c, inFunction));
+    return { fns, docs };
   };
-  ts.forEachChild(script.ast, (c) => visit(c, false));
+
+  const visited = new Set<ts.Node>();
+
+  const scan = (body: ts.Node, outer: LoadScope): void => {
+    const scope = collect(body, outer);
+    const enter = (fn: ts.Node): void => {
+      if (visited.has(fn)) return; // and it stops mutual recursion walking forever
+      visited.add(fn);
+      const inner = (fn as ts.FunctionLikeDeclaration).body;
+      if (inner) scan(inner, scope);
+    };
+    const visit = (n: ts.Node): void => {
+      const immediate = iifeBody(n);
+      if (immediate) {
+        scan(immediate, scope);
+        return;
+      }
+      if (ts.isCallExpression(n)) {
+        const callee = n.expression;
+        if (ts.isIdentifier(callee) && scope.fns.has(callee.text))
+          enter(scope.fns.get(callee.text) as ts.Node);
+        if (ts.isPropertyAccessExpression(callee) && SYNC_INVOKERS.has(callee.name.text)) {
+          for (const arg of n.arguments) {
+            if (ts.isIdentifier(arg) && scope.fns.has(arg.text)) enter(scope.fns.get(arg.text) as ts.Node);
+          }
+        }
+        ts.forEachChild(n, visit);
+        return;
+      }
+      if (isFunctionLike(n)) return; // judged on its own pass, only if something calls it at load
+      if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
+        if (rootsAtDocument(n, scope.docs)) report(n);
+      }
+      // `const { body } = document` reads a property of the document at load just as surely as
+      // `document.body` does, and the initializer alone is a bare identifier this would not flag.
+      if (
+        ts.isVariableDeclaration(n) &&
+        n.initializer &&
+        !ts.isIdentifier(n.name) &&
+        rootsAtDocument(n.initializer, scope.docs)
+      ) {
+        report(n);
+      }
+      ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(body, visit);
+  };
+
+  scan(sf, { fns: new Map(), docs: new Set() });
   return out;
 }
 
@@ -1307,4 +1773,166 @@ export function reachableFrom(graph: Map<string, Set<string>>, start: Iterable<s
     for (const next of graph.get(name) ?? []) if (!seen.has(next)) queue.push(next);
   }
   return seen;
+}
+
+// ── A TOP-LEVEL REFERENCE TO A MODULE'S GLOBAL, IN ANY SHAPE ─────────────────────────────────────
+//
+// unguardedCalls() above answers a narrower question than its name suggests: it finds
+// CallExpressions whose callee is a bare Identifier, anywhere in the script. That is ONE of the
+// shapes a missing module throws in, and the page contains the others.
+// `addEventListener("click", kevImportUrl)` throws while the ARGUMENT is evaluated, with no call
+// anywhere in the expression; `DfirTimelineView.hydrate({…})` throws on the property access, whose
+// callee is not an Identifier. Both abort the rest of the inline script exactly as a bare call
+// does, and neither was visible to a CallExpression-with-Identifier-callee visitor.
+//
+// So this asks the question the failure actually poses: does a reference to a name that only a
+// /js/ module declares get EVALUATED at load, on a path that has not first established the name
+// exists? Shape-independent, and scoped to load time — the ~600 references from inside functions
+// are contained to one interaction and are not this gate's business.
+
+/** Visit every node that RUNS when the script loads: everything outside a function, plus IIFE bodies. */
+function walkLoadTime(script: DashboardScript, fn: (n: ts.Node) => void): void {
+  // AN IIFE RUNS AT LOAD. Six of the page's load-time blocks are `(() => { … })()`, and treating
+  // any enclosing function as "contained" would have hidden every one of them — the same mistake
+  // domAccessOutsideFunctions() above had to correct.
+  const iifeBodyOf = (n: ts.CallExpression): ts.Node | null => {
+    let callee: ts.Node = n.expression;
+    while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+    return ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) ? callee.body : null;
+  };
+  const go = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const body = iifeBodyOf(n);
+      if (body) {
+        fn(n);
+        ts.forEachChild(body, go);
+        // The ARGUMENTS of an IIFE are evaluated at load too — `(fn => …)(DfirTimelineView)`.
+        for (const arg of n.arguments) go(arg);
+        return;
+      }
+    }
+    if (isFunctionLike(n)) return;
+    fn(n);
+    ts.forEachChild(n, go);
+  };
+  ts.forEachChild(script.ast, go);
+}
+
+/** Every name a classic script binds at its top level — all of which are page globals. */
+function topLevelNamesOf(script: DashboardScript): string[] {
+  const out: string[] = [];
+  const collect = (b: ts.BindingName): void => {
+    if (ts.isIdentifier(b)) {
+      out.push(b.text);
+      return;
+    }
+    for (const el of b.elements) if (ts.isBindingElement(el)) collect(el.name);
+  };
+  for (const st of script.ast.statements) {
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) collect(d.name);
+    } else if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) {
+      out.push(st.name.text);
+    }
+  }
+  return out;
+}
+
+/**
+ * The assignment forms that CREATE a global. `window.Dfir ??= …` publishes as surely as `=` does,
+ * and topLevelBindings() above already had to learn that; the same list is the right one here.
+ */
+const PUBLISH_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
+/**
+ * Every global name the page's `js/dashboard-*.js` modules put into scope, mapped to its owners.
+ *
+ * Both halves of "global" are here, because a classic script has two. A top-level `function` or
+ * `var` becomes a property of `window`; a top-level `let`/`const`/`class` does not, but it joins
+ * the shared global LEXICAL environment and is reachable by bare name from every other script on
+ * the page just the same. A harvest that read only one half would miss whichever names the next
+ * module happens to declare the other way.
+ *
+ * `window.X = …` counts only where it runs AT LOAD — at the file's top level or inside its wrapper
+ * IIFE. That is not a nicety: js/dashboard-geo.js contains `window.location = …` inside
+ * geoDownloadCsv(), which is a NAVIGATION, not a publication, and counting it made the page's
+ * ordinary `location.search` read at load look like an unguarded reference to a module global.
+ *
+ * A list of names would be simpler and would be a claim about the page that nothing checks. The
+ * page and the modules are both on disk; ask them.
+ */
+export function moduleGlobals(scripts: DashboardScript[] = dashboardScripts()): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const s of scripts) {
+    if (!/^js\/dashboard-[^/]+\.js$/.test(s.name)) continue;
+    const names = new Set<string>(topLevelNamesOf(s));
+    walkLoadTime(s, (n) => {
+      if (!ts.isBinaryExpression(n) || !PUBLISH_OPS.has(n.operatorToken.kind)) return;
+      const target = n.left;
+      if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return;
+      if (!ts.isIdentifier(target.expression) || !GLOBAL_ROOTS.has(target.expression.text)) return;
+      if (ts.isPropertyAccessExpression(target)) names.add(target.name.text);
+      else if (ts.isStringLiteralLike(target.argumentExpression)) {
+        names.add(target.argumentExpression.text);
+      }
+    });
+    for (const name of names) out.set(name, [...(out.get(name) ?? []), s.name]);
+  }
+  return out;
+}
+
+/**
+ * Every reference to one of `names` that is evaluated at LOAD without a `typeof` guard on that name.
+ *
+ * Any shape: a call, a bare reference passed as an argument, a namespace member access, an
+ * initialiser. All four are in the page, all four throw a ReferenceError when the module that
+ * declares the name failed to load.
+ *
+ * DELIBERATELY STRICTER THAN topLevelUnguardedRefs, and the difference is one case: a reference
+ * inside `try { … } catch {}`. That one excuses it, because a caught throw cannot abort the script.
+ * This one does not, because review found the other half of the failure: render() called into
+ * js/dashboard-collection-plan.js on its first line, both of render()'s callers swallowed the
+ * throw, and the write to DfirState.lastState() that every refresh path depends on was simply
+ * skipped. The page stayed up, said "connected (live)", and was inert. A catch converts "the script
+ * dies" into "the rest of THIS function is skipped, in silence", which is not obviously the better
+ * outcome — so at load, wrap the site in a `typeof` test rather than a `catch`.
+ */
+export function unguardedTopLevelRefs(
+  script: DashboardScript,
+  names: ReadonlySet<string>,
+): Array<{ name: string; line: number }> {
+  const out: Array<{ name: string; line: number }> = [];
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  walkLoadTime(script, (n) => {
+    if (!ts.isIdentifier(n) || !names.has(n.text)) return;
+    const parent = n.parent;
+    if (!parent) return;
+    // `typeof N` is the guard itself, and the one place the name may appear undeclared.
+    if (ts.isTypeOfExpression(parent)) return;
+    // Not a reference to the global: a property called `search`, a key called `from`, a binding
+    // that happens to share the name. Every one of these appears in the page.
+    if (ts.isPropertyAccessExpression(parent) && parent.name === n) return;
+    if ((ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)) && parent.name === n) {
+      return;
+    }
+    if (ts.isVariableDeclaration(parent) && parent.name === n) return;
+    if (ts.isFunctionDeclaration(parent) && parent.name === n) return;
+    if (ts.isClassDeclaration(parent) && parent.name === n) return;
+    if (ts.isParameter(parent) && parent.name === n) return;
+    if (ts.isBindingElement(parent) && parent.name === n) return;
+    // ONE guard predicate, not two. This function and topLevelUnguardedRefs were written
+    // independently against the same question and kept two answers to it, which differed on
+    // `try { N(); } catch {}` — this one demanded a typeof guard the other correctly did not,
+    // because a catch already stops the ReferenceError aborting the script. Two implementations of
+    // one rule is one that will rot, so this defers to isGuarded and the duplicate is gone.
+    if (isGuarded(n, n.text)) return;
+    out.push({ name: n.text, line: at(n) });
+  });
+  return out;
 }
