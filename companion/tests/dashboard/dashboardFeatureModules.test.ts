@@ -100,6 +100,13 @@ const FEATURES: Feature[] = [
     file: "dashboard-custody.js",
     publish: ["initCustodyButtons", "loadCustody", "verifyCustodyOnOpen"],
     private: ["custodyRecords", "custodyFailedPaths", "custodyVerifiedAt"],
+    // Declared late. The page guards and calls initCustodyButtons() exactly as it does the other
+    // two initializers, but this entry omitted the field, so every check keyed on
+    // `f.initializer` skipped it — and the only thing standing behind it was
+    // `expect(html).toContain("initCustodyButtons();")`, a check on prose. The manifest
+    // completeness test below now derives the expected set from the page instead of trusting
+    // this list, so a fourth initializer cannot be added without an entry either.
+    initializer: "initCustodyButtons",
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
@@ -730,14 +737,20 @@ describe("what stayed behind, on purpose", () => {
   // eighth time in this issue), and moving a listener into the module with
   // `window.document?.getElementById(...)` slipped the regex while dying at browser load. Both
   // questions are structural, so both are asked of the AST.
-  it("is called from the page as a real call, not a comment", () => {
-    const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline"));
-    const called = inline.some((s) => callsByName(s, "initTicketIntegrations"));
-    expect(called, "no CALL to initTicketIntegrations in the page — a comment does not count").toBe(true);
-  });
+  // BOTH OF THESE RAN AGAINST ONE FEATURE OF TEN. They were written for dashboard-tickets.js and
+  // hardcoded to it, so the other nine were asserted about by name in the manifest above and never
+  // actually examined. Neither check has anything ticket-specific in it.
+  it.each(FEATURES.filter((f) => f.initializer).map((f) => [f.file, f.initializer!] as const))(
+    "%s: the page really CALLS %s, not a comment mentioning it",
+    (_file, initializer) => {
+      const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline"));
+      const called = inline.some((s) => callsByName(s, initializer));
+      expect(called, `no CALL to ${initializer} in the page — a comment does not count`).toBe(true);
+    },
+  );
 
-  it("touches no DOM outside a function", async () => {
-    const module = scriptFromSource("dashboard-tickets.js", await read("dashboard-tickets.js"));
+  it.each(FEATURES.map((f) => f.file))("%s touches no DOM outside a function", async (file) => {
+    const module = scriptFromSource(file, await read(file));
     const offenders = domAccessOutsideFunctions(module);
     expect(
       offenders,
@@ -746,16 +759,41 @@ describe("what stayed behind, on purpose", () => {
     ).toEqual([]);
   });
 
-  // initCustodyButtons ran at its old position in the inline script, AFTER the custody markup.
-  // These modules are <head> scripts, so auto-running it would query for buttons that do not exist
-  // yet and wire nothing at all — a feature that silently stops working, with no error.
-  it("calls initCustodyButtons from the page rather than on module load", async () => {
-    const src = await read("dashboard-custody.js");
-    expect(src, "an auto-running IIFE would fire before the markup exists").not.toMatch(
-      /\(function initCustodyButtons/,
-    );
+  // AND NO INITIALIZER AUTO-RUNS. Every one of these is a <head> script, so a module that invoked
+  // its own initializer would query for markup that does not exist yet and wire nothing — a feature
+  // that silently stops working, with no error. Written for initCustodyButtons, true of all three.
+  it.each(FEATURES.filter((f) => f.initializer).map((f) => [f.file, f.initializer!] as const))(
+    "%s does not auto-run %s on load",
+    async (file, initializer) => {
+      const src = await read(file);
+      expect(src, "an auto-running IIFE would fire before the markup exists").not.toMatch(
+        new RegExp(`\\(function ${initializer}\\b`),
+      );
+      expect(src, "a bare self-call would fire before the markup exists").not.toMatch(
+        new RegExp(`^\\s*${initializer}\\(\\);`, "m"),
+      );
+    },
+  );
+
+  // THE MANIFEST MUST NOT BE THE SOURCE OF TRUTH FOR WHAT EXISTS.
+  //
+  // Every check above keys on `f.initializer`, so a feature whose entry omits the field is skipped
+  // in silence — which is exactly what happened to dashboard-custody.js, whose only remaining cover
+  // was `expect(html).toContain("initCustodyButtons();")`, a check on prose. Derive the expected set
+  // from the PAGE instead: every guarded initializer call site there must have a manifest entry
+  // claiming it, so a fourth one cannot be added without the entry that makes the rest of this file
+  // examine it.
+  it("has a manifest entry for every guarded initializer the page calls", async () => {
     const html = await readFile(DASHBOARD, "utf8");
-    expect(html).toContain("initCustodyButtons();");
+    const guarded = [...html.matchAll(/typeof\s+(init[A-Za-z0-9_$]*)\s*===\s*"function"/g)].map((m) => m[1]);
+    expect(
+      guarded.length,
+      "no guarded init… call sites found — this check would pass vacuously",
+    ).toBeGreaterThan(0);
+    const declared = FEATURES.map((f) => f.initializer).filter(Boolean);
+    expect([...new Set(guarded)].sort(), "the page guards an initializer no FEATURES entry declares").toEqual(
+      [...new Set(declared)].sort(),
+    );
   });
 });
 
