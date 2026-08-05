@@ -184,6 +184,24 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Deep pass (#282). Two of its four bindings used to escape and both were closed rather than
+    // published — see the module header. It calls back into the page's job registry, which is the
+    // established shape (js/dashboard-swimlane.js does it seven times), not a new dependency.
+    file: "dashboard-deep-pass.js",
+    publish: [
+      "runDeepPass",
+      "cancelDeepPass",
+      "resetDeepPass",
+      "applyDeepPassGate",
+      "loadDeepPassPreview",
+      "deepPassGuidance",
+      "deepPassBusy",
+      "deepPassJob",
+      "setDeepPassSynthesisEnabled",
+    ],
+    private: ["deepPassSynthesisEnabled", "deepPassPreviewLoaded", "deepPassPreviewSeq", "deepPassPosting"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

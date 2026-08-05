@@ -66,6 +66,13 @@
     "generateRemediation",
     "loadHuntProfile",
     "loadMcpRun",
+    "resetDeepPass",
+    "applyDeepPassGate",
+    "loadDeepPassPreview",
+    "deepPassGuidance",
+    "deepPassBusy",
+    "deepPassJob",
+    "setDeepPassSynthesisEnabled",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

@@ -497,6 +497,7 @@
     "ROUTE GET /js/dashboard-mcp.js",
     "ROUTE GET /js/dashboard-hunt-profile.js",
     "ROUTE GET /js/dashboard-derived-panels.js",
+    "ROUTE GET /js/dashboard-deep-pass.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
