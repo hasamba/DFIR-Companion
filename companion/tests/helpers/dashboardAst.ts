@@ -1906,6 +1906,152 @@ function walkLoadTime(script: DashboardScript, fn: (n: ts.Node) => void): void {
   ts.forEachChild(script.ast, go);
 }
 
+/**
+ * Every identifier this script READS without binding it anywhere in scope.
+ *
+ * The question behind it: does every name the page calls actually exist? A missing module, a typo,
+ * a renamed function and a deleted one all look the same at runtime — a ReferenceError that aborts
+ * whatever was running — and all four are decidable BEFORE merge, because this is a closed world.
+ * Every name the page may legitimately use is declared in the page, published by a module it loads,
+ * or a browser/JS built-in.
+ *
+ * SCOPE-AWARE, because the naive version is useless. The inline script references ~2,570 distinct
+ * identifiers and ~1,350 of them are locals (`e`, `msg`, `btn`, `i`) or built-ins; reporting those
+ * buries the handful that matter. Tracking a real scope chain — parameters, var/let/const, function
+ * and class declarations, catch bindings, destructuring patterns, labels — takes it to 50, of which
+ * 48 are built-ins.
+ *
+ * `var` and function declarations HOIST to the enclosing FUNCTION, not the block, which is why the
+ * chain carries a separate function-scope flag. Getting that wrong makes every `var` inside an `if`
+ * read as free. Declarations are collected before the bodies are walked, too: a function called
+ * above its own declaration is legal and this page does it constantly.
+ */
+export function freeIdentifiers(script: DashboardScript): Map<string, number> {
+  const out = new Map<string, number>();
+  const bump = (n: string): void => {
+    out.set(n, (out.get(n) ?? 0) + 1);
+  };
+
+  interface Scope {
+    names: Set<string>;
+    fn: boolean;
+    parent: Scope | null;
+  }
+  const declare = (sc: Scope, name: string, hoists: boolean): void => {
+    let target = sc;
+    if (hoists) while (!target.fn && target.parent) target = target.parent;
+    target.names.add(name);
+  };
+  const bound = (sc: Scope | null, name: string): boolean => {
+    for (let s = sc; s; s = s.parent) if (s.names.has(name)) return true;
+    return false;
+  };
+  const bindPattern = (name: ts.BindingName, sc: Scope, hoists: boolean): void => {
+    if (ts.isIdentifier(name)) {
+      declare(sc, name.text, hoists);
+      return;
+    }
+    for (const el of name.elements) {
+      if (ts.isBindingElement(el)) bindPattern(el.name, sc, hoists);
+    }
+  };
+
+  const hoistInto = (nodes: readonly ts.Node[], sc: Scope): void => {
+    const seen = (n: ts.Node): void => {
+      if (ts.isFunctionDeclaration(n) && n.name) declare(sc, n.name.text, true);
+      else if (ts.isClassDeclaration(n) && n.name) declare(sc, n.name.text, false);
+      else if (ts.isVariableStatement(n)) {
+        const hoists = !(n.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+        for (const d of n.declarationList.declarations) bindPattern(d.name, sc, hoists);
+      }
+      // `var` escapes blocks, loops and try, so keep descending through statement containers only.
+      if (
+        ts.isBlock(n) ||
+        ts.isIfStatement(n) ||
+        ts.isForStatement(n) ||
+        ts.isForOfStatement(n) ||
+        ts.isForInStatement(n) ||
+        ts.isWhileStatement(n) ||
+        ts.isDoStatement(n) ||
+        ts.isTryStatement(n) ||
+        ts.isCatchClause(n) ||
+        ts.isSwitchStatement(n) ||
+        ts.isCaseBlock(n) ||
+        ts.isCaseClause(n) ||
+        ts.isDefaultClause(n) ||
+        ts.isLabeledStatement(n)
+      ) {
+        ts.forEachChild(n, seen);
+      }
+    };
+    for (const n of nodes) seen(n);
+  };
+
+  const walk = (n: ts.Node, sc: Scope): void => {
+    if (isFunctionLike(n)) {
+      const inner: Scope = { names: new Set(), fn: true, parent: sc };
+      const fn = n as ts.FunctionLikeDeclaration;
+      // A named function expression can call itself by name from inside its own body.
+      if ((ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) {
+        inner.names.add(fn.name.text);
+      }
+      for (const p of fn.parameters) bindPattern(p.name, inner, false);
+      inner.names.add("arguments");
+      for (const p of fn.parameters) if (p.initializer) walk(p.initializer, inner);
+      if (fn.body) {
+        if (ts.isBlock(fn.body)) hoistInto(fn.body.statements, inner);
+        walk(fn.body, inner);
+      }
+      return;
+    }
+    if (ts.isBlock(n) || ts.isCaseBlock(n)) {
+      const inner: Scope = { names: new Set(), fn: false, parent: sc };
+      hoistInto(ts.isBlock(n) ? n.statements : n.clauses, inner);
+      ts.forEachChild(n, (c) => walk(c, inner));
+      return;
+    }
+    if (ts.isCatchClause(n)) {
+      const inner: Scope = { names: new Set(), fn: false, parent: sc };
+      if (n.variableDeclaration) bindPattern(n.variableDeclaration.name, inner, false);
+      hoistInto(n.block.statements, inner);
+      ts.forEachChild(n.block, (c) => walk(c, inner));
+      return;
+    }
+    if (ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) {
+      const inner: Scope = { names: new Set(), fn: false, parent: sc };
+      const init = n.initializer;
+      if (init && ts.isVariableDeclarationList(init)) {
+        for (const d of init.declarations) bindPattern(d.name, inner, false);
+      }
+      ts.forEachChild(n, (c) => walk(c, inner));
+      return;
+    }
+    if (ts.isIdentifier(n)) {
+      const p = n.parent;
+      if (!p) return;
+      // Not a READ: a property name, a name being declared, or a label.
+      if (ts.isPropertyAccessExpression(p) && p.name === n) return;
+      if (ts.isPropertyAssignment(p) && p.name === n) return;
+      if (ts.isMethodDeclaration(p) && p.name === n) return;
+      if (ts.isBindingElement(p) && (p.propertyName === n || p.name === n)) return;
+      if (ts.isLabeledStatement(p) && p.label === n) return;
+      if ((ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n) return;
+      if (ts.isVariableDeclaration(p) && p.name === n) return;
+      if (ts.isFunctionDeclaration(p) && p.name === n) return;
+      if (ts.isClassDeclaration(p) && p.name === n) return;
+      if (ts.isParameter(p) && p.name === n) return;
+      if (!bound(sc, n.text)) bump(n.text);
+      return;
+    }
+    ts.forEachChild(n, (c) => walk(c, sc));
+  };
+
+  const top: Scope = { names: new Set(), fn: true, parent: null };
+  hoistInto(script.ast.statements, top);
+  ts.forEachChild(script.ast, (c) => walk(c, top));
+  return out;
+}
+
 /** Every name a classic script binds at its top level — all of which are page globals. */
 function topLevelNamesOf(script: DashboardScript): string[] {
   const out: string[] = [];
