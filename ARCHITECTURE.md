@@ -225,22 +225,29 @@ belongs in a boundary ledger pretending to be a small fix:
    `velociraptorApi.ts` is a raw HTTP client with no domain knowledge (Platform). Until it is split
    into `integrations/push/` and `integrations/clients/`, one direction of every
    `analysis ↔ integrations` edge has to be ledgered whichever layer the directory is assigned.
-2. **`public/dashboard.html` is gated but not yet decomposed.** It is 25,571 lines, of which 19,256
-   are JavaScript inside `<script>` tags and 3,231 are CSS inside `<style>` tags — larger than
-   `pipeline.ts` and `server.ts` combined. It sits outside `companion/src/`, so until #384 wired it
-   in, neither ratchet had ever seen it, and it grew by 165 lines of script during the branch that
-   added the gates.
+2. **`public/dashboard.html` is gated and half decomposed.** Its inline JavaScript is 16,634 lines,
+   down from 19,203 when #384 wired the gates in — still larger than `pipeline.ts` and `server.ts`
+   combined, and still 14,634 lines above its 2,000-line target. The CSS half is done: 3,234 lines
+   of `<style>` became `public/css/dashboard.css`, leaving 4 lines that are a DOM node the runtime
+   writes into rather than a stylesheet. That file is now its own row above, 4× over its own limit.
 
-   Both ratchets now cover it: `check:size` holds `public/js/**.js` to the same 800-line limit and
-   freezes `dashboard.html`'s inline JS and CSS as separate shrink-only budgets, and `check:imports`
-   includes `public/js/**` so the first cycle between extracted feature modules fails a PR. The
-   markup itself is deliberately not measured — ~3,000 lines of HTML is fine; a 19,000-line program
-   inside a markup file is not.
+   `check:size` holds `public/js/**.js` to the same 800-line limit and freezes `dashboard.html`'s
+   inline JS and CSS as separate shrink-only budgets. The markup itself is deliberately not measured
+   — ~3,000 lines of HTML is fine; a 16,000-line program inside a markup file is not.
+
+   **`check:imports` does not, in practice, cover the extracted modules.** It includes `public/js/**`
+   so that "the first cycle between extracted feature modules fails a PR", but all 26 modules #415
+   has produced are classic scripts publishing onto `window` — none uses `import`/`export`, so the
+   regex-based graph sees 26 nodes and 0 edges. The real graph is ~35 edges carried by globals. That
+   pattern is deliberate (a feature must survive a sibling 404; see `public/js/dashboard-facade.js`),
+   but it routes every inter-module dependency around the gate. Tracked in #482.
 
    It is **not** in the domain map above, and that is the remaining gap: the layer/tier rules cover
-   `companion/src` only. The extraction pattern is proven (`public/js/hunt-workbench.js` and five
-   siblings are ES modules with direct vitest coverage), so the next step is moving features out,
-   not designing a second map.
+   `companion/src` only. Two extraction patterns now exist and they are not interchangeable:
+   `public/js/hunt-workbench.js` and five siblings are ES modules with direct vitest coverage, while
+   the 26 `dashboard-*.js` feature modules are classic scripts whose contract is enforced by the
+   manifest gate in `companion/tests/dashboard/dashboardFeatureModules.test.ts`. Nine of those ten
+   tier-3 features have no behavioural test of their own — the gap #479 tracks.
 
 ## Migration
 
@@ -295,7 +302,7 @@ the issue that owns the work, so no number is a blocker without an assignee:
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
-| `public/dashboard.html` inline JS | 2,000 | 18,138 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline JS | 2,000 | 16,634 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/css/dashboard.css` | 800 | 3,261 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |
