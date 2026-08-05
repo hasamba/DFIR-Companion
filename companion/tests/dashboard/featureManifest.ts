@@ -145,6 +145,18 @@ export const FEATURES: Feature[] = [
     initializer: "initMcp",
   },
   {
+    // Hunting Profile (#157). The only candidate on the board with ZERO escaping bindings: its one
+    // module-scope value is a frozen label/colour lookup, and its second function is internal.
+    // No initializer — it has no load-time DOM work to defer, so there is nothing for the page to
+    // call at load and nothing that could wire against markup that does not exist yet.
+    file: "dashboard-hunt-profile.js",
+    publish: ["loadHuntProfile"],
+    // renderHuntProfile is private too, but deliberately not listed: this check exists to catch a
+    // binding assigned without being declared, and a function declaration cannot become an implicit
+    // global. The exact-globals check above already proves it stays off window.
+    private: ["HP_STATUS"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

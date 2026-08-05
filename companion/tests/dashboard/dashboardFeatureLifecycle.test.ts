@@ -464,3 +464,107 @@ describe("what stayed behind, on purpose", () => {
     }
   });
 });
+
+// ── RUNNING initMcp() ────────────────────────────────────────────────────────────────────────────
+//
+// Review of the extraction PR found the gap this closes: initMcp() installs thirteen handlers, and
+// the committed checks only proved the function EXISTS and is CALLED once. Deleting the server
+// select, the agent run and the manual run handlers passed all 215 relevant tests — the same
+// failure mode #479 records for the swimlane, one feature later.
+//
+// A threshold would not have caught it either. `listeners.length > 8` cannot tell "all thirteen"
+// from "any nine", and reads a duplicate registration as more evidence of success. So every control
+// is named.
+describe("initMcp", () => {
+  // id -> the property MCP wires it through. Written out rather than derived from the module,
+  // because a list derived from the thing it checks agrees with it by construction.
+  const CONTROLS: Array<[string, string]> = [
+    ["mcpRunServer", "onchange"],
+    ["mcpRunTool", "onchange"],
+    ["mcpRunListToolsBtn", "onclick"],
+    ["mcpRunArgs", "oninput"],
+    ["mcpRunBrowseBtn", "onclick"],
+    ["mcpRunFile", "onchange"],
+    ["mcpRunTarget", "oninput"],
+    ["mcpAgentBtn", "onclick"],
+    ["mcpRunBtn", "onclick"],
+    ["mcpPreviewImportBtn", "onclick"],
+    ["mcpPreviewDiscardBtn", "onclick"],
+    ["mcpRunCancelBtn", "onclick"],
+    ["mcpRunRetryBtn", "onclick"],
+  ];
+
+  function fixture() {
+    const wired: string[] = [];
+    const els = new Map<string, Record<string, unknown>>();
+    const el = (id: string): Record<string, unknown> => {
+      if (!els.has(id)) {
+        const node: Record<string, unknown> = {
+          id,
+          value: "",
+          textContent: "",
+          innerHTML: "",
+          disabled: false,
+          hidden: false,
+          dataset: {},
+          style: {},
+          options: [],
+          files: [],
+          classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+          appendChild() {},
+          querySelector: () => null,
+          querySelectorAll: () => [],
+          addEventListener: (type: string) => wired.push(`${id}:${type}`),
+        };
+        // MCP wires with `el.onclick = …` / `.onchange =` / `.oninput =`, not addEventListener.
+        for (const prop of ["onclick", "onchange", "oninput"]) {
+          Object.defineProperty(node, prop, {
+            set(fn: unknown) {
+              if (typeof fn === "function") wired.push(`${id}:${prop}`);
+            },
+            get: () => undefined,
+            configurable: true,
+          });
+        }
+        els.set(id, node);
+      }
+      return els.get(id) as Record<string, unknown>;
+    };
+    const doc = {
+      getElementById: (id: string) => el(id),
+      createElement: () => el("<created>"),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+    };
+    return { wired, doc };
+  }
+
+  it("wires every control it owns, named one by one", () => {
+    const { wired, doc } = fixture();
+    const api = loadDashboardModule<{ initMcp: () => void }>("dashboard-mcp.js", [], {
+      document: doc,
+      fetch: () => new Promise(() => {}),
+      setTimeout: () => 0,
+    });
+    api.initMcp();
+    for (const [id, prop] of CONTROLS) {
+      expect(
+        wired,
+        `${id} lost its ${prop} handler — the control is dead and nothing else says so`,
+      ).toContain(`${id}:${prop}`);
+    }
+  });
+
+  it("wires nothing before the page calls it", () => {
+    // The module is a <head> script: anything it wired at load would be querying markup that does
+    // not exist yet and binding to nothing, silently.
+    const { wired, doc } = fixture();
+    loadDashboardModule("dashboard-mcp.js", [], {
+      document: doc,
+      fetch: () => new Promise(() => {}),
+      setTimeout: () => 0,
+    });
+    expect(wired, "the module wired controls at load, before #sec-mcp exists").toEqual([]);
+  });
+});
