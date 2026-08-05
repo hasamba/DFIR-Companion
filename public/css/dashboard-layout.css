@@ -1,0 +1,254 @@
+    /* Smooth the switch, but only after first paint (.theme-anim added by JS) so the initial
+   theme doesn't animate in. */
+html.theme-anim body, html.theme-anim header, html.theme-anim section,
+html.theme-anim .swimlane-wrap, html.theme-anim .asset-graph, html.theme-anim .comment-modal,
+html.theme-anim button, html.theme-anim input, html.theme-anim select, html.theme-anim textarea,
+html.theme-anim .finding, html.theme-anim .kc-phase, html.theme-anim .ph-row {
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease; }
+/* Theme picker trigger (sibling of the toolbar, pinned top-right beside the gear). */
+#themeToggle { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+  display: flex; align-items: center; border-radius: 7px; line-height: 0;
+  transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+#themeToggle:hover { color: var(--text-primary); background: var(--hover-wash); }
+/* Default to the moon; the per-theme rules above flip this for light-background themes. */
+#themeToggle .ti-sun { display: none; }
+/* Theme picker. Modelled on .jobs-menu; fixed rather than absolute so it escapes the
+   header's overflow without the header needing a stacking context. */
+.theme-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 210px; max-height: 70vh;
+  overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
+.theme-menu h3 { margin: 6px 6px 4px; font-size: 11px; color: var(--text-muted); font-weight: normal;
+  text-transform: uppercase; letter-spacing: .04em; }
+.theme-menu h3:first-child { margin-top: 2px; }
+/* justify-content is set explicitly: the global `button` rule centres its flex content,
+   and this is a menu row, so it must start at the swatch. */
+.theme-item { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%;
+  padding: 5px 8px; border: none; border-radius: 5px; background: none; color: var(--text-primary);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.theme-item:hover, .theme-item:focus-visible { background: var(--hover-wash); outline: none; }
+.theme-item:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.theme-item.active { color: var(--text-bright); font-weight: 600; }
+.theme-item.active::after { content: "✓"; margin-left: auto; color: var(--accent); }
+/* Two-tone chip: page background behind, accent in front, so a theme is recognisable
+   before it is applied. Values are generated per theme alongside the palette blocks. */
+.theme-swatch { width: 14px; height: 14px; border-radius: 4px; flex: 0 0 auto;
+  border: 1px solid var(--border-strong); }
+/* Light mode: the neutral toolbar icons are baked light-grey data-URIs — darken them so they
+   read on the now-light control faces. The white-on-blue action icons keep their buttons, so
+   they are left alone. */
+:root[data-theme="light"] #enrichToggle::before,
+:root[data-theme="light"] #anonToggle::before,
+:root[data-theme="light"] #aiToggle::before,
+:root[data-theme="light"] #captureCount::before { filter: brightness(.42) saturate(.6); }
+:root[data-theme="light"] #exportSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23586271' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 21V10'/><path d='M8 6l4-4 4 4'/><path d='M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6'/></svg>"),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
+:root[data-theme="light"] #pushSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23586271' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4z'/></svg>"),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
+/* The generic toolbar-select chevron (used before the per-select overrides win) also darkens. */
+:root[data-theme="light"] .toolbar-select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23586271' stroke-width='1.6'/></svg>"); }
+body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg-primary); color: var(--text-bright); }
+
+/* Skip link, focus ring, reduced motion and .visually-hidden are in /css/a11y.css. */
+header { padding: 10px 16px; background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
+/* The action controls live in their own wrapping flex container so the settings gear
+   (a sibling of it) is always pinned to the top-right of the first line, no matter how
+   many times the buttons wrap. The gear takes itself out of the buttons' wrap flow. */
+/* flex-basis:0 (not auto) so the gear's line-break is decided against a zero base size,
+   not toolbar-main's huge max-content — otherwise the gear gets bumped to its own line on
+   narrow screens. toolbar-main then grows to fill the row and its content wraps internally,
+   while the gear stays pinned beside it at the top-right. */
+.toolbar-main { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+/* Scope/time controls are always their own row beneath the actions (a top-border divider),
+   so the actions row + gear stay together up top. */
+.scope-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-muted);
+  flex-basis: 100%; padding-top: 9px; border-top: 1px solid var(--border-color); }
+.scope-group input[type="datetime-local"] { font-size: 12px; padding: 4px; }
+.scope-group button { padding: 4px 9px; font-size: 12px; }
+.scope-preset { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); }
+.scope-preset:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
+.toolbar-sep { width: 1px; height: 16px; background: var(--border-color); margin: 0 4px; flex-shrink: 0; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+section { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
+/* Click a section's header to collapse/expand it; state persists across reloads. */
+h2 { margin: 0 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted);
+  cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+h2:hover { color: var(--text-primary); }
+/* Drag-to-reorder sections (grip in each header; order persists in localStorage). */
+.drag-grip { cursor: grab; color: var(--accent); margin-right: 2px; font-size: 13px; user-select: none; }
+.drag-grip:active { cursor: grabbing; }
+/* Dashboard view-preset picker (toolbar icon button + popover menu, #142). */
+#dashViewBtn.dv-on { color: var(--sev-medium); }
+.dv-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 210px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4); padding: 5px; font-size: 13px; }
+.dv-item { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 5px;
+  cursor: pointer; color: var(--text-primary); white-space: nowrap; }
+.dv-item:hover { background: var(--border-subtle); }
+.dv-item .dv-tick { width: 14px; flex: 0 0 14px; color: var(--sev-low); }
+.dv-item.dv-active { color: var(--text-bright); font-weight: bold; }
+.dv-item small { color: var(--text-muted); font-weight: normal; }
+.dv-item-action { color: var(--accent); }
+.dv-sep { height: 1px; background: var(--border-color); margin: 5px 2px; }
+section.dragging { opacity: 0.45; }
+section.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+h2 .chev { font-size: 10px; color: var(--accent); transition: transform .12s; }
+section.collapsed h2 { margin-bottom: 0; }
+section.collapsed h2 .chev { transform: rotate(-90deg); }
+/* !important so it beats inline display set by JS (e.g. the synth-meta / import-meta banners,
+   which set style.display = "block" when they have content — otherwise they'd stay visible
+   in a collapsed Findings / Forensic Timeline / IOCs section). */
+section.collapsed > :not(h2) { display: none !important; }
+.manual-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 12px; }
+.manual-form input, .manual-form select { font-size: 12px; padding: 4px; background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 4px; }
+.manual-form button { padding: 4px 10px; font-size: 12px; }
+.manual-add { margin: 0 0 10px; }
+.manual-msg { color: var(--text-muted); font-size: 12px; }
+/* (+) button next to a section heading that toggles the manual add-entry form. */
+h2 .add-toggle { margin-left: 8px; padding: 0 7px; font-size: 14px; line-height: 1.3; font-weight: 700;
+  color: var(--accent); background: transparent; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;
+  vertical-align: middle; text-transform: none; }
+h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-color: var(--sev-medium); }
+.sev-Critical { color: var(--sev-critical); } .sev-High { color: var(--sev-high); }
+.sev-Medium { color: var(--sev-medium); } .sev-Low { color: var(--sev-low); } .sev-Info { color: var(--sev-info); }
+/* Severity legend next to a section heading — explains the timestamp colors. */
+.sev-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px;
+  margin-left: 10px; font-size: 10px; font-weight: 400; text-transform: none;
+  letter-spacing: 0; cursor: default; }
+.sev-legend .sev-item { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; user-select: none; }
+.sev-legend .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+.sev-legend .sev-filter { width: 11px; height: 11px; margin: 0; cursor: pointer; accent-color: currentColor; flex-shrink: 0; }
+.sev-legend .sev-item:has(.sev-filter:not(:checked)) { opacity: 0.35; text-decoration: line-through; }
+/* Source/tool filter dropdown next to the severity legend (#131 follow-up) — a faceted filter
+   built from the distinct tool names that contributed events (e.sources). */
+.src-legend { position: relative; display: inline-flex; align-items: center; margin-left: 8px;
+  cursor: default; vertical-align: middle; }
+.src-filter-btn { background: transparent; border: 1px solid var(--border-color); border-radius: 4px;
+  color: var(--text-muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0;
+  padding: 2px 8px; cursor: pointer; }
+.src-filter-btn:hover, .src-filter-btn.active { color: var(--accent); border-color: var(--accent); }
+/* Per-section corroboration lens select, shown in each title bar (Timeline / IOCs / Findings). */
+.corrob-sel { background: transparent; border: 1px solid var(--border-color); border-radius: 4px;
+  color: var(--text-muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0;
+  padding: 2px 6px; margin-left: 8px; cursor: pointer; vertical-align: middle; }
+.corrob-sel:hover { color: var(--accent); border-color: var(--accent); }
+.corrob-sel.active { color: var(--sev-low); border-color: var(--success-border); }
+.corrob-sel option { background: var(--bg-secondary); color: var(--text-bright); }
+.src-filter-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 30;
+  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 6px; min-width: 170px; max-height: 300px; overflow-y: auto;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45); display: flex; flex-direction: column; gap: 2px; }
+.src-filter-menu[hidden] { display: none; }   /* explicit — the display:flex above would override the [hidden] UA rule */
+.src-filter-menu .src-item { display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: var(--text-primary); text-transform: none; letter-spacing: 0; padding: 2px 4px;
+  border-radius: 3px; cursor: pointer; white-space: nowrap; }
+.src-filter-menu .src-item:hover { background: var(--bg-tertiary); }
+.src-filter-menu .src-filter, .src-filter-menu .ioc-type-cb, .src-filter-menu .origin-filter, .src-filter-menu .host-filter { width: 12px; height: 12px; margin: 0; cursor: pointer; accent-color: var(--accent); flex-shrink: 0; }
+.src-filter-menu .src-item-none span { font-style: italic; color: var(--text-muted); }
+.src-menu-actions { display: flex; gap: 10px; padding: 2px 4px 5px; border-bottom: 1px solid var(--border-color); margin-bottom: 3px; }
+.src-menu-link { background: transparent; border: none; color: var(--accent); font-size: 10px;
+  cursor: pointer; padding: 0; text-transform: uppercase; letter-spacing: 0.3px; }
+.src-menu-link:hover { text-decoration: underline; }
+/* Per-column sort arrows in the Forensic Timeline header (#104): ▲ asc / ▼ desc, on the
+   Timestamp column (by date) and the Message column (by severity). The active direction lights up. */
+.tl-sortarrows { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 4px; line-height: 0.8; }
+.tl-arrow { background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; font-size: 8px; line-height: 0.8; color: var(--border-strong); }
+.tl-arrow:hover { color: var(--text-muted); }
+.tl-arrow.active { color: var(--accent); }
+.tl-sevsort-label { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.3px; margin-left: 8px; }
+#timelineCount, #findingsCount { font-size: 12px; font-weight: normal; color: var(--text-muted); margin: 0 6px; letter-spacing: 0; text-transform: none; }
+.conf-badge { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; vertical-align: middle; }
+.conf-high { background: var(--success-bg); color: var(--sev-low); border: 1px solid var(--success-border); }
+.conf-mid  { background: var(--warning-bg); color: var(--help-icon-color); border: 1px solid var(--warning-border); }
+.conf-low  { background: var(--danger-bg); color: var(--badge-danger-text); border: 1px solid var(--danger-border); }
+/* Supporting-event jump links (jump to the timeline row). */
+.ev-jump { color: var(--accent); text-decoration: none; cursor: pointer; }
+.ev-jump > svg { width: 10px; height: 10px; vertical-align: -1px; }
+.ev-jump:hover { color: var(--accent-hover); border-bottom: 1px solid var(--accent-hover); }
+/* Findings — dense-table layout: grid columns instead of one crowded line. The chevron
+   (a <summary> styled as an icon) opens a full-width row revealing the confidence
+   explanation, supporting IOCs, and the cited-event timeline — native <details> toggle,
+   no extra JS wiring needed. */
+.finding-header-row, .finding { grid-template-columns: 26px 22px 92px 92px minmax(0,1fr) 108px 184px; }
+.finding-header-row {
+  display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted);
+}
+.finding {
+  display: grid; grid-template-rows: auto auto; align-items: start; column-gap: 10px;
+  border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary);
+  padding: 9px 10px; margin-bottom: 6px; position: relative;
+}
+.finding.finding-selected { background: var(--surface-selected); }
+.finding > .finding-cb { grid-column: 1; grid-row: 1; margin-top: 2px; }
+.finding-chevron {
+  grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; margin: 0; background: none; border: none;
+  color: var(--text-faint); cursor: pointer;
+}
+.finding-chevron:disabled { visibility: hidden; cursor: default; }
+.finding-chevron:hover { color: var(--accent); }
+.finding-chevron svg { width: 11px; height: 11px; transition: transform .12s; }
+.finding-chevron.open { color: var(--accent); }
+.finding-chevron.open svg { transform: rotate(90deg); }
+.finding-sev-cell { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 12px; }
+.finding-sev-cell .fsq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
+.finding-id-cell {
+  grid-column: 4; grid-row: 1; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.finding-main-cell { grid-column: 5; grid-row: 1; min-width: 0; }
+.finding-main-cell .finding-title { font-size: 13px; }
+.finding-main-cell .finding-desc {
+  display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.finding-main-cell .finding-tagline { margin-top: 4px; }
+/* Finding assignment + workflow status (#87) — icon action buttons matching the comment/tag/pin/FP
+   chrome (same border/radius/height + 11px SVG). Status is an icon whose colour = the state; its
+   native <select> overlays it transparently so a click opens the real dropdown. Assign shows the
+   person icon, plus the owner's name once assigned. */
+.finding-workflow { display: inline-flex; align-items: center; gap: 2px; }
+.fwf-btn { display: inline-flex; align-items: center; gap: 4px; background: transparent;
+  border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 10px; padding: 0 6px;
+  font-size: 11px; line-height: 18px; cursor: pointer; margin-left: 4px; }
+.fwf-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+.fwf-btn:hover { color: var(--accent); border-color: var(--accent); }
+.fwf-status-wrap { position: relative; display: inline-flex; margin-left: 4px; }
+.fwf-status-wrap .fwf-btn { margin-left: 0; }
+/* The real <select> sits invisibly on top of the icon button so the native dropdown opens on click. */
+.fwf-status-wrap .fwf-status { position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: 0; }
+.fwf-status-btn.fwf-new { color: #6aa9ff; border-color: #35507a; }
+.fwf-status-btn.fwf-in_progress { color: #e0b84a; border-color: #6a5a2a; }
+.fwf-status-btn.fwf-in_review { color: #c79bff; border-color: #5a3f7a; }
+.fwf-status-btn.fwf-resolved { color: #6bcb77; border-color: #2f6a3a; }
+.fwf-assignee.assigned { color: #6aa9ff; border-color: #35507a; }
+.fwf-assignee .fwf-initials { font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+.finding-conf-cell { grid-column: 6; grid-row: 1; display: flex; align-items: center; gap: 6px; }
+.finding-conf-cell .fcbar { width: 42px; height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
+.finding-conf-cell .fcbar > span { display: block; height: 100%; }
+.finding-conf-cell .fcpct { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-muted); }
+.finding-actions-cell { grid-column: 7; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 2px; }
+.finding-evidence-body {
+  display: none; grid-column: 1 / -1; grid-row: 2; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
+}
+.finding-evidence-body.open { display: block; }
+.finding-evidence-body .fev-row { display: flex; gap: 10px; padding: 3px 0; font-size: 12px; line-height: 1.5; }
+.finding-evidence-body .fev-k {
+  flex-shrink: 0; width: 104px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-faint); padding-top: 2px;
+}
+.finding-evidence-body .fev-v { flex: 1; min-width: 0; color: var(--text-muted); }
+.finding-evidence-body .fev-iocs { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
+.finding-evidence-body .fev-timeline { display: flex; flex-direction: column; }
+.finding-evidence-body .fev-tl-item { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border-subtle); }
+.finding-evidence-body .fev-tl-item:first-child { border-top: none; padding-top: 0; }
+.finding-evidence-body .fev-tl-time {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-faint);
+  flex-shrink: 0; white-space: nowrap;
+}
+.finding-evidence-body .fev-tl-desc { flex: 1; min-width: 0; }
+.finding-evidence-body .fev-tl-cite { flex-shrink: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+button { background: var(--accent-solid); color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+input { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); padding: 6px; border-radius: 6px; }
+#status { font-size: 12px; color: var(--text-muted); }

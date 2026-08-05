@@ -228,7 +228,7 @@ belongs in a boundary ledger pretending to be a small fix:
 2. **`public/dashboard.html` is gated and half decomposed.** Its inline JavaScript is 16,634 lines,
    down from 19,203 when #384 wired the gates in — still larger than `pipeline.ts` and `server.ts`
    combined, and still 14,634 lines above its 2,000-line target. The CSS half is done: 3,234 lines
-   of `<style>` became `public/css/dashboard.css`, leaving 4 lines that are a DOM node the runtime
+   of `<style>` became `public/css/dashboard-*.css`, leaving 4 lines that are a DOM node the runtime
    writes into rather than a stylesheet. That file is now its own row above, 4× over its own limit.
 
    `check:size` holds `public/js/**.js` to the same 800-line limit and freezes `dashboard.html`'s
@@ -304,7 +304,7 @@ the issue that owns the work, so no number is a blocker without an assignee:
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
 | `public/dashboard.html` inline JS | 2,000 | 16,634 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
-| `public/css/dashboard.css` | 800 | 3,261 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/css/dashboard-*.css` (8 parts) | 800 | **489 max — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
 | Boundary ledger | 10 | 47 | shrinks as the above land |
@@ -319,7 +319,7 @@ inline script grew by 110 lines and `src/analysis/` gained six files. That is no
 gates — they froze the new numbers as soon as they landed — but it is the argument for #415 and #416
 having owners rather than waiting.
 
-**`public/css/dashboard.css` is a new row, not a new problem.** #415 moved the CSS out of the
+**`public/css/dashboard-*.css` was a new row, not a new problem.** #415 moved the CSS out of the
 `<style>` blocks, which would otherwise have retired the `inline CSS` budget by making the gate stop
 looking: `check-file-size.mjs` walks `public/js` and now `public/css` too, so the 3,224 lines are
 still ledgered and still shrink-only, at their new address. A budget a file can escape by changing
@@ -332,7 +332,9 @@ extension is not a budget.
 The five layers above describe `companion/src`. The browser half has its own shape, and since #415
 it has a written answer to the question that governs it.
 
-- **`public/css/dashboard.css`** — the stylesheet. Was fourteen inline `<style>` blocks.
+- **`public/css/dashboard-*.css`** — the stylesheet, in eight cascade-ordered parts. Was fourteen
+  inline `<style>` blocks, then one 3,261-line file. The parts are a pure byte split: concatenating
+  them in link order reproduces that file exactly, which is what keeps the cascade unchanged.
 - **`public/js/dashboard-*.js`** — pure helpers extracted from the inline script: escaping, time
   formatting, text and prevalence shapes, glyphs, filters, IOC verdicts, value derivations and HTML
   fragment builders. Classic scripts rather than ES modules, deliberately;

@@ -25,25 +25,60 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const ROLE_MAP_PATH = join(here, "role-map.json");
 export const DASHBOARD_PATH = join(here, "..", "..", "..", "public", "dashboard.html");
 
+const css = (name: string): string => join(here, "..", "..", "..", "public", "css", name);
+
 /**
- * The stylesheet #415 moved dashboard.html's fourteen inline <style> blocks into.
+ * The three GENERATED parts, in cascade order. applyRoles.ts owns their contents.
  *
- * The generated token region lives HERE now — it is CSS, and it moved with the rest of the CSS.
- * The theme registry the picker reads is still in dashboard.html, because that half is JavaScript.
- * applyRoles.ts writes one region to each.
+ * dashboard-tokens.css keeps a hand-written docblock above the begin marker, so it is spliced;
+ * the two theme files are generated end to end and are rewritten wholesale.
  */
-export const DASHBOARD_CSS_PATH = join(here, "..", "..", "..", "public", "css", "dashboard.css");
+export const THEME_CSS_PARTS = [
+  css("dashboard-tokens.css"),
+  css("dashboard-themes-a.css"),
+  css("dashboard-themes-b.css"),
+];
+
+/**
+ * All eight parts of the dashboard stylesheet, IN CASCADE ORDER — the order they are linked in
+ * public/dashboard.html, which is the order they were cut from the single dashboard.css (#415).
+ *
+ * There is deliberately no DASHBOARD_CSS_PATH any more. That constant meant three incompatible
+ * things at once — a member of the read corpus, the splice target for the generated region, and a
+ * test fixture — and quietly aliasing it to one of the eight parts would have kept all three call
+ * sites compiling while two of them silently read a fraction of the stylesheet.
+ */
+export const DASHBOARD_CSS_PARTS = [
+  ...THEME_CSS_PARTS,
+  css("dashboard-layout.css"),
+  css("dashboard-panels.css"),
+  css("dashboard-timeline.css"),
+  css("dashboard-toolbar.css"),
+  css("dashboard-sections.css"),
+];
+
+/**
+ * The eight parts concatenated back into the byte-for-byte equivalent of the old dashboard.css.
+ *
+ * Joined with the EMPTY string, not a newline: the themes-b/layout boundary falls mid-line, so a
+ * "\n" join would split one source line in two. Callers that match line-anchored patterns —
+ * `\n:root {` in the theme tests — depend on this reproducing the original bytes exactly.
+ */
+export function readDashboardCss(): string {
+  return DASHBOARD_CSS_PARTS.map((p) => readFileSync(p, "utf8")).join("");
+}
 
 /**
  * Every file that can hold a `--c-<hex>` reference, read as one corpus.
  *
  * Usage counts decide which member's colour a role adopts, so they have to see all of it: the CSS
- * `var()` call sites in dashboard.css and the quoted `themeColor("--c-…")` lookups in
- * dashboard.html's inline script. Counting only one file would silently re-weight every role — and
- * the audit would still print a clean table, because a variable with fewer call sites looks like a
- * variable with fewer call sites, not like a bug.
+ * `var()` call sites across all eight stylesheet parts and the quoted `themeColor("--c-…")` lookups
+ * in dashboard.html's inline script. Counting only one file would silently re-weight every role —
+ * and the audit would still print a clean table, because a variable with fewer call sites looks
+ * like a variable with fewer call sites, not like a bug. That is why this lists all eight parts
+ * rather than only the three the generator writes.
  */
-export const THEME_SOURCES = [DASHBOARD_PATH, DASHBOARD_CSS_PATH];
+export const THEME_SOURCES = [DASHBOARD_PATH, ...DASHBOARD_CSS_PARTS];
 
 export interface BaselineEntry {
   dark: string;

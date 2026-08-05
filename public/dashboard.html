@@ -205,9 +205,23 @@
        No angle-bracketed tag names in this comment, on purpose: tests/reports/safeDomPolicy
        finds inline blocks by regex over the raw file, so a literal one written here reads to it
        as a real, un-nonced block. -->
-  <link rel="stylesheet" href="/css/dashboard.css" />
+  <!-- THE ORDER OF THESE EIGHT IS THE CASCADE, and it is the concatenation order of the single
+       dashboard.css they were cut from (#415). They are a pure byte split: rules that used to
+       resolve a specificity tie by sitting later in one file now resolve it by sitting in a later
+       FILE, so reordering these lines silently changes the page. tests/reports/dashboardCss.test.ts
+       asserts the set and the order against src/http/staticAssets.ts, and that every @keyframes an
+       animation names is defined somewhere in the union — a keyframe resolves by NAME across the
+       whole document, so a dropped link costs an animation with nothing else looking wrong. -->
+  <link rel="stylesheet" href="/css/dashboard-tokens.css" />
+  <link rel="stylesheet" href="/css/dashboard-themes-a.css" />
+  <link rel="stylesheet" href="/css/dashboard-themes-b.css" />
+  <link rel="stylesheet" href="/css/dashboard-layout.css" />
+  <link rel="stylesheet" href="/css/dashboard-panels.css" />
+  <link rel="stylesheet" href="/css/dashboard-timeline.css" />
+  <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
+  <link rel="stylesheet" href="/css/dashboard-sections.css" />
   <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
-       Linked after dashboard.css so it is last in the cascade. It was already last against the
+       Linked after the dashboard sheets so it is last in the cascade. It was already last against the
        inline block that used to sit here, and #415 made it last against the other thirteen too —
        they were interleaved through the body, so until now they came after it. -->
   <link rel="stylesheet" href="/css/a11y.css" />

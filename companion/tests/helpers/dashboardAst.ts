@@ -2052,6 +2052,48 @@ export function freeIdentifiers(script: DashboardScript): Map<string, number> {
   return out;
 }
 
+/**
+ * Every place `name` is CALLED on a path that runs at load, with its line.
+ *
+ * DELIBERATELY NARROWER THAN callsByName(), which answers "is this name called anywhere the page
+ * can reach" — a different question, and the wrong one for an initializer. Review found three
+ * shapes that satisfied reachability while the feature never initialised:
+ *
+ *   document.addEventListener("dfir-never", () => initSwimlane());   // never fires
+ *   function dead() { initSwimlane(); } void dead;                   // never called
+ *   el.onclick = () => initSwimlane();                               // needs a click
+ *
+ * walkLoadTime refuses to enter a function body that is not immediately invoked, so all three are
+ * invisible here and only a real load-time call counts. Returning every site rather than a boolean
+ * is what lets a caller demand EXACTLY ONE: these initializers are not idempotent, and a second
+ * call stacks listeners and a ResizeObserver.
+ *
+ * Callee spellings collapsed on purpose — `(f)()`, `f.call(this)` and `f.apply(null, [])` all
+ * invoke f, and an auto-run check that recognised only the bare shape was bypassed by the parens.
+ */
+export function loadTimeCallsTo(script: DashboardScript, name: string): number[] {
+  const out: number[] = [];
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  walkLoadTime(script, (n) => {
+    if (!ts.isCallExpression(n)) return;
+    let callee: ts.Node = n.expression;
+    while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+    // `f.call(…)` / `f.apply(…)` — the invoked function is the object, not the property.
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      (callee.name.text === "call" || callee.name.text === "apply")
+    ) {
+      let target: ts.Node = callee.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target) && target.text === name) out.push(at(n));
+      return;
+    }
+    if (ts.isIdentifier(callee) && callee.text === name) out.push(at(n));
+  });
+  return out;
+}
+
 /** Every name a classic script binds at its top level — all of which are page globals. */
 function topLevelNamesOf(script: DashboardScript): string[] {
   const out: string[] = [];

@@ -36,16 +36,27 @@ export const DASHBOARD_HELPER_FILES = [
 ] as const;
 
 /**
- * public/css/dashboard.css on its own.
+ * Every `/css/` stylesheet the dashboard links, IN DOCUMENT ORDER, concatenated.
  *
  * For suites whose subject IS the CSS — the Settings search and Essential-mode rules, which are
  * deliberately implemented as stylesheet rules rather than render-time branches so a late status
  * answer cannot miss them. Those read the stylesheet directly rather than the whole client source,
  * because a selector assertion that accidentally matched a string inside a JS module would pass
  * for the wrong reason.
+ *
+ * DERIVED FROM THE MARKUP, not a list kept here. #415 cut dashboard.css into eight parts to meet
+ * its 800-line limit, and a hard-coded list would have to be edited again at the ninth — silently,
+ * because a missing part reads as "that rule was deleted" and the suites here would agree.
+ *
+ * THE `/css/` PREFIX IS LOAD-BEARING. dashboard.html also links /vendor/leaflet/leaflet.css, first
+ * in the cascade; matching every `rel="stylesheet"` would pull 661 lines of vendored CSS into this
+ * corpus and into every assertion built on it. Same regex as settingsSearch.test.ts uses.
  */
 export function dashboardStylesheet(): string {
-  return readFileSync(new URL("../../../public/css/dashboard.css", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const hrefs = [...html.matchAll(/<link[^>]+href="(\/css\/[^"]+)"/g)].map((m) => m[1]);
+  if (hrefs.length === 0) throw new Error("no /css/ stylesheets linked from dashboard.html");
+  return hrefs.map((h) => readFileSync(new URL(`../../../public${h}`, import.meta.url), "utf8")).join("\n");
 }
 
 /**
@@ -84,11 +95,7 @@ export function dashboardClientSource(): string {
   // different file. Where a test cares WHERE something lives — the CSP nonce on inline blocks, the
   // report logo's FileReader — read that file directly instead.
   const tagged = [...html.matchAll(/<script[^>]*\ssrc="\/js\/(dashboard-[^"]+)"/g)].map((m) => m[1]);
-  return [
-    html,
-    read("../../../public/css/dashboard.css"),
-    ...tagged.map((f) => read(`../../../public/js/${f}`)),
-  ].join("\n");
+  return [html, dashboardStylesheet(), ...tagged.map((f) => read(`../../../public/js/${f}`))].join("\n");
 }
 
 /**

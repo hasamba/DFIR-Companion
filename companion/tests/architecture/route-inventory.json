@@ -503,7 +503,14 @@
     "ROUTE GET /js/a11y/describe-as-table.js",
     "ROUTE GET /js/a11y/tooltips.js",
     "ROUTE GET /css/a11y.css",
-    "ROUTE GET /css/dashboard.css",
+    "ROUTE GET /css/dashboard-tokens.css",
+    "ROUTE GET /css/dashboard-themes-a.css",
+    "ROUTE GET /css/dashboard-themes-b.css",
+    "ROUTE GET /css/dashboard-layout.css",
+    "ROUTE GET /css/dashboard-panels.css",
+    "ROUTE GET /css/dashboard-timeline.css",
+    "ROUTE GET /css/dashboard-toolbar.css",
+    "ROUTE GET /css/dashboard-sections.css",
     "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
 }
