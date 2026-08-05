@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contrastHex as contrast, hexToRgb, relLuminance } from "../../scripts/theme/contrast.js";
-import { DASHBOARD_CSS_PATH, DASHBOARD_PATH } from "../../scripts/theme/loadBaseline.js";
+import { DASHBOARD_PATH, readDashboardCss } from "../../scripts/theme/loadBaseline.js";
 import {
   CANONICAL_HUE,
   deltaE,
@@ -32,7 +32,8 @@ import {
 import { IMPORTED_THEMES } from "../../scripts/theme/vendor/themePalettes.js";
 
 /** The stylesheet: every generated `:root[data-theme="…"]` block and the token region. */
-const dashboard = readFileSync(DASHBOARD_CSS_PATH, "utf8");
+// All eight stylesheet parts, concatenated back into the bytes the single dashboard.css held.
+const dashboard = readDashboardCss();
 
 /** The page: the generated DFIR_THEMES registry the theme picker reads. */
 const dashboardHtml = readFileSync(DASHBOARD_PATH, "utf8");

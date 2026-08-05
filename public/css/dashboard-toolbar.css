@@ -1,0 +1,442 @@
+/* Toolbar state toggles (AI / Enrich / Anon) — ONE consistent look, distinct from the blue
+   action buttons: muted when inactive, teal when active. A box-shadow "border" keeps them
+   the same height as the borderless action buttons (no layout shift). */
+.toggle-btn { background: var(--bg-tertiary); color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border-color); font-weight: 600; }
+.toggle-btn:hover { color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.toggle-btn.on { background: var(--brand-teal-deep); color: var(--brand-teal-ink); box-shadow: inset 0 0 0 1px var(--brand-teal-bright); }
+.toggle-btn.on:hover { background: var(--brand-teal); }
+.toggle-btn.na { color: var(--text-faint); box-shadow: inset 0 0 0 1px var(--border-color); cursor: default; }
+/* Toolbar dropdowns (Export / Push) — styled to match the buttons (the native select chrome
+   looked out of place), with a custom chevron and matching height/border. */
+.toolbar-select { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 7px 30px 7px 12px; font: inherit; cursor: pointer; -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center; }
+.toolbar-select:hover { border-color: var(--border-strong); }
+.toolbar-select:focus { outline: none; border-color: var(--accent-solid); }
+.toolbar-select option { background: var(--bg-elevated); color: var(--text-bright); }
+/* ── Toolbar action icons ───────────────────────────────────────────────────────────
+   Each action button carries an icon via ::before (NOT a child element) so it survives
+   the textContent rewrites of the Enrich/Anon/AI toggles and the Collapse/Expand button.
+   In .icons-only mode (auto-applied by fitToolbar() when the row would wrap) the labels
+   collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
+   hover tooltips (data-tip) keep every icon discoverable. */
+#connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
+#aiToggle::before, #synthesize::before, #secondOpinion::before, #deepPassBtn::before, #importBtn::before, #importCaseBtn::before,
+#importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
+#toggleAll::before, #toggleSearchBar::before {
+  content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
+  margin-right: 6px; background: no-repeat center / contain; }
+#connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
+#newCaseBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2'/><path d='M12 8v8M8 12h8'/></svg>"); }
+#enrichToggle::before{ background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='M21 21l-4.3-4.3'/></svg>"); }
+#anonToggle::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3l18 18'/><path d='M10.6 10.6a2 2 0 0 0 2.8 2.8'/><path d='M9.5 5.2A9.5 9.5 0 0 1 21 12a13 13 0 0 1-2 2.6M6 6.3A13 13 0 0 0 3 12a9.5 9.5 0 0 0 12.5 5.8'/></svg>"); }
+#aiToggle::before    { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z'/><path d='M18.5 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'/></svg>"); }
+#synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
+/* Presentation mode (#177) — a "play" triangle inside a slide frame (projector/slideshow). */
+#presentBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><path d='M10 8l4 2.5-4 2.5z' fill='%23cbd3df'/><path d='M12 17v4M8 21h8'/></svg>"); }
+/* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
+#secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
+/* Deep pass (#204) — stacked layers under a magnifier: reading EVERY layer of the timeline, not
+   the one prompt's worth normal synthesis sees. */
+#deepPassBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 2 3 7l9 5 9-5z'/><path d='M3 12l9 5 9-5'/><path d='M3 17l9 5 9-5'/></svg>"); }
+#importBtn::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v11'/><path d='M8 10l4 4 4-4'/><path d='M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2'/></svg>"); }
+/* Import case (#88) — an archive box, distinct from the evidence-import down-arrow: this restores a whole packaged case (snapshot or IRIS). */
+#importCaseBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 8v13H3V8'/><rect x='1' y='3' width='22' height='5' rx='1'/><path d='M10 12h4'/></svg>"); }
+/* Undo / redo the latest import (#76) — curved arrows, distinct from the synthesize refresh circle. */
+#importUndoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 14 4 9l5-5'/><path d='M4 9h11a5 5 0 0 1 0 10h-4'/></svg>"); }
+#importRedoBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m15 14 5-5-5-5'/><path d='M20 9H9a5 5 0 0 0 0 10h4'/></svg>"); }
+#toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
+/* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
+   labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
+   a ::before (replaced elements), so the icon rides as a background layer beside the chevron, and
+   the selected-value text is hidden via a transparent colour (the popup options stay readable). */
+#exportSelect, #pushSelect { background-repeat: no-repeat, no-repeat;
+  background-position: left 9px center, right 8px center; background-size: 15px 15px, 11px 11px;
+  color: transparent; width: 50px; padding: 7px 21px 7px 25px; }
+/* Undo / redo (#76) join the ALWAYS-icon-only group (like Export/Push) — their labels never show,
+   so they add no label width and can't push the toolbar into the collapsed icons-only state. */
+#toggleAll, #toggleSearchBar, #importUndoBtn, #importRedoBtn, #importCaseBtn { font-size: 0; padding-left: 9px; padding-right: 9px; }
+#toggleAll::before, #toggleSearchBar::before, #importUndoBtn::before, #importRedoBtn::before, #importCaseBtn::before { margin-right: 0; }
+/* Search toggle — magnifier (white stroke, like the other primary action icons). It toggles the
+   search/filter row below; while any filter is active it adopts the house "active" teal so a
+   collapsed row still signals the view is filtered. */
+#toggleSearchBar::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>"); }
+#toggleSearchBar.has-filter { background: var(--brand-teal-deep); box-shadow: inset 0 0 0 1px var(--brand-teal-bright); }
+#toggleSearchBar.has-filter:hover { background: var(--brand-teal); }
+#exportSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 21V10'/><path d='M8 6l4-4 4 4'/><path d='M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6'/></svg>"),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
+#pushSelect { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4z'/></svg>"),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%239aa4b2' stroke-width='1.6'/></svg>"); }
+/* Tight-mode collapse — when even the labelled actions won't fit, fitToolbar() adds .icons-only
+   and the remaining labels go to zero width (icon px size is immune to font-size:0). Export/Push/
+   Collapse are already icon-only above, so this only affects the seven labelled buttons. */
+.toolbar-main.icons-only button { font-size: 0; padding-left: 9px; padding-right: 9px; }
+.toolbar-main.icons-only button::before { margin-right: 0; }
+/* The capture count carries a camera icon (always shown). When space is tight the word
+   "Screenshots:" drops and only the camera + number remain, and the AI-status badge is
+   compacted (not hidden) — its colored pill (grey/green/yellow/red) still conveys the state
+   at a glance, the verbose text truncates with an ellipsis, and the full string stays on
+   hover (title) — so "(see AI status)" messages always have something to point at. */
+#captureCount::before { content: ""; display: inline-block; width: 14px; height: 14px;
+  vertical-align: -2px; margin-right: 5px; background: no-repeat center / contain;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/><circle cx='12' cy='13' r='4'/></svg>"); }
+.toolbar-main.icons-only #aiStatus { max-width: 104px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }  /* compact, never hidden — the colored pill still shows the state */
+.toolbar-main.icons-only .cc-label { display: none; }
+.toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
+#caseId { width: 120px; }                                  /* sized for INC-YYYY-NNN; content scrolls for longer ids */
+.toolbar-main.icons-only #caseId { width: 100px; }        /* narrow further when tight */
+/* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
+   CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
+.tip { position: fixed; z-index: 1000; max-width: 360px; background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none; white-space: normal; }
+/* Transient toast for an action whose ONLY feedback would otherwise be the #status line in the
+   toolbar — which is scrolled out of view for anyone working further down the page, making a
+   refusal (e.g. "nothing to seed a Sigma draft from") look like a dead button. Fixed to the
+   viewport so it is seen wherever the click happened. Borrows the .tip tokens for consistency. */
+.toast { position: fixed; z-index: 1200; left: 50%; bottom: 24px; transform: translateX(-50%);
+  max-width: min(560px, 92vw); background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px; font-size: 13px;
+  line-height: 1.45; box-shadow: 0 8px 24px rgba(0,0,0,.55); pointer-events: none;
+  opacity: 0; transition: opacity .15s ease; }
+.toast.show { opacity: 1; }
+.toast.warn { border-color: var(--sev-medium); color: var(--sev-medium); }
+/* Kill-chain tactic phase view */
+.kc-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-primary); cursor: pointer; transition: background .1s; }
+.kc-phase:not(.kc-empty):hover { background: var(--bg-secondary); }
+.kc-phase.kc-empty { opacity: 0.35; cursor: default; }
+.kc-phase.kc-active { background: var(--bg-secondary); border-color: var(--border-strong); }
+.kc-phase-header { padding: 8px 10px; border-top: 3px solid var(--border-color); border-radius: 5px 5px 0 0; }
+.kc-tac { display: block; font-size: 10px; color: var(--text-muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.kc-count { font-size: 20px; font-weight: 700; display: block; line-height: 1; }
+/* Selected tactic's events render full-width below the strip — one wide wrapping line
+   per alert, so no narrow-column horizontal/vertical scrolling. */
+.kc-detail { margin-top: 8px; border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-primary); padding: 10px 14px; }
+.kc-detail-head { font-size: 14px; font-weight: 700; margin-bottom: 8px;
+  display: flex; align-items: baseline; gap: 10px; }
+.kc-detail-rows { max-height: 60vh; overflow-y: auto; }
+.kc-event-row { padding: 5px 0; border-bottom: 1px solid var(--border-subtle); display: flex;
+  gap: 12px; align-items: baseline; font-size: 13px; }
+.kc-event-row:last-child { border-bottom: none; }
+.kc-ev-time { flex-shrink: 0; font-size: 11px; }
+.kc-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+.kc-ev-mitre { flex-shrink: 0; color: var(--text-muted); }
+/* Attack Phases — temporal bursts, vertical expandable list. */
+.ph-list { display: flex; flex-direction: column; gap: 6px; }
+.ph-row { border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); overflow: hidden; }
+.ph-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+  border-left: 4px solid var(--border-color); }
+.ph-head:hover { background: var(--bg-secondary); }
+.ph-caret { color: var(--text-muted); font-size: 11px; width: 10px; flex-shrink: 0; transition: transform 0.12s; }
+.ph-row.ph-open .ph-caret { transform: rotate(90deg); }
+.ph-num { font-weight: 700; color: var(--text-primary); flex-shrink: 0; }
+.ph-label { font-weight: 600; }
+.ph-when { color: var(--text-muted); font-size: 12px; }
+.ph-meta { margin-left: auto; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.ph-events { padding: 4px 12px 8px 26px; border-top: 1px solid var(--border-subtle); }
+.ph-ev-row { padding: 5px 0; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 10px; flex-wrap: wrap; }
+.ph-ev-row:last-child { border-bottom: none; }
+.ph-ev-time { flex-shrink: 0; font-size: 11px; }
+.ph-ev-desc { flex: 1; min-width: 0; word-break: break-word; }
+/* Timeline Swimlane — Canvas-based chart: assets on Y-axis, time on X-axis. */
+.swimlane-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.swimlane-controls select { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 3px 6px; font-size: 12px; }
+.swimlane-controls button { padding: 3px 9px; font-size: 12px; }
+.swimlane-ctrl-sep { width: 1px; align-self: stretch; background: var(--border-color); margin: 0 2px; }
+.swimlane-hint { font-size: 11px; color: var(--text-dim); margin: -2px 0 8px; }
+.swimlane-hint strong { color: var(--text-primary); font-weight: 600; }
+.swimlane-selbar { display: none; align-items: center; gap: 8px; padding: 5px 0 6px; font-size: 12px; color: var(--text-muted); }
+.swimlane-selbar.active { display: flex; flex-wrap: wrap; }
+/* Brief highlight when a swimlane dot click locates its row in the timeline table,
+   or when a timeline event's finding link jumps to the finding. */
+.ev-row.ev-flash, .finding.ev-flash { animation: evFlash 1.5s ease-out; }
+@keyframes evFlash { 0%,40% { background: var(--bg-drop-active); } 100% { background: transparent; } }
+.swimlane-wrap { display: flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; background: var(--bg-primary); }
+.swimlane-labels { width: 160px; flex-shrink: 0; border-right: 1px solid var(--border-color); overflow: hidden; }
+.swimlane-label { box-sizing: border-box; display: flex; align-items: center; padding: 0 8px;
+  font-size: 11px; color: var(--text-primary); border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.swimlane-label.host { color: var(--accent); }
+.swimlane-label.account { color: var(--text-primary); }
+.swimlane-label.unassigned { color: var(--text-faint); font-style: italic; }
+.swimlane-canvas-wrap { flex: 1; min-width: 0; overflow: hidden; position: relative; }
+#swimlaneCanvas { display: block; width: 100%; cursor: crosshair; }
+#swimlaneTooltip { position: fixed; background: var(--bg-elevated); border: 1px solid var(--border-color); border-radius: 5px;
+  padding: 6px 10px; font-size: 11px; color: var(--text-bright); pointer-events: none; z-index: 999;
+  max-width: 320px; word-break: break-word; display: none; }
+.swimlane-detail { margin-top: 10px; padding: 10px 12px; background: var(--bg-primary); border: 1px solid var(--border-color);
+  border-radius: 6px; font-size: 12px; }
+.swimlane-detail-header { font-weight: 600; margin-bottom: 6px; }
+/* Help icon — opens the online user manual in a new tab. Sits immediately left of the gear and
+   matches it pixel-for-pixel so the two read as one control cluster. */
+#helpBtn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+  display: flex; align-items: center; border-radius: 7px; line-height: 0; text-decoration: none;
+  transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+#helpBtn:hover { color: var(--text-primary); background: var(--hover-wash); }
+/* Settings icon — sibling of .toolbar-main, align-self:flex-start keeps it pinned to the
+   top-right of the first line even when the action buttons wrap below it. */
+#settingsBtn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+  display: flex; align-items: center; border-radius: 7px; line-height: 0;
+  transition: color .15s, background .15s; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+#settingsBtn:hover { color: var(--text-primary); background: var(--hover-wash); }
+/* Signed-in profile menu — the final control in the header, after Settings. */
+#profileMenuWrap { position: relative; display: flex; flex-shrink: 0; align-self: flex-start; margin-top: 3px; }
+#profileMenuWrap[hidden] { display: none; }
+#profileMenuBtn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
+  display: flex; align-items: center; border-radius: 7px; line-height: 0;
+  transition: color .15s, background .15s; }
+#profileMenuBtn:hover, #profileMenuBtn[aria-expanded="true"] { color: var(--text-primary); background: var(--hover-wash); }
+.profile-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 220px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+  padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.55); }
+.profile-menu[hidden] { display: none; }
+.profile-menu-identity { display: block; padding: 7px 9px 8px; color: var(--text-muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border-subtle); }
+.profile-menu a, .profile-menu button { display: flex; width: 100%; justify-content: flex-start;
+  box-sizing: border-box; margin: 3px 0 0; padding: 7px 9px; border: none; border-radius: 5px;
+  background: none; color: var(--text-primary); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+.profile-menu a:hover, .profile-menu button:hover { background: var(--bg-hover); }
+.profile-menu #profileSignOut { color: var(--badge-danger-text); }
+/* Settings modal — flex column so the tab-bar (top) and footer (bottom) stay fixed and only the
+   active .stab-pane scrolls in between. Avoids a fixed-px header/footer height assumption, which broke
+   (footer clipped) whenever the .stab-bar wrapped to two lines. */
+.settings-modal { width: min(820px, 96vw); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+.settings-modal > h3 { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+.stab-bar { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--border-color); margin: 8px 0 14px; flex-shrink: 0; }
+.stab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted);
+  padding: 6px 16px; cursor: pointer; font-size: 12px; font-family: inherit; transition: color .12s; }
+.stab:hover { color: var(--text-primary); }
+.stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.stab-pane { display: none; overflow-y: auto; flex: 1 1 auto; min-height: 0; padding-right: 4px; }
+.stab-pane.active { display: block; }
+.sfield { margin-bottom: 10px; }
+.sfield > label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+.sfield input, .sfield select { width: 100%; box-sizing: border-box; }
+/* Dark-mode combo boxes throughout Settings (every <select>, matching the export/push .toolbar-select look).
+   Without this, selects fall back to the light browser default while the inputs around them are dark. */
+.settings-modal select { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 5px; font-size: 13px; }
+.settings-modal select:hover { border-color: var(--border-strong); }
+.settings-modal select:focus { outline: none; border-color: var(--accent-solid); }
+.settings-modal select option { background: var(--bg-elevated); color: var(--text-bright); }
+.sfield-hint { display: block; font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+.sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+.sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+.diag-support-action { min-width: 220px; }
+.settings-group-head { font-size: 11px; color: var(--accent); font-weight: 600; margin: 10px 0 4px; }
+.settings-hr { border: none; border-top: 1px solid var(--border-color); margin: 12px 0; }
+.srestart-note { font-size: 11px; color: var(--sev-medium); margin-bottom: 10px; }
+/* ── Essential / All view ───────────────────────────────────────────────────────────────
+   `data-essential` on an element means "visible in Essential mode". Everything else is hidden when
+   the modal is in Essential, so a field, group heading, or whole tab is opted IN explicitly and a
+   newly added tuning knob falls outside Essential by default — the safe way round.
+
+   Hiding TOP-LEVEL pane children is what makes group headings and <hr>s vanish along with the
+   fields under them, with no runtime pass computing whether a heading still has visible
+   children. Scoping to direct children is also what makes a blanket :not() safe: it can never
+   reach inside a field or a panel's own markup.
+
+   `!important` beats the inline display that JS toggles on panels like #claude-code-status;
+   without it a JS-shown block would leak into the Essential view. It only ever applies to
+   elements we mean to hide — a marked element doesn't match these selectors at all. */
+.settings-mode { display: flex; margin-left: auto; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.settings-mode button { background: none; border: none; color: var(--text-muted); font-size: 11px; font-weight: 500; padding: 3px 12px; cursor: pointer; }
+.settings-mode button:hover { color: var(--text-primary); background: var(--hover-wash); }
+.settings-mode button.active { background: var(--accent-solid); color: #fff; }
+.settings-modal[data-mode="essential"]:not([data-searching]) .stab:not([data-essential]) { display: none !important; }
+.settings-modal[data-mode="essential"]:not([data-searching]) .stab-pane:not([data-essential="pane"]) > *:not([data-essential]) { display: none !important; }
+.settings-modal[data-mode="essential"]:not([data-searching]) :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-essential]) { display: none !important; }
+/* ── Search ─────────────────────────────────────────────────────────────────────────────
+   `data-searching` on the modal means a non-empty query is active. The three Essential rules
+   above opt OUT of it rather than these rules out-specificing three `!important` declarations —
+   one uniform edit, and it is what lets a search reach a tab Essential hides entirely. A test
+   in tests/settings/settingsSearch.test.ts pins that opt-out onto every Essential rule.
+
+   Marking the ancestor chain in JS is what keeps these selectors this simple: no :has(), and no
+   runtime pass working out whether a container still has visible children. The last two mirror
+   the Essential pair exactly — hide unmarked top-level pane children, then unmarked fields
+   inside a marked row — so there is one shape to learn, not two. */
+.settings-search { flex: 0 1 220px; min-width: 110px; background: var(--bg-tertiary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit; font-weight: 400; }
+.settings-search::placeholder { color: var(--text-faint); }
+.settings-search:focus { outline: none; border-color: var(--accent-solid); }
+.settings-search-msg { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: auto; }
+.settings-search-msg[hidden] { display: none; }
+/* The mode toggle steps aside while searching. Leaving it live would be a dead control: search
+   has suspended Essential, so clicking it would rewrite the stored preference to no visible
+   effect. It returns, unchanged, when the box is cleared. */
+.settings-modal[data-searching] .settings-mode { display: none; }
+.settings-modal[data-searching] .stab:not([data-hit]) { display: none !important; }
+.settings-modal[data-searching] .stab-pane:not([data-hit="pane"]) > *:not([data-hit]) { display: none !important; }
+.settings-modal[data-searching] :is(.sfield-row, .sfield-row3, .sgrid) > .sfield:not([data-hit]) { display: none !important; }
+.settings-modal[data-searching] .stab[data-hit-count]::after { content: attr(data-hit-count);
+  margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--border-color); color: var(--text-muted); font-size: 10px; }
+.settings-modal[data-searching] .stab.active[data-hit-count]::after { background: var(--accent-solid); color: #fff; }
+/* No inner scroll — the whole list expands and the single .stab-pane scrollbar handles overflow. */
+.sec-checks { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+.sec-check { display: flex; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 5px; user-select: none; }
+.sec-check:hover { background: var(--hover-wash); }
+.sec-check input[type=checkbox] { width: auto; margin: 0 6px 0 0; cursor: pointer; flex-shrink: 0; }
+.drag-handle { color: var(--text-faint); cursor: grab; font-size: 14px; margin-right: 5px; flex-shrink: 0; line-height: 1; }
+.drag-handle:active { cursor: grabbing; }
+.sec-check.drag-over { box-shadow: 0 -2px 0 0 var(--accent); }
+.sec-selall { display: flex; gap: 6px; margin: 3px 0 5px; }
+.sec-selall button { font-size: 11px; padding: 2px 8px; background: var(--border-color); border: none; border-radius: 4px; color: var(--text-muted); cursor: pointer; }
+.sec-selall button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.settings-footer { margin-top: 14px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border-color); padding-top: 12px; flex-shrink: 0; }
+/* Takes the footer's remaining width and wraps (scrolling past ~4 lines) — a save error can name
+   several .env keys, and as a single non-wrapping line it was clipped to the first few words. */
+.settings-msg { font-size: 11px; margin-left: 4px; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.6em; overflow-y: auto; }
+/* Global search + time-range filter row — revealed by the toolbar search icon, hidden by default.
+   Sticky while open so it stays visible (e.g. over the Super-Timeline it also scopes) as the
+   dashboard is scrolled; [hidden] still fully removes it when the toolbar icon closes it. */
+#searchFilterBar { position: sticky; top: 0; z-index: 20; padding: 5px 16px; background: var(--bg-primary); border-bottom: 1px solid var(--border-subtle);
+  display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--text-muted); }
+#searchFilterBar[hidden] { display: none; }
+#closeSearchBar { margin-left: auto; background: transparent; border: 1px solid var(--border-color);
+  border-radius: 4px; color: var(--text-muted); cursor: pointer; padding: 2px 7px; font-size: 12px; line-height: 1.4; }
+#closeSearchBar:hover { color: var(--badge-danger-text); border-color: var(--badge-danger-text); }
+/* Import progress bar — strip at the bottom edge of the header. */
+#importProgressBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 4px; z-index: 10000;
+  overflow: hidden; display: none; pointer-events: none; background: transparent;
+}
+#importProgressBar.ipb-active { display: block; }
+#importProgressBar::after {
+  content: ''; position: absolute; top: 0; left: 0; height: 100%;
+  width: var(--ipb-w, 0%); background: var(--sev-medium);
+  box-shadow: 0 0 8px var(--sev-medium); transition: width 0.25s ease;
+}
+#importProgressBar.ipb-indeterminate::after {
+  width: 40%; transition: none;
+  animation: ipbSlide 1.5s ease-in-out infinite;
+}
+@keyframes ipbSlide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+/* Case-load progress — the overlay's staged bar, driven by /js/case-load-progress.js.
+   The fill is the floor of the last COMPLETED stage; .clp-shimmer animates the PENDING
+   segment only, which is how a stage with no signal behind it (server think time, parse,
+   render) says "working" without implying a position. */
+#caseLoadingBar { position: relative; width: 280px; height: 6px; margin: 16px auto 8px;
+  background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
+#caseLoadingBar .clp-fill { position: absolute; top: 0; bottom: 0; left: 0;
+  width: var(--clp-w, 0%); background: var(--badge-success-text); border-radius: 4px;
+  transition: width 0.25s ease; }
+#caseLoadingBar .clp-pending { position: absolute; top: 0; bottom: 0; right: 0;
+  left: var(--clp-w, 0%); overflow: hidden; }
+#caseLoadingBar.clp-shimmer .clp-pending::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+  animation: clpShimmer 1.4s ease-in-out infinite;
+}
+@keyframes clpShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+#caseLoadingPct { color: var(--text-muted); font-size: 12px; min-height: 15px; }
+/* Panel-load strip — the ~60 secondary panels that keep loading after the overlay hides.
+   Bottom edge, deliberately peripheral: it is informative, not urgent. Kept off the top edge
+   so it can never collide with #importProgressBar. */
+#panelProgressBar {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 3px; z-index: 9998;
+  overflow: hidden; display: none; pointer-events: none; background: transparent;
+}
+#panelProgressBar.ppb-active { display: block; }
+#panelProgressBar::after {
+  content: ''; position: absolute; top: 0; left: 0; height: 100%;
+  width: var(--ppb-w, 0%); background: var(--accent-solid); transition: width 0.2s ease;
+}
+#panelProgressBar.ppb-failed::after { background: var(--sev-medium); }
+/* Disk-space warning banner (#119). */
+#diskWarnBanner { display: flex; align-items: center; gap: 10px; padding: 6px 16px;
+  border-bottom: 1px solid; font-size: 12.5px; }
+#diskWarnBanner[hidden] { display: none; }
+#diskWarnBanner.dw-warning { background: var(--warning-bg); color: var(--tag-orange-text); border-color: var(--warning-border); }
+#diskWarnBanner.dw-danger  { background: #3a1800; color: #ff9933; border-color: #7a3000; }
+#diskWarnBanner.dw-critical { background: #3a0000; color: #ff5c5c; border-color: #7a0000; }
+#diskWarnBanner span { flex: 1; }
+#diskWarnBanner button { background: rgba(0,0,0,0.3); color: inherit; border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 5px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
+#diskWarnBanner button:hover { background: rgba(0,0,0,0.5); }
+/* Pre-flight warning banner (#179). */
+#preflightBanner { display: flex; align-items: flex-start; gap: 10px; padding: 7px 16px;
+  background: #3a0000; color: #ff5c5c; border-bottom: 1px solid #7a0000; font-size: 12.5px; }
+#preflightBanner[hidden] { display: none; }
+/* #preflightBanner span is in /css/a11y.css (it stops the banner forcing horizontal scroll). */
+#preflightBanner a { color: #ffaaaa; }
+#preflightBanner button { background: rgba(0,0,0,0.3); color: inherit;
+  border: 1px solid rgba(255,255,255,0.2); border-radius: 5px;
+  cursor: pointer; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+#preflightBanner button:hover { background: rgba(0,0,0,0.5); }
+/* Case lifecycle button and dropdown. */
+#lifecycleBtn { padding: 4px 7px; cursor: pointer; background: transparent;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  transition: background 0.2s; align-items: center; vertical-align: middle; }
+#lifecycleBtn:hover { background: var(--hover-wash); }
+#lifecycleBtn .lc-icon-active { color: var(--badge-success-text); display: inline-block; }
+#lifecycleBtn .lc-icon-closed { color: #ff9933; display: none; }
+#lifecycleBtn .lc-icon-archived { color: #8b8fa3; display: none; }
+#lifecycleBtn.lc-closed .lc-icon-active { display: none; }
+#lifecycleBtn.lc-closed .lc-icon-closed { display: inline-block; }
+#lifecycleBtn.lc-archived .lc-icon-active { display: none; }
+#lifecycleBtn.lc-archived .lc-icon-closed { display: none; }
+#lifecycleBtn.lc-archived .lc-icon-archived { display: inline-block; }
+#lifecycleMenu button:hover { background: var(--hover-wash); }
+#lifecycleMenu button#deleteCaseBtn:hover { background: #4a2020; }
+/* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
+#caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+  background: var(--warning-bg); color: var(--tag-orange-text); border-bottom: 1px solid var(--warning-border); font-size: 12.5px; }
+#caseMismatchBanner[hidden] { display: none; }
+#caseMismatchText { flex: 1; }
+#caseMismatchBanner button { background: var(--warning-border); color: var(--tag-orange-text); border: 1px solid var(--warning-border);
+  border-radius: 5px; cursor: pointer; padding: 3px 9px; font-size: 12px; }
+#caseMismatchBanner button:hover { background: var(--warning-bg-strong); }
+#caseMismatchDismiss { padding: 3px 8px; }
+.sf-search-wrap { position: relative; display: flex; align-items: center; }
+#globalSearch { font-size: 12px; padding: 4px 26px 4px 8px; width: 240px;
+  background: var(--bg-elevated); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 5px; }
+#globalSearch:focus { outline: none; border-color: var(--accent-solid); }
+#clearSearch { position: absolute; right: 3px; background: transparent; border: none;
+  color: var(--text-faint); cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1; }
+#clearSearch:hover { color: var(--badge-danger-text); }
+.sf-sep { width: 1px; align-self: stretch; background: var(--border-color); margin: 0 2px; }
+/* Exclude filter (#216): hide events/IOCs/findings matching any of several terms — a view-only lens. */
+.sf-exclude-wrap { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+#excludeInput { font-size: 12px; padding: 4px 8px; width: 180px;
+  background: var(--bg-elevated); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 5px; }
+#excludeInput:focus { outline: none; border-color: var(--badge-danger-text); }
+#excludeChips { display: flex; flex-wrap: wrap; gap: 4px; }
+.exclude-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+  background: var(--danger-bg); color: var(--tag-red-text); border: 1px solid var(--danger-border);
+  border-radius: 10px; padding: 2px 4px 2px 8px; max-width: 220px; }
+.exclude-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exclude-chip button { background: transparent; border: none; color: inherit; cursor: pointer;
+  padding: 0 3px; font-size: 12px; line-height: 1; opacity: 0.75; }
+.exclude-chip button:hover { opacity: 1; }
+#clearExcludeBtn { background: transparent; border: 1px solid var(--border-color); border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; padding: 2px 7px; font-size: 11px; }
+#clearExcludeBtn:hover { color: var(--badge-danger-text); border-color: var(--badge-danger-text); }
+#filterFrom, #filterTo { font-size: 12px; padding: 3px 5px; background: var(--bg-elevated);
+  color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 5px; }
+#clearFiltersBtn { background: transparent; border: 1px solid var(--border-color); border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; padding: 2px 7px; font-size: 11px; }
+#clearFiltersBtn:hover { color: var(--badge-danger-text); border-color: var(--badge-danger-text); }
+#searchMatchCount { color: var(--accent); font-size: 11px; }
+/* OCR full-text search results (#176) */
+#ocrSearchResults { padding: 6px 16px; background: var(--bg-primary); border-bottom: 1px solid var(--border-subtle); max-height: 280px; overflow-y: auto; }
+#ocrSearchResults[hidden] { display: none; }
+#ocrSearchResults .ocr-hit { display: block; padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 5px; margin-bottom: 5px; text-decoration: none; color: var(--text-primary); }
+#ocrSearchResults .ocr-hit:hover { border-color: var(--accent); background: var(--bg-secondary); }
+#ocrSearchResults .ocr-hit .ocr-file { color: var(--accent); font-size: 11px; font-family: monospace; }
+#ocrSearchResults .ocr-hit .ocr-snippet { font-size: 12px; margin-top: 2px; }
+#ocrSearchResults .ocr-hit mark { background: var(--sev-medium); color: #000; padding: 0 1px; border-radius: 2px; }
+#ocrSearchResults .ocr-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
+
+

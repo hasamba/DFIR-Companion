@@ -7,7 +7,7 @@
 // classifies by observed property, not by appearance.
 //
 // "The client source" was one file until #415 split it: the declarations and `var()` call
-// sites are in public/css/dashboard.css, the `themeColor("--c-…")` lookups are still in
+// sites are spread across the eight public/css/dashboard-*.css parts, the `themeColor("--c-…")` lookups are still in
 // dashboard.html's inline script. Both are read as one corpus (loadBaseline's
 // THEME_SOURCES), because a usage count that saw half of them would quietly re-weight
 // every role while the audit still printed a clean table.

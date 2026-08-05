@@ -1,0 +1,451 @@
+/* Catppuccin — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="catppuccin"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #1e1e2e;
+  --bg-secondary:          #272838;
+  --bg-tertiary:           #313244;
+  --bg-hover:              #45475a;
+  --bg-hover-light:        #585b70;
+  --border-color:          #45475a;
+  --text-primary:          #cdd6f4;
+  --text-bright:           #f5e0dc;
+  --text-muted:            #a6adc8;
+  --accent:                #89b4fa;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #313244;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #f38ba8;
+  --danger-bg:             #2d2e3a;
+  --badge-bg-neutral:      #1b1c27;
+  --badge-warning-text:    #f9e2af;
+  --badge-success-text:    #a6e3a1;
+  --tag-red-text:          #f38ba8;
+  --tag-purple-text:       #f5c2e7;
+  --tag-orange-text:       #fab387;
+  --tag-blue-text:         #89b4fa;
+  --tag-gray-text:         #a6adc8;
+  --tag-green-text:        #a6e3a1;
+  --help-icon-color:       #89b4fa;
+  --accent-solid-hover:    #b4befe;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #9da4be;
+  --text-faint:            #8c92ab;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #f38ba8;
+  --sev-high:              #fab387;
+  --sev-medium:            #ccb15a;
+  --sev-low:               #a6e3a1;
+  --sev-info:              #89b4fa;
+}
+
+/* Catppuccin Latte — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="catppuccin-latte"] {
+  color-scheme: light;
+  --hover-wash: rgba(0,0,0,.06);
+  --bg-primary:            #eff1f5;
+  --bg-secondary:          #e6e9ef;
+  --bg-tertiary:           #dce0e8;
+  --bg-hover:              #bcc0cc;
+  --bg-hover-light:        #acb0be;
+  --border-color:          #bcc0cc;
+  --text-primary:          #4c4f69;
+  --text-bright:           #4c4f69;
+  --text-muted:            #6c6f85;
+  --accent:                #1e66f5;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #dce0e8;
+  --modal-backdrop:        rgba(0, 0, 0, 0.5);
+  --badge-danger-text:     #d20f39;
+  --danger-bg:             #d3d6de;
+  --badge-bg-neutral:      #f2f4f7;
+  --badge-warning-text:    #df8e1d;
+  --badge-success-text:    #40a02b;
+  --tag-red-text:          #d20f39;
+  --tag-purple-text:       #ea76cb;
+  --tag-orange-text:       #fe640b;
+  --tag-blue-text:         #1e66f5;
+  --tag-gray-text:         #6c6f85;
+  --tag-green-text:        #40a02b;
+  --help-icon-color:       #1e66f5;
+  --accent-solid-hover:    #1a57d0;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #73768b;
+  --text-faint:            #84879a;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #d10e39;
+  --sev-high:              #b64400;
+  --sev-medium:            #806600;
+  --sev-low:               #1e7900;
+  --sev-info:              #155dec;
+}
+
+/* CGA — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="cga"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #000000;
+  --bg-secondary:          #001414;
+  --bg-tertiary:           #002828;
+  --bg-hover:              #008080;
+  --bg-hover-light:        #00a3a3;
+  --border-color:          #55ffff;
+  --text-primary:          #ffffff;
+  --text-bright:           #ffffff;
+  --text-muted:            #55aaaa;
+  --accent:                #ff55ff;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #002a2a;
+  --modal-backdrop:        rgba(0,0,0,0.85);
+  --badge-danger-text:     #ff55ff;
+  --danger-bg:             #330033;
+  --badge-bg-neutral:      #000000;
+  --badge-warning-text:    #ffffff;
+  --badge-success-text:    #55ffff;
+  --tag-red-text:          #ff55ff;
+  --tag-purple-text:       #ff80ff;
+  --tag-orange-text:       #ffffff;
+  --tag-blue-text:         #55ffff;
+  --tag-gray-text:         #55aaaa;
+  --tag-green-text:        #55ffff;
+  --help-icon-color:       #ffffff;
+  --accent-solid-hover:    #ff80ff;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #50a1a1;
+  --text-faint:            #478e8e;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ff55ff;
+  --sev-high:              #ffffff;
+  --sev-medium:            #feeaae;
+  --sev-low:               #55ffff;
+  --sev-info:              #60b0ff;
+}
+
+/* Ethereal — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="ethereal"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #060B1E;
+  --bg-secondary:          #0d1630;
+  --bg-tertiary:           #182341;
+  --bg-hover:              #3C486D;
+  --bg-hover-light:        #6d7db6;
+  --border-color:          #3C486D;
+  --text-primary:          #ffcead;
+  --text-bright:           #ffe3c8;
+  --text-muted:            #6d7db6;
+  --accent:                #7d82d9;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #182341;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #ED5B5A;
+  --danger-bg:             #272f47;
+  --badge-bg-neutral:      #060b18;
+  --badge-warning-text:    #E9BB4F;
+  --badge-success-text:    #92a593;
+  --tag-red-text:          #ED5B5A;
+  --tag-purple-text:       #c89dc1;
+  --tag-orange-text:       #F99957;
+  --tag-blue-text:         #7d82d9;
+  --tag-gray-text:         #6d7db6;
+  --tag-green-text:        #92a593;
+  --help-icon-color:       #7d82d9;
+  --accent-solid-hover:    #c2c4f0;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #6676ac;
+  --text-faint:            #596698;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ed5b5a;
+  --sev-high:              #f99957;
+  --sev-medium:            #a98908;
+  --sev-low:               #92a593;
+  --sev-info:              #7d82d9;
+}
+
+/* Everforest — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="everforest"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #2d353b;
+  --bg-secondary:          #343f44;
+  --bg-tertiary:           #3d484d;
+  --bg-hover:              #475258;
+  --bg-hover-light:        #4f585e;
+  --border-color:          #475258;
+  --text-primary:          #d3c6aa;
+  --text-bright:           #e5dac3;
+  --text-muted:            #859289;
+  --accent:                #7fbbb3;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #3d484d;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #e67e80;
+  --danger-bg:             #2e3539;
+  --badge-bg-neutral:      #283034;
+  --badge-warning-text:    #dbbc7f;
+  --badge-success-text:    #a7c080;
+  --tag-red-text:          #e67e80;
+  --tag-purple-text:       #d699b6;
+  --tag-orange-text:       #e69875;
+  --tag-blue-text:         #7fbbb3;
+  --tag-gray-text:         #859289;
+  --tag-green-text:        #a7c080;
+  --help-icon-color:       #7fbbb3;
+  --accent-solid-hover:    #8ed1c9;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #839087;
+  --text-faint:            #737f79;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #f3898b;
+  --sev-high:              #faab87;
+  --sev-medium:            #bcad80;
+  --sev-low:               #bad393;
+  --sev-info:              #90b1d5;
+}
+
+/* Gruvbox — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="gruvbox"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #282828;
+  --bg-secondary:          #2f2d2d;
+  --bg-tertiary:           #353231;
+  --bg-hover:              #3c3836;
+  --bg-hover-light:        #504945;
+  --border-color:          #3c3836;
+  --text-primary:          #d4be98;
+  --text-bright:           #ebdbb2;
+  --text-muted:            #bdae93;
+  --accent:                #7daea3;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #353231;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #ea6962;
+  --danger-bg:             #272423;
+  --badge-bg-neutral:      #181616;
+  --badge-warning-text:    #d8a657;
+  --badge-success-text:    #a9b665;
+  --tag-red-text:          #ea6962;
+  --tag-purple-text:       #d3869b;
+  --tag-orange-text:       #d65d0e;
+  --tag-blue-text:         #7daea3;
+  --tag-gray-text:         #bdae93;
+  --tag-green-text:        #a9b665;
+  --help-icon-color:       #7daea3;
+  --accent-solid-hover:    #8cc3b6;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #b3a58c;
+  --text-faint:            #9f937d;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ed6c64;
+  --sev-high:              #d65d0f;
+  --sev-medium:            #aea27c;
+  --sev-low:               #afbc6b;
+  --sev-info:              #89a6c4;
+}
+
+/* Hacker — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="hacker"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #000000;
+  --bg-secondary:          #001100;
+  --bg-tertiary:           #002200;
+  --bg-hover:              #003b00;
+  --bg-hover-light:        #004d00;
+  --border-color:          #003b00;
+  --text-primary:          #00ff41;
+  --text-bright:           #00ff41;
+  --text-muted:            #008f11;
+  --accent:                #00ff41;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #001a00;
+  --modal-backdrop:        rgba(0,0,0,0.85);
+  --badge-danger-text:     #ff4d4d;
+  --danger-bg:             #002600;
+  --badge-bg-neutral:      #000800;
+  --badge-warning-text:    #ffb300;
+  --badge-success-text:    #00ff41;
+  --tag-red-text:          #ff4d4d;
+  --tag-purple-text:       #c084fc;
+  --tag-orange-text:       #ffb300;
+  --tag-blue-text:         #4dabf7;
+  --tag-gray-text:         #888888;
+  --tag-green-text:        #00ff41;
+  --help-icon-color:       #00ff41;
+  --accent-solid-hover:    #00cc33;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #008610;
+  --text-faint:            #00750e;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ff4d4d;
+  --sev-high:              #ffb300;
+  --sev-medium:            #00ff41;
+  --sev-low:               #00d054;
+  --sev-info:              #b3d8ff;
+}
+
+/* Hackerman — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="hackerman"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #0B0C16;
+  --bg-secondary:          #1c1d2c;
+  --bg-tertiary:           #2d2e42;
+  --bg-hover:              #3E4058;
+  --bg-hover-light:        #6a6e95;
+  --border-color:          #3E4058;
+  --text-primary:          #ddf7ff;
+  --text-bright:           #f2fdff;
+  --text-muted:            #6a6e95;
+  --accent:                #82FB9C;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #2d2e42;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #ff6b6b;
+  --danger-bg:             #282a39;
+  --badge-bg-neutral:      #11121b;
+  --badge-warning-text:    #ffa726;
+  --badge-success-text:    #50f872;
+  --tag-red-text:          #ff6b6b;
+  --tag-purple-text:       #ba68c8;
+  --tag-orange-text:       #ffa726;
+  --tag-blue-text:         #829dd4;
+  --tag-gray-text:         #6a6e95;
+  --tag-green-text:        #50f872;
+  --help-icon-color:       #82FB9C;
+  --accent-solid-hover:    #a4fcc0;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #666a90;
+  --text-faint:            #585c7d;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ff6b6b;
+  --sev-high:              #ffa726;
+  --sev-medium:            #82fb9c;
+  --sev-low:               #24e463;
+  --sev-info:              #c2e0ff;
+}
+
+/* Kanagawa — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="kanagawa"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #1f1f28;
+  --bg-secondary:          #272730;
+  --bg-tertiary:           #2a2a37;
+  --bg-hover:              #363646;
+  --bg-hover-light:        #54546d;
+  --border-color:          #363646;
+  --text-primary:          #dcd7ba;
+  --text-bright:           #ede8d2;
+  --text-muted:            #727169;
+  --accent:                #7e9cd8;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #2a2a37;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #e82424;
+  --danger-bg:             #23232e;
+  --badge-bg-neutral:      #1a1a21;
+  --badge-warning-text:    #e6c384;
+  --badge-success-text:    #98bb6c;
+  --tag-red-text:          #e82424;
+  --tag-purple-text:       #957fb8;
+  --tag-orange-text:       #ffa066;
+  --tag-blue-text:         #7e9cd8;
+  --tag-gray-text:         #727169;
+  --tag-green-text:        #98bb6c;
+  --help-icon-color:       #7e9cd8;
+  --accent-solid-hover:    #9bb8ea;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #727169;
+  --text-faint:            #6b6a63;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ff4d43;
+  --sev-high:              #ffa066;
+  --sev-medium:            #b29b54;
+  --sev-low:               #98bb6c;
+  --sev-info:              #7e9cd8;
+}
+
+/* Lumon — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="lumon"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #16242d;
+  --bg-secondary:          #182734;
+  --bg-tertiary:           #1a2b3b;
+  --bg-hover:              #1b2d40;
+  --bg-hover-light:        #304860;
+  --border-color:          #1b2d40;
+  --text-primary:          #d6e2ee;
+  --text-bright:           #f2fcff;
+  --text-muted:            #73a6cb;
+  --accent:                #8bc9eb;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #1a2b3b;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #ff6b6b;
+  --danger-bg:             #121d2a;
+  --badge-bg-neutral:      #0c141a;
+  --badge-warning-text:    #ffa726;
+  --badge-success-text:    #66bb6a;
+  --tag-red-text:          #ff6b6b;
+  --tag-purple-text:       #ba68c8;
+  --tag-orange-text:       #ffa726;
+  --tag-blue-text:         #8bc9eb;
+  --tag-gray-text:         #73a6cb;
+  --tag-green-text:        #66bb6a;
+  --help-icon-color:       #8bc9eb;
+  --accent-solid-hover:    #b4e4f6;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #6d9dc0;
+  --text-faint:            #608bab;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #ff6b6b;
+  --sev-high:              #ffa726;
+  --sev-medium:            #d2bf84;
+  --sev-low:               #66bb6a;
+  --sev-info:              #8bc9eb;
+}
+
+/* Matte Black — MIT (c) 2026 Security Onion Solutions, LLC */
+:root[data-theme="matte-black"] {
+  color-scheme: dark;
+  --hover-wash: rgba(255,255,255,.07);
+  --bg-primary:            #121212;
+  --bg-secondary:          #1a1a1a;
+  --bg-tertiary:           #262626;
+  --bg-hover:              #333333;
+  --bg-hover-light:        #515151;
+  --border-color:          #333333;
+  --text-primary:          #bebebe;
+  --text-bright:           #eaeaea;
+  --text-muted:            #8a8a8d;
+  --accent:                #e68e0d;
+  --accent-hover:          color-mix(in oklab, var(--accent) 78%, var(--text-bright));
+  --bg-drop-active:        #262626;
+  --modal-backdrop:        rgba(0, 0, 0, 0.85);
+  --badge-danger-text:     #D35F5F;
+  --danger-bg:             #212121;
+  --badge-bg-neutral:      #0d0d0d;
+  --badge-warning-text:    #FFC107;
+  --badge-success-text:    #66bb6a;
+  --tag-red-text:          #D35F5F;
+  --tag-purple-text:       #ba68c8;
+  --tag-orange-text:       #e68e0d;
+  --tag-blue-text:         #42a5f5;
+  --tag-gray-text:         #8a8a8d;
+  --tag-green-text:        #66bb6a;
+  --help-icon-color:       #e68e0d;
+  --accent-solid-hover:    #f59e0b;
+  /* solved for contrast, not derived — see textRampSteps() */
+  --text-dim:              #828285;
+  --text-faint:            #727275;
+  /* solved for contrast AND mutual separation — see severity.ts */
+  --sev-critical:          #d35f5f;
+  --sev-high:              #e68e0d;
+  --sev-medium:            #b18f00;
+  --sev-low:               #66bb6a;
+  --sev-info:              #52aaff;
+}
+

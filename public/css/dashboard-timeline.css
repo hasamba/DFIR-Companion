@@ -1,0 +1,417 @@
+/* Timeline table layout — checkbox · star · icons | severity | timestamp | tags+message.
+   The forensic timeline uses the same bordered-card row language as Findings / IOCs: each event
+   is its own rounded card with a severity-coloured left rail, a dedicated severity column
+   (coloured square + label), and a calm monospace timestamp. Scoped to #forensicTimeline so the
+   super-timeline (which reuses .ev-row) keeps its own flat layout. */
+#forensicTimeline { container-type: inline-size; }
+.ev-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--border-subtle); padding: 3px 0; }
+#forensicTimeline .ev-row {
+  border: 1px solid var(--border-color); border-left: 3px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); padding: 4px 10px; margin-bottom: 4px;
+}
+#forensicTimeline .ev-row:hover { background: var(--bg-secondary); border-color: var(--border-strong); }
+.ev-row:hover { background: var(--bg-primary); }
+.ev-row.ev-selected { background: var(--surface-selected); }
+#forensicTimeline .ev-row.ev-selected { background: var(--surface-selected); }
+.ev-row.ev-focused { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 3px; }
+/* Severity left-rail (border-left colour) — distinct from .ev-new's green inset box-shadow, so a
+   newly-imported high-severity row shows both cues without conflict. */
+#forensicTimeline .ev-row.sevr-Critical { border-left-color: var(--sev-critical); }
+#forensicTimeline .ev-row.sevr-High     { border-left-color: var(--sev-high); }
+#forensicTimeline .ev-row.sevr-Medium   { border-left-color: var(--sev-medium); }
+#forensicTimeline .ev-row.sevr-Low      { border-left-color: var(--sev-low); }
+#forensicTimeline .ev-row.sevr-Info     { border-left-color: var(--sev-info); }
+/* Clock-skew alignment (#228): the recorded time, kept visible under the corrected one. */
+#forensicTimeline .ev-skew { color: var(--text-dim); font-size: 10.5px; white-space: nowrap; }
+/* Severity column: coloured square + label, colour driven by the .sev-<level> class. */
+.ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
+.ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
+.ev-header-sev { width: 92px; margin-right: 6px; flex-shrink: 0; }
+.ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
+/* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
+   icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
+   width budget — pin them to their natural size instead; the column's own width + margin above
+   is sized with headroom so this never overflows into the adjacent timestamp column. */
+.ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn, .ev-col-ctrl .ev-geo {
+  margin-left: 0; flex-shrink: 0;
+}
+/* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
+#forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
+.ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0; margin: 0; }
+.ev-star { background: transparent; border: 0; color: var(--border-strong); cursor: pointer; padding: 0 1px; line-height: 1; flex-shrink: 0; display: inline-flex; align-items: center; }
+.ev-star.starred, .ev-star:hover { color: var(--sev-medium); }
+.ev-star svg { width: 12px; height: 12px; }
+.ev-star.starred svg { fill: currentColor; }
+.ev-geo { background: none; border: none; cursor: pointer; padding: 0 4px; color: var(--text-faint); display: inline-flex; align-items: center; }
+.ev-geo:hover { color: var(--accent); }
+.ev-geo svg { width: 12px; height: 12px; }
+.ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: ui-monospace, Menlo, Consolas, monospace; align-self: center; color: var(--text-muted); }
+.ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+.ev-origin { color: var(--text-dim); white-space: nowrap; font-size: 11px; }
+.ev-more-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
+/* Unified per-row [details] disclosure — shared by the forensic timeline and super-timeline so both
+   consolidate their "extra" content (full text, MITRE, findings, chain-check, decoded payloads,
+   evidence, Velociraptor link) into one collapsed panel instead of always-on inline noise. */
+.ev-details-toggle { background: none; border: 1px solid var(--border-strong); border-radius: 3px; color: var(--accent); font-size: 11px; padding: 1px 5px; cursor: pointer; margin-top: 3px; }
+.ev-details-panel { margin-top: 4px; padding: 6px 8px; background: var(--bg-primary); border-left: 2px solid var(--border-strong); border-radius: 2px; font-size: 11px; color: var(--text-primary); }
+.ev-details-panel > * + * { margin-top: 4px; }
+.ev-header-row { display: flex; align-items: center; padding: 0 11px 6px 13px; margin-bottom: 1px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.ev-header-ctrl { width: 178px; margin-right: 6px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+.ev-header-time { width: 192px; flex-shrink: 0; }
+.tl-pagesize-wrap { margin-left: auto; flex-shrink: 0; }
+.tl-pagesize-sel { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-muted); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
+.tl-page-bar { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; font-size: 11px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); margin-bottom: 4px; }
+.tl-page-btn { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 4px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.tl-page-btn:disabled { opacity: 0.35; cursor: default; }
+.tl-page-btn:not(:disabled):hover { background: var(--bg-hover); border-color: var(--accent); color: #fff; }
+.tl-page-info { color: var(--text-muted); }
+/* Event-density heatmap (#219): a thin bar strip above the timeline, one bar per time bucket,
+   height ~ event count, color ~ worst severity in the bucket. Click a bar to zoom the timeline
+   to that window (reuses the same filterFrom/filterTo path as the search-bar date filters). */
+.tl-heatmap { display: flex; align-items: flex-end; gap: 1px; height: 34px; margin: 0 0 8px; padding: 3px 4px 2px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; }
+.tl-heatmap-bar { flex: 1 1 0; min-width: 2px; min-height: 2px; border-radius: 1px 1px 0 0; cursor: pointer; opacity: 0.85; }
+.tl-heatmap-bar:hover { opacity: 1; outline: 1px solid var(--text-primary); outline-offset: -1px; }
+.tl-heatmap-empty { flex: 1; font-size: 11px; color: var(--text-faint); text-align: center; align-self: center; }
+@media (max-width: 768px) { .tl-heatmap { height: 16px; padding: 2px; } .tl-heatmap-bar { border-radius: 0; } }
+.ev-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); margin-bottom: 4px; }
+.ev-bulk-bar.active { display: flex; }
+.ev-bulk-btn { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.ev-bulk-btn:hover { background: var(--bg-hover); color: #fff; border-color: var(--accent); }
+#evStarFilterBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#evStarFilterBtn.active { color: var(--sev-medium); border-color: var(--sev-medium); background: var(--warning-bg); }
+#iocFlaggedBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#iocFlaggedBtn.active { color: var(--sev-high); border-color: var(--sev-high); background: var(--warning-bg); }
+#iocSignalBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#iocSignalBtn.active { color: var(--accent); border-color: var(--accent); background: var(--bg-secondary); }
+/* Provenance filter buttons (All / Detection-linked / Telemetry-only) — mirror the signal-only toggle style. */
+.ioc-prov-filter { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.ioc-prov-btn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.ioc-prov-btn.active { color: var(--accent); border-color: var(--accent); background: var(--bg-secondary); }
+/* Per-IOC provenance badge — distinct from the verdict badge. Accent for detection, muted grey for telemetry. */
+.ioc-prov-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; }
+.ioc-prov-detection { background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--border-color); }
+.ioc-prov-telemetry { background: var(--border-subtle); color: var(--text-faint); border: 1px solid var(--border-strong); }
+/* Composite IOC risk badge (#63) — severity-keyed colours; benign/low recede. */
+.ioc-risk-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+.ioc-risk-critical { background: var(--danger-bg); color: var(--badge-danger-text); border: 1px solid var(--danger-border); }
+.ioc-risk-high { background: var(--warning-bg); color: var(--sev-high); border: 1px solid var(--warning-border); }
+.ioc-risk-medium { background: var(--warning-bg); color: var(--sev-medium); border: 1px solid var(--warning-border); }
+.ioc-risk-low { background: var(--border-subtle); color: var(--text-faint); border: 1px solid var(--border-strong); }
+.ioc-risk-benign { background: var(--success-bg); color: var(--sev-low); border: 1px solid var(--success-border); }
+.ioc-noise-chk { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-muted); cursor: pointer; }
+.ioc-noise-chk input { cursor: pointer; }
+/* IOC multi-select + bulk action bar */
+.ioc-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); margin-bottom: 4px; }
+.ioc-bulk-bar.active { display: flex; }
+.ioc-bulk-btn { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.ioc-bulk-btn:hover { background: var(--bg-hover); color: #fff; border-color: var(--accent); }
+.ioc-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0; margin: 0; }
+/* Finding multi-select + bulk action bar (mirrors the IOC bulk bar above) */
+.finding-bulk-bar { display: none; align-items: center; gap: 8px; padding: 5px 0 4px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); margin-bottom: 4px; }
+.finding-bulk-bar.active { display: flex; }
+.finding-bulk-btn { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 5px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.finding-bulk-btn:hover { background: var(--bg-hover); color: #fff; border-color: var(--accent); }
+.finding-cb { width: 13px; height: 13px; cursor: pointer; accent-color: var(--accent); }
+/* IOCs — dense-table layout, matching Findings: a grid row instead of one flowing line of
+   chips. Type in its own column, value + corroboration/provenance badges + enrichment +
+   tags stacked inside the main cell, actions right-aligned. */
+.ioc-header-row, .ioc-row { grid-template-columns: 26px 70px minmax(0,1fr) 176px; }
+.ioc-header-row {
+  display: grid; align-items: center; column-gap: 10px; padding: 0 10px 6px; font-size: 10px;
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted);
+}
+.ioc-row {
+  display: grid; align-items: start; column-gap: 10px; border: 1px solid var(--border-color);
+  border-radius: 6px; background: var(--bg-secondary); padding: 7px 10px; margin-bottom: 5px; position: relative;
+}
+.ioc-row.ioc-selected { background: var(--surface-selected); }
+.ioc-row.ioc-new { border-color: var(--accent-solid); }
+.ioc-row > .ioc-cb { margin-top: 3px; }
+.ioc-type-cell {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .03em; color: var(--text-muted); padding-top: 2px;
+}
+.ioc-main-cell { min-width: 0; line-height: 1.5; }
+.ioc-value-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ioc-value-line .qa-val { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+/* Context that must NOT live inside the indicator itself (#177) — the host a private IP belongs
+   to, an observed port, why the analyst added it. Shown beside the value, never part of it. */
+.ioc-note-chip { font-size: 10.5px; color: var(--text-muted); font-style: italic; }
+.ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
+.vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--border-color); border-radius: 5px; }
+.vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
+.vql-result th, .vql-result td { border: 1px solid var(--border-color); padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
+.vql-result th { background: var(--bg-secondary); position: sticky; top: 0; }
+/* Synthesis freshness + what-changed diff (shown above the findings) */
+.synth-meta .sm-perf { color: var(--text-faint); font-size: 11px; }
+.synth-meta { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; padding: 6px 9px;
+  border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); }
+.synth-meta .sm-line { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.synth-meta .sm-added { color: var(--sev-low); } .synth-meta .sm-removed { color: var(--badge-danger-text); } .synth-meta .sm-changed { color: var(--sev-medium); }
+.synth-meta details { margin-top: 5px; } .synth-meta summary { cursor: pointer; color: var(--accent); }
+.synth-meta .sm-item { display: block; margin: 2px 0 2px 8px; }
+/* Immediate FP cascade (#12): a conclusion neutralized the instant a supporting finding was marked
+   false positive, pending the queued re-synthesis. */
+.stale-badge { color: var(--sev-medium); font-size: 11px; font-weight: 600; white-space: nowrap; }
+/* Rabbit-hole detection (#13): relevance chips on findings. */
+.rel-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
+.rel-rabbit { color: var(--badge-warning-text); border: 1px solid var(--warning-border); background: var(--warning-bg); }
+.rel-parked { color: var(--text-muted); border: 1px solid var(--border-color); background: var(--bg-secondary); }
+.hyp-needs-review { color: var(--sev-medium); font-size: 11px; font-weight: 600; margin-left: 6px; }
+/* ACH-style hypotheses (#14). */
+.hyp-contra { color: var(--badge-danger-text) !important; border-color: var(--danger-border) !important; }
+.hyp-exhausted { color: var(--text-muted); font-size: 11px; font-weight: 600; margin-left: 6px; }
+.hyp.exhausted { opacity: 0.7; }
+.hyp-discriminator { font-size: 12px; color: var(--text-primary); margin: 3px 0; }
+.hyp-ach-note { color: var(--text-faint); font-size: 10px; font-weight: 400; }
+/* Falsification review (#71) — ephemeral for/against panel above the hypothesis list. */
+.hyp-rev-box { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--bg-secondary); }
+.hyp-rev-hdr { font-size: 13px; font-weight: 600; color: var(--text-bright); margin-bottom: 8px; }
+.hyp-rev-sub { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+.hyp-rev-item { border-top: 1px solid var(--border-color); padding: 9px 0; }
+.hyp-rev-title { font-size: 13px; font-weight: 600; color: var(--text-bright); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.hyp-rev-rec { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 1px 7px; }
+.hyp-rev-rec.supported { color: var(--tag-green-text); border: 1px solid var(--success-border); }
+.hyp-rev-rec.refuted { color: var(--badge-danger-text); border: 1px solid var(--danger-border); }
+.hyp-rev-rec.unknown, .hyp-rev-rec.open { color: var(--badge-warning-text); border: 1px solid var(--warning-border); }
+.hyp-rev-apply { padding: 1px 9px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.hyp-rev-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 6px 0 0; }
+@media (max-width: 720px) { .hyp-rev-cols { grid-template-columns: 1fr; } }
+.hyp-rev-cols b { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.hyp-rev-for b { color: var(--tag-green-text); }
+.hyp-rev-against b { color: var(--badge-danger-text); }
+.hyp-rev-list { margin: 3px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-primary); }
+.hyp-rev-list li { margin: 2px 0; }
+.hyp-rev-none { font-size: 12px; color: var(--text-faint); font-style: italic; margin-top: 3px; }
+.hyp-rev-rat { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-style: italic; }
+/* Prevalence baseline chips (#15b). */
+.prev-chip { font-size: 10px; font-weight: 600; border-radius: 4px; padding: 0 6px; white-space: nowrap; cursor: help; }
+.prev-common { color: var(--text-muted); border: 1px solid var(--border-color); }
+.prev-rare { color: var(--badge-warning-text); border: 1px solid var(--warning-border); }
+/* Low-relevance chip (#75) — client mirror of eventRelevance.ts's "low" tier. */
+.lowsig-chip { color: var(--text-faint); border: 1px solid var(--border-color); }
+/* Raw-file (EVTX/PCAP) prompt banner — prominent, at the top of the content. #211 */
+.raw-banner { font-size: 13px; color: var(--text-bright); margin: 0 0 12px; padding: 11px 14px;
+  border: 1px solid #7a5c1a; border-left: 4px solid #e0a72c; border-radius: 8px; background: #241a08; }
+.raw-banner .rb-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-weight: 600; margin-bottom: 4px; }
+.raw-banner .rb-files { color: var(--text-muted); margin: 3px 0 8px; word-break: break-all; }
+.raw-banner button { padding: 4px 14px; font-size: 12px; margin-right: 6px; }
+.raw-banner .rb-yes { background: #2f7d32; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+.raw-banner .rb-no { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 5px; cursor: pointer; }
+/* One row per raw file: its name, a checkbox per claiming tool, and (for archives) a password box. */
+.raw-banner .rb-row { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.raw-banner .rb-tool { font-size: 12px; opacity: 0.9; }
+.raw-banner .rb-pw { width: 130px; font-size: 12px; padding: 2px 6px; }
+/* Second LLM opinion panel (#116) — independent-model QA cross-check with per-delta accept/reject. */
+.so-panel { font-size: 12px; color: var(--text-primary); margin: 0 0 10px; padding: 9px 11px;
+  border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); }
+.so-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; }
+.so-toggle { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);
+  border-radius: 4px; width: 20px; height: 20px; line-height: 1; padding: 0; font-size: 11px; cursor: pointer; }
+.so-toggle:hover { color: var(--text-bright); border-color: var(--border-strong); }
+.so-head .so-models { font-weight: 600; color: var(--text-bright); }
+.so-head .so-agree { color: var(--sev-low); }
+.so-summary { color: var(--text-muted); margin: 0 0 8px; font-style: italic; }
+.so-empty { color: var(--sev-low); }
+.so-delta { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; margin: 4px 0;
+  border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-secondary); }
+.so-delta.so-accepted { box-shadow: inset 3px 0 0 var(--sev-low); opacity: .75; }
+.so-delta.so-rejected { box-shadow: inset 3px 0 0 var(--badge-danger-text); opacity: .6; }
+.so-delta .so-body { flex: 1; min-width: 0; }
+.so-kind { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 10px; margin-right: 6px; background: var(--border-color); color: var(--text-primary); }
+.so-kind.so-b_only { background: #1d3a2a; color: var(--sev-low); }
+.so-kind.so-a_only { background: #3a1d1d; color: var(--badge-danger-text); }
+.so-kind.so-severity { background: #3a341d; color: var(--sev-medium); }
+.so-kind.so-mitre_added, .so-kind.so-mitre_removed { background: #1d2c3a; color: var(--accent); }
+.so-title { font-weight: 600; color: var(--text-bright); }
+.so-rationale { color: var(--text-muted); margin-top: 3px; }
+.so-rec { font-size: 11px; margin-top: 2px; color: var(--text-dim); }
+.so-rec.so-accept_b { color: var(--sev-low); }
+.so-acts { display: flex; gap: 5px; flex-shrink: 0; }
+.so-acts button { font-size: 11px; padding: 3px 8px; }
+.so-acts .so-status { font-size: 11px; align-self: center; }
+.so-bulk { display: flex; gap: 6px; justify-content: flex-end; margin: 0 0 8px; }
+.so-bulk button { font-size: 11px; padding: 3px 10px; }
+/* "New since last import" highlight on forensic-timeline / IOC rows + its badge (see #importMeta) */
+.ev-row.ev-new { box-shadow: inset 3px 0 0 var(--sev-low); }
+.ioc-new { box-shadow: inset 3px 0 0 var(--sev-low); padding-left: 6px; border-radius: 3px; }
+.ev-new-badge, .ev-badge-count, .ev-badge-corro, .ev-promoted-badge { border-radius:4px; padding:0 5px; font-size:10px; font-weight:bold; }
+.ev-new-badge { background:var(--success-bg); color:var(--sev-low); border:1px solid var(--success-border); }
+.ev-promoted-badge { background:var(--success-bg); color:var(--sev-low); border:1px solid var(--success-border); }
+.ev-badge-count { background: var(--warning-bg-strong); color: var(--sev-medium); border: 1px solid var(--warning-border); }
+.ev-badge-corro { background: var(--success-bg); color: var(--sev-low); border: 1px solid var(--success-border); }
+.ev-chain-badge { display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; padding: 0 5px; font-size: 10px; text-decoration: none; }
+.ev-chain-badge svg { width: 10px; height: 10px; }
+.ev-chain-ok { color: var(--sev-low); border: 1px solid var(--sev-low); }
+.ev-chain-warn { color: var(--badge-danger-text); border: 1px solid var(--badge-danger-text); }
+/* Affected host/asset chip on each forensic-timeline event */
+.ev-host { background:var(--bg-drop-active); color:var(--accent-hover); border:1px solid var(--border-color); border-radius:4px; padding:0 5px; font-size:10px; font-weight:600; white-space:nowrap; }
+.ev-host svg { width: 10px; height: 10px; vertical-align: -1px; }
+/* Clickable finding references inside a timeline event → jump to the finding */
+.finding-jump { color:var(--accent); text-decoration:none; border-bottom:1px dotted var(--accent); cursor:pointer; }
+.finding-jump:hover { color:var(--accent-hover); border-bottom-style:solid; }
+/* Ask the LLM panel */
+.ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.ask-row input { flex: 1; }
+.report-links { font-size: 12px; }
+.report-links a { color: var(--accent); text-decoration: none; }
+.report-links a:hover { text-decoration: underline; }
+#aiStatus { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+/* Deep pass (#204) — pre-flight cost table, run control, and the result card. */
+.dp-table { border-collapse: collapse; font-size: 12px; margin: 6px 0 10px; }
+.dp-table th { text-align: right; padding: 4px 10px; color: var(--text-muted); font-weight: normal; border-bottom: 1px solid var(--border-color); }
+.dp-table th:first-child, .dp-table td:first-child { text-align: left; }
+.dp-table td { padding: 4px 10px; border-bottom: 1px solid var(--border-subtle); text-align: right; white-space: nowrap; }
+.dp-table tr.dp-picked td { background: #6aa9ff14; }
+.dp-table label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.dp-run-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+.dp-progress { font-size: 12px; color: var(--text-muted); }
+.dp-note { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+/* Guidance = analyst-correctable refusal (over the batch ceiling, closed case, no provider).
+   Deliberately NOT the error red: nothing broke, the run just needs a different input. */
+.dp-guidance { font-size: 12px; border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+  background: #ff9f4318; border: 1px solid #ff9f4355; color: var(--badge-warning-text); }
+.dp-result { font-size: 12px; border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+  background: var(--bg-primary); border: 1px solid var(--border-subtle); }
+.dp-result b { color: var(--text-bright); }
+.dp-partial { background: #ff5a5a18; border-color: #ff5a5a66; }
+.dp-partial .dp-partial-hd { color: #ff8f8f; font-weight: bold; }
+/* Background jobs widget (#225) — badge + popover in the toolbar. */
+#jobsBadge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #6aa9ff22; border: 1px solid #6aa9ff55; }
+.jobs-menu { position: fixed; right: 12px; top: 52px; z-index: 1000; width: 340px; max-height: 70vh; overflow-y: auto;
+  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; box-shadow: 0 8px 24px #0009; }
+.jobs-menu h3 { margin: 2px 4px 8px; font-size: 12px; color: var(--text-muted); font-weight: normal; text-transform: uppercase; letter-spacing: .04em; }
+.job-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; background: var(--bg-primary); border: 1px solid var(--border-subtle);
+  border-radius: 5px; padding: 5px 8px; font-size: 12px; margin-bottom: 6px; }
+.job-kind { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: var(--text-muted); }
+.job-label { color: var(--text-bright); word-break: break-all; flex: 1 1 140px; min-width: 0; }
+.job-st { border-radius: 3px; padding: 0 6px; font-size: 10px; font-weight: bold; white-space: nowrap; flex: 0 0 auto; align-self: center; }
+.job-queued { background: #9aa4b222; color: #b6c0cc; border: 1px solid #9aa4b255; }
+.job-running { background: #6aa9ff22; color: #6aa9ff; border: 1px solid #6aa9ff55; }
+.job-succeeded { background: #2f8f4e22; color: #6bcb77; border: 1px solid #2f8f4e55; }
+.job-failed { background: #ff5a5a22; color: #ff8f8f; border: 1px solid #ff5a5a55; }
+.job-cancelled { background: #9aa4b222; color: #9aa4b2; border: 1px solid #9aa4b255; }
+.job-interrupted { background: #ffb34722; color: #ffbd66; border: 1px solid #ffb34755; }
+.job-cancel, .job-resume { margin-left: auto; flex: 0 0 auto; align-self: center; white-space: nowrap; background: var(--sev-high); border: 1px solid var(--sev-high);
+  color: #1a1f29; border-radius: 4px; padding: 3px 12px; font-size: 11px; font-weight: bold; line-height: 1.4; cursor: pointer; }
+.job-resume { background: var(--accent); border-color: var(--accent); }
+/* The popover lives inside .toolbar-main, but its actions are not toolbar controls. Keep their
+   labels visible when the outer toolbar collapses its own buttons to icons-only. */
+.toolbar-main.icons-only .jobs-menu button { font-size: 11px; padding: 3px 12px; }
+.job-cancel:hover, .job-resume:hover { filter: brightness(1.1); }
+.job-cancel:disabled, .job-resume:disabled { opacity: .5; cursor: default; }
+.job-detail { flex-basis: 100%; color: var(--text-muted); font-size: 11px; }
+.jobs-empty { color: var(--text-muted); font-size: 12px; padding: 4px; }
+.ai-unknown { background: var(--border-color); color: var(--text-muted); }
+.ai-off { background: var(--border-color); color: var(--text-muted); }
+.ai-idle { background: var(--success-bg); color: var(--sev-low); }
+.ai-analyzing { background: var(--warning-bg-strong); color: var(--sev-medium); }
+.ai-error { background: var(--danger-bg); color: var(--sev-critical); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.ai-analyzing { animation: pulse 1s ease-in-out infinite; }
+/* Secondary action — muted by default, only lights up on hover so it reads as
+   "click to mark", not as a status tag. Hidden until you hover the row. */
+.finding, #iocs > div { position: relative; }
+.fp-btn {
+  background: transparent; color: var(--text-faint); border: 1px solid var(--border-color); border-radius: 10px;
+  padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px;
+  opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
+}
+.finding:hover .fp-btn, #iocs > div:hover .fp-btn, .ev-row:hover .fp-btn, .fp-btn:focus { opacity: 1; }
+.fp-btn:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
+.unfp-btn {
+  font-size: 10px; padding: 1px 7px; margin-left: 6px; background: transparent;
+  color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer;
+}
+.unfp-btn:hover { color: var(--sev-low); border-color: var(--sev-low); }
+/* False Positives panel — one row per marker, consistent with the Findings/IOCs card style
+   instead of a bare styled div. */
+.fp-marker-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--border-color);
+  border-radius: 6px; background: var(--bg-secondary); padding: 6px 10px; margin-bottom: 5px;
+}
+.fp-marker-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); flex-shrink: 0; width: 52px; }
+.fp-marker-ref { text-decoration: line-through; color: var(--text-primary); flex: 1; min-width: 120px; }
+.fp-marker-reason { font-size: 10.5px; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px 6px; color: var(--text-muted); }
+/* Learned patterns (#65) */
+.lp-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.lp-sig { color: var(--text-bright); }
+.lp-count { color: var(--badge-warning-text); font-weight: 600; font-size: 11px; }
+.fp-marker-note { color: var(--text-faint); font-size: 12px; }
+/* Next Steps / Key Questions — bordered card rows, same visual language as Findings/IOCs but
+   their own class (not .finding, which is now a dense-table grid with fixed columns). */
+.step-row {
+  border: 1px solid var(--border-color); border-left: 3px solid var(--step-color, var(--border-color));
+  border-radius: 6px; background: var(--bg-secondary); padding: 7px 10px; margin-bottom: 6px; font-size: 13px;
+}
+.step-row .step-priority { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--step-color, var(--text-muted)); }
+.step-row .step-rationale, .step-row .step-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--text-muted); }
+.step-row .step-pointer { color: var(--accent); }
+.qrow { border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); padding: 7px 10px; margin-bottom: 6px; }
+.qrow .q-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.qrow .q-answer, .qrow .q-pointer { display: block; margin-top: 3px; font-size: 12px; color: var(--text-muted); }
+.qrow .q-pointer { color: var(--accent); }
+/* Structured collection directive + one-click Deploy (investigation-guidance #8, phase 3). */
+.collect-directive { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; font-size: 12px; }
+.collect-directive .collect-what { color: var(--badge-warning-text); }
+.collect-deploy { background: var(--success); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.collect-deploy:disabled { opacity: .6; cursor: default; }
+.collect-deploy.collect-done { background: var(--bg-hover); }
+.collect-manual { color: var(--text-muted); font-style: italic; }
+.q-status { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.q-status-answered { color: var(--sev-low); }
+.q-status-partial { color: var(--help-icon-color); }
+.q-status-unknown { color: var(--text-muted); }
+.icon-pinned { color: var(--sev-medium); display: inline-flex; }
+.icon-pinned svg { width: 11px; height: 11px; vertical-align: -1px; }
+/* Investigation Threads — small status dot instead of a bare "•"/"✓" text prefix. */
+.thread-row { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; font-size: 13px; }
+.thread-row-closed { color: var(--text-muted); text-decoration: line-through; }
+.thread-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.thread-dot-open { background: var(--accent); }
+.thread-dot-closed { background: var(--sev-low); }
+.thread-id { color: var(--accent); }
+.thread-row-closed .thread-id { color: var(--text-muted); }
+/* Investigation Log + MITRE list — hairline-separated rows instead of a bare "•" bullet list. */
+.log-row, .mitre-row {
+  display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-top: 1px solid var(--border-subtle); font-size: 12.5px;
+}
+.log-row:first-child, .mitre-row:first-child { border-top: none; }
+.log-time { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-faint); flex-shrink: 0; white-space: nowrap; }
+.mitre-findings { color: var(--text-muted); }
+/* Generic bordered box for one-off free-flowing AI output (Ask-the-Case answer, Executive
+   Summary draft) — same card look as Findings/IOCs without the grid-column constraints. */
+.info-card { border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); padding: 8px 10px; margin-bottom: 6px; }
+
+/* Inline IOC quick-actions (#221). A detected value inside an event description / an IOC value
+   becomes a clickable target; clicking it opens the floating action tray anchored below it. */
+.qa-val { border-bottom: 1px dotted var(--text-faint); cursor: pointer; }
+.qa-val:hover { border-bottom-color: var(--accent); background: var(--bg-hover); }
+.qa-tray {
+  position: absolute; z-index: 60; display: flex; gap: 2px; align-items: center;
+  background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px;
+  padding: 3px; box-shadow: 0 6px 20px rgba(0,0,0,.5); font-size: 12px;
+}
+.qa-tray .qa-head { color: var(--text-muted); font-size: 10px; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; padding: 0 6px 0 4px; border-right: 1px solid var(--border-color); }
+.qa-tray button {
+  background: transparent; border: 1px solid transparent; color: var(--text-primary);
+  border-radius: 6px; padding: 3px 7px; cursor: pointer; white-space: nowrap; font-size: 12px;
+}
+.qa-tray button:hover { border-color: var(--border-color); background: var(--bg-elevated); }
+.qa-tray button.qa-mal:hover { color: var(--badge-danger-text); border-color: var(--badge-danger-text); }
+.qa-tray button.qa-ben:hover { color: var(--sev-low); border-color: var(--sev-low); }
+.qa-tray button.qa-copied { color: var(--sev-low); }
+/* Report-details form: human-authored sections merged into the generated report. */
+#reportMeta .rm-hint { color: var(--text-muted); font-size: 12px; margin: 0 0 10px; }
+#reportMeta .rm-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin-bottom: 8px; }
+#reportMeta label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+#reportMeta input, #reportMeta textarea, #reportMeta select { width: 100%; box-sizing: border-box; margin-top: 3px;
+  background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;
+  font-family: inherit; font-size: 13px; }
+#reportMeta textarea { resize: vertical; }
+#reportMeta .rm-check { display: flex; align-items: center; gap: 6px; margin: 4px 0 12px; }
+#reportMeta .rm-check input { width: auto; margin: 0; }
+#reportMeta code { color: var(--accent); background: var(--bg-secondary); padding: 1px 4px; border-radius: 3px; }
