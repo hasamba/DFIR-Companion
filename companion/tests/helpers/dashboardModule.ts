@@ -201,6 +201,24 @@ function freshSandbox(extraGlobals: DashboardGlobals = {}): DashboardGlobals {
  * Lexical bindings are invisible here by construction, so this checks the property side and the
  * companion test proves the lexical side by trying the bypass and expecting a ReferenceError.
  */
+/**
+ * Every string-keyed own property of a loaded sandbox — ENUMERABLE OR NOT.
+ *
+ * `Object.keys` was the obvious choice and it is the wrong one. A module that leaks with
+ * `Object.defineProperty(window, "debugTickets", { value: x, enumerable: false })` puts a name on
+ * the global object that every other script on the page can read by bare name, and Object.keys does
+ * not see it — so the exact-globals gate in dashboardFeatureModules.test.ts certified a module that
+ * was leaking. That gate answers "what can the rest of the page reach", and reachability has
+ * nothing to do with enumerability.
+ *
+ * NOT `Reflect.ownKeys`: it adds symbol keys, and a symbol-keyed property is precisely the one case
+ * that CANNOT be reached by bare name from another script. Including them would buy nothing and
+ * make every name comparison coerce symbols to strings.
+ */
+export function globalNamesOf(sandbox: object): string[] {
+  return Object.getOwnPropertyNames(sandbox);
+}
+
 export function globalsAddedBy(file: string, preload: string[] = []): string[] {
   // `preload` for the same reason loadDashboardModule takes one, and it is not optional for every
   // module: js/dashboard-scope.js builds its cell from DfirState.cell at LOAD time, so without its
@@ -208,11 +226,13 @@ export function globalsAddedBy(file: string, preload: string[] = []): string[] {
   // AFTER the dependencies have run is what keeps the answer "what did THIS file add".
   const before = new Set(
     preload.length
-      ? Object.keys(loadDashboardModule<DashboardGlobals>(preload[preload.length - 1], preload.slice(0, -1)))
-      : Object.keys(freshSandbox()),
+      ? globalNamesOf(
+          loadDashboardModule<DashboardGlobals>(preload[preload.length - 1], preload.slice(0, -1)),
+        )
+      : globalNamesOf(freshSandbox()),
   );
   const after = loadDashboardModule<DashboardGlobals>(file, preload);
-  return Object.keys(after).filter((name) => !before.has(name));
+  return globalNamesOf(after).filter((name) => !before.has(name));
 }
 
 /**

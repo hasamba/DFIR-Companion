@@ -1,0 +1,64 @@
+// A feature module that never loaded becomes a NO-OP, not a ReferenceError (#415 tier 3).
+//
+// WHAT THIS IS FOR. Every tier-3 feature ships as its own /js/ file and publishes its names by
+// assignment (see js/dashboard-swimlane.js). dashboard.html calls a lot of those names BARE, and
+// the dangerous ones sit in the middle of a single load-time statement:
+//
+//   scheduleAnomaliesReload(); scheduleSessionsReload(); … scheduleSwimlaneReload(); scheduleIocSourcesReload(); …
+//
+// on case restore and again in the WebSocket "state" handler. One 404 turned the first of those
+// into a ReferenceError that took every LATER refresh in the same statement with it — the IOC
+// panels, the super-timeline, the lot — while the server had already accepted the change. The page
+// then reported a failure that had not happened and skipped work that had.
+//
+// Guarding nineteen call sites would work and would rot: the twentieth gets added without one. A
+// stub is declared once, covers every present and future call site, and cannot be forgotten.
+//
+// WHY THIS FILE LOADS LAST. It can only tell a missing module from a present one after the feature
+// scripts have run, so its tag sits below theirs in the head and above the inline script. If THIS
+// file 404s the page is in the same shape it was before the stubs existed; it is a tier-1 helper
+// like js/dashboard-state.js, not a feature, and the page does not pretend to survive without those.
+//
+// WHAT IS DELIBERATELY NOT HERE. No INITIALIZER name — not initSwimlane, initTicketIntegrations,
+// initCustodyButtons, verifyCustodyOnOpen, renderCollectionPlan, loadCaseBackups, or the three kev*
+// entry points. Those are the sentinels the guards in dashboard.html test to decide whether to put
+// a chip on screen, and stubbing one would make its feature look present and silence the warning
+// that says it is gone. A stub here must only ever replace work, never evidence.
+//
+// Nor DfirTimelineView: that is a tier-2 owner whose absence stops the page on purpose, because a
+// dashboard whose timeline, IOCs and findings are all empty is indistinguishable from a case with
+// no evidence in it.
+(function () {
+  // Every name below is one dashboard.html calls bare on a path that runs at LOAD, harvested with
+  // the call-graph reachability the feature-module suite asserts against — not by hand.
+  var STUBBED = [
+    "fetchCollectionResults",
+    "loadAnomalies",
+    "loadCompliance",
+    "loadCustody",
+    "loadD3fend",
+    "loadGeoMap",
+    "loadSessions",
+    "loadSwimlane",
+    "renderGeoMarkers",
+    "renderGeoView",
+    "scheduleAnomaliesReload",
+    "scheduleComplianceReload",
+    "scheduleD3fendReload",
+    "scheduleGeoMapReload",
+    "scheduleSessionsReload",
+    "scheduleSwimlaneReload",
+    "swReflectSelection",
+    "swRenderCanvas",
+    "swSelToolbar",
+  ];
+  // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
+  // and quietly replacing it would hide that one too.
+  for (var i = 0; i < STUBBED.length; i++) {
+    var name = STUBBED[i];
+    if (typeof window[name] !== "function") {
+      window[name] = function () {};
+    }
+  }
+  window.DfirFacade = { stubbed: STUBBED };
+})();

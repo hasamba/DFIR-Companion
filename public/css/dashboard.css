@@ -3258,3 +3258,4 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   #sec-playbook .pbh-regen:disabled{opacity:.6;cursor:default}
   #sec-playbook .pbh-res{margin-top:6px}
   #sec-playbook .pbh-caveat{color:var(--badge-warning-text);font-size:11px;margin:8px 0 0}
+/* #415: a tier-3 feature whose file failed to load. Loud, but in warning ROLES — var(--sev-high) is a TEXT colour and was 2.04:1 behind white. */ .feature-warnings{display:flex;flex-direction:column;gap:4px;padding:6px 10px 0}.feature-warn{background:var(--warning-bg-strong);border-left:3px solid var(--sev-high);color:var(--text-bright);border-radius:4px;padding:6px 10px;font-size:12px}

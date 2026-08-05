@@ -493,6 +493,8 @@
     "ROUTE GET /js/dashboard-tickets.js",
     "ROUTE GET /js/dashboard-tagger.js",
     "ROUTE GET /js/dashboard-kev.js",
+    "ROUTE GET /js/dashboard-swimlane.js",
+    "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
     "ROUTE GET /js/a11y/focus-trap.js",
