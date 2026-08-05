@@ -1,6 +1,7 @@
 // Resolves every `--c-<hex>` variable in the dashboard's client source to a semantic role and
 // writes scripts/theme/role-map.json, then prints a collapse audit. Since #415 that source is two
-// files — public/css/dashboard.css and public/dashboard.html — read as one corpus; see THEME_SOURCES.
+// files — the eight public/css/dashboard-*.css parts and public/dashboard.html — read as one corpus;
+// see THEME_SOURCES.
 //
 //   npm run theme:map          write role-map.json + print the audit
 //   npm run theme:map -- --check   audit only, non-zero exit if anything is unassigned

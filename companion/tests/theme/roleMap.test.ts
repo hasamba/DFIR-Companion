@@ -6,16 +6,17 @@
 // dashboard.html is edited constantly, so "someone added a colour and nobody re-ran the
 // mapper" is the expected failure, not a hypothetical one.
 
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { DASHBOARD_CSS_PATH, loadBaseline, THEME_SOURCES } from "../../scripts/theme/loadBaseline.js";
+import { loadBaseline, readDashboardCss, THEME_SOURCES } from "../../scripts/theme/loadBaseline.js";
 import { isThemeInvariant, readPaletteFacts } from "../../scripts/theme/paletteFacts.js";
 import { assignRoles, TIER_A, TIER_B, TIER_C } from "../../scripts/theme/roleMap.js";
 
 const baseline = loadBaseline();
 const facts = readPaletteFacts(THEME_SOURCES, baseline);
 const map = assignRoles(facts, baseline);
-const dashboard = readFileSync(DASHBOARD_CSS_PATH, "utf8");
+// The eight stylesheet parts read back as the one file they were cut from (#415). Joined with
+// the empty string, so the line-anchored matches below still see the original bytes.
+const dashboard = readDashboardCss();
 
 describe("dashboard colour role map", () => {
   it("finds the palette and every variable in it", () => {

@@ -1,0 +1,358 @@
+/* Compromised-assets + Evidence-Chain graphs render via cytoscape (see .login-graph); only their
+   side-panel text styling remains here. */
+.ev-sub { font-size: 12px; color: var(--text-muted); font-weight: normal; margin-left: 8px; }
+.ev-legend { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.ev-leg-line { display: inline-block; width: 18px; height: 0; vertical-align: middle; }
+.ev-leg-high { border-top: 2px solid var(--sev-high); }
+.ev-leg-med { border-top: 2px dashed var(--bg-hover-light); }
+.ev-leg-ran { border-top: 2px solid var(--text-faint); }
+.ev-leg-file { border-top: 2px solid var(--badge-success-text); }
+.ev-leg-net { border-top: 2px solid var(--accent); }
+/* Kill-chain overlay legend (#93): filled swatch per tactic. Wraps so all present phases fit. */
+#evKcLegend { flex-wrap: wrap; gap: 4px 10px; }
+.ev-leg-item { display: inline-flex; align-items: center; gap: 4px; }
+.ev-leg-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+.legend-ico { vertical-align: middle; margin-right: 2px; }
+/* Anchor the absolutely-positioned View/side panels (.lg-options/.lg-side-panel) to their own
+   graph wrap — without this they escape to the page and stay floating when you scroll away. */
+.asset-graph-wrap { position: relative; }
+/* Fullscreen: the wrapper fills the screen and the graph grows to fit. */
+.asset-graph-wrap:fullscreen { background: var(--bg-secondary); padding: 12px; }
+.asset-graph-wrap:fullscreen .login-graph { height: calc(100vh - 90px); }
+/* ── Login Graph (cytoscape) ─────────────────────────── */
+.login-graph-wrap { position: relative; }
+.login-graph { height: 480px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary); }
+.login-graph-wrap:fullscreen { background: var(--bg-secondary); padding: 12px; }
+.login-graph-wrap:fullscreen .login-graph { height: calc(100vh - 90px); }
+.lg-stats { font-size: 12px; color: var(--text-muted); margin: 4px 0 8px; }
+.lg-toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.lg-toolbar input[type="text"] { flex: 1 1 180px; min-width: 140px; font-size: 12px; }
+.lg-toolbar button { padding: 3px 9px; font-size: 12px; }
+.lg-options { position: absolute; top: 40px; left: 8px; z-index: 30; background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 12px 14px; font-size: 12px; color: var(--text-bright); box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+.lg-opt-group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.lg-opt-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.lg-opt-label { font-weight: 600; flex-basis: 100%; color: var(--text-muted); }
+.lg-side-panel { position: absolute; top: 40px; right: 8px; z-index: 30; width: 300px; max-height: 420px;
+  overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 10px 12px; font-size: 12px; color: var(--text-bright); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.lg-side-panel .lg-ev-row { padding: 5px 0; border-top: 1px solid var(--border-color); }
+.lg-panel-btns { display: flex; gap: 6px; margin-top: 8px; }
+.lg-panel-btns button { padding: 3px 9px; font-size: 12px; }
+/* Legend under the graph — swatches match LG_STYLE's literal node/edge colors. */
+.lg-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 11px;
+  color: var(--text-muted); margin-top: 6px; }
+.lg-leg-item { white-space: nowrap; }
+.lg-leg-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  vertical-align: -1px; margin-right: 4px; }
+.lg-leg-line { display: inline-block; width: 18px; height: 2px; vertical-align: 3px; margin-right: 4px; }
+.lg-leg-dashed { background: repeating-linear-gradient(90deg, #e05c5c 0 4px, transparent 4px 7px); }
+.lg-truncated { color: var(--sev-medium); }
+/* Swimlane fullscreen: the section fills the screen; scroll if there are more lanes than fit. */
+#sec-swimlane:fullscreen { background: var(--bg-secondary); padding: 16px; overflow: auto; }
+/* Fallback "maximize" for when the native Fullscreen API is unavailable or rejected (e.g.
+   the dashboard is served over a plain-HTTP LAN IP, which isn't a secure context). Fills the
+   viewport via fixed positioning — needs no secure context, so it always works. */
+#sec-swimlane.swimlane-maximized { position: fixed; inset: 0; z-index: 9999; margin: 0;
+  background: var(--bg-secondary); padding: 16px; overflow: auto; }
+.asset-subhead { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; }
+.asset-chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 10px;
+  font-size: 12px; background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-bright); }
+/* Removable customer-exposure target chips (like the asset chips, with an × and an "auto" variant) */
+.ce-chip { display: inline-block; padding: 2px 6px 2px 9px; margin: 0 5px 5px 0; border-radius: 10px;
+  font-size: 12px; background: var(--surface-selected); border: 1px solid var(--border-strong); color: var(--text-bright); }
+.ce-chip.auto { background: var(--bg-primary); border-style: dashed; border-color: var(--border-color); color: var(--text-muted); }
+.ce-chip small { color: var(--text-faint); margin-left: 4px; }
+.ce-chip .x { cursor: pointer; margin-left: 7px; color: var(--text-muted); font-weight: 600; }
+.ce-chip .x:hover { color: var(--badge-danger-text); }
+/* Investigator comments */
+.comment-chip { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 10px;
+  padding: 0 7px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.comment-chip:hover { color: var(--accent); border-color: var(--accent); }
+.comment-chip.has { color: var(--accent); border-color: var(--border-strong); background: var(--surface-selected); }
+.comment-chip svg, .tag-add svg, .pin-btn svg, .fp-btn svg,
+.hunt-add svg, .explain-btn svg, .ioc-chain-btn svg, .sigma-export-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
+.anon-chip { display:inline-block; background:var(--badge-bg-neutral); border:1px solid var(--border-color); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
+.anon-chip.anon-chip-sup { opacity:.6; }
+.anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--text-dim); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
+.anon-chip .anon-auto-rm:hover { color:var(--badge-danger-text); }
+.anon-chip .anon-auto-restore:hover { color:var(--sev-low); }
+.anon-auto-grp { margin-bottom:6px; }
+.anon-cust-row { display:flex; align-items:center; gap:8px; padding:2px 0; }
+.anon-cust-rm { background:var(--info-bg); border:none; color:var(--tag-red-text); border-radius:4px; cursor:pointer; padding:0 6px; }
+.comment-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 50; }
+.comment-overlay.open { display: block; }
+.comment-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: min(560px, 92vw); max-height: 80vh; overflow: auto; background: var(--bg-elevated); border: 1px solid var(--border-color);
+  border-radius: 10px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.comment-modal h3 { margin: 0 0 4px; font-size: 14px; color: var(--text-primary); }
+.comment-item { border-left: 2px solid var(--border-color); padding: 6px 10px; margin: 8px 0; }
+.comment-item .meta { color: var(--text-muted); font-size: 11px; }
+.comment-item .body { white-space: pre-wrap; margin-top: 2px; }
+.mention-chip { background: var(--surface-selected); color: var(--accent); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 0 5px; font-weight: 600; white-space: nowrap; }
+.comment-del { background: transparent; border: 0; color: var(--badge-danger-text); cursor: pointer; font-size: 11px; padding: 0 4px; }
+/* Command palette (issue #238) — the Ctrl+K launcher, driven by /js/command-palette.js.
+   Anchored near the top rather than vertically centred like .comment-modal: the result list
+   grows and shrinks on every keystroke, and a centred box would slide up and down under the
+   cursor while the analyst is still typing. z-index sits above .comment-overlay (50) and
+   .wiz-overlay (60) so the palette is never opened behind another modal. */
+.cmdp-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 70; }
+.cmdp-overlay.open { display: block; }
+.cmdp-modal { position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);
+  width: min(620px, 94vw); background: var(--bg-elevated); border: 1px solid var(--border-color);
+  border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.5); overflow: hidden; }
+.cmdp-modal input { width: 100%; box-sizing: border-box; background: transparent; border: 0;
+  border-bottom: 1px solid var(--border-color); color: var(--text-primary); font-size: 15px;
+  padding: 12px 14px; outline: none; }
+.cmdp-list { max-height: 52vh; overflow-y: auto; }
+.cmdp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 14px; cursor: pointer; font-size: 13px; color: var(--text-primary); }
+.cmdp-row:hover { background: var(--border-subtle); }
+.cmdp-row.sel { background: var(--surface-selected); }
+.cmdp-row.sel .cmdp-label { color: var(--accent); }
+.cmdp-cat { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.cmdp-empty { padding: 14px; color: var(--text-muted); font-size: 13px; }
+.cmdp-hint { border-top: 1px solid var(--border-color); padding: 6px 14px; color: var(--text-muted); font-size: 11px; }
+#commentText { width: 100%; box-sizing: border-box; background: var(--bg-primary); color: var(--text-bright);
+  border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; font-family: inherit; resize: vertical; }
+/* First-run AI setup wizard (#181) — a friendly onboarding overlay shown once when no AI provider
+   is configured. Reuses the comment-overlay backdrop; its own roomier modal + stepped layout. */
+.wiz-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; z-index: 60; }
+.wiz-overlay.open { display: block; }
+.wiz-modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: min(620px, 94vw); max-height: 92vh; overflow: auto; background: var(--bg-elevated);
+  border: 1px solid var(--border-color); border-radius: 12px; padding: 22px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+.wiz-modal h2 { margin: 0 0 4px; font-size: 18px; color: var(--text-bright); }
+.wiz-modal .wiz-sub { color: var(--text-muted); font-size: 12.5px; margin: 0 0 14px; line-height: 1.5; }
+.wiz-note { background: var(--bg-primary); border: 1px solid var(--border-color); border-left: 3px solid #5ad17a;
+  border-radius: 6px; padding: 8px 11px; font-size: 12px; color: var(--text-primary); margin: 0 0 16px; line-height: 1.5; }
+.wiz-field { margin: 0 0 12px; }
+.wiz-field label { display: block; font-size: 12px; color: var(--text-primary); margin: 0 0 4px; font-weight: 600; }
+.wiz-field .wiz-hint { display: block; font-size: 11px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
+.wiz-modal input, .wiz-modal select { width: 100%; box-sizing: border-box; background: var(--bg-primary);
+  color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 7px 8px; font-size: 13px; }
+.wiz-modal select option { background: var(--bg-elevated); }
+.wiz-row { display: flex; gap: 12px; }
+.wiz-row > .wiz-field { flex: 1; }
+.wiz-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.wiz-btn { background: var(--accent-solid); color: #fff; border: 0; border-radius: 7px; padding: 8px 16px;
+  font-size: 13px; cursor: pointer; }
+.wiz-btn:hover { background: #3a78e8; }
+.wiz-btn[disabled] { opacity: .55; cursor: default; }
+.wiz-btn.secondary { background: transparent; border: 1px solid var(--border-color); color: var(--text-primary); }
+.wiz-btn.secondary:hover { border-color: var(--border-strong); }
+.wiz-dismiss { background: transparent; border: 0; color: var(--text-muted); cursor: pointer; font-size: 12px;
+  margin-left: auto; text-decoration: underline; }
+.wiz-dismiss:hover { color: var(--text-primary); }
+.wiz-result { font-size: 12.5px; margin: 12px 0 0; min-height: 18px; line-height: 1.5; }
+.wiz-modelhint { font-size: 11px; color: var(--text-muted); margin-top: 5px; line-height: 1.5; }
+.wiz-modelhint code { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px;
+  padding: 0 4px; cursor: pointer; }
+.wiz-modelhint code:hover { border-color: var(--accent-solid); color: var(--text-bright); }
+/* Comprehensive multi-step Setup wizard (#181) — left rail of steps + a body pane. Reuses the
+   .wiz-* field styles above. The single-pane AI wizard is now step 1 of this stepped shell. */
+.wiz-modal.stepped { width: min(880px, 96vw); padding: 0; display: flex; flex-direction: column; }
+.wiz-head { padding: 16px 22px 10px; border-bottom: 1px solid var(--border-color); }
+.wiz-head h2 { margin: 0; }
+.wiz-body-wrap { display: flex; min-height: 0; flex: 1; }
+.wiz-rail { width: 210px; flex: 0 0 210px; border-right: 1px solid var(--border-color); padding: 10px 0;
+  overflow-y: auto; max-height: calc(92vh - 130px); }
+.wiz-rail-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 12.5px;
+  color: var(--text-primary); cursor: pointer; border-left: 2px solid transparent; }
+.wiz-rail-item:hover { background: var(--bg-tertiary); }
+.wiz-rail-item.active { background: var(--bg-tertiary); border-left-color: var(--accent-solid); color: #fff; }
+.wiz-rail-item .wiz-rail-dot { font-size: 12px; width: 16px; text-align: center; }
+.wiz-rail-item.done .wiz-rail-dot { color: #5ad17a; }
+.wiz-rail-item.optional .wiz-rail-label small { color: var(--text-muted); font-size: 10px; display: block; }
+.wiz-pane { flex: 1; padding: 16px 22px; overflow-y: auto; max-height: calc(92vh - 130px); min-width: 0; }
+.wiz-pane h3 { margin: 0 0 4px; font-size: 15px; color: var(--text-bright); }
+.wiz-foot { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-top: 1px solid var(--border-color); }
+.wiz-foot .wiz-spacer { flex: 1; }
+.wiz-prov-list { display: flex; flex-direction: column; gap: 10px; }
+.wiz-prov { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; background: var(--bg-primary); }
+.wiz-prov-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); font-weight: 600; margin-bottom: 6px; }
+.wiz-prov-head .wiz-scope { font-size: 10px; font-weight: 400; border: 1px solid var(--border-color); border-radius: 8px; padding: 0 6px; color: var(--text-muted); }
+.wiz-prov-head .wiz-scope.local { color: #5ad17a; border-color: #2f5d3f; }
+.wiz-prov-head .wiz-scope.external { color: #ffb05a; border-color: #6b5326; }
+.wiz-prov-head .wiz-ok { margin-left: auto; font-size: 11px; }
+/* Analyst triage tags (hand labels — confirmed-malicious, false-positive, key-evidence, …) */
+.tag-pill { display: inline-block; border: 1px solid; border-radius: 9px; padding: 0 7px;
+  font-size: 10px; line-height: 16px; margin-left: 4px; vertical-align: middle; background: var(--bg-primary); }
+.tag-add { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 10px;
+  padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.tag-add:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
+/* Pinned findings (#220): pin toggle on each finding card + the sticky strip at the top of
+   the Findings panel (folded into that panel, not a standalone section). */
+.pin-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted); border-radius: 10px;
+  padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.pin-btn:hover { color: var(--sev-medium); border-color: var(--sev-medium); }
+.pin-btn.pinned { color: var(--sev-medium); border-color: var(--warning-border); background: var(--warning-bg); }
+/* The strip stays visible while scrolling a long findings list — a sticky, capped, curated list. */
+.pinned-strip { position: sticky; top: 0; z-index: 6; background: var(--bg-secondary); margin: 0 0 10px; }
+.pinned-strip-head { display: flex; align-items: baseline; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--text-muted); margin: 0 0 6px; }
+.pinned-list { display: flex; flex-direction: column; gap: 4px; }
+/* touch-action:none so a touchpad/touchscreen drag reorders instead of scrolling the page
+   (otherwise the browser fires pointercancel and the drag never runs). */
+.pinned-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border-color);
+  border-radius: 6px; background: var(--bg-primary); font-size: 12px; cursor: grab; user-select: none; touch-action: none; }
+.pinned-item.dragging { cursor: grabbing; border-color: var(--accent); background: var(--surface-selected);
+  box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.pinned-grip { cursor: grab; color: var(--text-faint); user-select: none; flex-shrink: 0; font-size: 13px; padding: 0 2px; }
+.pinned-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.pinned-title:hover { color: var(--accent); }
+.pinned-unpin { background: transparent; border: 0; color: var(--text-muted); cursor: pointer; font-size: 12px; flex-shrink: 0; padding: 0 2px; }
+.pinned-unpin:hover { color: var(--badge-danger-text); }
+.pinned-empty { color: var(--text-muted); font-size: 12px; }
+.tag-suggest-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.tag-suggest-btn { background: var(--bg-primary); border: 1px solid; border-radius: 9px; padding: 2px 9px;
+  font-size: 11px; cursor: pointer; }
+.tag-current-pill { display: inline-flex; align-items: center; gap: 4px; border: 1px solid; border-radius: 10px;
+  padding: 2px 4px 2px 9px; font-size: 11px; margin: 0 5px 5px 0; background: var(--bg-primary); }
+.tag-current-pill .tag-del { background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: .7; }
+/* Analyst notebook */
+.nb-entry { border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg-primary); }
+.nb-entry.note { border-left: 3px solid var(--tag-green-text); }
+.nb-entry.question { border-left: 3px solid var(--sev-medium); }
+.nb-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted); }
+.nb-type-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  border-radius: 4px; padding: 1px 6px; }
+.nb-type-badge.note { background: var(--success-bg); color: var(--tag-green-text); }
+.nb-type-badge.question { background: var(--warning-bg); color: var(--sev-medium); }
+.nb-entry-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.nb-entry-actions { margin-top: 8px; display: flex; gap: 6px; }
+.nb-action-btn { background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted);
+  cursor: pointer; font-size: 11px; padding: 2px 8px; }
+.nb-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+.nb-action-btn.del:hover { border-color: var(--badge-danger-text); color: var(--badge-danger-text); }
+.nb-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.nb-add-row { display: flex; gap: 8px; align-items: flex-start; }
+#nbText { flex: 1; background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 6px 8px; font-family: inherit; font-size: 13px; resize: vertical; min-height: 56px; }
+#nbType { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+.nb-ai-row { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.nb-ai-row label { cursor: pointer; user-select: none; }
+/* Hypotheses (#140) */
+.hyp { border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg-primary); border-left: 3px solid var(--text-muted); }
+.hyp.open { border-left-color: var(--accent); }
+.hyp.supported { border-left-color: var(--tag-green-text); }
+.hyp.refuted { border-left-color: var(--badge-danger-text); }
+.hyp.unknown { border-left-color: var(--sev-medium); }
+.hyp-row1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hyp-status { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 2px 6px; font-size: 12px; }
+.hyp-title { font-size: 13px; font-weight: 600; flex: 1; word-break: break-word; }
+.hyp-src { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-radius: 4px; padding: 1px 6px; color: var(--text-muted); border: 1px solid var(--border-color); }
+.hyp-src.synthesis { background: var(--surface-selected); color: var(--accent); border-color: transparent; }
+.hyp-outcome { font-size: 12px; color: var(--text-primary); margin-top: 6px; }
+.hyp-outcome b { color: var(--text-muted); font-weight: 600; }
+.hyp-desc { font-size: 12px; color: var(--text-muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.hyp-history { font-size: 11px; color: var(--text-faint); margin-top: 5px; }
+.hyp-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+.hyp-chip { font-size: 10px; border: 1px solid var(--border-color); border-radius: 4px; padding: 1px 6px; color: var(--text-muted); }
+.hyp-row2 { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.hyp-assignee, .hyp-notes { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 8px; font-size: 12px; font-family: inherit; }
+.hyp-assignee { width: 130px; }
+.hyp-notes { flex: 1; resize: vertical; min-height: 28px; }
+.hyp-del { background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 2px 8px; }
+.hyp-del:hover { border-color: var(--badge-danger-text); color: var(--badge-danger-text); }
+.hyp-grouphdr { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); margin: 12px 0 6px; }
+.hyp-add-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.hyp-add-form input, .hyp-add-form select { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 8px; font-size: 13px; font-family: inherit; }
+.tag-current-pill .tag-del:hover { opacity: 1; }
+#tagInput { background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; font-family: inherit; }
+/* Hunt-pivot query generator (Velociraptor / KQL / ES|QL / Splunk / Sigma / YARA / Suricata templates from an entity) */
+.hunt-add { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 6px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.hunt-add:hover { color: var(--accent); border-color: var(--accent); }
+.explain-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.explain-btn:hover { color: var(--sev-medium); border-color: var(--warning-border); }
+/* IOC provenance chain panel button (#247) — matches the other row-action chips. */
+.ioc-chain-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.ioc-chain-btn:hover { color: var(--sev-low); border-color: var(--success-border); }
+/* Per-finding "Export as Sigma draft" button (#89) — matches the other row-action chips. */
+.sigma-export-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.sigma-export-btn:hover { color: var(--sev-low); border-color: var(--success-border); }
+/* Per-finding "push to Jira / ServiceNow" chips (#297) — match the other row-action chips, but
+   stay hidden until GET /jira/status | /servicenow/status says the integration is configured.
+   The switch is a class on <body> rather than a render-time branch: the status answer usually
+   lands AFTER the first findings render, and those already-rendered rows must still get chips. */
+.jira-push-btn, .snow-push-btn, #findingBulkJiraBtn, #findingBulkSnowBtn { display: none; }
+.jira-push-btn, .snow-push-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint);
+  border-radius: 10px; padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.jira-push-btn:hover { color: var(--accent); border-color: var(--accent); }
+.snow-push-btn:hover { color: var(--sev-low); border-color: var(--success-border); }
+body.has-jira .jira-push-btn, body.has-jira #findingBulkJiraBtn { display: inline-block; }
+body.has-servicenow .snow-push-btn, body.has-servicenow #findingBulkSnowBtn { display: inline-block; }
+/* Super-timeline ⌖ context button + its inline ±window chips — match the other row-action chips. */
+.st-ctx { background: transparent; border: 1px solid var(--border-color); color: var(--text-faint); border-radius: 10px;
+  padding: 0 5px; font-size: 11px; cursor: pointer; margin-left: 4px; line-height: 18px; }
+.st-ctx:hover { color: var(--accent); border-color: var(--accent); }
+.st-ctx svg { width: 11px; height: 11px; vertical-align: -1px; }
+.st-ctx-win { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 5px;
+  padding: 1px 7px; font-size: 11px; cursor: pointer; line-height: 16px; white-space: nowrap; }
+.st-ctx-win:hover { background: var(--bg-hover); color: #fff; border-color: var(--accent); }
+.explain-modal { width: min(640px, 95vw); max-height: 85vh; overflow-y: auto; }
+.explain-section { margin-bottom: 10px; }
+.explain-section strong { display: block; margin-bottom: 3px; color: var(--text-primary); }
+/* IOC provenance chain panel (#247) — wider than the base explain-modal since extraction event
+   descriptions (raw VQL/EVTX field dumps) are long; dedicated row classes (not the Phases panel's
+   .ph-ev-row/.ph-ev-time/.ph-ev-desc) so time and text render at the SAME font size here. */
+.ioc-chain-modal { width: min(920px, 96vw); }
+.iocchain-row { padding: 6px 0; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.iocchain-row:last-child { border-bottom: none; }
+.iocchain-time { flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+.iocchain-desc { flex: 1; min-width: 0; word-break: break-word; font-size: 12px; }
+.iocchain-tag { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.hunt-modal { width: min(740px, 95vw); }
+.hunt-card { border: 1px solid var(--border-color); border-radius: 6px; margin: 8px 0; overflow: hidden; }
+.hunt-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; background: var(--bg-secondary); font-size: 12px; color: var(--text-primary); font-weight: 600; }
+.hunt-copy { background: var(--accent-solid); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.hunt-copy.copied { background: var(--success); }
+.hunt-card pre { margin: 0; padding: 10px; background: var(--bg-primary); color: var(--text-bright); font-size: 11px;
+  white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, Consolas, monospace;
+  max-height: 240px; overflow: auto; }
+.hunt-card-head > div { display: flex; gap: 6px; }
+.hunt-run { background: var(--success); border: 0; color: #fff; border-radius: 5px; padding: 2px 10px; font-size: 11px; cursor: pointer; }
+.hunt-run:disabled { opacity: .6; cursor: default; }
+.hunt-vql-edit { width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical; background: var(--bg-primary);
+  color: var(--text-bright); border: 0; border-top: 1px solid var(--border-color); padding: 10px; font-size: 11px;
+  font-family: ui-monospace, Menlo, Consolas, monospace; }
+.hunt-run-res { padding: 8px 10px; border-top: 1px solid var(--border-color); }
+.hunt-refresh { background: var(--border-color); border: 0; color: var(--text-primary); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+.hunt-refresh:hover { color: #fff; }
+/* Attacker Sessions story view (#341). Session cards share the bordered-card language of the
+   timeline rows below them, with the severity rail keyed to the session's WORST severity so a
+   scan down the column reads as an escalation curve. */
+.ses-card {
+  border: 1px solid var(--border-color); border-left: 3px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); padding: 6px 10px; margin-bottom: 5px; cursor: pointer;
+}
+.ses-card:hover { background: var(--surface-selected); border-color: var(--border-strong); }
+.ses-card.sevr-Critical { border-left-color: var(--sev-critical); }
+.ses-card.sevr-High     { border-left-color: var(--sev-high); }
+.ses-card.sevr-Medium   { border-left-color: var(--sev-medium); }
+.ses-card.sevr-Low      { border-left-color: var(--sev-low); }
+.ses-card.sevr-Info     { border-left-color: var(--sev-info); }
+.ses-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ses-num { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ses-host { font-weight: 600; }
+/* The unknown-host bucket must never look like a hostname — italic + muted, and it carries a
+   title explaining that the row may span several machines. */
+.ses-host.ses-unknown { font-weight: 400; font-style: italic; color: var(--text-muted); }
+.ses-acct { color: var(--accent); font-size: 12px; }
+.ses-tactic { font-size: 11px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 3px; padding: 1px 6px; }
+.ses-when { color: var(--text-muted); font-size: 11px; font-family: ui-monospace, monospace; margin-left: auto; }
+.ses-body { margin-top: 5px; font-size: 12px; color: var(--text-primary); }
+.ses-actions { margin-top: 5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ses-btn { font-size: 11px; background: var(--border-color); border: none; color: var(--text-primary); border-radius: 3px; padding: 2px 8px; cursor: pointer; }
+.ses-btn:hover { background: var(--border-strong); }
+.ses-summary { margin-top: 6px; padding: 6px 8px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px; white-space: pre-wrap; }
+.ses-msg { font-size: 11px; color: var(--text-muted); }
+section#sec-sessions.ses-collapsed .ses-body { display: none; }
+

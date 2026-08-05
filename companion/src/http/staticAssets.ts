@@ -101,10 +101,29 @@ export const STATIC_ASSETS: Record<string, string> = {
   // still renders, so the only symptom is that focus rings, the skip link and reduced-motion
   // support are silently gone.
   "/css/a11y.css": "text/css; charset=utf-8",
-  // The dashboard's own stylesheet — all 3,224 lines that used to live in fourteen inline <style>
-  // blocks (#415). Unlike a11y.css this one fails loudly: the page hides <body> until safe-dom.js
-  // is ready, so a 404 here is a blank dashboard rather than an unstyled one.
-  "/css/dashboard.css": "text/css; charset=utf-8",
+  // The dashboard's own stylesheet, cut into eight parts (#415) from the single file that had held
+  // everything the fourteen inline <style> blocks used to. Unlike a11y.css these fail loudly: the
+  // page hides <body> until safe-dom.js is ready, so a 404 is a blank dashboard, not an unstyled
+  // one — with one exception worth knowing, because it is the quiet failure this split introduced.
+  //
+  // THE ORDER OF THESE KEYS IS THE CASCADE ORDER, and it must match the <link> order in
+  // public/dashboard.html: the parts are a pure byte split of one file, so a tie that used to be
+  // resolved by one rule sitting later in the file is now resolved by it sitting in a later PART.
+  //
+  // THE EXCEPTION: an @keyframes resolves by NAME across the whole document, not by document order.
+  // Drop one of these keys and the eight-way cascade is still perfectly ordered for everything that
+  // did load — but any animation whose keyframe lived in the missing part just stops, with no
+  // unstyled region to show for it. tests/reports/dashboardCss.test.ts holds that line; the case it
+  // was written for is `spin`, defined in dashboard-timeline.css and used only from a
+  // data-safe-style attribute in the markup, which no grep over the CSS will ever show you.
+  "/css/dashboard-tokens.css": "text/css; charset=utf-8",
+  "/css/dashboard-themes-a.css": "text/css; charset=utf-8",
+  "/css/dashboard-themes-b.css": "text/css; charset=utf-8",
+  "/css/dashboard-layout.css": "text/css; charset=utf-8",
+  "/css/dashboard-panels.css": "text/css; charset=utf-8",
+  "/css/dashboard-timeline.css": "text/css; charset=utf-8",
+  "/css/dashboard-toolbar.css": "text/css; charset=utf-8",
+  "/css/dashboard-sections.css": "text/css; charset=utf-8",
 };
 
 /**
