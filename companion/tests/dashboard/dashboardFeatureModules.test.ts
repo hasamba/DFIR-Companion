@@ -2,11 +2,13 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import { runInContext } from "node:vm";
+import type { DashboardScript } from "../helpers/dashboardAst.js";
 import {
   callsAfter,
   callsByName,
   dashboardScripts,
   domAccessOutsideFunctions,
+  functionBindingsOf,
   functionsOf,
   moduleGlobals,
   scriptFromSource,
@@ -228,6 +230,27 @@ describe("the global-name enumeration these checks rest on", () => {
 const read = (f: string) => readFile(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
 const scripts = dashboardScripts();
 
+/**
+ * THE CENSUS SEAM: names the module binds that the inline script binds too.
+ *
+ * A named function rather than two lines inlined into the assertion, because the two lines are the
+ * thing that has now been wrong twice and neither wrongness was reachable from a test. Its own
+ * contract lives in the `describe` at the bottom of this file — synthetic module and inline sources
+ * carrying the exact mutations that got through, so the seam is exercised and not just its helper.
+ */
+const duplicateBindings = (
+  moduleName: string,
+  moduleSrc: string,
+  inlineScripts: DashboardScript[],
+): string[] => {
+  const declared = functionBindingsOf(scriptFromSource(moduleName, moduleSrc)).map((b) => b.name);
+  return inlineScripts.flatMap((s) =>
+    functionBindingsOf(s)
+      .filter((b) => declared.includes(b.name))
+      .map((b) => `${s.name}:${b.line} ${b.name}`),
+  );
+};
+
 describe.each(FEATURES)("$file", (feat) => {
   // THESE RUN THE MODULE. The first version asserted on the file's TEXT — that it contained
   // `(function () {` and one `window.x = x` line per published name — and review showed what that
@@ -263,22 +286,22 @@ describe.each(FEATURES)("$file", (feat) => {
   // referring to it. A name left behind in the page resolves to undefined at call time.
   it("leaves nothing behind in the inline script", async () => {
     const src = await read(feat.file);
-    // ANY indentation: dashboard-tickets.js declares fourteen of its functions inside
-    // initTicketIntegrations(), and an IIFE-level pattern saw none of them — so a duplicate left
-    // behind in the page went unnoticed.
-    const declared = [...src.matchAll(/^\s*(?:async )?function (\w+)\s*\(/gm)].map((m) => m[1]);
-    expect(declared.length, "no functions found — the extraction produced an empty module").toBeGreaterThan(
-      0,
-    );
+    // ONE CENSUS, ASKED OF BOTH SIDES. This was two questions: a regex over the module's text and
+    // an AST walk over the inline script. They disagreed twice over. A regex reads text, so a
+    // comment between the keyword and the name — `function /* moved */ initTicketIntegrations()` —
+    // dropped the name and the duplicate went unnoticed; and both sides counted DECLARATIONS only,
+    // so `const loadAnomalies = () => {}` restored in the page shadowed the module's published
+    // function for every inline call site while the whole suite stayed green.
+    //
+    // functionBindingsOf() answers it once, for declarations AND function-valued bindings, and
+    // still leaves the ACTIONS dispatch table alone — see its own note on why a property is not a
+    // binding.
+    expect(
+      functionBindingsOf(scriptFromSource(feat.file, src)).length,
+      "no functions found — the extraction produced an empty module",
+    ).toBeGreaterThan(0);
     const inline = scripts.filter((s) => s.name.startsWith("dashboard.html#inline"));
-    // DECLARATIONS only. The ACTIONS dispatch table holds
-    // `setComplianceDiscovered: (el) => setComplianceDiscovered(el)` entries whose arrow takes the
-    // property's name — those must stay, since they are how a click reaches the module.
-    const leftBehind = inline.flatMap((s) =>
-      functionsOf(s)
-        .filter((f) => f.declaration && declared.includes(f.name))
-        .map((f) => `${s.name}:${f.line} ${f.name}`),
-    );
+    const leftBehind = duplicateBindings(feat.file, src, inline);
     expect(leftBehind, "the feature must move as a unit or not at all").toEqual([]);
   });
 
@@ -733,5 +756,78 @@ describe("what stayed behind, on purpose", () => {
     );
     const html = await readFile(DASHBOARD, "utf8");
     expect(html).toContain("initCustodyButtons();");
+  });
+});
+
+// ── THE CENSUS SEAM ITSELF ───────────────────────────────────────────────────────────────────────
+//
+// The suite above asks duplicateBindings() about the REAL modules, and the real modules are clean —
+// so it returns [] whether the seam works or not. That is how this check was wrong twice without a
+// single red test: a green suite proves the page is tidy, never that the gate can see.
+//
+// These rows drive the same function with synthetic module + inline sources carrying exactly the
+// mutations that got through. Each one FAILS if the seam regresses to what it was.
+describe("the census seam catches a duplicate the page kept", () => {
+  const inline = (src: string): DashboardScript[] => [scriptFromSource("dashboard.html#inline-1", src)];
+
+  it.each([
+    [
+      "a plain declaration on both sides",
+      `function loadAnomalies() { return 1; }`,
+      `function loadAnomalies() { return 2; }`,
+    ],
+    [
+      // Defeated the regex census: legal, and the name vanished from the module's half.
+      "a module declaration hidden behind a comment",
+      `function /* moved out */ loadAnomalies() { return 1; }`,
+      `function loadAnomalies() { return 2; }`,
+    ],
+    [
+      // Defeated the declaration-only census on the INLINE side. This is the one that shadows.
+      "an arrow left behind in the page",
+      `function loadAnomalies() { return 1; }`,
+      `const loadAnomalies = () => 2;`,
+    ],
+    [
+      // ...and on the MODULE side, so neither half may be declaration-only.
+      "a module that binds its function to a const",
+      `const loadAnomalies = function () { return 1; };`,
+      `function loadAnomalies() { return 2; }`,
+    ],
+    ["an arrow on both sides", `const loadAnomalies = () => 1;`, `const loadAnomalies = () => 2;`],
+  ])("reports %s", (_label, moduleSrc, inlineSrc) => {
+    expect(
+      duplicateBindings("m.js", moduleSrc, inline(inlineSrc)),
+      "a duplicate the gate cannot see is a stale copy the page keeps calling",
+    ).not.toEqual([]);
+  });
+
+  it.each([
+    [
+      // The ACTIONS dispatch table. These MUST stay behind — they are how a click reaches the module.
+      "a dispatch entry that forwards to the module",
+      `function loadAnomalies() { return 1; }`,
+      `const ACTIONS = { loadAnomalies: (el) => loadAnomalies(el) };`,
+    ],
+    [
+      "a call site, not a binding",
+      `function loadAnomalies() { return 1; }`,
+      `document.getElementById("x").onclick = () => loadAnomalies();`,
+    ],
+    [
+      "the module's own publication onto window",
+      `function loadAnomalies() { return 1; }`,
+      `window.loadAnomalies = window.loadAnomalies;`,
+    ],
+    [
+      "a name the module does not own",
+      `function loadAnomalies() { return 1; }`,
+      `function renderSomethingElse() {}`,
+    ],
+  ])("stays silent on %s", (_label, moduleSrc, inlineSrc) => {
+    expect(
+      duplicateBindings("m.js", moduleSrc, inline(inlineSrc)),
+      "flagging correct code is how a gate gets switched off",
+    ).toEqual([]);
   });
 });

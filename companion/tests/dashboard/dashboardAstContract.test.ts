@@ -16,6 +16,7 @@ import {
   buildCallGraph,
   callsByName,
   domAccessOutsideFunctions,
+  functionBindingsOf,
   ownerEscapes,
   calleesInsideLoops,
   commitsInsideLoops,
@@ -219,6 +220,14 @@ describe("the guard analyser reads the branch, not just the condition", () => {
     ["the ELSE of a === function test", `if (typeof Foo === "function") { a(); } else { Foo(); }`],
     ["a call inside a template literal", "const s = `${Foo()}`;"],
     ["a spread of the bare name", `go(...Foo);`],
+    // SHORTHAND IS A READ, not a property name. `{ Foo }` desugars to `{ Foo: Foo }` and evaluates
+    // the binding, so it throws exactly like a bare reference — but the analyser grouped
+    // ShorthandPropertyAssignment with PropertyAssignment, where excluding the name IS right, and
+    // fell straight through the hole. isValueRef() at the top of the helper had it correct all
+    // along and said so in a comment; two implementations of one rule, and the wrong one was wired.
+    ["a shorthand property that evaluates the binding", `const wiring = { Foo };`],
+    ["a shorthand inside a load-time IIFE", `(() => { register({ Foo }); })();`],
+    ["a shorthand nested in a longhand value", `const wiring = { outer: { Foo } };`],
   ])("reports %s", (_label, src) => {
     expect(refs(src), "a missing module throws here and aborts the rest of the script").toContain("Foo");
   });
@@ -248,12 +257,71 @@ describe("the guard analyser reads the branch, not just the condition", () => {
     ["a call from inside an object method", `const o = { go() { Foo(); } };`],
     ["a property that shares the name", `const o = { Foo: 1 }; go(o.Foo);`],
     ["a parameter that shares the name", `function go(Foo) { return Foo; }`],
+    // Both of these were REPORTED before the analyser deferred to isValueRef(). A gate that flags
+    // correct code gets switched off, so a false positive costs the same as a false negative here.
+    ["a renamed destructuring key", `const { Foo: local } = q;`],
+    ["a loop label that shares the name", `Foo: for (;;) { break Foo; }`],
+    // SHORTHAND IN A PATTERN IS A WRITE. TypeScript spells `{ Foo }` the same in `const w = { Foo }`
+    // (a read, reported above) and `({ Foo } = src)` (an assignment, silent here) — and only the
+    // read can throw when the module is missing. Paired with the reports rows on purpose: one rule
+    // covering both directions is the only way this stays right.
+    ["a destructuring assignment target", `let Foo; ({ Foo } = src);`],
+    ["a destructuring assignment target with a default", `let Foo; ({ Foo = 1 } = src);`],
+    ["a nested destructuring assignment target", `let Foo; ({ outer: { Foo } } = src);`],
+    ["a destructuring target in a for-of", `let Foo; for ({ Foo } of xs) {}`],
   ])("ignores %s", (_label, src) => {
     expect(
       refs(src),
       "contained to one interaction, or not a reference to the global at all — reporting it would " +
         "bury the six that can abort the page",
     ).not.toContain("Foo");
+  });
+});
+
+// The feature-module suite asks "did this module leave a duplicate of one of its functions behind
+// in the page?" It harvests the module's declared names, then looks for those names in the inline
+// script. The inline half always used the parser; the module half was a regex over the source, and
+// a regex reads text. Every row below is a declaration the regex missed or misread — and a name
+// missing from the census is a duplicate the gate cannot look for.
+describe("the function census counts every binding, and only bindings", () => {
+  const bound = (src: string): string[] =>
+    functionBindingsOf(scriptFromSource("m.js", src)).map((b) => b.name);
+
+  it.each([
+    ["a plain declaration", `function wire() {}`],
+    ["an async declaration", `async function wire() {}`],
+    // Legal, and invisible to the /^\s*(?:async )?function (\w+)\s*\(/ this replaced.
+    ["a comment between the keyword and the name", `function /* moved out */ wire() {}`],
+    ["a comment between the name and its parens", `function wire /* (#415) */ () {}`],
+    ["a newline between the keyword and the name", `function\nwire() {}`],
+    ["a generator declaration", `function* wire() {}`],
+    ["a declaration nested inside another function", `function outer() { function wire() {} }`],
+    ["a declaration inside a block", `{ function wire() {} }`],
+    // THE ONE THAT SHADOWS. A declaration-only census called these "names the module never owned";
+    // they are top-level lexical bindings, and one restored in the inline script wins over the
+    // module's published function at every call site in it.
+    ["a function expression bound to a const", `const wire = function () {};`],
+    ["an arrow bound to a const", `const wire = () => {};`],
+    ["an async arrow bound to a let", `let wire = async () => {};`],
+    ["a function expression bound to a var", `var wire = function () {};`],
+    ["a named function expression bound to a const", `const wire = function inner() {};`],
+  ])("sees %s", (_label, src) => {
+    expect(bound(src), "a name missing from the census is a duplicate the gate cannot hunt").toContain(
+      "wire",
+    );
+  });
+
+  it.each([
+    // A property is not a binding — nothing can shadow through one, and the ACTIONS dispatch table
+    // is made of these. Counting them would make the census hunt names the module never owned.
+    ["an arrow in an object property", `const ACTIONS = { wire: (el) => wire(el) };`],
+    ["a method shorthand in an object literal", `const o = { wire() {} };`],
+    ["a class method", `class C { wire() {} }`],
+    ["an assignment onto window", `window.wire = function () {};`],
+    ["a const bound to a non-function", `const wire = 42;`],
+    ["the word function inside a string", `const s = "function wire() {}";`],
+  ])("does not count %s", (_label, src) => {
+    expect(bound(src)).not.toContain("wire");
   });
 });
 
