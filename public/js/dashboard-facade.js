@@ -81,6 +81,17 @@
     "refreshSuperRows",
     "renderSuperTimeline",
     "superPage",
+    // Playbook (#230). `initPlaybook` is deliberately absent: it is the module's own sentinel, and a
+    // stub for it would swallow the "Playbook unavailable" chip the page shows when the file is gone.
+    "loadPlaybook",
+    "pbPatch",
+    "pbDelete",
+    "pbMove",
+    "pbToggleDep",
+    "pbToggleDeps",
+    "pbJumpFinding",
+    "doSuggestPlaybookHunts",
+    "resetPlaybookHuntSuggest",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

@@ -251,6 +251,25 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Playbook (#230). Zero state escapes — the two that looked like escapes were a mention in a
+    // comment and an HTML id attribute, which is why the block check reads code and not text.
+    file: "dashboard-playbook.js",
+    initializer: "initPlaybook",
+    publish: [
+      "loadPlaybook",
+      "pbPatch",
+      "pbDelete",
+      "pbMove",
+      "pbToggleDep",
+      "pbToggleDeps",
+      "pbJumpFinding",
+      "doSuggestPlaybookHunts",
+      "resetPlaybookHuntSuggest",
+      "initPlaybook",
+    ],
+    private: ["playbookTasks", "pbOpenOnly", "pbDepsOpen", "pbHuntFlat", "pbHuntCollapsed"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

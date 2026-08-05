@@ -497,8 +497,12 @@ describe("dashboard.html", () => {
     // derived from the enclosing task's own (singular) relatedFindingId via playbookTasks.find(...).
     // Scoped to renderTaskHunts specifically — the sibling fleet-hunt panel legitimately DOES call
     // citeFindings(s.relatedFindingIds) (see the next test), so a file-wide assertion would be wrong.
+    // The arrow's parens are optional here because prettier formats extracted modules and does not
+    // format the inline block: the same code reads `t =>` in dashboard.html and `(t) =>` once it
+    // moves to public/js. The assertion is about which collection the task is looked up in, so it
+    // must not also pin whichever side of that move the code currently sits on.
     expect(html).toMatch(
-      /function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(t => t\.id === taskId\)/,
+      /function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(\(?t\)? => t\.id === taskId\)/,
     );
     expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}_pbhTask\.relatedFindingId/);
     expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(_pbhFindingIds\)/);
@@ -1047,7 +1051,10 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toMatch(/clpStage\("lifecycle"\)/);
     // The body is read by hand rather than via r.json(): that is what yields a true download %.
     expect(html).toContain("readBodyWithProgress");
-    expect(html).not.toMatch(/\/state`, \{ signal: loadSignal \}\)\.then\(r => r\.json\(\)\)/);
+    // Arrow parens optional: this is the assertion that the r.json() shortcut has NOT come back, and
+    // a negative pinned to one spelling stops catching it the moment the block moves to public/js
+    // and prettier writes `(r) =>`.
+    expect(html).not.toMatch(/\/state`, \{ signal: loadSignal \}\)\.then\(\(?r\)? => r\.json\(\)\)/);
   });
 
   it("paints the stage label before the phases that block the main thread", async () => {
