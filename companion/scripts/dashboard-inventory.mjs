@@ -295,6 +295,20 @@ const rows = sections.map((sec) => {
   // line range is trusted.
   const ownArr = own.map(([n]) => n);
   const coreMachinery = ownArr.filter((n) => CORE_MACHINERY.has(n)).sort();
+
+  // A section can be core machinery without declaring any of those NAMES. The 397-line block under
+  // the "Theme picker" banner declares ws, SEV, aiEnabled, lastIocs, tlPage, iocPage, timelineSort
+  // and twenty more — the page's central state — and not one core FUNCTION, so the name list above
+  // waves it through as a 397-line feature worth extracting. It is not a feature. It is the state
+  // every feature reads, filed under whichever banner happened to be above it.
+  //
+  // The signal is the escape count itself. A real feature keeps its state to itself and escapes in
+  // ones and twos; the three answers (accessor on the owner / ownership follows use / the
+  // declaration was in the wrong file) all assume a handful. Past roughly a dozen, "escape" is the
+  // wrong word — nothing escaped, the section simply IS the page's state, and the work to do is to
+  // find each binding's real owner, not to lift the block.
+  const STATE_HUB_ESCAPES = 12;
+  const isStateHub = stateEscapes.length >= STATE_HUB_ESCAPES;
   const idx = new Map(ownArr.map((n, i) => [n, i]));
   const parent = ownArr.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
@@ -356,7 +370,8 @@ const rows = sections.map((sec) => {
       .filter(([line]) => inSection(line))
       .map(([line, name]) => `${line} ${name}`),
     coreMachinery,
-    isCoreMachinery: coreMachinery.length > 0,
+    isStateHub,
+    isCoreMachinery: coreMachinery.length > 0 || isStateHub,
     boundElsewhere: [...boundElsewhere].sort(),
     needsInitializer: dom > 0 || boundElsewhere.size > 0,
     clusters,

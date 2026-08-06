@@ -39,6 +39,7 @@ const run = (): {
     looksLikeTwoFeatures: boolean;
     coreMachinery: string[];
     isCoreMachinery: boolean;
+    isStateHub: boolean;
     foreignStanzas: string[];
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
@@ -463,7 +464,36 @@ describe("dashboard extraction inventory", () => {
     const byLabel = Object.fromEntries(flagged.map((s) => [s.label.slice(0, 20), s.coreMachinery]));
     expect(byLabel["Cross-case capture w"], "the block that taught this lesson").toContain("connect");
     for (const s of report.sections) {
-      expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0);
+      expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0 || s.isStateHub);
+    }
+  });
+
+  it("flags a section that is core by the state it declares, not by any function it names", () => {
+    // The name list above misses a whole shape. The 397-line block under the "Theme picker" banner
+    // declares ws, SEV, aiEnabled, lastIocs, tlPage, iocPage, timelineSort and twenty more — the
+    // page's central state — and not one core FUNCTION, so it was waved through as the largest
+    // remaining feature. It is not a feature; it is the state every feature reads, filed under
+    // whichever banner happened to sit above it.
+    const hubs = report.sections.filter((s) => s.isStateHub);
+    expect(hubs.length, "no state hubs — the threshold has drifted out of range").toBeGreaterThan(0);
+    for (const h of hubs) {
+      expect(h.isCoreMachinery, `${h.label} is a state hub but not flagged core`).toBe(true);
+      expect(h.stateEscapes.length).toBeGreaterThanOrEqual(12);
+    }
+  });
+
+  it("does not call an ordinary feature a state hub", () => {
+    // The complement. A threshold low enough to catch every feature would quietly empty the queue,
+    // which reads as "nothing left to extract" rather than as a broken rule.
+    const ordinary = report.sections.filter((s) => !s.isStateHub);
+    expect(ordinary.length, "every section is a state hub — the threshold is too low").toBeGreaterThan(
+      report.sections.length / 2,
+    );
+    for (const s of ordinary) {
+      expect(
+        s.stateEscapes.length,
+        `${s.label} escapes ${s.stateEscapes.length} yet is not a hub`,
+      ).toBeLessThan(12);
     }
   });
 
