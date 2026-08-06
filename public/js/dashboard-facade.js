@@ -39,6 +39,7 @@
     "loadD3fend",
     "loadGeoMap",
     "loadSessions",
+    "toggleSessionsCollapse",
     "loadSwimlane",
     "renderGeoMarkers",
     "renderGeoView",

@@ -6226,7 +6226,6 @@
     }
 
 
-    let sessionsCollapsed = false;
 
 
     // Timeline Gaps (#83) moved to js/dashboard-timeline-gaps.js (#415 tier 3). No initializer.
@@ -8724,10 +8723,7 @@
       // Attacker Sessions collapse-all (#341): collapse every card to its one-line header for a
       // high-level read of the intrusion, expand for the detail. Purely visual, no refetch.
       if (e.target.id === "sessionsCollapseAllBtn") {
-        sessionsCollapsed = !sessionsCollapsed;
-        const sec = document.getElementById("sec-sessions");
-        if (sec) sec.classList.toggle("ses-collapsed", sessionsCollapsed);
-        e.target.textContent = sessionsCollapsed ? "⇕ Expand all" : "⇕ Collapse all";
+        if (typeof toggleSessionsCollapse === "function") toggleSessionsCollapse(e.target);
         return;
       }
       // Star filter toggle

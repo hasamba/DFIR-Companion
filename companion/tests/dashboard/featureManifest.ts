@@ -51,8 +51,9 @@ export const FEATURES: Feature[] = [
   },
   {
     file: "dashboard-sessions.js",
-    publish: ["loadSessions", "scheduleSessionsReload", "summarizeSession"],
-    private: ["sessionsData", "sessionsTimer", "sessionSummaries"],
+    // sessionsCollapsed came home: its only reader is this feature's own collapse-all control.
+    publish: ["loadSessions", "scheduleSessionsReload", "summarizeSession", "toggleSessionsCollapse"],
+    private: ["sessionsData", "sessionsTimer", "sessionSummaries", "sessionsCollapsed"],
   },
   {
     file: "dashboard-compliance.js",

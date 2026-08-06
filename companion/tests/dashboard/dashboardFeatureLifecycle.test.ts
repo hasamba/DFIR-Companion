@@ -352,21 +352,25 @@ describe("a feature script that fails to load", () => {
 });
 
 describe("what stayed behind, on purpose", () => {
-  // `sessionsCollapsed` lives inside the sessions block but the timeline header's collapse-all
-  // control reads it, so it is shared state, not this feature's. Taking it would have broken that
-  // control silently — the census that drove this tier did not see the reference, because it counts
-  // calls between top-level functions and that one is a listener.
-  it("leaves sessionsCollapsed in the page, where its other reader is", async () => {
+  // `sessionsCollapsed` used to live in the page, and this test used to assert that it stayed —
+  // on the reasoning that "the collapse-all control reads it, so it is shared state". Re-reading
+  // that control is what overturned it: it toggles .ses-collapsed on #sec-sessions and relabels
+  // its own button, and nothing else touches the flag. It read as shared only because it sits in
+  // the page's delegated-click block, forty features deep. An element's address is not its owner.
+  it("keeps sessionsCollapsed with the feature whose control is its only reader", async () => {
     const html = await readFile(DASHBOARD, "utf8");
-    expect(html).toMatch(/let sessionsCollapsed = false;/);
-    // Asserted against CODE, not the file text: this module's own header explains why
-    // sessionsCollapsed stayed behind, and a raw substring check trips over that explanation —
-    // which is the sixth time in this issue that a mechanical check has caught its own prose.
+    expect(html, "the page still declares it").not.toMatch(/let sessionsCollapsed = false/);
+    expect(html, "the page asks for the operation instead").toContain("toggleSessionsCollapse(e.target)");
+    // Asserted against CODE, not file text: a comment naming the binding would satisfy a raw
+    // substring search, which is the sixth time in this issue a mention has passed for a use.
     const code = (await read("dashboard-sessions.js"))
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    expect(code).not.toContain("sessionsCollapsed");
+    expect(code).toContain("let sessionsCollapsed = false");
+    expect(code, "and it stays private — only the operation is published").not.toContain(
+      "window.sessionsCollapsed",
+    );
   });
 
   // THE PAGE MUST REALLY CALL IT, and the module must really defer its DOM work.

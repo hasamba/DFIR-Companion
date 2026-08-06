@@ -1,8 +1,11 @@
 // Attacker Sessions story view (#341 / #229) (#415 tier 3).
 //
-// `sessionsCollapsed` deliberately did NOT come along: the collapse-all control in the timeline
-// header reads it, so it is shared state and stays in the page. The rest — the segmentation, its
-// debounce timer and the ephemeral per-session summaries — is this feature's alone.
+// `sessionsCollapsed` was left in the page on the grounds that the collapse-all control reads it,
+// "so it is shared state". That was wrong, and re-reading its one reader is what showed it: the
+// control IS this feature's — it toggles .ses-collapsed on #sec-sessions and relabels its own
+// button, and nothing else touches the flag. It read as shared only because it sits in the page's
+// delegated-click block, forty features deep. An element's address is not its owner; the state it
+// touches is. The binding is here now, and the page asks through toggleSessionsCollapse().
 //
 // AN IIFE, unlike js/dashboard-tagger.js and js/dashboard-kev.js. Those hold no state, so their
 // top-level declarations were harmless. This feature owns state, and a top-level `let` in a
@@ -12,6 +15,16 @@
 //
 // NOT AN ES MODULE: the inline script calls the published names below by bare name.
 (function () {
+  // Purely visual, no refetch: collapse every session card to its one-line header for a
+  // high-level read of the intrusion, expand for the detail.
+  let sessionsCollapsed = false;
+  function toggleSessionsCollapse(btn) {
+    sessionsCollapsed = !sessionsCollapsed;
+    const sec = document.getElementById("sec-sessions");
+    if (sec) sec.classList.toggle("ses-collapsed", sessionsCollapsed);
+    if (btn) btn.textContent = sessionsCollapsed ? "⇕ Expand all" : "⇕ Collapse all";
+  }
+
   // ── Attacker Sessions story view (#341 / #229) ────────────────────────────────────────
   // The timeline re-threaded as per-host chapters. Derived server-side (GET /cases/:id/sessions)
   // from the raw forensic timeline; re-derived (debounced) on each state change like the panels
@@ -111,4 +124,5 @@
   window.loadSessions = loadSessions;
   window.scheduleSessionsReload = scheduleSessionsReload;
   window.summarizeSession = summarizeSession;
+  window.toggleSessionsCollapse = toggleSessionsCollapse;
 })();
