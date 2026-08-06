@@ -15,18 +15,8 @@
       "size": 94,
       "functions": 8,
       "stateBindings": 4,
-      "publish": [
-        "applyTheme",
-        "currentTheme",
-        "setTheme",
-        "storedTheme",
-        "systemTheme"
-      ],
-      "stateEscapes": [
-        "DFIR_THEMES",
-        "THEME_GROUP_LABELS",
-        "THEME_GROUP_ORDER"
-      ],
+      "publish": ["applyTheme", "currentTheme", "setTheme", "storedTheme", "systemTheme"],
+      "stateEscapes": ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
       "moduleScopeDom": 0
     },
     {
@@ -101,12 +91,7 @@
         "loadAssetOverrides",
         "scheduleAssetGraphReload"
       ],
-      "stateEscapes": [
-        "DESC_TITLE_LIMIT",
-        "assetGraphData",
-        "assetOverridesData",
-        "assetTypesEnabled"
-      ],
+      "stateEscapes": ["DESC_TITLE_LIMIT", "assetGraphData", "assetOverridesData", "assetTypesEnabled"],
       "moduleScopeDom": 0
     },
     {
@@ -124,10 +109,7 @@
         "renderAssetList",
         "scheduleLoginGraphReload"
       ],
-      "stateEscapes": [
-        "assetGV",
-        "lgGV"
-      ],
+      "stateEscapes": ["assetGV", "lgGV"],
       "moduleScopeDom": 1
     },
     {
@@ -162,13 +144,7 @@
       "size": 87,
       "functions": 7,
       "stateBindings": 20,
-      "publish": [
-        "closeCommentModal",
-        "commentChip",
-        "loadComments",
-        "openCommentModal",
-        "postComment"
-      ],
+      "publish": ["closeCommentModal", "commentChip", "loadComments", "openCommentModal", "postComment"],
       "stateEscapes": [
         "ICON_CHAIN",
         "ICON_DOWNLOAD",
@@ -207,10 +183,7 @@
         "tagChip",
         "tagPills"
       ],
-      "stateEscapes": [
-        "tagTarget",
-        "tagsByTarget"
-      ],
+      "stateEscapes": ["tagTarget", "tagsByTarget"],
       "moduleScopeDom": 0
     },
     {
@@ -220,15 +193,8 @@
       "size": 24,
       "functions": 2,
       "stateBindings": 3,
-      "publish": [
-        "loadPins",
-        "pinBtn"
-      ],
-      "stateEscapes": [
-        "pinLimit",
-        "pinnedList",
-        "pinnedSet"
-      ],
+      "publish": ["loadPins", "pinBtn"],
+      "stateEscapes": ["pinLimit", "pinnedList", "pinnedSet"],
       "moduleScopeDom": 0
     },
     {
@@ -256,14 +222,8 @@
       "size": 45,
       "functions": 3,
       "stateBindings": 1,
-      "publish": [
-        "closeFalsePositiveModal",
-        "openFalsePositiveModal",
-        "renderFpCandidates"
-      ],
-      "stateEscapes": [
-        "fpTarget"
-      ],
+      "publish": ["closeFalsePositiveModal", "openFalsePositiveModal", "renderFpCandidates"],
+      "stateEscapes": ["fpTarget"],
       "moduleScopeDom": 0
     },
     {
@@ -273,15 +233,8 @@
       "size": 93,
       "functions": 6,
       "stateBindings": 2,
-      "publish": [
-        "loadNbAiToggle",
-        "loadNotebook",
-        "nbDelete",
-        "nbStartEdit"
-      ],
-      "stateEscapes": [
-        "notebookEntries"
-      ],
+      "publish": ["loadNbAiToggle", "loadNotebook", "nbDelete", "nbStartEdit"],
+      "stateEscapes": ["notebookEntries"],
       "moduleScopeDom": 8
     },
     {
@@ -300,9 +253,7 @@
         "loadHypotheses",
         "promoteToHypothesis"
       ],
-      "stateEscapes": [
-        "pendingHuntHypothesis"
-      ],
+      "stateEscapes": ["pendingHuntHypothesis"],
       "moduleScopeDom": 16
     },
     {
@@ -334,12 +285,7 @@
       "size": 86,
       "functions": 4,
       "stateBindings": 9,
-      "publish": [
-        "deriveStarred",
-        "isSystemPathIoc",
-        "migrateLocalStars",
-        "toggleStar"
-      ],
+      "publish": ["deriveStarred", "isSystemPathIoc", "migrateLocalStars", "toggleStar"],
       "stateEscapes": [
         "hideFpNoIntel",
         "hideSystemPaths",
@@ -375,11 +321,7 @@
       "size": 39,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "bulkEnrichIocs",
-        "bulkMarkIocsFalsePositive",
-        "bulkTagIocs"
-      ],
+      "publish": ["bulkEnrichIocs", "bulkMarkIocsFalsePositive", "bulkTagIocs"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -507,9 +449,7 @@
       "size": 49,
       "functions": 1,
       "stateBindings": 0,
-      "publish": [
-        "genExecSummary"
-      ],
+      "publish": ["genExecSummary"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -520,9 +460,7 @@
       "size": 161,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "loadSynthMeta"
-      ],
+      "publish": ["loadSynthMeta"],
       "stateEscapes": [],
       "moduleScopeDom": 17
     },
@@ -533,9 +471,7 @@
       "size": 48,
       "functions": 3,
       "stateBindings": 1,
-      "publish": [
-        "loadCorrProfile"
-      ],
+      "publish": ["loadCorrProfile"],
       "stateEscapes": [],
       "moduleScopeDom": 3
     },
@@ -576,11 +512,7 @@
         "loadImportMeta",
         "propagateFalsePositive"
       ],
-      "stateEscapes": [
-        "evKey",
-        "newEventKeys",
-        "newIocKeys"
-      ],
+      "stateEscapes": ["evKey", "newEventKeys", "newIocKeys"],
       "moduleScopeDom": 0
     },
     {
@@ -590,11 +522,7 @@
       "size": 98,
       "functions": 4,
       "stateBindings": 0,
-      "publish": [
-        "doAsk",
-        "doImportUndoRedo",
-        "loadUndoStack"
-      ],
+      "publish": ["doAsk", "doImportUndoRedo", "loadUndoStack"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -605,9 +533,7 @@
       "size": 60,
       "functions": 1,
       "stateBindings": 0,
-      "publish": [
-        "openExplainPanel"
-      ],
+      "publish": ["openExplainPanel"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -618,13 +544,7 @@
       "size": 169,
       "functions": 8,
       "stateBindings": 2,
-      "publish": [
-        "applyScope",
-        "doTranslateQuery",
-        "loadAiToggle",
-        "renderNlqPlatforms",
-        "toggleAi"
-      ],
+      "publish": ["applyScope", "doTranslateQuery", "loadAiToggle", "renderNlqPlatforms", "toggleAi"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -635,11 +555,7 @@
       "size": 77,
       "functions": 5,
       "stateBindings": 3,
-      "publish": [
-        "loadEnrichToggle",
-        "openEnrichModal",
-        "saveEnrich"
-      ],
+      "publish": ["loadEnrichToggle", "openEnrichModal", "saveEnrich"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -650,12 +566,7 @@
       "size": 76,
       "functions": 7,
       "stateBindings": 6,
-      "publish": [
-        "loadAnonEntities",
-        "loadAnonToggle",
-        "renderAnonToggle",
-        "renderAutoEntities"
-      ],
+      "publish": ["loadAnonEntities", "loadAnonToggle", "renderAnonToggle", "renderAutoEntities"],
       "stateEscapes": [
         "ANON_CATEGORIES",
         "ANON_ENTITY_CATEGORIES",
@@ -681,9 +592,7 @@
         "saveAnon",
         "setAi"
       ],
-      "stateEscapes": [
-        "presidioPending"
-      ],
+      "stateEscapes": ["presidioPending"],
       "moduleScopeDom": 1
     },
     {
@@ -712,13 +621,7 @@
       "size": 215,
       "functions": 14,
       "stateBindings": 9,
-      "publish": [
-        "esc",
-        "escAttr",
-        "loadJobs",
-        "pollCount",
-        "scheduleJobUiRefresh"
-      ],
+      "publish": ["esc", "escAttr", "loadJobs", "pollCount", "scheduleJobUiRefresh"],
       "stateEscapes": [],
       "moduleScopeDom": 10
     },
@@ -729,14 +632,8 @@
       "size": 170,
       "functions": 6,
       "stateBindings": 6,
-      "publish": [
-        "qaAudit",
-        "qaLinkify",
-        "qaResolveIocId"
-      ],
-      "stateEscapes": [
-        "QA_AUDIT_MARK"
-      ],
+      "publish": ["qaAudit", "qaLinkify", "qaResolveIocId"],
+      "stateEscapes": ["QA_AUDIT_MARK"],
       "moduleScopeDom": 1
     },
     {
@@ -746,19 +643,8 @@
       "size": 194,
       "functions": 4,
       "stateBindings": 9,
-      "publish": [
-        "fpBtn",
-        "kcSelect",
-        "kcTacticForEvent",
-        "renderKcDetail"
-      ],
-      "stateEscapes": [
-        "KC_CHAIN_ORDER",
-        "KC_SEV_COLOR",
-        "KC_SEV_ORDER",
-        "kcByTactic",
-        "kcSelectedTac"
-      ],
+      "publish": ["fpBtn", "kcSelect", "kcTacticForEvent", "renderKcDetail"],
+      "stateEscapes": ["KC_CHAIN_ORDER", "KC_SEV_COLOR", "KC_SEV_ORDER", "kcByTactic", "kcSelectedTac"],
       "moduleScopeDom": 5
     },
     {
@@ -807,10 +693,7 @@
       "size": 49,
       "functions": 3,
       "stateBindings": 2,
-      "publish": [
-        "loadTimelineGaps",
-        "scheduleTimelineGapsReload"
-      ],
+      "publish": ["loadTimelineGaps", "scheduleTimelineGapsReload"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -821,10 +704,7 @@
       "size": 117,
       "functions": 3,
       "stateBindings": 2,
-      "publish": [
-        "doHypothesizeGaps",
-        "resetGapHypotheses"
-      ],
+      "publish": ["doHypothesizeGaps", "resetGapHypotheses"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -835,11 +715,7 @@
       "size": 90,
       "functions": 4,
       "stateBindings": 2,
-      "publish": [
-        "doMemNextSteps",
-        "resetMemNextSteps",
-        "toggleMemNextSteps"
-      ],
+      "publish": ["doMemNextSteps", "resetMemNextSteps", "toggleMemNextSteps"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -850,11 +726,7 @@
       "size": 112,
       "functions": 5,
       "stateBindings": 3,
-      "publish": [
-        "applyHostRankingScope",
-        "loadHostRanking",
-        "scheduleHostRankingReload"
-      ],
+      "publish": ["applyHostRankingScope", "loadHostRanking", "scheduleHostRankingReload"],
       "stateEscapes": [],
       "moduleScopeDom": 1
     },
@@ -865,11 +737,7 @@
       "size": 129,
       "functions": 4,
       "stateBindings": 2,
-      "publish": [
-        "huntForTechnique",
-        "loadAdversaryHints",
-        "scheduleAdversaryHintsReload"
-      ],
+      "publish": ["huntForTechnique", "loadAdversaryHints", "scheduleAdversaryHintsReload"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -881,12 +749,7 @@
       "functions": 0,
       "stateBindings": 4,
       "publish": [],
-      "stateEscapes": [
-        "VHS_SEV_COLOR",
-        "VHS_SEV_RANK",
-        "vhsFlat",
-        "vhsSource"
-      ],
+      "stateEscapes": ["VHS_SEV_COLOR", "VHS_SEV_RANK", "vhsFlat", "vhsSource"],
       "moduleScopeDom": 0
     },
     {
@@ -934,10 +797,7 @@
         "sortTimelineEvents",
         "sourceFacets"
       ],
-      "stateEscapes": [
-        "NO_HOST_FACET",
-        "NO_SOURCE_FACET"
-      ],
+      "stateEscapes": ["NO_HOST_FACET", "NO_SOURCE_FACET"],
       "moduleScopeDom": 9
     },
     {
@@ -947,11 +807,7 @@
       "size": 257,
       "functions": 5,
       "stateBindings": 3,
-      "publish": [
-        "prevalenceChip",
-        "renderTimelineEvents",
-        "zoomToTimeWindow"
-      ],
+      "publish": ["prevalenceChip", "renderTimelineEvents", "zoomToTimeWindow"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -962,14 +818,8 @@
       "size": 361,
       "functions": 13,
       "stateBindings": 5,
-      "publish": [
-        "kbdOpenHelp",
-        "kbdShortcutsEnabled",
-        "setKbdShortcutsEnabled"
-      ],
-      "stateEscapes": [
-        "CP_LABELS"
-      ],
+      "publish": ["kbdOpenHelp", "kbdShortcutsEnabled", "setKbdShortcutsEnabled"],
+      "stateEscapes": ["CP_LABELS"],
       "moduleScopeDom": 37
     },
     {
@@ -997,15 +847,8 @@
       "size": 425,
       "functions": 13,
       "stateBindings": 11,
-      "publish": [
-        "connect",
-        "proceedConnect"
-      ],
-      "stateEscapes": [
-        "activeCaseId",
-        "activeUnlockRemembered",
-        "activeUnlockedCaseId"
-      ],
+      "publish": ["connect", "proceedConnect"],
+      "stateEscapes": ["activeCaseId", "activeUnlockRemembered", "activeUnlockedCaseId"],
       "moduleScopeDom": 3
     },
     {
@@ -1015,14 +858,8 @@
       "size": 79,
       "functions": 5,
       "stateBindings": 2,
-      "publish": [
-        "onTemplateSelectChange",
-        "populateTemplateSelect",
-        "selectedNewCasePlaybook"
-      ],
-      "stateEscapes": [
-        "_cachedTemplates"
-      ],
+      "publish": ["onTemplateSelectChange", "populateTemplateSelect", "selectedNewCasePlaybook"],
+      "stateEscapes": ["_cachedTemplates"],
       "moduleScopeDom": 0
     },
     {
@@ -1032,11 +869,7 @@
       "size": 38,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeSaveTemplate",
-        "openSaveTemplate",
-        "saveAsTemplate"
-      ],
+      "publish": ["closeSaveTemplate", "openSaveTemplate", "saveAsTemplate"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1047,11 +880,7 @@
       "size": 21,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeIocBlocklist",
-        "downloadIocBlocklist",
-        "openIocBlocklist"
-      ],
+      "publish": ["closeIocBlocklist", "downloadIocBlocklist", "openIocBlocklist"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1062,11 +891,7 @@
       "size": 46,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeRedactedExport",
-        "doRedactedExport",
-        "openRedactedExport"
-      ],
+      "publish": ["closeRedactedExport", "doRedactedExport", "openRedactedExport"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1077,11 +902,7 @@
       "size": 216,
       "functions": 15,
       "stateBindings": 3,
-      "publish": [
-        "closeReportVersions",
-        "doReportVersionsDiff",
-        "openReportVersions"
-      ],
+      "publish": ["closeReportVersions", "doReportVersionsDiff", "openReportVersions"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1092,11 +913,7 @@
       "size": 156,
       "functions": 6,
       "stateBindings": 0,
-      "publish": [
-        "closeAnalysisRuns",
-        "compareAnalysisRuns",
-        "openAnalysisRuns"
-      ],
+      "publish": ["closeAnalysisRuns", "compareAnalysisRuns", "openAnalysisRuns"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1107,11 +924,7 @@
       "size": 34,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeZipArchive",
-        "doZipArchive",
-        "openZipArchive"
-      ],
+      "publish": ["closeZipArchive", "doZipArchive", "openZipArchive"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1122,11 +935,7 @@
       "size": 57,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeEncryptedExport",
-        "doEncryptedExport",
-        "openEncryptedExport"
-      ],
+      "publish": ["closeEncryptedExport", "doEncryptedExport", "openEncryptedExport"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1137,11 +946,7 @@
       "size": 84,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "closeDeleteCase",
-        "doDeleteCase",
-        "openDeleteCase"
-      ],
+      "publish": ["closeDeleteCase", "doDeleteCase", "openDeleteCase"],
       "stateEscapes": [],
       "moduleScopeDom": 3
     },
@@ -1185,11 +990,7 @@
       "size": 53,
       "functions": 4,
       "stateBindings": 2,
-      "publish": [
-        "askMinSeverity",
-        "setImportSevPref",
-        "syncImportSevDefaultSelect"
-      ],
+      "publish": ["askMinSeverity", "setImportSevPref", "syncImportSevDefaultSelect"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1244,9 +1045,7 @@
       "size": 46,
       "functions": 3,
       "stateBindings": 1,
-      "publish": [
-        "openMergeModal"
-      ],
+      "publish": ["openMergeModal"],
       "stateEscapes": [],
       "moduleScopeDom": 7
     },
@@ -1268,13 +1067,8 @@
       "size": 97,
       "functions": 3,
       "stateBindings": 5,
-      "publish": [
-        "setupCollapsible",
-        "setupReorder"
-      ],
-      "stateEscapes": [
-        "sections"
-      ],
+      "publish": ["setupCollapsible", "setupReorder"],
+      "stateEscapes": ["sections"],
       "moduleScopeDom": 2
     },
     {
@@ -1295,15 +1089,8 @@
       "size": 70,
       "functions": 2,
       "stateBindings": 3,
-      "publish": [
-        "isSectionVisible",
-        "loadSectionsVis"
-      ],
-      "stateEscapes": [
-        "SECTIONS_ORDER_KEY",
-        "SECTIONS_VIS_KEY",
-        "SECTION_DEFS"
-      ],
+      "publish": ["isSectionVisible", "loadSectionsVis"],
+      "stateEscapes": ["SECTIONS_ORDER_KEY", "SECTIONS_VIS_KEY", "SECTION_DEFS"],
       "moduleScopeDom": 0
     },
     {
@@ -1313,12 +1100,7 @@
       "size": 193,
       "functions": 9,
       "stateBindings": 1,
-      "publish": [
-        "applySectionsVis",
-        "renderSecChecks",
-        "revealSection",
-        "saveSectionsOrder"
-      ],
+      "publish": ["applySectionsVis", "renderSecChecks", "revealSection", "saveSectionsOrder"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1329,12 +1111,7 @@
       "size": 38,
       "functions": 5,
       "stateBindings": 2,
-      "publish": [
-        "applyTlDisplayFromChecks",
-        "loadTlDisplay",
-        "renderTlChecks",
-        "tlShow"
-      ],
+      "publish": ["applyTlDisplayFromChecks", "loadTlDisplay", "renderTlChecks", "tlShow"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1365,10 +1142,7 @@
       "size": 78,
       "functions": 5,
       "stateBindings": 1,
-      "publish": [
-        "closeSettingsModal",
-        "openSettingsTab"
-      ],
+      "publish": ["closeSettingsModal", "openSettingsTab"],
       "stateEscapes": [],
       "moduleScopeDom": 5
     },
@@ -1379,9 +1153,7 @@
       "size": 115,
       "functions": 1,
       "stateBindings": 9,
-      "publish": [
-        "wizEl"
-      ],
+      "publish": ["wizEl"],
       "stateEscapes": [
         "LOCAL_PROVIDERS",
         "WIZARD_BY_ID",
@@ -1400,9 +1172,7 @@
       "size": 88,
       "functions": 2,
       "stateBindings": 0,
-      "publish": [
-        "wizResetAiStep"
-      ],
+      "publish": ["wizResetAiStep"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1413,10 +1183,7 @@
       "size": 435,
       "functions": 16,
       "stateBindings": 2,
-      "publish": [
-        "fetchLogLevel",
-        "wizRefreshStatus"
-      ],
+      "publish": ["fetchLogLevel", "wizRefreshStatus"],
       "stateEscapes": [],
       "moduleScopeDom": 86
     },
@@ -1427,12 +1194,7 @@
       "size": 151,
       "functions": 7,
       "stateBindings": 6,
-      "publish": [
-        "loadReportTemplates",
-        "rtDelete",
-        "rtFillEditor",
-        "rtSave"
-      ],
+      "publish": ["loadReportTemplates", "rtDelete", "rtFillEditor", "rtSave"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1443,12 +1205,7 @@
       "size": 109,
       "functions": 8,
       "stateBindings": 3,
-      "publish": [
-        "dvDelete",
-        "dvFillEditor",
-        "dvSave",
-        "loadDashboardViewsEditor"
-      ],
+      "publish": ["dvDelete", "dvFillEditor", "dvSave", "loadDashboardViewsEditor"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1459,11 +1216,7 @@
       "size": 27,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "loadCaseTemplatePicker",
-        "refreshCaseTemplatePicker",
-        "saveCaseTemplate"
-      ],
+      "publish": ["loadCaseTemplatePicker", "refreshCaseTemplatePicker", "saveCaseTemplate"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1474,12 +1227,7 @@
       "size": 47,
       "functions": 5,
       "stateBindings": 0,
-      "publish": [
-        "loadWhitelist",
-        "wlAddRule",
-        "wlExport",
-        "wlImport"
-      ],
+      "publish": ["loadWhitelist", "wlAddRule", "wlExport", "wlImport"],
       "stateEscapes": [],
       "moduleScopeDom": 0
     },
@@ -1527,10 +1275,7 @@
       "size": 250,
       "functions": 11,
       "stateBindings": 1,
-      "publish": [
-        "loadTools",
-        "loadUpdateCheck"
-      ],
+      "publish": ["loadTools", "loadUpdateCheck"],
       "stateEscapes": [],
       "moduleScopeDom": 10
     },
@@ -1582,9 +1327,7 @@
       "size": 32,
       "functions": 2,
       "stateBindings": 2,
-      "publish": [
-        "loadDiskStats"
-      ],
+      "publish": ["loadDiskStats"],
       "stateEscapes": [],
       "moduleScopeDom": 1
     },
@@ -1606,9 +1349,7 @@
       "size": 149,
       "functions": 1,
       "stateBindings": 0,
-      "publish": [
-        "loadCaseLifecycle"
-      ],
+      "publish": ["loadCaseLifecycle"],
       "stateEscapes": [],
       "moduleScopeDom": 12
     },
@@ -1630,9 +1371,7 @@
       "size": 54,
       "functions": 3,
       "stateBindings": 0,
-      "publish": [
-        "promptCaseUnlock"
-      ],
+      "publish": ["promptCaseUnlock"],
       "stateEscapes": [],
       "moduleScopeDom": 5
     },

@@ -26,6 +26,7 @@
 // scope would query its elements before they exist and wire nothing, silently. Any block with a
 // non-zero `dom` count needs its wiring wrapped in an init function the page calls behind a guard.
 import ts from "typescript";
+import prettier from "prettier";
 import { readFileSync, writeFileSync } from "node:fs";
 
 // `--html <path>` exists so the coverage guard below can be tested against a deliberately broken
@@ -41,6 +42,11 @@ const lines = readFileSync(HTML_PATH, "utf8").split("\n");
 
 // The inline block is the longest <script> with no src=. Located rather than hard-coded: it has
 // moved every time a feature left it.
+//
+// THIS NUMBER IS NOT check:size's `#inline-js`, and the gap is not a bug in either. That ledger
+// sums all five inline blocks (14,731 today); this covers only the big one, and counts whole lines
+// between the tags rather than the partial lines the tags sit on — 14,541 against its 14,543. The
+// other four blocks total 188 lines and are page bootstrap, not features: nothing to inventory.
 let bounds = null;
 for (let i = 0; i < lines.length; i++) {
   if (!/<script(?![^>]*\ssrc=)/.test(lines[i])) continue;
@@ -165,7 +171,16 @@ const report = {
 };
 
 if (process.argv.includes("--update")) {
-  writeFileSync(JSON_PATH, JSON.stringify(report, null, 2) + "\n");
+  // Written through prettier, not JSON.stringify alone. format:check covers this artifact, and
+  // prettier's JSON printer keeps short arrays on one line where JSON.stringify never does — so a
+  // raw dump lands the branch a red CI, and running `npm run format` to fix it leaves a file that
+  // goes red again the next time anyone regenerates. Formatting here makes the two agree forever.
+  const raw = JSON.stringify(report, null, 2) + "\n";
+  const options = (await prettier.resolveConfig(JSON_PATH.pathname)) ?? {};
+  writeFileSync(
+    JSON_PATH,
+    await prettier.format(raw, { ...options, parser: "json", filepath: JSON_PATH.pathname }),
+  );
   console.log(`[inventory] wrote ${rows.length} sections to scripts/dashboard-inventory.json`);
 } else if (process.argv.includes("--json")) {
   console.log(JSON.stringify(report, null, 2));
