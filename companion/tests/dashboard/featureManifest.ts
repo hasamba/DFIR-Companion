@@ -439,6 +439,22 @@ export const FEATURES: Feature[] = [
     private: ["enrichProviders", "enrichAvailable", "enrichOnCount"],
   },
   {
+    // Unified import. No declarations and no state — the block was two statements of listener
+    // wiring, so the module publishes only its initializer.
+    file: "dashboard-unified-import.js",
+    initializer: "initUnifiedImport",
+    publish: ["initUnifiedImport"],
+    private: [],
+  },
+  {
+    // Asset overrides. Same shape: six statements of wiring, nothing else, nothing published but
+    // the initializer.
+    file: "dashboard-asset-overrides.js",
+    initializer: "initAssetOverrides",
+    publish: ["initAssetOverrides"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

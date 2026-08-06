@@ -184,8 +184,14 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
 // Tools extraction, and copying the range wholesale put a call to the page's dfirFeatureUnavailable
 // inside a module, where it is not defined. The module suite caught it, but only after the fact.
 //
-// Detected structurally rather than by text: an `if` whose condition is `typeof NAME !== "undefined"`
-// for a NAME that one of the extracted modules publishes.
+// Detected structurally rather than by text: an `if` whose condition tests `typeof NAME` for a NAME
+// that one of the extracted modules publishes.
+//
+// BOTH IDIOMS, because the file uses both and matching only one is worse than matching neither. The
+// first version required the literal `undefined`, so it missed
+// `if (typeof initTicketIntegrations === "function")` — and that stanza was inside the very next
+// block extracted, went into the module, and stopped the ticket integrations initialising at all.
+// Silently: the page was fine, the feature simply never started. The lifecycle suite caught it.
 const publishedByModules = new Set();
 for (const [name] of siblingRefs) publishedByModules.add(name);
 {
@@ -206,7 +212,7 @@ const foreignStanzaLines = new Map(); // first line -> the guarded name
 for (const st of sf.statements) {
   if (!ts.isIfStatement(st)) continue;
   const cond = st.expression.getText(sf);
-  const m = /typeof\s+(\w+)\s*!==?\s*["']undefined["']/.exec(cond);
+  const m = /typeof\s+(\w+)\s*[!=]==?\s*["'](?:undefined|function)["']/.exec(cond);
   if (m && publishedByModules.has(m[1])) foreignStanzaLines.set(lineOf(st.getStart(sf)), m[1]);
 }
 

@@ -386,6 +386,40 @@ describe("dashboard extraction inventory", () => {
     }
   });
 
+  it('catches the `=== "function"` guard idiom as well as `!== "undefined"`', () => {
+    // The file uses both, and matching only one is worse than matching neither — it reads as
+    // coverage. The first version required the literal `undefined` and missed
+    // `if (typeof initTicketIntegrations === "function")`. That stanza sat inside the very next
+    // block extracted, travelled into the module, and stopped the ticket integrations initialising
+    // at all — silently, because the page was otherwise fine. Widening the pattern took the count
+    // from 7 sections to 15.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"));
+    writeFileSync(join(dir, "js", "dashboard-gone.js"), "window.initGone = function () {};\n");
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- A feature that is still here ----",
+        "  function stillHere() {}",
+        '  if (typeof initGone === "function") initGone();',
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      expect(r.sections[0].foreignStanzas).toEqual(["5 initGone"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not flag a typeof guard for a name no module publishes", () => {
     // The page guards plenty of its own optional things. Only a guard for a name an extracted
     // module publishes is someone else's stanza; without this the flag would fire on those too.
