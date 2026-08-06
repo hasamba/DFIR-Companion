@@ -946,7 +946,6 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
   // really about is that the two sides match, so the "used" side has to see everything that emits
   // a control, wherever it now lives.
   it("routes every control through data-act, with a matching ACTIONS entry for each", async () => {
-    const html = await load();
     const used = new Set(
       [...dashboardClientSource().matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]),
     );
