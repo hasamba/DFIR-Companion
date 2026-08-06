@@ -715,10 +715,14 @@ export const FEATURES: Feature[] = [
   },
   {
     // Velociraptor triage bundles — the other half. Its wiring was a self-calling IIFE.
+    // veloArtifactCache, veloEditingId and veloSelected moved here from the inline block. The
+    // first two were declared there and used only here; veloSelected had thirteen uses here and
+    // two assignments, against one reset in the page — ownership follows use.
     file: "dashboard-velo-bundles.js",
     initializer: "initVeloBundles",
     publish: [
       "initVeloBundles",
+      "resetVeloSelected",
       "renderVeloSelected",
       "veloClearBuilder",
       "veloEdit",
@@ -868,6 +872,28 @@ export const FEATURES: Feature[] = [
       "invalidateTemplateCache",
     ],
     private: ["_cachedTemplates", "_cachedIncidentTypes"],
+  },
+  {
+    // Velociraptor triage. Seven bindings crossed the boundary: three were simply declared in the
+    // wrong file and moved to the module that used them, four are genuinely shared and are handed
+    // out through accessors while the writes stay here.
+    file: "dashboard-velo-triage.js",
+    publish: [
+      "loadVeloTriage",
+      "loadVeloBundles",
+      "loadVeloClients",
+      "loadVeloHuntJobs",
+      "veloCaseId",
+      "applyVeloEnabled",
+      "doRefreshVeloClients",
+      "doVeloReconnect",
+      "veloImportExternal",
+      "veloBundlesList",
+      "veloClientsList",
+      "veloMonAutoBrowsed",
+      "setVeloMonAutoBrowsed",
+    ],
+    private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
     file: "dashboard-collection-plan.js",

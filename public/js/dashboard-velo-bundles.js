@@ -5,6 +5,11 @@
 // `(function wireVeloTriage(){…})()` — the eighth in this PR — which in a <head> script runs before
 // the builder's controls exist and binds nothing.
 (function () {
+  // The builder's artifact selection. Declared in the inline block until #415 tier 3, but THIRTEEN
+  // of its uses are here and two of them are assignments — the page only reset it once. Ownership
+  // follows use, so it lives here and js/dashboard-velo-triage.js calls resetVeloSelected().
+  let veloSelected = new Set();
+
   function veloBrowseArtifacts() {
     const picker = document.getElementById("veloArtifactPicker");
     const btn = document.getElementById("veloBrowseBtn");
@@ -249,7 +254,7 @@
     veloSetEditing(null);
   }
   function veloEdit(id) {
-    const b = (_veloBundles || []).find((x) => x.id === id);
+    const b = (veloBundlesList() || []).find((x) => x.id === id);
     if (!b) return;
     veloApplyToBuilder(b);
     veloSetEditing(b.id, b.name);
@@ -257,7 +262,7 @@
     if (msg) msg.textContent = "";
   }
   function veloDuplicate(id) {
-    const b = (_veloBundles || []).find((x) => x.id === id);
+    const b = (veloBundlesList() || []).find((x) => x.id === id);
     if (!b) return;
     veloApplyToBuilder({ ...b, name: b.name + " (copy)" });
     veloSetEditing(null); // a duplicate is saved as a NEW bundle
@@ -342,5 +347,10 @@
   window.veloDuplicate = veloDuplicate;
   window.veloDeleteBundle = veloDeleteBundle;
   window.veloResetBuiltin = veloResetBuiltin;
+  function resetVeloSelected() {
+    veloSelected = new Set();
+  }
+
+  window.resetVeloSelected = resetVeloSelected;
   window.initVeloBundles = initVeloBundles;
 })();

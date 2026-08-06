@@ -6,12 +6,15 @@
 //
 // NO INITIALIZER: the per-row buttons are wired by renderVeloMonitors() as the rows are built.
 (function () {
+  // Declared in the inline block until #415 tier 3 and used only here. This module's binding now.
+  let _veloEventArtifacts = []; // last-loaded CLIENT_EVENT artifact list (monitor picker)
+
   // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
   function loadVeloMonitors(caseId) {
     // Populate the CLIENT_EVENT picker once when Velociraptor is on, so the dropdown isn't empty
     // and the analyst doesn't have to click "Browse" first (it can still be re-browsed manually).
-    if (veloEnabled && !_veloMonAutoBrowsed) {
-      _veloMonAutoBrowsed = true;
+    if (veloEnabled && !veloMonAutoBrowsed()) {
+      setVeloMonAutoBrowsed(true);
       veloMonBrowse();
     }
     if (!caseId) {
@@ -216,7 +219,8 @@
           "enter a valid client id (C.xxxxxxxx), or tick All enrolled clients";
       return;
     }
-    const host = _veloClients.find((c) => c.clientId === clientId) || {};
+    const host =
+      (veloClientsList() || []).find((c) => c.clientId === clientId) || {};
     const body = allClients
       ? { allClients: true, artifact, pollSeconds, minSeverity }
       : {

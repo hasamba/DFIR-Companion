@@ -250,6 +250,7 @@
     "veloDuplicate",
     "veloDeleteBundle",
     "veloResetBuiltin",
+    "resetVeloSelected",
     // Import progress, the AI status banner and the custom importers. None has an initializer.
     "showImportProgress",
     "showImportProgressIndeterminate",
@@ -313,6 +314,21 @@
     "selectedNewCasePlaybook",
     "onTemplateSelectChange",
     "invalidateTemplateCache",
+    // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
+    // missing triage module must not turn their renders into ReferenceErrors.
+    "loadVeloTriage",
+    "loadVeloBundles",
+    "loadVeloClients",
+    "loadVeloHuntJobs",
+    "veloCaseId",
+    "applyVeloEnabled",
+    "doRefreshVeloClients",
+    "doVeloReconnect",
+    "veloImportExternal",
+    "veloBundlesList",
+    "veloClientsList",
+    "veloMonAutoBrowsed",
+    "setVeloMonAutoBrowsed",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

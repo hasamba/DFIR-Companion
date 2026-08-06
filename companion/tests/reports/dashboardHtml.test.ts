@@ -625,12 +625,15 @@ describe("dashboard.html", () => {
   });
 
   it("guards the time-scope preview against out-of-order responses from rapid scope changes", async () => {
-    const html = dashboardClientSource();
+    // Whitespace-collapsed: this code moved to js/dashboard-velo-triage.js (#415 tier 3) and
+    // prettier rewrapped both branches. The invariant is that BOTH the success and the error path
+    // bail out when a newer request has superseded them — a stale response must not overwrite a
+    // fresh preview — and that is independent of how the arrows are laid out.
+    const html = dashboardClientSource().replace(/\s+/g, " ");
     expect(html).toContain("let veloTsPreviewSeq = 0;");
     expect(html).toMatch(/function veloTimeScopePreview[\s\S]{0,900}const mySeq = \+\+veloTsPreviewSeq;/);
-    // Both the success and error branches must bail out if a newer request has since superseded them.
-    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{\s*\n\s*if \(mySeq !== veloTsPreviewSeq\) return;/);
-    expect(html).toMatch(/\.catch\(e => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+    expect(html).toMatch(/\.catch\(\(?e\)? => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
   });
 
   it("renders the hunt job card's degraded time-scope coverage as explicitly unverified, not as zero", async () => {
