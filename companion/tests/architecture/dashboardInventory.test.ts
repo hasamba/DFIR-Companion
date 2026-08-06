@@ -281,6 +281,44 @@ describe("dashboard extraction inventory", () => {
     }
   });
 
+  it("counts a lone FUNCTION as a second feature, but not a lone constant", () => {
+    // The check's first real miss. `doAsk` — the AI Ask box, forty-four lines with its own controls
+    // — sat under the "Import undo / redo (#76)" banner referencing nothing around it and referenced
+    // by nothing in the block, so it was a component of one and the original filter dropped every
+    // singleton as noise. A lone lookup table is noise; a lone function is a feature.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- One banner, a feature and a stowaway ----",
+        "  function aOne() { return aTwo(); }",
+        "  function aTwo() { return 1; }",
+        "  const SMALL_TABLE = { a: 1 };",
+        "  function stowaway() {",
+        ...Array.from({ length: 10 }, (_, i) => `    const line${i} = ${i};`),
+        "    return 0;",
+        "  }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      // aOne+aTwo is a cluster of two; stowaway is a cluster of one that counts; SMALL_TABLE is a
+      // singleton that does not.
+      expect(r.sections[0].clusters).toEqual([2, 1]);
+      expect(r.sections[0].looksLikeTwoFeatures).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not flag one feature just because it has several functions", () => {
     // The complement, and the one that keeps this usable: without it the flag could fire on every
     // section and mean nothing. One reference joining the two halves is enough to make them one.

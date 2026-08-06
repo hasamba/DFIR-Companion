@@ -88,7 +88,7 @@
       "foreignStanzas": ["3691 DfirTimelineView", "3697 DfirTimelineView"],
       "boundElsewhere": ["saveReportMeta"],
       "needsInitializer": true,
-      "clusters": [5, 5, 5, 2],
+      "clusters": [5, 5, 5, 2, 1, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -357,7 +357,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [],
+      "clusters": [1],
       "looksLikeTwoFeatures": false
     },
     {
@@ -426,7 +426,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [2, 2],
+      "clusters": [2, 2, 1, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -444,8 +444,8 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [],
-      "looksLikeTwoFeatures": false
+      "clusters": [1, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Bulk finding operations",
@@ -487,7 +487,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [9, 7, 2, 2],
+      "clusters": [9, 7, 2, 2, 1, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -568,7 +568,7 @@
       "foreignStanzas": ["6823 initNarrativeTimeline", "6827 initImportUndoRedo"],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [],
+      "clusters": [1],
       "looksLikeTwoFeatures": false
     },
     {
@@ -641,8 +641,8 @@
       "foreignStanzas": [],
       "boundElsewhere": ["doAsk"],
       "needsInitializer": true,
-      "clusters": [18],
-      "looksLikeTwoFeatures": false
+      "clusters": [18, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Explain Event (#141)",
@@ -659,7 +659,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [],
+      "clusters": [1],
       "looksLikeTwoFeatures": false
     },
     {
@@ -677,7 +677,7 @@
       "foreignStanzas": [],
       "boundElsewhere": ["applyScope", "doTranslateQuery", "renderNlqPlatforms", "toggleAi"],
       "needsInitializer": true,
-      "clusters": [5, 4],
+      "clusters": [5, 4, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -745,8 +745,8 @@
       "foreignStanzas": [],
       "boundElsewhere": ["addCustomEntity", "openAnonModal", "saveAnon"],
       "needsInitializer": true,
-      "clusters": [7],
-      "looksLikeTwoFeatures": false
+      "clusters": [7, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Import progress bar helpers",
@@ -771,8 +771,8 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [8],
-      "looksLikeTwoFeatures": false
+      "clusters": [8, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Background jobs (#225)",
@@ -879,7 +879,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [7, 6, 6, 5, 5],
+      "clusters": [7, 6, 6, 5, 5, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -915,8 +915,8 @@
       "foreignStanzas": ["9047 initHostRanking"],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [4],
-      "looksLikeTwoFeatures": false
+      "clusters": [4, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Suggested Fleet Hunts (#57)",
@@ -988,7 +988,7 @@
       "foreignStanzas": [],
       "boundElsewhere": ["dfirFeatureUnavailable", "runCustomerExposureCheck"],
       "needsInitializer": true,
-      "clusters": [12, 8, 7, 4, 3, 3, 3, 3, 3, 3, 2],
+      "clusters": [12, 8, 7, 4, 3, 3, 3, 3, 3, 3, 2, 1, 1, 1, 1, 1, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -1049,8 +1049,8 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [6],
-      "looksLikeTwoFeatures": false
+      "clusters": [6, 1, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Cross-case capture warning",
@@ -1193,8 +1193,8 @@
       "foreignStanzas": [],
       "boundElsewhere": ["closeDeleteCase", "doDeleteCase"],
       "needsInitializer": true,
-      "clusters": [2],
-      "looksLikeTwoFeatures": false
+      "clusters": [2, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "New case  creation lives here (the extension only attaches to existing cases)",
@@ -1211,7 +1211,7 @@
       "foreignStanzas": ["12479 initHuntModal", "12557 initReportVersions", "12561 initAnalysisRuns"],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [2, 2],
+      "clusters": [2, 2, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -1490,7 +1490,7 @@
       "foreignStanzas": [],
       "boundElsewhere": ["saveSettings"],
       "needsInitializer": true,
-      "clusters": [12, 6, 3],
+      "clusters": [12, 6, 3, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -1552,7 +1552,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": false,
-      "clusters": [],
+      "clusters": [1],
       "looksLikeTwoFeatures": false
     },
     {
@@ -1575,7 +1575,7 @@
       ],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [10, 4],
+      "clusters": [10, 4, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -1636,8 +1636,8 @@
       "foreignStanzas": ["15193 initSettingsTools"],
       "boundElsewhere": ["impAdd", "impCopyPrompt", "impReload", "impSetPrecedence", "wlApplyToCase"],
       "needsInitializer": true,
-      "clusters": [4],
-      "looksLikeTwoFeatures": false
+      "clusters": [4, 1, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications",
@@ -1661,7 +1661,7 @@
       "foreignStanzas": [],
       "boundElsewhere": ["loadCaseList", "ntfAddChannel", "ntfTypeChanged"],
       "needsInitializer": true,
-      "clusters": [6, 2],
+      "clusters": [6, 2, 1],
       "looksLikeTwoFeatures": true
     },
     {
@@ -1715,7 +1715,7 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [],
+      "clusters": [1],
       "looksLikeTwoFeatures": false
     },
     {
@@ -1733,8 +1733,8 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [3],
-      "looksLikeTwoFeatures": false
+      "clusters": [3, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Case unlock prompt",
@@ -1751,8 +1751,8 @@
       "foreignStanzas": [],
       "boundElsewhere": [],
       "needsInitializer": true,
-      "clusters": [2],
-      "looksLikeTwoFeatures": false
+      "clusters": [2, 1],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Custom tooltip",

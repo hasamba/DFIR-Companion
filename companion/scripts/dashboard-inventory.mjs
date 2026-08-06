@@ -292,8 +292,26 @@ const rows = sections.map((sec) => {
     const root = find(i);
     components.set(root, (components.get(root) ?? 0) + 1);
   });
-  // Singletons are noise — a lone constant is not a second feature. Count only clusters of 2+.
-  const clusters = [...components.values()].filter((n) => n >= 2).sort((a, b) => b - a);
+  // Singletons are usually noise — a lone lookup table is not a second feature — but a lone
+  // FUNCTION of any size is one, and dropping every singleton made the check miss its first real
+  // case: `doAsk`, the AI Ask box, sat under the "Import undo / redo (#76)" banner referencing
+  // nothing around it and referenced by nothing in the block. Forty-four lines, its own controls,
+  // its own Settings wiring, and the check called the block cohesive.
+  //
+  // So a singleton counts when its declaration spans enough lines to be a feature rather than a
+  // constant. Ten is the line that separates every lookup table in this file from every function.
+  const SINGLETON_MIN_LINES = 10;
+  const sizeOfDecl = (name) => (declEnd.get(name) ?? decls.get(name).line) - decls.get(name).line + 1;
+  const membersOf = new Map();
+  ownArr.forEach((n, i) => {
+    const root = find(i);
+    if (!membersOf.has(root)) membersOf.set(root, []);
+    membersOf.get(root).push(n);
+  });
+  const clusters = [...membersOf.values()]
+    .filter((names) => names.length >= 2 || sizeOfDecl(names[0]) >= SINGLETON_MIN_LINES)
+    .map((names) => names.length)
+    .sort((a, b) => b - a);
 
   return {
     label: sec.label,
