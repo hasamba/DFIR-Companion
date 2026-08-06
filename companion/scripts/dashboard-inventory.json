@@ -19,7 +19,9 @@
       "stateEscapes": ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
       "maxFanout": 17,
       "sharedMachinery": ["themeColor"],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["applyTheme", "storedTheme", "systemTheme"],
+      "needsInitializer": true
     },
     {
       "label": "Theme picker",
@@ -79,7 +81,9 @@
       ],
       "maxFanout": 7,
       "sharedMachinery": [],
-      "moduleScopeDom": 12
+      "moduleScopeDom": 12,
+      "boundElsewhere": ["saveReportMeta"],
+      "needsInitializer": true
     },
     {
       "label": "Compromised assets + asset↔IoC graph",
@@ -99,7 +103,9 @@
       "stateEscapes": ["DESC_TITLE_LIMIT", "assetGraphData", "assetOverridesData", "assetTypesEnabled"],
       "maxFanout": 12,
       "sharedMachinery": ["loadAssetGraph", "loadAssetOverrides"],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Login Graph (cytoscape)",
@@ -119,7 +125,9 @@
       "stateEscapes": ["assetGV", "lgGV"],
       "maxFanout": 12,
       "sharedMachinery": ["lgEl"],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Evidence Chain graph (causal: process trees + lateral movement)",
@@ -146,7 +154,9 @@
       ],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Investigator comments (collaboration)",
@@ -178,7 +188,9 @@
       ],
       "maxFanout": 6,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeCommentModal", "postComment"],
+      "needsInitializer": true
     },
     {
       "label": "Analyst triage tags",
@@ -200,7 +212,9 @@
       "stateEscapes": ["tagTarget", "tagsByTarget"],
       "maxFanout": 10,
       "sharedMachinery": ["loadTags"],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeTagModal"],
+      "needsInitializer": true
     },
     {
       "label": "Pinned findings (#220)",
@@ -213,7 +227,9 @@
       "stateEscapes": ["pinLimit", "pinnedList", "pinnedSet"],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Finding assignment + workflow status (#87)",
@@ -233,7 +249,9 @@
       "stateEscapes": [],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Mark-false-positive modal (#227)",
@@ -246,7 +264,9 @@
       "stateEscapes": ["fpTarget"],
       "maxFanout": 5,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeFalsePositiveModal"],
+      "needsInitializer": true
     },
     {
       "label": "Analyst notebook",
@@ -259,7 +279,9 @@
       "stateEscapes": ["notebookEntries"],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 8
+      "moduleScopeDom": 8,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Hypotheses (issue #140)",
@@ -280,7 +302,9 @@
       "stateEscapes": ["pendingHuntHypothesis"],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 16
+      "moduleScopeDom": 16,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Super-Timeline",
@@ -293,7 +317,9 @@
       "stateEscapes": ["ST_PAGE"],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Hunt-pivot query generator",
@@ -306,7 +332,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Starred events (per case, tag-backed)",
@@ -325,7 +353,9 @@
       ],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Multi-select (session-only, cleared on re-render)",
@@ -347,7 +377,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Bulk IOC operations",
@@ -360,7 +392,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Bulk finding operations",
@@ -397,7 +431,9 @@
       ],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Per-finding \"Export as Sigma draft\" (#89)",
@@ -417,7 +453,9 @@
       "stateEscapes": [],
       "maxFanout": 7,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeHuntModal"],
+      "needsInitializer": true
     },
     {
       "label": "Velociraptor triage bundles",
@@ -448,7 +486,9 @@
       ],
       "maxFanout": 9,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Live CLIENT_EVENT monitoring (#84)",
@@ -467,7 +507,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Push ingest token (#84)",
@@ -488,7 +530,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 16
+      "moduleScopeDom": 16,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Executive summary generator",
@@ -501,7 +545,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Narrative Timeline",
@@ -514,7 +560,9 @@
       "stateEscapes": [],
       "maxFanout": 5,
       "sharedMachinery": [],
-      "moduleScopeDom": 17
+      "moduleScopeDom": 17,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Correlation profile (per-case cross-source event merge window)",
@@ -527,7 +575,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 3
+      "moduleScopeDom": 3,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Second LLM opinion (#116): independent-model QA cross-check",
@@ -552,7 +602,9 @@
       ],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["runSecondOpinion"],
+      "needsInitializer": true
     },
     {
       "label": "Last-import change tracking (what the last import added to the timeline + IOCs)",
@@ -571,7 +623,9 @@
       "stateEscapes": ["evKey", "newEventKeys", "newIocKeys"],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Import undo / redo (#76)",
@@ -584,7 +638,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["doAsk"],
+      "needsInitializer": true
     },
     {
       "label": "Explain Event (#141)",
@@ -597,7 +653,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Query Translator (natural language → hunt queries, #100)",
@@ -610,7 +668,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["applyScope", "doTranslateQuery", "renderNlqPlatforms", "toggleAi"],
+      "needsInitializer": true
     },
     {
       "label": "Threat-intel enrichment — per-source selection (local on by default; external opt-in)",
@@ -623,7 +683,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["openEnrichModal", "saveEnrich"],
+      "needsInitializer": true
     },
     {
       "label": "Anonymization — tokenize sensitive victim data before the AI; restore on display",
@@ -643,7 +705,9 @@
       ],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Presidio approval panel (analyst-run PII-detector container found unseen values)",
@@ -663,7 +727,9 @@
       "stateEscapes": ["presidioPending"],
       "maxFanout": 8,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": ["addCustomEntity", "openAnonModal", "saveAnon"],
+      "needsInitializer": true
     },
     {
       "label": "Import progress bar helpers",
@@ -684,7 +750,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Background jobs (#225)",
@@ -705,7 +773,9 @@
       "stateEscapes": ["_jobsCache"],
       "maxFanout": 883,
       "sharedMachinery": ["esc", "escAttr"],
-      "moduleScopeDom": 10
+      "moduleScopeDom": 10,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Inline IOC quick-actions (#221)",
@@ -718,7 +788,9 @@
       "stateEscapes": ["QA_AUDIT_MARK"],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Screenshot OCR full-text search (#176)",
@@ -731,7 +803,9 @@
       "stateEscapes": ["KC_CHAIN_ORDER", "KC_SEV_COLOR", "KC_SEV_ORDER", "kcByTactic", "kcSelectedTac"],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 5
+      "moduleScopeDom": 5,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Attack Phases (temporal bursts; grouped by time gap, derived server-side, no AI)",
@@ -772,7 +846,9 @@
       ],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Timeline Gaps (#83)",
@@ -785,7 +861,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Gap Hypotheses (#96)",
@@ -798,7 +876,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Memory Next Steps (#101)",
@@ -811,7 +891,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Host & Account Ranking (#202)",
@@ -824,7 +906,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Adversary Hints (#46)",
@@ -837,7 +921,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Suggested Fleet Hunts (#57)",
@@ -850,7 +936,9 @@
       "stateEscapes": ["VHS_SEV_COLOR", "VHS_SEV_RANK", "vhsFlat", "vhsSource"],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Activity Log (#238)",
@@ -900,7 +988,9 @@
       "stateEscapes": ["NO_HOST_FACET", "NO_SOURCE_FACET"],
       "maxFanout": 16,
       "sharedMachinery": ["dfirFeatureUnavailable", "renderIocs"],
-      "moduleScopeDom": 9
+      "moduleScopeDom": 9,
+      "boundElsewhere": ["dfirFeatureUnavailable", "runCustomerExposureCheck"],
+      "needsInitializer": true
     },
     {
       "label": "Event-density heatmap (#219)",
@@ -913,7 +1003,9 @@
       "stateEscapes": [],
       "maxFanout": 24,
       "sharedMachinery": ["renderTimelineEvents"],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Vim-style keyboard navigation (Forensic Timeline)",
@@ -926,7 +1018,9 @@
       "stateEscapes": ["CP_LABELS", "CP_MARK"],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 37
+      "moduleScopeDom": 37,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Now investigator cockpit (#375)",
@@ -946,7 +1040,9 @@
       "stateEscapes": [],
       "maxFanout": 30,
       "sharedMachinery": ["render"],
-      "moduleScopeDom": 2
+      "moduleScopeDom": 2,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Cross-case capture warning",
@@ -959,7 +1055,9 @@
       "stateEscapes": ["activeCaseId", "activeUnlockRemembered", "activeUnlockedCaseId"],
       "maxFanout": 6,
       "sharedMachinery": [],
-      "moduleScopeDom": 3
+      "moduleScopeDom": 3,
+      "boundElsewhere": ["connect"],
+      "needsInitializer": true
     },
     {
       "label": "Case templates",
@@ -972,7 +1070,9 @@
       "stateEscapes": ["_cachedTemplates"],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["onTemplateSelectChange"],
+      "needsInitializer": true
     },
     {
       "label": "Save as Template",
@@ -985,7 +1085,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeSaveTemplate", "saveAsTemplate"],
+      "needsInitializer": true
     },
     {
       "label": "IOC block-list export (#87)",
@@ -998,7 +1100,9 @@
       "stateEscapes": [],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeIocBlocklist"],
+      "needsInitializer": true
     },
     {
       "label": "Redacted case export (#54)",
@@ -1011,7 +1115,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeRedactedExport", "doRedactedExport"],
+      "needsInitializer": true
     },
     {
       "label": "Reproducible analysis runs (#377)",
@@ -1024,7 +1130,9 @@
       "stateEscapes": [],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeAnalysisRuns", "compareAnalysisRuns"],
+      "needsInitializer": true
     },
     {
       "label": "ZIP case archive (unencrypted, \"(no password)\" in the filename)",
@@ -1037,7 +1145,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeZipArchive", "doZipArchive"],
+      "needsInitializer": true
     },
     {
       "label": "Encrypted case archive export (replaces #56's JSON snapshot)",
@@ -1050,7 +1160,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["closeEncryptedExport", "doEncryptedExport"],
+      "needsInitializer": true
     },
     {
       "label": "Delete case (optionally archive first)",
@@ -1063,7 +1175,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 3
+      "moduleScopeDom": 3,
+      "boundElsewhere": ["closeDeleteCase", "doDeleteCase"],
+      "needsInitializer": true
     },
     {
       "label": "New case  creation lives here (the extension only attaches to existing cases)",
@@ -1076,7 +1190,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 120
+      "moduleScopeDom": 120,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88)",
@@ -1089,7 +1205,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 24
+      "moduleScopeDom": 24,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Search bar + time-range filter listeners",
@@ -1102,7 +1220,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 49
+      "moduleScopeDom": 49,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Import minimum-severity preference (per-browser)",
@@ -1115,7 +1235,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Unified import: one button, the server auto-detects the file type",
@@ -1128,7 +1250,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 8
+      "moduleScopeDom": 8,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Unified export menu",
@@ -1141,7 +1265,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 12
+      "moduleScopeDom": 12,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Presentation mode (#177)",
@@ -1154,7 +1280,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 3
+      "moduleScopeDom": 3,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Manual add (event / IOC the AI didn't catch)",
@@ -1167,7 +1295,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 25
+      "moduleScopeDom": 25,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows",
@@ -1180,7 +1310,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 7
+      "moduleScopeDom": 7,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Asset overrides (rename / add / suppress / link)",
@@ -1193,7 +1325,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 19
+      "moduleScopeDom": 19,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Collapsible sections",
@@ -1206,7 +1340,9 @@
       "stateEscapes": ["sections"],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 2
+      "moduleScopeDom": 2,
+      "boundElsewhere": ["setupCollapsible", "setupReorder"],
+      "needsInitializer": true
     },
     {
       "label": "data-act dispatch (CSP: no inline handlers)",
@@ -1219,7 +1355,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 4
+      "moduleScopeDom": 4,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Settings modal",
@@ -1232,7 +1370,9 @@
       "stateEscapes": ["SECTIONS_ORDER_KEY", "SECTIONS_VIS_KEY", "SECTION_DEFS"],
       "maxFanout": 6,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Command palette registry (issue #238)",
@@ -1245,7 +1385,9 @@
       "stateEscapes": [],
       "maxFanout": 7,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["applySectionsVis"],
+      "needsInitializer": true
     },
     {
       "label": "Timeline row display toggles",
@@ -1258,7 +1400,9 @@
       "stateEscapes": [],
       "maxFanout": 9,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["applyTlDisplayFromChecks"],
+      "needsInitializer": true
     },
     {
       "label": "Dashboard view presets (#142)",
@@ -1280,7 +1424,9 @@
       "stateEscapes": [],
       "maxFanout": 7,
       "sharedMachinery": [],
-      "moduleScopeDom": 4
+      "moduleScopeDom": 4,
+      "boundElsewhere": ["saveSettings"],
+      "needsInitializer": true
     },
     {
       "label": "Essential / All view",
@@ -1293,7 +1439,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 5
+      "moduleScopeDom": 5,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Comprehensive Setup wizard (#181)",
@@ -1314,7 +1462,9 @@
       ],
       "maxFanout": 64,
       "sharedMachinery": ["wizEl"],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["wizEl"],
+      "needsInitializer": true
     },
     {
       "label": "AI step logic (#181, preserved)",
@@ -1327,7 +1477,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Synthesis model (optional, sub-section of the AI step)",
@@ -1340,7 +1492,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 81
+      "moduleScopeDom": 81,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Report Templates (#60) — global branded report layouts, Settings → Report Templates",
@@ -1353,7 +1507,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["rtDelete", "rtSave"],
+      "needsInitializer": true
     },
     {
       "label": "Dashboard Views (#142) — global panel-layout presets, Settings → Dashboard Views",
@@ -1366,7 +1522,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["dvDelete", "dvSave"],
+      "needsInitializer": true
     },
     {
       "label": "Per-case report-template picker (in Case Details)",
@@ -1379,7 +1537,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["saveCaseTemplate"],
+      "needsInitializer": true
     },
     {
       "label": "IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist",
@@ -1392,7 +1552,9 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["wlAddRule", "wlImport"],
+      "needsInitializer": true
     },
     {
       "label": "Custom importers (declarative external plugin layer) — global, Settings → Importers",
@@ -1412,7 +1574,9 @@
       "stateEscapes": [],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": ["impAdd", "impCopyPrompt", "impReload", "impSetPrecedence", "wlApplyToCase"],
+      "needsInitializer": true
     },
     {
       "label": "NSRL known-good hashes (#63) — global hash set, Settings → NSRL",
@@ -1433,7 +1597,16 @@
       "stateEscapes": [],
       "maxFanout": 2,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [
+        "nsrlApplyToCase",
+        "nsrlClear",
+        "nsrlDbConnect",
+        "nsrlDbDisconnect",
+        "nsrlImport",
+        "nsrlImportFile"
+      ],
+      "needsInitializer": true
     },
     {
       "label": "Update check (#127) — opt-in \"newer release available\" notice; Settings → Updates",
@@ -1446,7 +1619,9 @@
       "stateEscapes": [],
       "maxFanout": 3,
       "sharedMachinery": [],
-      "moduleScopeDom": 10
+      "moduleScopeDom": 10,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications",
@@ -1466,7 +1641,9 @@
       "stateEscapes": [],
       "maxFanout": 13,
       "sharedMachinery": ["loadCaseList"],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": ["loadCaseList", "ntfAddChannel", "ntfTypeChanged"],
+      "needsInitializer": true
     },
     {
       "label": "Disk-space warning (#119)",
@@ -1479,7 +1656,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 1
+      "moduleScopeDom": 1,
+      "boundElsewhere": ["loadDiskStats"],
+      "needsInitializer": true
     },
     {
       "label": "Startup pre-flight banner (#179)",
@@ -1492,7 +1671,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Case lifecycle (#119)",
@@ -1505,7 +1686,9 @@
       "stateEscapes": [],
       "maxFanout": 4,
       "sharedMachinery": [],
-      "moduleScopeDom": 12
+      "moduleScopeDom": 12,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Case password protection",
@@ -1518,7 +1701,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 6
+      "moduleScopeDom": 6,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Case unlock prompt",
@@ -1531,7 +1716,9 @@
       "stateEscapes": [],
       "maxFanout": 1,
       "sharedMachinery": [],
-      "moduleScopeDom": 5
+      "moduleScopeDom": 5,
+      "boundElsewhere": [],
+      "needsInitializer": true
     },
     {
       "label": "Custom tooltip",
@@ -1544,7 +1731,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 0
+      "moduleScopeDom": 0,
+      "boundElsewhere": [],
+      "needsInitializer": false
     },
     {
       "label": "Responsive toolbar: collapse action buttons to icon-only when the row would wrap",
@@ -1557,7 +1746,9 @@
       "stateEscapes": [],
       "maxFanout": 0,
       "sharedMachinery": [],
-      "moduleScopeDom": 2
+      "moduleScopeDom": 2,
+      "boundElsewhere": [],
+      "needsInitializer": true
     }
   ]
 }

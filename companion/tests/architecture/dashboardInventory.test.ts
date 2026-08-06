@@ -33,6 +33,8 @@ const run = (): {
     maxFanout: number;
     sharedMachinery: string[];
     moduleScopeDom: number;
+    boundElsewhere: string[];
+    needsInitializer: boolean;
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
 
@@ -166,6 +168,77 @@ describe("dashboard extraction inventory", () => {
       );
       const only = r.sections.find((s: { label: string }) => s.label === "Lonely feature");
       expect(only.publish).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags a block whose controls are bound by some other top-level statement", () => {
+    // `moduleScopeDom: 0` means the block wires nothing. It does NOT mean nothing wires the block —
+    // the page has a shared modal-wiring block that binds the controls for every modal in one
+    // place, hundreds of lines from the feature. Two extractions in a row scored zero here and
+    // still needed an initializer, because moving the functions out turns those bindings into bare
+    // references evaluated at load, and a 404 is then a ReferenceError before the WebSocket
+    // connects rather than one dead modal.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- The feature ----",
+        "  function closeThing() {}",
+        "  // ---- Somewhere else entirely ----",
+        '  document.getElementById("x").onclick = closeThing;',
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const feature = r.sections.find((s: { label: string }) => s.label === "The feature");
+      expect(feature.moduleScopeDom).toBe(0);
+      expect(feature.boundElsewhere).toEqual(["closeThing"]);
+      expect(feature.needsInitializer).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not flag a name that is only called from inside a callback", () => {
+    // The distinction the flag lives or dies on. `onclick = closeThing` READS closeThing as the
+    // page loads; `onclick = () => closeThing()` does not — it reads it when someone clicks, by
+    // which time the facade stub or the real module is there either way. Without this the flag
+    // would fire on nearly every section and mean nothing.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- The feature ----",
+        "  function closeThing() {}",
+        "  // ---- Somewhere else entirely ----",
+        '  document.getElementById("x").onclick = () => closeThing();',
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const feature = r.sections.find((s: { label: string }) => s.label === "The feature");
+      expect(feature.boundElsewhere).toEqual([]);
+      expect(feature.needsInitializer).toBe(false);
+      // Still an escape that must be published — only the load-time urgency differs.
+      expect(feature.publish).toContain("closeThing");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

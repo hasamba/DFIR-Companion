@@ -102,7 +102,7 @@ for (const st of sf.statements) {
 // object-literal key. Without those three exclusions `foo` in `{ foo: 1 }` and in `bar.foo` both
 // read as references to a top-level `foo`, and nearly every block looks entangled.
 const refs = [];
-(function walk(node) {
+(function walk(node, inFn) {
   if (ts.isIdentifier(node)) {
     const p = node.parent;
     const isDeclName =
@@ -115,11 +115,23 @@ const refs = [];
     const isMember = ts.isPropertyAccessExpression(p) && p.name === node;
     const isKey = (ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) && p.name === node;
     if (!isDeclName && !isMember && !isKey) {
-      refs.push({ name: node.text, line: lineOf(node.getStart(sf)) });
+      // `loadTime` means: evaluated as the page parses, with no function between here and the top.
+      // `addEventListener("click", foo)` reads foo at load; `addEventListener("click", () => foo())`
+      // does not. That distinction is the whole point of the flag, so the arrow counts as a
+      // function even though it is not a declaration.
+      refs.push({ name: node.text, line: lineOf(node.getStart(sf)), loadTime: !inFn });
     }
   }
-  node.forEachChild(walk);
-})(sf);
+  const opens =
+    inFn ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessor(node) ||
+    ts.isSetAccessor(node);
+  node.forEachChild((c) => walk(c, opens));
+})(sf, false);
 
 // References from the ALREADY-EXTRACTED modules back into the inline script. Without these the
 // inventory is blind in the one direction that breaks a live page: a sibling module calling a page
@@ -171,8 +183,17 @@ const rows = sections.map((sec) => {
   const ownNames = new Set(own.map(([n]) => n));
 
   const escaped = new Map(); // name -> how many reference sites outside this section
+  // Names this block declares that some OTHER top-level statement reads as the page loads. These
+  // are controls bound from somewhere else — the page's shared modal-wiring block does this for
+  // every modal — and they are the reason `moduleScopeDom: 0` does not mean "no initializer
+  // needed". Two extractions in a row scored zero here and still needed one; the block wires
+  // nothing, but something wires the block, and moving the functions out turns those into bare
+  // references evaluated at load. A 404 then throws before the WebSocket connects.
+  const boundElsewhere = new Set();
   for (const r of refs) {
-    if (ownNames.has(r.name) && !inSection(r.line)) escaped.set(r.name, (escaped.get(r.name) ?? 0) + 1);
+    if (!ownNames.has(r.name) || inSection(r.line)) continue;
+    escaped.set(r.name, (escaped.get(r.name) ?? 0) + 1);
+    if (r.loadTime) boundElsewhere.add(r.name);
   }
   // A sibling module referencing one of this block's names counts exactly like an inline reference
   // from outside the block: the name has to be published, or the state does not travel.
@@ -207,6 +228,8 @@ const rows = sections.map((sec) => {
     maxFanout: fanout,
     sharedMachinery: shared,
     moduleScopeDom: dom,
+    boundElsewhere: [...boundElsewhere].sort(),
+    needsInitializer: dom > 0 || boundElsewhere.size > 0,
   };
 });
 
@@ -248,11 +271,12 @@ if (process.argv.includes("--update")) {
       `[inventory] ready to extract (no state escapes): ${report.ready} sections, ` +
       `${report.readyLines} lines\n`,
   );
-  console.log(" size  fns   st  esc  dom  fan  range           feature");
+  console.log(" size  fns   st  esc  dom  fan init range           feature");
   for (const r of [...rows].sort((a, b) => b.size - a.size)) {
     console.log(
       `${pad(r.size, 5)} ${pad(r.functions, 4)} ${pad(r.stateBindings, 4)} ` +
-        `${pad(r.stateEscapes.length, 4)} ${pad(r.moduleScopeDom, 4)} ${pad(r.maxFanout, 4)}  ` +
+        `${pad(r.stateEscapes.length, 4)} ${pad(r.moduleScopeDom, 4)} ${pad(r.maxFanout, 4)} ` +
+        `${r.needsInitializer ? "yes " : "  . "}` +
         `${`${r.start}-${r.end}`.padEnd(14)}  ${r.label.slice(0, 56)}`,
     );
   }
