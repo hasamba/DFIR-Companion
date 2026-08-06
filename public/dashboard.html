@@ -201,6 +201,14 @@
   <script src="/js/dashboard-encrypted-export.js"></script>
   <!-- Redacted case export (#54). initRedactedExport() binds its three. -->
   <script src="/js/dashboard-redacted-export.js"></script>
+  <!-- Explain Event (#141). No initializer. -->
+  <script src="/js/dashboard-explain-event.js"></script>
+  <!-- Timeline Gaps (#83). No initializer. -->
+  <script src="/js/dashboard-timeline-gaps.js"></script>
+  <!-- Unified export menu. Wiring only. -->
+  <script src="/js/dashboard-unified-export.js"></script>
+  <!-- Manual add. initManualAdd() wires the three forms. -->
+  <script src="/js/dashboard-manual-add.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -7363,66 +7371,7 @@
         .catch(e => box.innerHTML = `<div data-safe-style="color:var(--sev-high)">ask failed: ${esc(e.message)} — restart the companion server if this 404s</div>`);
     }
 
-    // ── Explain Event (#141) ─────────────────────────────────────────────────────────────────
-    // Single AI call per click: what happened, why it matters, ATT&CK mapping, pivot queries,
-    // and evidence for/against maliciousness. Ephemeral — no state change.
-    function openExplainPanel(caseId, eventId) {
-      const event = DfirState.lastState() && DfirState.lastState().forensicTimeline && DfirState.lastState().forensicTimeline.find(e => e.id === eventId);
-      const overlay = document.getElementById("explainOverlay");
-      const titleEl = document.getElementById("explainEventTitle");
-      const bodyEl = document.getElementById("explainBody");
-      overlay.classList.add("open");
-      titleEl.textContent = event ? event.description.slice(0, 140) : eventId;
-      bodyEl.innerHTML = "<div data-safe-style='color:var(--text-muted)'>analyzing…</div>";
-      fetch(`/cases/${encodeURIComponent(caseId)}/events/${encodeURIComponent(eventId)}/explain`, { method: "POST" })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(result => {
-          const section = (label, content, color) =>
-            content ? `<div class="explain-section"><strong>${label}</strong><span data-safe-style="color:${color || "var(--text-primary)"}">${esc(content)}</span></div>` : "";
-          const qhtml = (result.pivotQueries || []).map((q) => {
-            return `<div class="hunt-card">`
-              + `<div class="hunt-card-head"><span>${esc(q.platform || "query")}</span>`
-              + `<button class="hunt-copy" data-q="${escAttr(q.query)}">Copy</button></div>`
-              + `<pre data-safe-style="margin:0;padding:10px;background:var(--bg-primary);color:var(--text-bright);font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">${esc(q.query)}</pre>`
-              + (q.rationale ? `<div data-safe-style="padding:6px 10px;font-size:11px;color:var(--text-muted)">${esc(q.rationale)}</div>` : "")
-              + `</div>`;
-          }).join("");
-          const cited = citeEvents(result.relatedEventIds);
-          bodyEl.innerHTML =
-            section("What happened", result.summary, "var(--text-primary)") +
-            section("Why it matters", result.whyItMatters, "var(--accent)") +
-            (result.normalContext || result.suspiciousIndicators
-              ? `<div class="explain-section"><strong>Normal vs. suspicious</strong>`
-                + (result.normalContext ? `<div data-safe-style="color:var(--text-muted);margin-bottom:3px">${esc(result.normalContext)}</div>` : "")
-                + (result.suspiciousIndicators ? `<div data-safe-style="color:var(--sev-high)">${esc(result.suspiciousIndicators)}</div>` : "")
-                + `</div>` : "") +
-            section("ATT&CK mapping", result.attackMapping, "var(--text-primary)") +
-            (result.evidenceFor || result.evidenceAgainst
-              ? `<div class="explain-section"><strong>Evidence</strong>`
-                + (result.evidenceFor ? `<div data-safe-style="color:var(--badge-danger-text)">✓ ${esc(result.evidenceFor)}</div>` : "")
-                + (result.evidenceAgainst ? `<div data-safe-style="color:var(--text-muted);margin-top:3px">⊘ ${esc(result.evidenceAgainst)}</div>` : "")
-                + `</div>` : "") +
-            (qhtml ? `<div class="explain-section"><strong>Pivot queries</strong>${qhtml}</div>` : "") +
-            (cited ? `<div class="explain-section"><strong>Related events</strong><span data-safe-style="color:var(--text-muted);font-size:12px">${cited}</span></div>` : "");
-          // Copy buttons: attach the clipboard handler after render instead of building an inline
-          // onclick from the AI-supplied query (which could break out of the attribute/tag context).
-          // The query rides in an escAttr-escaped data-q attribute; dataset.q decodes back to the
-          // exact original string, so clipboard content and the "copied" feedback are unchanged.
-          bodyEl.querySelectorAll(".hunt-copy").forEach((b) => b.onclick = () => {
-            navigator.clipboard?.writeText(b.dataset.q);
-            b.textContent = "✓ copied";
-            setTimeout(() => { b.textContent = "Copy"; }, 1500);
-          });
-        })
-        .catch(e => {
-          const msg = String(e.message || e);
-          const hint = /501/.test(msg) ? "AI provider not configured — check Settings → AI"
-                     : /404/.test(msg) ? "route not found — restart the companion server"
-                     : "check the server console for details";
-          bodyEl.innerHTML = `<div data-safe-style="color:var(--sev-high)">explain failed: ${esc(msg)} — ${hint}</div>`;
-        });
-    }
-
+    // Explain Event (#141) moved to js/dashboard-explain-event.js (#415 tier 3). No initializer.
     // ── Query Translator (natural language → hunt queries, #100) ──────────────────────────
     // The analyst types intent in plain English; the server makes one AI call that translates it
     // into a runnable query per selected platform, grounded in each platform's real schema. Results
@@ -8838,57 +8787,7 @@
     let sessionsCollapsed = false;
 
 
-    // ── Timeline Gaps (#83) ───────────────────────────────────────────────────────────────
-    // Suspiciously long silent periods in the forensic timeline. A COMPLETE gap (every source dark)
-    // is the classic signature of cleared logs / a stopped collector → High; a PARTIAL gap is one tool
-    // going quiet while others keep logging → Medium. Derived server-side (GET /cases/:id/timeline-gaps)
-    // from the in-scope timeline; re-derived (debounced) on each state change, like the phases panel.
-    // A lead, NOT proof of tampering.
-    let timelineGapsData = [];
-    let timelineGapsTimer = null;
-    function loadTimelineGaps(caseId) {
-      fetch(`/cases/${caseId}/timeline-gaps`).then(r => r.json()).then(g => {
-        timelineGapsData = Array.isArray(g) ? g : [];
-        renderTimelineGaps();
-      }).catch(() => {});
-    }
-    function scheduleTimelineGapsReload() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      clearTimeout(timelineGapsTimer);
-      timelineGapsTimer = setTimeout(() => loadTimelineGaps(caseId), 800);
-    }
-
-
-    function renderTimelineGaps() {
-      const el = document.getElementById("timelineGaps");
-      if (!el) return;
-      if (!timelineGapsData.length) { el.innerHTML = "<span data-safe-style='color:var(--text-muted)'>No suspicious silent periods detected in the forensic timeline.</span>"; return; }
-      const rows = timelineGapsData.map(g => {
-        const sevColor = KC_SEV_COLOR[g.severity] || "var(--border-color)";
-        const kind = g.complete
-          ? "<span title='Every source went silent — the classic log-tampering signature' data-safe-style='color:var(--sev-critical);font-weight:bold'>complete silence</span>"
-          : "<span title='One tool went quiet while others kept logging — a coverage blindspot' data-safe-style='color:var(--text-muted)'>partial</span>";
-        const silent = (g.silentSources && g.silentSources.length) ? g.silentSources.map(esc).join(", ") : "all sources";
-        const active = (g.activeSources && g.activeSources.length) ? g.activeSources.map(esc).join(", ") : "<span data-safe-style='color:var(--text-muted)'>—</span>";
-        return `<tr>` +
-          `<td><span class="sev-${esc(g.severity)}" data-safe-style="color:${sevColor};font-weight:bold">${esc(g.severity)}</span></td>` +
-          `<td>${kind}</td>` +
-          `<td title="${escAttr((g.startTimestamp || "") + " → " + (g.endTimestamp || ""))}"><strong>${esc(g.durationLabel)}</strong></td>` +
-          `<td data-safe-style="color:var(--text-muted);font-size:11px">${esc(g.startTimestamp || "")} → ${esc(g.endTimestamp || "")}</td>` +
-          `<td>${silent}</td>` +
-          `<td>${active}</td>` +
-          `</tr>`;
-      }).join("");
-      el.innerHTML =
-        `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-bottom:6px">A coverage gap is a lead, not proof — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is the classic signature of cleared logs or a stopped collector; confirm against the collection scope and host clocks.</div>` +
-        `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
-        `<th>Severity</th><th>Type</th><th>Duration</th><th>When</th><th>Silent sources</th><th>Still active</th>` +
-        `</tr></thead><tbody>${rows}</tbody></table></div>`;
-    }
-
-    // Gap Hypotheses (#96) moved to js/dashboard-gap-hypotheses.js (#415 tier 3). No initializer:
-    // nothing here runs at load. A missing file is reported through DfirFacade.filled, below.
+    // Timeline Gaps (#83) moved to js/dashboard-timeline-gaps.js (#415 tier 3). No initializer.
     // ── Memory Next Steps (#101) ──────────────────────────────────────────────────────────
     // AI-proposed next Volatility 3 commands for an iterative memory investigation. The section is
     // shown only when the case has imported Volatility/Rekall evidence (toggled from render()). On
@@ -9070,21 +8969,19 @@
     if (typeof initCustodyButtons === "function") initCustodyButtons();   // js/dashboard-custody.js
     else dfirFeatureUnavailable("Chain of custody");
 
-    // Hunting Profile (#157) moved to js/dashboard-hunt-profile.js (#415 tier 3). No initializer:
-    // it has no load-time DOM work — the page calls loadHuntProfile() when a case opens. Same
-    // reporting problem as the derived panels above, same answer.
-    if (window.DfirFacade && window.DfirFacade.filled.includes("loadHuntProfile")) {
-      dfirFeatureUnavailable("Hunting Profile");
-    }
-
-    // Adversary Hints (#46) and Gap Hypotheses (#96) moved out with no initializer of their own —
-    // nothing in either runs at load — so the facade is the only thing that can tell the page they
-    // are gone. Same shape as Hunting Profile above.
-    if (window.DfirFacade && window.DfirFacade.filled.includes("loadAdversaryHints")) {
-      dfirFeatureUnavailable("Adversary Hints");
-    }
-    if (window.DfirFacade && window.DfirFacade.filled.includes("doHypothesizeGaps")) {
-      dfirFeatureUnavailable("Gap Hypotheses");
+    // The features with NO INITIALIZER of their own. Nothing in them runs at load, so they have no
+    // sentinel the page can test — the facade's `filled` list is the only thing that knows their
+    // file never arrived. One table rather than one four-line `if` each: this list only grows as
+    // tier 3 continues, and the repeated form was already costing more lines than the features it
+    // reported. Entry is [a name the module publishes, what to call it on screen].
+    for (const [probe, label] of [
+      ["loadHuntProfile", "Hunting Profile"],
+      ["loadAdversaryHints", "Adversary Hints"],
+      ["doHypothesizeGaps", "Gap Hypotheses"],
+      ["openExplainPanel", "Explain Event"],
+      ["loadTimelineGaps", "Timeline Gaps"],
+    ]) {
+      if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
 
     function resetVeloHuntSuggest() {
@@ -12776,82 +12673,9 @@
     // so the module is nothing but initUnifiedImport().
     if (typeof initUnifiedImport !== "undefined") initUnifiedImport();
     else dfirFeatureUnavailable("Unified import");
-    // ── Unified export menu ───────────────────────────────────────────────────
-    document.getElementById("exportSelect").onchange = (e) => {
-      const sel = e.target;
-      const action = sel.value;
-      sel.value = ""; // reset to the "Export…" placeholder
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!action || !caseId) return;
-      const c = encodeURIComponent(caseId);
-      if (action === "report") {
-        document.getElementById("status").textContent = "generating report…";
-        document.getElementById("reportLinks").innerHTML = "";
-        fetch(`/cases/${c}/report`, { method: "POST" })
-          .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(() => {
-            document.getElementById("status").textContent = "report written";
-            document.getElementById("reportLinks").innerHTML =
-              `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
-              ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
-              ` · <a href="/cases/${c}/report/report.html?print=1" target="_blank" rel="noopener">Print / Save as PDF</a>` +
-              ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
-          })
-          .catch((err) => document.getElementById("status").textContent = "report failed: " + err.message);
-      } else if (action === "report-pdf") {
-        // PDF = generate the report, then open the print-styled HTML which auto-triggers the
-        // browser print dialog ("Save as PDF"). Open the tab synchronously (within this click
-        // gesture) so it isn't pop-up-blocked, then point it at the print view once generated.
-        const printUrl = `/cases/${c}/report/report.html?print=1`;
-        const win = window.open("about:blank", "_blank");
-        document.getElementById("status").textContent = "generating report…";
-        document.getElementById("reportLinks").innerHTML = "";
-        fetch(`/cases/${c}/report`, { method: "POST" })
-          .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(() => {
-            document.getElementById("status").textContent = "report written — opening print dialog";
-            if (win && !win.closed) win.location.href = printUrl; else window.open(printUrl, "_blank", "noopener");
-            document.getElementById("reportLinks").innerHTML =
-              `<a href="${printUrl}" target="_blank" rel="noopener">Print / Save as PDF</a>` +
-              ` · <a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
-              ` · <a href="/cases/${c}/report/report.md?download=1">Download Markdown</a>`;
-          })
-          .catch((err) => {
-            if (win && !win.closed) win.close();
-            document.getElementById("status").textContent = "report failed: " + err.message;
-          });
-      } else if (action === "report-docx") {
-        // On-demand .docx — the server generates the binary fresh per request. No POST
-        // /cases/:id/report dance, no on-disk file. Trigger the download directly.
-        window.location.href = `/cases/${c}/report.docx`;
-      } else if (action === "present-html") {
-        // Standalone, self-contained presentation deck (#177) — opens/downloads an offline HTML slide deck.
-        window.location.href = `/cases/${c}/present/export`;
-      } else if (action === "timeline-csv") {
-        window.location.href = `/cases/${c}/incident-timeline.csv`;
-      } else if (action === "attack-layer") {
-        // On-demand ATT&CK Navigator layer (JSON) — import at mitre-attack.github.io/attack-navigator.
-        window.location.href = `/cases/${c}/attack-layer.json`;
-      } else if (action === "timesketch-jsonl") {
-        window.location.href = `/cases/${c}/timeline.jsonl`;
-      } else if (action === "timesketch-jsonl-super") {
-        window.location.href = `/cases/${c}/super-timeline.jsonl`;
-      } else if (action === "stix") {
-        // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
-        window.location.href = `/cases/${c}/export/stix`;
-      } else if (action === "ioc-blocklist") {
-        openIocBlocklist();
-      } else if (action === "redacted") {
-        openRedactedExport();
-      } else if (action === "save-template") {
-        openSaveTemplate();
-      } else if (action === "report-versions") {
-        openReportVersions();
-      } else if (action === "analysis-runs") {
-        openAnalysisRuns();
-      }
-    };
-
+    // Unified export menu moved to js/dashboard-unified-export.js (#415 tier 3) — wiring only.
+    if (typeof initUnifiedExport !== "undefined") initUnifiedExport();
+    else dfirFeatureUnavailable("Unified export menu");
     // ── Presentation mode (#177) ──────────────────────────────────────────────
     // Open the read-only, step-through slide viewer for this case in a new tab. The viewer has its
     // own severity selector + standalone-HTML export, so we just point it at the case.
@@ -12861,55 +12685,9 @@
       window.open(`/cases/${encodeURIComponent(caseId)}/present`, "_blank", "noopener");
     };
 
-    // ── Manual add (event / IOC the AI didn't catch) ──────────────────────────
-    // POST to the case; the server appends + re-synthesizes/enriches and broadcasts the new
-    // state over the WS, which re-renders the list. We just clear the form + show a status.
-    function postManual(url, body, msgId, onOk) {
-      const el = document.getElementById(msgId);
-      el.textContent = "saving…";
-      fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
-        .then(() => { el.textContent = "added ✓"; if (onOk) onOk(); setTimeout(() => { el.textContent = ""; }, 2500); })
-        .catch(e => { el.textContent = "failed: " + e.message; });
-    }
-    document.getElementById("addEventBtn").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const desc = document.getElementById("meDesc").value.trim();
-      if (!desc) { document.getElementById("addEventMsg").textContent = "description required"; return; }
-      const tIn = document.getElementById("meTime").value;
-      const body = {
-        timestamp: utcInputToIso(tIn) || new Date().toISOString(),   // picker is UTC; blank → now (UTC)
-        description: desc,
-        severity: document.getElementById("meSev").value,
-        asset: document.getElementById("meAsset").value.trim(),
-        mitreTechniques: document.getElementById("meMitre").value.trim(),
-      };
-      postManual(`/cases/${encodeURIComponent(caseId)}/events`, body, "addEventMsg", () => {
-        document.getElementById("meDesc").value = "";
-        document.getElementById("meAsset").value = "";
-        document.getElementById("meMitre").value = "";
-      });
-    };
-    document.getElementById("addIocBtn").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const value = document.getElementById("miValue").value.trim();
-      if (!value) { document.getElementById("addIocMsg").textContent = "value required"; return; }
-      const note = document.getElementById("miNote").value.trim();
-      const body = { type: document.getElementById("miType").value, value, ...(note ? { note } : {}) };
-      postManual(`/cases/${encodeURIComponent(caseId)}/iocs`, body, "addIocMsg", () => {
-        document.getElementById("miValue").value = "";
-        document.getElementById("miNote").value = "";
-      });
-    };
-    document.getElementById("runCustomerExposure").onclick = runCustomerExposureCheck;
-    // Chip inputs: Enter adds a domain/email (auto-saved + checked); clicking a chip's × removes it.
-    document.getElementById("ceDomainInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ceAddTarget("domain", e.target.value); e.target.value = ""; } });
-    document.getElementById("ceEmailInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ceAddTarget("email", e.target.value); e.target.value = ""; } });
-    document.getElementById("ceDomainChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
-    document.getElementById("ceEmailChips").addEventListener("click", e => { const x = e.target.closest(".x"); if (x) ceRemoveTarget(x.dataset.kind, x.dataset.val); });
-    document.getElementById("ceProviders").addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("ce-prov")) ceAutosaveTargets(); });
+    // Manual add moved to js/dashboard-manual-add.js (#415 tier 3).
+    if (typeof initManualAdd !== "undefined") initManualAdd();
+    else dfirFeatureUnavailable("Manual add");
     // ── Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows
     // a filterable, click-to-select list of same-type candidates instead of asking the analyst to
     // type an id/value by hand.

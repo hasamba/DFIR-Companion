@@ -469,6 +469,35 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Explain Event (#141). Its only caller is the timeline's delegated click handler, which calls
+    // it from inside a listener rather than binding it — nothing evaluated at load, nothing to defer.
+    file: "dashboard-explain-event.js",
+    publish: ["openExplainPanel"],
+    private: [],
+  },
+  {
+    // Timeline Gaps (#83). Refreshed from the reload chain and the WebSocket handler, both calls
+    // rather than bindings, so no initializer.
+    file: "dashboard-timeline-gaps.js",
+    publish: ["loadTimelineGaps", "scheduleTimelineGapsReload"],
+    private: ["timelineGapsData", "timelineGapsTimer"],
+  },
+  {
+    // Unified export menu. Wiring only — one statement seventy-four lines long.
+    file: "dashboard-unified-export.js",
+    initializer: "initUnifiedExport",
+    publish: ["initUnifiedExport"],
+    private: [],
+  },
+  {
+    // Manual add. One shared POST helper in the body, eight statements of form wiring in the
+    // initializer.
+    file: "dashboard-manual-add.js",
+    initializer: "initManualAdd",
+    publish: ["initManualAdd"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

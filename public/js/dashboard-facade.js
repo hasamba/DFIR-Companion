@@ -173,6 +173,11 @@
     "openRedactedExport",
     "closeRedactedExport",
     "doRedactedExport",
+    // Explain Event (#141) and Timeline Gaps (#83). Neither has an initializer, so every name they
+    // publish is a work function and the facade's `filled` list is their only way to report.
+    "openExplainPanel",
+    "loadTimelineGaps",
+    "scheduleTimelineGapsReload",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

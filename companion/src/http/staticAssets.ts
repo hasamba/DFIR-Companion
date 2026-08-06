@@ -138,6 +138,14 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-encrypted-export.js": "application/javascript; charset=utf-8",
   // Redacted case export (#54) — the same case with names, hosts and accounts masked.
   "/js/dashboard-redacted-export.js": "application/javascript; charset=utf-8",
+  // Explain Event (#141) — the plain-language explanation of one timeline event.
+  "/js/dashboard-explain-event.js": "application/javascript; charset=utf-8",
+  // Timeline Gaps (#83) — the stretches of time the evidence says nothing about.
+  "/js/dashboard-timeline-gaps.js": "application/javascript; charset=utf-8",
+  // Unified export menu — one button offering every export the case supports.
+  "/js/dashboard-unified-export.js": "application/javascript; charset=utf-8",
+  // Manual add — event / IOC / finding typed in by hand.
+  "/js/dashboard-manual-add.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.
