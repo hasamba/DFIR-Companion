@@ -590,6 +590,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Import case. The whole block is the initializer: two module-scope `const`s read the DOM, so
+    // nothing here can safely sit in the module body.
+    file: "dashboard-import-case.js",
+    initializer: "initImportCase",
+    publish: ["initImportCase"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

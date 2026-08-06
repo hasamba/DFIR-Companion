@@ -536,6 +536,7 @@
     "ROUTE GET /js/dashboard-case-template-picker.js",
     "ROUTE GET /js/dashboard-ioc-whitelist.js",
     "ROUTE GET /js/dashboard-search-scope.js",
+    "ROUTE GET /js/dashboard-import-case.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
