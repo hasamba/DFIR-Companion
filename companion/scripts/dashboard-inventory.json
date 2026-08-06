@@ -1,0 +1,1662 @@
+{
+  "inlineScript": {
+    "start": 3405,
+    "end": 17945,
+    "lines": 14541
+  },
+  "covered": 14541,
+  "ready": 65,
+  "readyLines": 8452,
+  "sections": [
+    {
+      "label": "Theme (issue #53)",
+      "start": 3405,
+      "end": 3498,
+      "size": 94,
+      "functions": 8,
+      "stateBindings": 4,
+      "publish": [
+        "applyTheme",
+        "currentTheme",
+        "setTheme",
+        "storedTheme",
+        "systemTheme"
+      ],
+      "stateEscapes": [
+        "DFIR_THEMES",
+        "THEME_GROUP_LABELS",
+        "THEME_GROUP_ORDER"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Theme picker",
+      "start": 3499,
+      "end": 3895,
+      "size": 397,
+      "functions": 23,
+      "stateBindings": 31,
+      "publish": [
+        "_hasActiveFilter",
+        "_matchesGlobalFilter",
+        "_updateSearchCount",
+        "_updateSearchToggleIndicator",
+        "applyGlobalEventFilter",
+        "fillReportMeta",
+        "latestEventMs",
+        "loadConfidenceControl",
+        "loadReportMeta",
+        "loadScope",
+        "renderExcludeChips",
+        "renderLogoPreview",
+        "renderThemeMenu",
+        "saveConfidenceControl",
+        "saveReportMeta",
+        "setExcludeTerms",
+        "setSearchBarOpen"
+      ],
+      "stateEscapes": [
+        "CUSTOM_VIEW_MARKER",
+        "DASHBOARD_VIEWS",
+        "DEFAULT_DASHBOARD_VIEW_ID",
+        "LOGO_MAX_LEN",
+        "SEV",
+        "_hostMenuSig",
+        "_iocKeepPage",
+        "_iocTypeMenuSig",
+        "_lastRenderedIocs",
+        "_originMenuSig",
+        "_searchDebounce",
+        "_srcMenuSig",
+        "_tlKeepPage",
+        "aiEnabled",
+        "countTimer",
+        "countUpdate",
+        "fpMarkers",
+        "fpReasonFilter",
+        "iocPage",
+        "iocPageSize",
+        "lastCockpit",
+        "lastCockpitRenderSignature",
+        "lastIocs",
+        "rmLogo",
+        "timelineSort",
+        "tlPage",
+        "tlPageSize",
+        "ws"
+      ],
+      "moduleScopeDom": 12
+    },
+    {
+      "label": "Compromised assets + asset↔IoC graph",
+      "start": 3896,
+      "end": 3996,
+      "size": 101,
+      "functions": 6,
+      "stateBindings": 5,
+      "publish": [
+        "_graphTimeQuery",
+        "eventDetailsBlock",
+        "loadAssetGraph",
+        "loadAssetOverrides",
+        "scheduleAssetGraphReload"
+      ],
+      "stateEscapes": [
+        "DESC_TITLE_LIMIT",
+        "assetGraphData",
+        "assetOverridesData",
+        "assetTypesEnabled"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Login Graph (cytoscape)",
+      "start": 3997,
+      "end": 4331,
+      "size": 335,
+      "functions": 16,
+      "stateBindings": 6,
+      "publish": [
+        "assetEnsureGV",
+        "lgEl",
+        "loadLoginGraph",
+        "renderAssetGraph",
+        "renderAssetList",
+        "scheduleLoginGraphReload"
+      ],
+      "stateEscapes": [
+        "assetGV",
+        "lgGV"
+      ],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Evidence Chain graph (causal: process trees + lateral movement)",
+      "start": 4332,
+      "end": 4585,
+      "size": 254,
+      "functions": 11,
+      "stateBindings": 15,
+      "publish": [
+        "evEnsureGV",
+        "loadEvidenceGraph",
+        "loadLateralPaths",
+        "renderEvidenceGraph",
+        "scheduleEvidenceGraphReload"
+      ],
+      "stateEscapes": [
+        "evColorMode",
+        "evGV",
+        "evGraphData",
+        "evMinSev",
+        "evPathsData",
+        "evPathsShowDismissed",
+        "evTypesEnabled"
+      ],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Investigator comments (collaboration)",
+      "start": 4586,
+      "end": 4672,
+      "size": 87,
+      "functions": 7,
+      "stateBindings": 20,
+      "publish": [
+        "closeCommentModal",
+        "commentChip",
+        "loadComments",
+        "openCommentModal",
+        "postComment"
+      ],
+      "stateEscapes": [
+        "ICON_CHAIN",
+        "ICON_DOWNLOAD",
+        "ICON_EXPLAIN",
+        "ICON_EXTERNAL",
+        "ICON_FLAG",
+        "ICON_FLOW",
+        "ICON_GEO",
+        "ICON_HOST",
+        "ICON_HUNT",
+        "ICON_PIN",
+        "ICON_STAR",
+        "ICON_TAG",
+        "ICON_USER",
+        "ICON_WARN",
+        "commentsByTarget",
+        "investigatorName",
+        "targetKey"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Analyst triage tags",
+      "start": 4673,
+      "end": 4791,
+      "size": 119,
+      "functions": 9,
+      "stateBindings": 3,
+      "publish": [
+        "addTag",
+        "closeTagModal",
+        "loadTags",
+        "openTagModal",
+        "renderTagModal",
+        "tagAddBtn",
+        "tagChip",
+        "tagPills"
+      ],
+      "stateEscapes": [
+        "tagTarget",
+        "tagsByTarget"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Pinned findings (#220)",
+      "start": 4792,
+      "end": 4815,
+      "size": 24,
+      "functions": 2,
+      "stateBindings": 3,
+      "publish": [
+        "loadPins",
+        "pinBtn"
+      ],
+      "stateEscapes": [
+        "pinLimit",
+        "pinnedList",
+        "pinnedSet"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Finding assignment + workflow status (#87)",
+      "start": 4816,
+      "end": 5026,
+      "size": 211,
+      "functions": 12,
+      "stateBindings": 5,
+      "publish": [
+        "assignFinding",
+        "findingWorkflowControls",
+        "loadFindingWorkflow",
+        "renderPinned",
+        "setFindingWorkflowStatus",
+        "togglePin"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Mark-false-positive modal (#227)",
+      "start": 5027,
+      "end": 5071,
+      "size": 45,
+      "functions": 3,
+      "stateBindings": 1,
+      "publish": [
+        "closeFalsePositiveModal",
+        "openFalsePositiveModal",
+        "renderFpCandidates"
+      ],
+      "stateEscapes": [
+        "fpTarget"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Analyst notebook",
+      "start": 5072,
+      "end": 5164,
+      "size": 93,
+      "functions": 6,
+      "stateBindings": 2,
+      "publish": [
+        "loadNbAiToggle",
+        "loadNotebook",
+        "nbDelete",
+        "nbStartEdit"
+      ],
+      "stateEscapes": [
+        "notebookEntries"
+      ],
+      "moduleScopeDom": 8
+    },
+    {
+      "label": "Hypotheses (issue #140)",
+      "start": 5165,
+      "end": 5399,
+      "size": 235,
+      "functions": 10,
+      "stateBindings": 5,
+      "publish": [
+        "consumePendingHuntHypothesis",
+        "hypApplyReview",
+        "hypDelete",
+        "hypPatch",
+        "linkNextHuntToHypothesis",
+        "loadHypotheses",
+        "promoteToHypothesis"
+      ],
+      "stateEscapes": [
+        "pendingHuntHypothesis"
+      ],
+      "moduleScopeDom": 16
+    },
+    {
+      "label": "Super-Timeline",
+      "start": 5400,
+      "end": 5453,
+      "size": 54,
+      "functions": 1,
+      "stateBindings": 1,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Hunt-pivot query generator",
+      "start": 5454,
+      "end": 5460,
+      "size": 7,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Starred events (per case, tag-backed)",
+      "start": 5461,
+      "end": 5546,
+      "size": 86,
+      "functions": 4,
+      "stateBindings": 9,
+      "publish": [
+        "deriveStarred",
+        "isSystemPathIoc",
+        "migrateLocalStars",
+        "toggleStar"
+      ],
+      "stateEscapes": [
+        "hideFpNoIntel",
+        "hideSystemPaths",
+        "showFlaggedIocsOnly",
+        "showSignalIocsOnly",
+        "starredTagIds"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Multi-select (session-only, cleared on re-render)",
+      "start": 5547,
+      "end": 5627,
+      "size": 81,
+      "functions": 8,
+      "stateBindings": 0,
+      "publish": [
+        "bulkMarkFalsePositive",
+        "bulkToggleStar",
+        "clearIocSelection",
+        "clearSelection",
+        "openBulkTagModal",
+        "updateBulkBar",
+        "updateIocBulkBar"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Bulk IOC operations",
+      "start": 5628,
+      "end": 5666,
+      "size": 39,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "bulkEnrichIocs",
+        "bulkMarkIocsFalsePositive",
+        "bulkTagIocs"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Bulk finding operations",
+      "start": 5667,
+      "end": 5925,
+      "size": 259,
+      "functions": 15,
+      "stateBindings": 13,
+      "publish": [
+        "bulkCopyIocs",
+        "bulkExcludeIocs",
+        "bulkMarkFindingsFalsePositive",
+        "bulkTagFindings",
+        "clearFindingSelection",
+        "explainChip",
+        "huntChip",
+        "huntContextFor",
+        "huntKql",
+        "huntSigma",
+        "huntSpl",
+        "huntVql",
+        "huntVqlNotebook",
+        "updateFindingBulkBar"
+      ],
+      "stateEscapes": [
+        "baseName",
+        "cleanWinPath",
+        "enabledHuntPlatforms",
+        "hasAny",
+        "hq",
+        "huntLabel",
+        "pushUniq",
+        "veloEnabled"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Per-finding \"Export as Sigma draft\" (#89)",
+      "start": 5926,
+      "end": 6276,
+      "size": 351,
+      "functions": 15,
+      "stateBindings": 7,
+      "publish": [
+        "closeHuntModal",
+        "exportFindingSigma",
+        "launchHuntInto",
+        "openHuntModal",
+        "sigmaExportChip"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Velociraptor triage bundles",
+      "start": 6277,
+      "end": 6741,
+      "size": 465,
+      "functions": 18,
+      "stateBindings": 9,
+      "publish": [
+        "applyVeloEnabled",
+        "doRefreshVeloClients",
+        "doVeloReconnect",
+        "loadVeloBundles",
+        "loadVeloClients",
+        "loadVeloHuntJobs",
+        "loadVeloTriage",
+        "veloCaseId",
+        "veloImportExternal"
+      ],
+      "stateEscapes": [
+        "_veloBundles",
+        "_veloClients",
+        "_veloEventArtifacts",
+        "_veloMonAutoBrowsed",
+        "veloArtifactCache",
+        "veloEditingId",
+        "veloSelected"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Live CLIENT_EVENT monitoring (#84)",
+      "start": 6742,
+      "end": 6888,
+      "size": 147,
+      "functions": 9,
+      "stateBindings": 0,
+      "publish": [
+        "loadVeloMonitors",
+        "veloMonAuto",
+        "veloMonBrowse",
+        "veloMonStart",
+        "veloMonSyncAllClients"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Push ingest token (#84)",
+      "start": 6889,
+      "end": 7110,
+      "size": 222,
+      "functions": 16,
+      "stateBindings": 1,
+      "publish": [
+        "loadPushToken",
+        "renderVeloSelected",
+        "veloClearBuilder",
+        "veloDeleteBundle",
+        "veloDuplicate",
+        "veloEdit",
+        "veloResetBuiltin"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 16
+    },
+    {
+      "label": "Executive summary generator",
+      "start": 7111,
+      "end": 7159,
+      "size": 49,
+      "functions": 1,
+      "stateBindings": 0,
+      "publish": [
+        "genExecSummary"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Narrative Timeline",
+      "start": 7160,
+      "end": 7320,
+      "size": 161,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "loadSynthMeta"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 17
+    },
+    {
+      "label": "Correlation profile (per-case cross-source event merge window)",
+      "start": 7321,
+      "end": 7368,
+      "size": 48,
+      "functions": 3,
+      "stateBindings": 1,
+      "publish": [
+        "loadCorrProfile"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 3
+    },
+    {
+      "label": "Second LLM opinion (#116): independent-model QA cross-check",
+      "start": 7369,
+      "end": 7478,
+      "size": 110,
+      "functions": 5,
+      "stateBindings": 6,
+      "publish": [
+        "applyAllSecondOpinion",
+        "applySecondOpinionDelta",
+        "loadSecondOpinion",
+        "renderSecondOpinion",
+        "runSecondOpinion"
+      ],
+      "stateEscapes": [
+        "SO_COLLAPSE_KEY",
+        "fpAiConfigured",
+        "lastSecondOpinionRec",
+        "secondOpinionEnabled",
+        "soCollapsed"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Last-import change tracking (what the last import added to the timeline + IOCs)",
+      "start": 7479,
+      "end": 7797,
+      "size": 319,
+      "functions": 13,
+      "stateBindings": 6,
+      "publish": [
+        "askRunToolsOnImport",
+        "fetchRawToolExts",
+        "loadDropStatus",
+        "loadImportMeta",
+        "propagateFalsePositive"
+      ],
+      "stateEscapes": [
+        "evKey",
+        "newEventKeys",
+        "newIocKeys"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Import undo / redo (#76)",
+      "start": 7798,
+      "end": 7895,
+      "size": 98,
+      "functions": 4,
+      "stateBindings": 0,
+      "publish": [
+        "doAsk",
+        "doImportUndoRedo",
+        "loadUndoStack"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Explain Event (#141)",
+      "start": 7896,
+      "end": 7955,
+      "size": 60,
+      "functions": 1,
+      "stateBindings": 0,
+      "publish": [
+        "openExplainPanel"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Query Translator (natural language → hunt queries, #100)",
+      "start": 7956,
+      "end": 8124,
+      "size": 169,
+      "functions": 8,
+      "stateBindings": 2,
+      "publish": [
+        "applyScope",
+        "doTranslateQuery",
+        "loadAiToggle",
+        "renderNlqPlatforms",
+        "toggleAi"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Threat-intel enrichment — per-source selection (local on by default; external opt-in)",
+      "start": 8125,
+      "end": 8201,
+      "size": 77,
+      "functions": 5,
+      "stateBindings": 3,
+      "publish": [
+        "loadEnrichToggle",
+        "openEnrichModal",
+        "saveEnrich"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Anonymization — tokenize sensitive victim data before the AI; restore on display",
+      "start": 8202,
+      "end": 8277,
+      "size": 76,
+      "functions": 7,
+      "stateBindings": 6,
+      "publish": [
+        "loadAnonEntities",
+        "loadAnonToggle",
+        "renderAnonToggle",
+        "renderAutoEntities"
+      ],
+      "stateEscapes": [
+        "ANON_CATEGORIES",
+        "ANON_ENTITY_CATEGORIES",
+        "anonAuto",
+        "anonControl",
+        "anonCustom",
+        "anonSuppressed"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Presidio approval panel (analyst-run PII-detector container found unseen values)",
+      "start": 8278,
+      "end": 8429,
+      "size": 152,
+      "functions": 8,
+      "stateBindings": 1,
+      "publish": [
+        "addCustomEntity",
+        "loadPresidioPending",
+        "openAnonModal",
+        "renderPresidioPending",
+        "saveAnon",
+        "setAi"
+      ],
+      "stateEscapes": [
+        "presidioPending"
+      ],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Import progress bar helpers",
+      "start": 8430,
+      "end": 8544,
+      "size": 115,
+      "functions": 8,
+      "stateBindings": 1,
+      "publish": [
+        "applyAiStatus",
+        "cancelImportProgress",
+        "hideImportProgress",
+        "importPermissionMessage",
+        "readFileTextWithProgress",
+        "showImportProgress",
+        "showImportProgressIndeterminate"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Background jobs (#225)",
+      "start": 8545,
+      "end": 8759,
+      "size": 215,
+      "functions": 14,
+      "stateBindings": 9,
+      "publish": [
+        "esc",
+        "escAttr",
+        "loadJobs",
+        "pollCount",
+        "scheduleJobUiRefresh"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 10
+    },
+    {
+      "label": "Inline IOC quick-actions (#221)",
+      "start": 8760,
+      "end": 8929,
+      "size": 170,
+      "functions": 6,
+      "stateBindings": 6,
+      "publish": [
+        "qaAudit",
+        "qaLinkify",
+        "qaResolveIocId"
+      ],
+      "stateEscapes": [
+        "QA_AUDIT_MARK"
+      ],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Screenshot OCR full-text search (#176)",
+      "start": 8930,
+      "end": 9123,
+      "size": 194,
+      "functions": 4,
+      "stateBindings": 9,
+      "publish": [
+        "fpBtn",
+        "kcSelect",
+        "kcTacticForEvent",
+        "renderKcDetail"
+      ],
+      "stateEscapes": [
+        "KC_CHAIN_ORDER",
+        "KC_SEV_COLOR",
+        "KC_SEV_ORDER",
+        "kcByTactic",
+        "kcSelectedTac"
+      ],
+      "moduleScopeDom": 5
+    },
+    {
+      "label": "Attack Phases (temporal bursts; grouped by time gap, derived server-side, no AI)",
+      "start": 9124,
+      "end": 9445,
+      "size": 322,
+      "functions": 20,
+      "stateBindings": 15,
+      "publish": [
+        "citeEvents",
+        "findingEvidenceDetails",
+        "iocChainChip",
+        "iocCorroBadge",
+        "iocProvenanceBadge",
+        "iocProvenanceOf",
+        "iocRiskBadge",
+        "iocRiskRankOf",
+        "loadIocProvenance",
+        "loadIocProvenanceChains",
+        "loadIocRisk",
+        "loadIocSources",
+        "loadPhases",
+        "openIocChainPanel",
+        "renderPhases",
+        "scheduleIocProvenanceChainReload",
+        "scheduleIocProvenanceReload",
+        "scheduleIocRiskReload",
+        "scheduleIocSourcesReload",
+        "schedulePhasesReload"
+      ],
+      "stateEscapes": [
+        "iocProvenanceChains",
+        "iocProvenanceFilter",
+        "iocSourcesById",
+        "phasesData",
+        "riskIocsFilter",
+        "sessionsCollapsed"
+      ],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Timeline Gaps (#83)",
+      "start": 9446,
+      "end": 9494,
+      "size": 49,
+      "functions": 3,
+      "stateBindings": 2,
+      "publish": [
+        "loadTimelineGaps",
+        "scheduleTimelineGapsReload"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Gap Hypotheses (#96)",
+      "start": 9495,
+      "end": 9611,
+      "size": 117,
+      "functions": 3,
+      "stateBindings": 2,
+      "publish": [
+        "doHypothesizeGaps",
+        "resetGapHypotheses"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Memory Next Steps (#101)",
+      "start": 9612,
+      "end": 9701,
+      "size": 90,
+      "functions": 4,
+      "stateBindings": 2,
+      "publish": [
+        "doMemNextSteps",
+        "resetMemNextSteps",
+        "toggleMemNextSteps"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Host & Account Ranking (#202)",
+      "start": 9702,
+      "end": 9813,
+      "size": 112,
+      "functions": 5,
+      "stateBindings": 3,
+      "publish": [
+        "applyHostRankingScope",
+        "loadHostRanking",
+        "scheduleHostRankingReload"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Adversary Hints (#46)",
+      "start": 9814,
+      "end": 9942,
+      "size": 129,
+      "functions": 4,
+      "stateBindings": 2,
+      "publish": [
+        "huntForTechnique",
+        "loadAdversaryHints",
+        "scheduleAdversaryHintsReload"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Suggested Fleet Hunts (#57)",
+      "start": 9943,
+      "end": 9957,
+      "size": 15,
+      "functions": 0,
+      "stateBindings": 4,
+      "publish": [],
+      "stateEscapes": [
+        "VHS_SEV_COLOR",
+        "VHS_SEV_RANK",
+        "vhsFlat",
+        "vhsSource"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Activity Log (#238)",
+      "start": 9958,
+      "end": 10947,
+      "size": 990,
+      "functions": 50,
+      "stateBindings": 11,
+      "publish": [
+        "ceAddTarget",
+        "ceAutosaveTargets",
+        "ceRemoveTarget",
+        "clearEvIdFilter",
+        "dfirFeatureUnavailable",
+        "doSuggestHunts",
+        "filterTimelineToEventIds",
+        "fpEventIdSet",
+        "fpFindingTitleSet",
+        "hostFacets",
+        "iocPageStep",
+        "iocSetPageSize",
+        "iocTypeFacets",
+        "jumpToEvent",
+        "jumpToEventFromHash",
+        "jumpToFinding",
+        "jumpToHypothesis",
+        "jumpToQuestion",
+        "loadActivityLog",
+        "loadCustomerExposure",
+        "loadFalsePositives",
+        "loadLearnedPatterns",
+        "loadSourceTrust",
+        "renderEvIdFilterChip",
+        "renderFalsePositives",
+        "renderHostFilter",
+        "renderIocs",
+        "renderKillChain",
+        "renderOriginFilter",
+        "renderSourceFilter",
+        "renderVeloHuntSuggest",
+        "resetVeloHuntSuggest",
+        "runCustomerExposureCheck",
+        "sortArrows",
+        "sortTimelineEvents",
+        "sourceFacets"
+      ],
+      "stateEscapes": [
+        "NO_HOST_FACET",
+        "NO_SOURCE_FACET"
+      ],
+      "moduleScopeDom": 9
+    },
+    {
+      "label": "Event-density heatmap (#219)",
+      "start": 10948,
+      "end": 11204,
+      "size": 257,
+      "functions": 5,
+      "stateBindings": 3,
+      "publish": [
+        "prevalenceChip",
+        "renderTimelineEvents",
+        "zoomToTimeWindow"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Vim-style keyboard navigation (Forensic Timeline)",
+      "start": 11205,
+      "end": 11565,
+      "size": 361,
+      "functions": 13,
+      "stateBindings": 5,
+      "publish": [
+        "kbdOpenHelp",
+        "kbdShortcutsEnabled",
+        "setKbdShortcutsEnabled"
+      ],
+      "stateEscapes": [
+        "CP_LABELS"
+      ],
+      "moduleScopeDom": 37
+    },
+    {
+      "label": "Now investigator cockpit (#375)",
+      "start": 11566,
+      "end": 12002,
+      "size": 437,
+      "functions": 9,
+      "stateBindings": 1,
+      "publish": [
+        "cockpitAction",
+        "cockpitJumpEvent",
+        "cockpitOpenTarget",
+        "cockpitWorkspace",
+        "loadCockpit",
+        "render"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 2
+    },
+    {
+      "label": "Cross-case capture warning",
+      "start": 12003,
+      "end": 12427,
+      "size": 425,
+      "functions": 13,
+      "stateBindings": 11,
+      "publish": [
+        "connect",
+        "proceedConnect"
+      ],
+      "stateEscapes": [
+        "activeCaseId",
+        "activeUnlockRemembered",
+        "activeUnlockedCaseId"
+      ],
+      "moduleScopeDom": 3
+    },
+    {
+      "label": "Case templates",
+      "start": 12428,
+      "end": 12506,
+      "size": 79,
+      "functions": 5,
+      "stateBindings": 2,
+      "publish": [
+        "onTemplateSelectChange",
+        "populateTemplateSelect",
+        "selectedNewCasePlaybook"
+      ],
+      "stateEscapes": [
+        "_cachedTemplates"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Save as Template",
+      "start": 12507,
+      "end": 12544,
+      "size": 38,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeSaveTemplate",
+        "openSaveTemplate",
+        "saveAsTemplate"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "IOC block-list export (#87)",
+      "start": 12545,
+      "end": 12565,
+      "size": 21,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeIocBlocklist",
+        "downloadIocBlocklist",
+        "openIocBlocklist"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Redacted case export (#54)",
+      "start": 12566,
+      "end": 12611,
+      "size": 46,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeRedactedExport",
+        "doRedactedExport",
+        "openRedactedExport"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Report versions: diff & rollback (#77)",
+      "start": 12612,
+      "end": 12827,
+      "size": 216,
+      "functions": 15,
+      "stateBindings": 3,
+      "publish": [
+        "closeReportVersions",
+        "doReportVersionsDiff",
+        "openReportVersions"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Reproducible analysis runs (#377)",
+      "start": 12828,
+      "end": 12983,
+      "size": 156,
+      "functions": 6,
+      "stateBindings": 0,
+      "publish": [
+        "closeAnalysisRuns",
+        "compareAnalysisRuns",
+        "openAnalysisRuns"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "ZIP case archive (unencrypted, \"(no password)\" in the filename)",
+      "start": 12984,
+      "end": 13017,
+      "size": 34,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeZipArchive",
+        "doZipArchive",
+        "openZipArchive"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Encrypted case archive export (replaces #56's JSON snapshot)",
+      "start": 13018,
+      "end": 13074,
+      "size": 57,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeEncryptedExport",
+        "doEncryptedExport",
+        "openEncryptedExport"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Delete case (optionally archive first)",
+      "start": 13075,
+      "end": 13158,
+      "size": 84,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "closeDeleteCase",
+        "doDeleteCase",
+        "openDeleteCase"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 3
+    },
+    {
+      "label": "New case  creation lives here (the extension only attaches to existing cases)",
+      "start": 13159,
+      "end": 13826,
+      "size": 668,
+      "functions": 5,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 123
+    },
+    {
+      "label": "Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88)",
+      "start": 13827,
+      "end": 13922,
+      "size": 96,
+      "functions": 1,
+      "stateBindings": 2,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 24
+    },
+    {
+      "label": "Search bar + time-range filter listeners",
+      "start": 13923,
+      "end": 14144,
+      "size": 222,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 49
+    },
+    {
+      "label": "Import minimum-severity preference (per-browser)",
+      "start": 14145,
+      "end": 14197,
+      "size": 53,
+      "functions": 4,
+      "stateBindings": 2,
+      "publish": [
+        "askMinSeverity",
+        "setImportSevPref",
+        "syncImportSevDefaultSelect"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Unified import: one button, the server auto-detects the file type",
+      "start": 14198,
+      "end": 14351,
+      "size": 154,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 8
+    },
+    {
+      "label": "Unified export menu",
+      "start": 14352,
+      "end": 14427,
+      "size": 76,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 12
+    },
+    {
+      "label": "Presentation mode (#177)",
+      "start": 14428,
+      "end": 14436,
+      "size": 9,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 3
+    },
+    {
+      "label": "Manual add (event / IOC the AI didn't catch)",
+      "start": 14437,
+      "end": 14485,
+      "size": 49,
+      "functions": 1,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 25
+    },
+    {
+      "label": "Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows",
+      "start": 14486,
+      "end": 14531,
+      "size": 46,
+      "functions": 3,
+      "stateBindings": 1,
+      "publish": [
+        "openMergeModal"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 7
+    },
+    {
+      "label": "Asset overrides (rename / add / suppress / link)",
+      "start": 14532,
+      "end": 14642,
+      "size": 111,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 19
+    },
+    {
+      "label": "Collapsible sections",
+      "start": 14643,
+      "end": 14739,
+      "size": 97,
+      "functions": 3,
+      "stateBindings": 5,
+      "publish": [
+        "setupCollapsible",
+        "setupReorder"
+      ],
+      "stateEscapes": [
+        "sections"
+      ],
+      "moduleScopeDom": 2
+    },
+    {
+      "label": "data-act dispatch (CSP: no inline handlers)",
+      "start": 14740,
+      "end": 14872,
+      "size": 133,
+      "functions": 1,
+      "stateBindings": 1,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 4
+    },
+    {
+      "label": "Settings modal",
+      "start": 14873,
+      "end": 14942,
+      "size": 70,
+      "functions": 2,
+      "stateBindings": 3,
+      "publish": [
+        "isSectionVisible",
+        "loadSectionsVis"
+      ],
+      "stateEscapes": [
+        "SECTIONS_ORDER_KEY",
+        "SECTIONS_VIS_KEY",
+        "SECTION_DEFS"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Command palette registry (issue #238)",
+      "start": 14943,
+      "end": 15135,
+      "size": 193,
+      "functions": 9,
+      "stateBindings": 1,
+      "publish": [
+        "applySectionsVis",
+        "renderSecChecks",
+        "revealSection",
+        "saveSectionsOrder"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Timeline row display toggles",
+      "start": 15136,
+      "end": 15173,
+      "size": 38,
+      "functions": 5,
+      "stateBindings": 2,
+      "publish": [
+        "applyTlDisplayFromChecks",
+        "loadTlDisplay",
+        "renderTlChecks",
+        "tlShow"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Dashboard view presets (#142)",
+      "start": 15174,
+      "end": 15555,
+      "size": 382,
+      "functions": 19,
+      "stateBindings": 3,
+      "publish": [
+        "applyDashboardView",
+        "applySavedViewForCase",
+        "fetchEnvSettings",
+        "loadDashboardViews",
+        "saveSettings",
+        "viewFilters",
+        "viewMeetsMinSev",
+        "viewTopN"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 4
+    },
+    {
+      "label": "Essential / All view",
+      "start": 15556,
+      "end": 15633,
+      "size": 78,
+      "functions": 5,
+      "stateBindings": 1,
+      "publish": [
+        "closeSettingsModal",
+        "openSettingsTab"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 5
+    },
+    {
+      "label": "Comprehensive Setup wizard (#181)",
+      "start": 15634,
+      "end": 15748,
+      "size": 115,
+      "functions": 1,
+      "stateBindings": 9,
+      "publish": [
+        "wizEl"
+      ],
+      "stateEscapes": [
+        "LOCAL_PROVIDERS",
+        "WIZARD_BY_ID",
+        "WIZ_DISMISS_KEY",
+        "WIZ_MODEL_HINTS",
+        "WIZ_ORDER",
+        "wizCurrent",
+        "wizStatus"
+      ],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "AI step logic (#181, preserved)",
+      "start": 15749,
+      "end": 15836,
+      "size": 88,
+      "functions": 2,
+      "stateBindings": 0,
+      "publish": [
+        "wizResetAiStep"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Synthesis model (optional, sub-section of the AI step)",
+      "start": 15837,
+      "end": 16271,
+      "size": 435,
+      "functions": 16,
+      "stateBindings": 2,
+      "publish": [
+        "fetchLogLevel",
+        "wizRefreshStatus"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 86
+    },
+    {
+      "label": "Report Templates (#60) — global branded report layouts, Settings → Report Templates",
+      "start": 16272,
+      "end": 16422,
+      "size": 151,
+      "functions": 7,
+      "stateBindings": 6,
+      "publish": [
+        "loadReportTemplates",
+        "rtDelete",
+        "rtFillEditor",
+        "rtSave"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Dashboard Views (#142) — global panel-layout presets, Settings → Dashboard Views",
+      "start": 16423,
+      "end": 16531,
+      "size": 109,
+      "functions": 8,
+      "stateBindings": 3,
+      "publish": [
+        "dvDelete",
+        "dvFillEditor",
+        "dvSave",
+        "loadDashboardViewsEditor"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Per-case report-template picker (in Case Details)",
+      "start": 16532,
+      "end": 16558,
+      "size": 27,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "loadCaseTemplatePicker",
+        "refreshCaseTemplatePicker",
+        "saveCaseTemplate"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist",
+      "start": 16559,
+      "end": 16605,
+      "size": 47,
+      "functions": 5,
+      "stateBindings": 0,
+      "publish": [
+        "loadWhitelist",
+        "wlAddRule",
+        "wlExport",
+        "wlImport"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Custom importers (declarative external plugin layer) — global, Settings → Importers",
+      "start": 16606,
+      "end": 16702,
+      "size": 97,
+      "functions": 7,
+      "stateBindings": 0,
+      "publish": [
+        "impAdd",
+        "impCopyPrompt",
+        "impReload",
+        "impSetPrecedence",
+        "loadImporters",
+        "wlApplyToCase"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "NSRL known-good hashes (#63) — global hash set, Settings → NSRL",
+      "start": 16703,
+      "end": 16801,
+      "size": 99,
+      "functions": 8,
+      "stateBindings": 0,
+      "publish": [
+        "loadNsrl",
+        "nsrlApplyToCase",
+        "nsrlClear",
+        "nsrlDbConnect",
+        "nsrlDbDisconnect",
+        "nsrlImport",
+        "nsrlImportFile"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Update check (#127) — opt-in \"newer release available\" notice; Settings → Updates",
+      "start": 16802,
+      "end": 17051,
+      "size": 250,
+      "functions": 11,
+      "stateBindings": 1,
+      "publish": [
+        "loadTools",
+        "loadUpdateCheck"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 10
+    },
+    {
+      "label": "Health / Diagnostics (#118) — operator system state, Settings → Diagnostics",
+      "start": 17052,
+      "end": 17378,
+      "size": 327,
+      "functions": 13,
+      "stateBindings": 3,
+      "publish": [
+        "clockSkewMutate",
+        "diagAiTest",
+        "diagComputeSizes",
+        "diagCopy",
+        "diagDownloadSupport",
+        "diagPreviewSupport",
+        "loadCaseStats",
+        "loadClockSkew",
+        "loadDiagnostics",
+        "loadPreflightStatus",
+        "renderPreflightStatus"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications",
+      "start": 17379,
+      "end": 17517,
+      "size": 139,
+      "functions": 7,
+      "stateBindings": 3,
+      "publish": [
+        "loadCaseList",
+        "loadNotifications",
+        "ntfAddChannel",
+        "ntfTest",
+        "ntfToggle",
+        "ntfTypeChanged"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Disk-space warning (#119)",
+      "start": 17518,
+      "end": 17549,
+      "size": 32,
+      "functions": 2,
+      "stateBindings": 2,
+      "publish": [
+        "loadDiskStats"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 1
+    },
+    {
+      "label": "Startup pre-flight banner (#179)",
+      "start": 17550,
+      "end": 17597,
+      "size": 48,
+      "functions": 1,
+      "stateBindings": 1,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Case lifecycle (#119)",
+      "start": 17598,
+      "end": 17746,
+      "size": 149,
+      "functions": 1,
+      "stateBindings": 0,
+      "publish": [
+        "loadCaseLifecycle"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 12
+    },
+    {
+      "label": "Case password protection",
+      "start": 17747,
+      "end": 17817,
+      "size": 71,
+      "functions": 4,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 6
+    },
+    {
+      "label": "Case unlock prompt",
+      "start": 17818,
+      "end": 17871,
+      "size": 54,
+      "functions": 3,
+      "stateBindings": 0,
+      "publish": [
+        "promptCaseUnlock"
+      ],
+      "stateEscapes": [],
+      "moduleScopeDom": 5
+    },
+    {
+      "label": "Custom tooltip",
+      "start": 17872,
+      "end": 17902,
+      "size": 31,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 0
+    },
+    {
+      "label": "Responsive toolbar: collapse action buttons to icon-only when the row would wrap",
+      "start": 17903,
+      "end": 17945,
+      "size": 43,
+      "functions": 0,
+      "stateBindings": 0,
+      "publish": [],
+      "stateEscapes": [],
+      "moduleScopeDom": 2
+    }
+  ]
+}
