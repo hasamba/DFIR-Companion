@@ -677,6 +677,26 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Query Translator — one of THREE features that shared a banner (clusters 5, 4 and 1).
+    file: "dashboard-query-translator.js",
+    initializer: "initQueryTranslator",
+    publish: ["initQueryTranslator", "renderNlqPlatforms", "doTranslateQuery"],
+    private: ["NLQ_PLATFORM_LABELS", "NLQ_PLATFORM_ORDER"],
+  },
+  {
+    // applyScope — the singleton cluster. Called from js/dashboard-search-scope.js, so it is its
+    // own module rather than a passenger in whichever neighbour was extracted first.
+    file: "dashboard-scope-apply.js",
+    publish: ["applyScope"],
+    private: [],
+  },
+  {
+    // The per-case AI on/off toggle — the third feature under that banner.
+    file: "dashboard-ai-toggle.js",
+    publish: ["loadAiToggle", "toggleAi"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

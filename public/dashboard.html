@@ -250,6 +250,12 @@
   <script src="/js/dashboard-palette-registry.js"></script>
   <!-- Section order and visibility (#238). No initializer. -->
   <script src="/js/dashboard-section-order.js"></script>
+  <!-- Query Translator (natural language → hunt queries). No initializer. -->
+  <script src="/js/dashboard-query-translator.js"></script>
+  <!-- Scope apply. No initializer. -->
+  <script src="/js/dashboard-scope-apply.js"></script>
+  <!-- Per-case AI on/off toggle. No initializer. -->
+  <script src="/js/dashboard-ai-toggle.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -7112,177 +7118,9 @@
     }
 
     // Explain Event (#141) moved to js/dashboard-explain-event.js (#415 tier 3). No initializer.
-    // ── Query Translator (natural language → hunt queries, #100) ──────────────────────────
-    // The analyst types intent in plain English; the server makes one AI call that translates it
-    // into a runnable query per selected platform, grounded in each platform's real schema. Results
-    // are ephemeral (no state change). The Velociraptor query can be deployed via the existing hunt
-    // flow (launchHuntInto). Platform keys + labels mirror huntPlatforms.ts / queryTranslate.ts.
-    const NLQ_PLATFORM_LABELS = {
-      velociraptor: "Velociraptor (VQL)",
-      defender: "Defender / Sentinel (KQL)",
-      elastic: "Elastic (ES|QL)",
-      splunk: "Splunk (SPL)",
-      sigma: "Sigma rule",
-      yara: "YARA rule",
-      suricata: "Suricata (network)",
-    };
-    const NLQ_PLATFORM_ORDER = ["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata"];
-
-    // Render the platform picker from the server's enabled-platforms allowlist (set from /health).
-    // All enabled platforms start checked. Re-rendered when /health arrives.
-    function renderNlqPlatforms() {
-      const el = document.getElementById("nlqPlatforms");
-      if (!el) return;
-      const order = NLQ_PLATFORM_ORDER.filter((p) => enabledHuntPlatforms.has(p));
-      el.innerHTML = order.map((p) =>
-        `<label class="nlq-chip"><input type="checkbox" class="nlq-pf" value="${escAttr(p)}" checked>${esc(NLQ_PLATFORM_LABELS[p] || p)}</label>`
-      ).join("");
-      el.querySelectorAll(".nlq-pf").forEach((cb) => cb.onchange = () => cb.closest(".nlq-chip").classList.toggle("off", !cb.checked));
-    }
-
-    function doTranslateQuery() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const reqText = document.getElementById("nlqInput").value.trim();
-      const box = document.getElementById("nlqResult");
-      if (!caseId) { box.innerHTML = "<div class='nlq-empty'>connect to a case first</div>"; return; }
-      if (!reqText) return;
-      const platforms = [...document.querySelectorAll("#nlqPlatforms .nlq-pf:checked")].map((c) => c.value);
-      if (!platforms.length) { box.innerHTML = "<div class='nlq-empty' data-safe-style='color:var(--sev-high)'>select at least one platform to translate into</div>"; return; }
-      const btn = document.getElementById("nlqBtn");
-      btn.disabled = true;
-      box.innerHTML = "<div class='nlq-empty'>translating… (one AI call across the selected platforms)</div>";
-      fetch(`/cases/${caseId}/translate-query`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request: reqText, platforms }) })
-        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => {
-          if (!ok || j.error) { box.innerHTML = `<div class="nlq-empty" data-safe-style="color:var(--sev-high)">error: ${esc(j.error || "translation failed")} — restart the companion server if this 404s</div>`; return; }
-          renderQueryTranslations(j);
-        })
-        .catch((e) => box.innerHTML = `<div class="nlq-empty" data-safe-style="color:var(--sev-high)">error: ${esc(e.message)}</div>`)
-        .finally(() => { btn.disabled = false; });
-    }
-
-    function renderQueryTranslations(result) {
-      const box = document.getElementById("nlqResult");
-      const queries = (result && result.queries) || [];
-      if (!queries.length) {
-        box.innerHTML = "<div class='nlq-empty'>No queries produced — try rephrasing the request, or widen the selected platforms.</div>";
-        return;
-      }
-      const interp = result.interpretation ? `<div class="nlq-interp">🧠 Interpreted as: ${esc(result.interpretation)}</div>` : "";
-      const caveat = `<div class="nlq-caveat" data-safe-style="margin-bottom:8px">⚠ AI-generated queries — review each against your real schema before running. Deploying the Velociraptor query launches a hunt across ALL enrolled endpoints.</div>`;
-      const cards = queries.map((q, idx) => {
-        const label = q.label || NLQ_PLATFORM_LABELS[q.platform] || q.platform;
-        const na = q.notApplicable || !q.query;
-        const naBadge = na ? `<span class="nlq-na">not applicable</span>` : "";
-        const expl = q.explanation ? `<div class="nlq-expl">${esc(q.explanation)}</div>` : "";
-        const caveats = q.caveats ? `<div class="nlq-caveat">⚠ ${esc(q.caveats)}</div>` : "";
-        const queryBlock = q.query ? `<textarea class="nlq-query" id="nlqQ${idx}" spellcheck="false">${esc(q.query)}</textarea>` : "";
-        const deployBtn = (q.platform === "velociraptor" && q.query)
-          ? (veloEnabled
-              ? `<button class="nlq-deploy" data-idx="${idx}" title="Launch this VQL as a hunt across ALL enrolled Velociraptor clients">▶ Deploy hunt (all clients)</button>`
-              : `<button class="nlq-deploy" disabled title="Velociraptor API not configured — set the API config path in Settings → Integrations, then restart the server">▶ Deploy hunt (all clients)</button>`)
-          : "";
-        const actions = q.query
-          ? `<div class="nlq-actions"><button class="nlq-copy" data-idx="${idx}">Copy</button>${deployBtn}</div><div class="nlq-res" id="nlqRes${idx}"></div>`
-          : "";
-        return `<div class="nlq-card${na ? " na" : ""}">`
-          + `<div class="nlq-head"><span class="nlq-platform">${esc(label)}</span>${naBadge}</div>`
-          + expl + caveats + queryBlock + actions
-          + `</div>`;
-      }).join("");
-      box.innerHTML = interp + caveat + `<div class="nlq-list">${cards}</div>`;
-      box.querySelectorAll(".nlq-copy").forEach((b) => b.onclick = () => {
-        const q = document.getElementById("nlqQ" + b.dataset.idx);
-        navigator.clipboard.writeText(q ? q.value : "").then(() => {
-          b.textContent = "Copied ✓"; b.classList.add("copied");
-          setTimeout(() => { b.textContent = "Copy"; b.classList.remove("copied"); }, 1500);
-        }).catch(() => { b.textContent = "copy failed"; });
-      });
-      box.querySelectorAll(".nlq-deploy:not([disabled])").forEach((b) => b.onclick = () => {
-        const idx = b.dataset.idx;
-        const q = document.getElementById("nlqQ" + idx);
-        const label = (queries[idx] && queries[idx].label) || "DFIR query-translator hunt";
-        launchHuntInto(q ? q.value : "", label, document.getElementById("nlqRes" + idx), b);
-      });
-    }
-
-    function applyScope() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const body = {
-        start: utcInputToIso(document.getElementById("scopeStart").value),
-        end: utcInputToIso(document.getElementById("scopeEnd").value),
-      };
-      document.getElementById("status").textContent = "applying scope & re-synthesizing…";
-      fetch(`/cases/${caseId}/scope`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(s => {
-          // confirm(), not receive(): the two inputs are where this window was READ from, so
-          // writing them back is not this path's business. (The server's own scope_changed echo
-          // does write them, with its normalised ISO form — see the handler.)
-          DfirScope.confirm(s.start, s.end);
-          // The view is scope-consistent immediately (client-side projection); AI
-          // re-synthesis continues in the background and is reported via AI status.
-          document.getElementById("status").textContent = !DfirScope.isEmpty()
-            ? "scope applied — AI re-synthesizing in background (see AI status)"
-            : "scope cleared — AI re-synthesizing in background (see AI status)";
-          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
-          // These panels are derived server-side straight from the (now re-scoped) forensic
-          // timeline — no AI call needed, so refresh them right away instead of waiting on the
-          // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
-          scheduleAssetGraphReload(); scheduleEvidenceGraphReload(); schedulePhasesReload();
-          scheduleTimelineGapsReload(); scheduleEvidenceGapsReload(); scheduleBeaconsReload(); scheduleAnomaliesReload(); scheduleSessionsReload();
-          scheduleAdversaryHintsReload(); schedulePlaybookMatchReload(); scheduleHostRankingReload(); scheduleD3fendReload();
-          scheduleAttackMitigationsReload(); scheduleComplianceReload(); scheduleGeoMapReload(); scheduleSwimlaneReload();
-          scheduleIocSourcesReload(); scheduleIocProvenanceReload(); scheduleIocRiskReload(); scheduleIocProvenanceChainReload();
-          loadSuperTimeline(caseId);
-        })
-        .catch(() => document.getElementById("status").textContent = "scope failed — restart the companion server to load the latest endpoints.");
-    }
-
-    function renderAiToggle() {
-      const b = document.getElementById("aiToggle");
-      b.textContent = aiEnabled ? "AI: ON" : "AI: OFF";
-      b.classList.remove("na");
-      b.classList.toggle("on", aiEnabled);
-    }
-
-    function aiToggleUnavailable() {
-      const b = document.getElementById("aiToggle");
-      b.textContent = "AI: ?";
-      b.classList.remove("on"); b.classList.add("na");
-      b.setAttribute("data-tip", "AI control endpoint missing");
-      document.getElementById("status").textContent =
-        "AI toggle unavailable — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
-    }
-
-    function loadAiToggle(caseId) {
-      fetch(`/cases/${caseId}/ai-control`)
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(c => { aiEnabled = !!c.enabled; renderAiToggle(); })
-        .catch(() => aiToggleUnavailable());
-    }
-
-    function toggleAi() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const next = !aiEnabled;
-      fetch(`/cases/${caseId}/ai-control`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled: next }),
-      })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(c => {
-          aiEnabled = !!c.enabled;
-          renderAiToggle();
-          document.getElementById("status").textContent =
-            aiEnabled ? "AI on — catching up on un-analyzed evidence…" : "AI off — capturing only";
-        })
-        .catch(() => aiToggleUnavailable());
-    }
-
-    // Threat-intel enrichment (per-case provider toggles) moved to js/dashboard-enrichment.js
-    // (#415 tier 3). Its two controls are bound by initEnrichment(), from the modal-wiring block.
+    // Query Translator, the scope-apply function and the AI toggle shared one banner and are
+    // three separate modules now: js/dashboard-query-translator.js, js/dashboard-scope-apply.js
+    // and js/dashboard-ai-toggle.js (#415 tier 3). None has load-time work.
     // ── Anonymization — tokenize sensitive victim data before the AI; restore on display ──
     const ANON_CATEGORIES = [
       ["IP", "IP addresses"], ["USER", "Usernames"], ["HOST", "Hostnames"],
@@ -8725,6 +8563,8 @@
       ["loadFindingWorkflow", "Finding assignment"],
       ["renderPinned", "Pinned findings"],
       ["applySectionsVis", "Section order and visibility"],
+      ["applyScope", "Scope filter"],
+      ["loadAiToggle", "AI toggle"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -11896,9 +11736,8 @@
     document.getElementById("memNextStepsBtn").addEventListener("click", (e) => { e.stopPropagation(); doMemNextSteps(); });
     document.getElementById("askBtn").onclick = doAsk;
     document.getElementById("askInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doAsk(); });
-    document.getElementById("nlqBtn").onclick = doTranslateQuery;
-    document.getElementById("nlqInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doTranslateQuery(); });
-    renderNlqPlatforms();   // initial render (refreshed when /health arrives)
+    if (typeof initQueryTranslator !== "undefined") initQueryTranslator();
+    else dfirFeatureUnavailable("Query Translator");
     document.getElementById("connect").onclick = connect;
     document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
     // A <datalist> filters its suggestions by the field's current text, so a pre-filled case id

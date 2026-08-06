@@ -194,6 +194,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-palette-registry.js": "application/javascript; charset=utf-8",
   // Section order and visibility (#238) — which panels are shown and in what order.
   "/js/dashboard-section-order.js": "application/javascript; charset=utf-8",
+  // Query Translator — natural language into hunt queries for each platform.
+  "/js/dashboard-query-translator.js": "application/javascript; charset=utf-8",
+  // Applying the analyst's scope filter to the loaded case.
+  "/js/dashboard-scope-apply.js": "application/javascript; charset=utf-8",
+  // The per-case AI on/off toggle.
+  "/js/dashboard-ai-toggle.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.
