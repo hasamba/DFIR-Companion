@@ -871,7 +871,9 @@ export const FEATURES: Feature[] = [
       "onTemplateSelectChange",
       "invalidateTemplateCache",
     ],
-    private: ["_cachedTemplates", "_cachedIncidentTypes"],
+    // CP_LABELS moved here from the inline block: declared under a keyboard-navigation banner
+    // it had nothing to do with, and read only here.
+    private: ["_cachedTemplates", "_cachedIncidentTypes", "CP_LABELS"],
   },
   {
     // Velociraptor triage. Seven bindings crossed the boundary: three were simply declared in the
@@ -896,9 +898,11 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // CP_MARK moved here from the inline block: declared under a keyboard-navigation banner and
+    // read only here.
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
-    private: [],
+    private: ["CP_MARK"],
   },
   {
     // The canvas chart. Like dashboard-tickets.js, all of its load-time work is DOM wiring —

@@ -9011,24 +9011,6 @@
       }
     });
 
-    // Collection plan (#347). Derived server-side from the case timeline; this only renders it and
-    // posts the analyst's overrides. The section is data-gated: no incident type → no plan → stays
-    // hidden, because a generic collection plan would be guesswork.
-    const CP_MARK = {
-      collected: "✔", "override-collected": "✔", "override-na": "—", external: "↗", outstanding: "○",
-    };
-    // Step id → analyst-facing label, mirroring COLLECTION_STEPS server-side. Kept here so the New
-    // Case preview reads "EDR telemetry → Memory image" rather than raw ids.
-    const CP_LABELS = {
-      "edr": "EDR telemetry", "windows-event-logs": "Windows event logs",
-      "endpoint-triage": "Endpoint triage artifacts", "memory": "Memory image",
-      "network": "Network traffic / IDS", "web-logs": "Web server access logs",
-      "m365": "Microsoft 365 / mailbox audit", "identity": "Identity sign-in logs",
-      "cloud-audit": "Cloud control-plane audit", "siem": "SIEM / aggregated logs",
-      "sandbox": "Malware sandbox report", "super-timeline": "Super-timeline",
-      "threat-scan": "Threat / YARA scan", "physical-access": "Physical access records",
-    };
-
     document.getElementById("collectionPlan").addEventListener("click", async (e) => {
       const setBtn = e.target.closest("[data-cp-set]");
       const clearBtn = e.target.closest("[data-cp-clear]");

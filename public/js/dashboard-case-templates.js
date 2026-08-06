@@ -13,6 +13,27 @@
 // Its 676-line banner is 597 lines of the page's shared wiring run with twenty-one guard stanzas
 // threaded through it; none of that is this feature and none of it moved.
 (function () {
+  // Declared in the inline block until #415 tier 3, beside the collection-plan marks under a
+  // keyboard-navigation banner. This module is its only reader.
+  // Step id → analyst-facing label, mirroring COLLECTION_STEPS server-side. Kept here so the New
+  // Case preview reads "EDR telemetry → Memory image" rather than raw ids.
+  const CP_LABELS = {
+    edr: "EDR telemetry",
+    "windows-event-logs": "Windows event logs",
+    "endpoint-triage": "Endpoint triage artifacts",
+    memory: "Memory image",
+    network: "Network traffic / IDS",
+    "web-logs": "Web server access logs",
+    m365: "Microsoft 365 / mailbox audit",
+    identity: "Identity sign-in logs",
+    "cloud-audit": "Cloud control-plane audit",
+    siem: "SIEM / aggregated logs",
+    sandbox: "Malware sandbox report",
+    "super-timeline": "Super-timeline",
+    "threat-scan": "Threat / YARA scan",
+    "physical-access": "Physical access records",
+  };
+
   // ── Case templates ────────────────────────────────────────────────────────────────────
   let _cachedTemplates = null;
   async function loadTemplates() {
