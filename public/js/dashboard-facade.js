@@ -195,6 +195,9 @@
     "renderTlChecks",
     "applyTlDisplayFromChecks",
     "tlShow",
+    // The wizard AI step and the disk-space warning. Their initializers are the sentinels.
+    "wizResetAiStep",
+    "loadDiskStats",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

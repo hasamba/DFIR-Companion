@@ -221,6 +221,10 @@
   <script src="/js/dashboard-zip-archive.js"></script>
   <!-- Timeline row display toggles. initTimelineDisplay() binds the checkbox list. -->
   <script src="/js/dashboard-timeline-display.js"></script>
+  <!-- Setup wizard AI step (#181). initWizardAiStep() wires it. -->
+  <script src="/js/dashboard-wizard-ai-step.js"></script>
+  <!-- Disk-space warning (#1). initDiskWarning() captures and wires the dismiss button. -->
+  <script src="/js/dashboard-disk-warning.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -13628,94 +13632,9 @@
     let wizCurrent = "ai";          // active step id
     let wizStatus = {};             // last /setup/status snapshot (drives ✓/○)
 
-    // ── AI step logic (#181, preserved) ──
-    function wizResetAiStep() {
-      wizEl("wizProvider").value = ""; wizEl("wizModel").value = ""; wizEl("wizKey").value = "";
-      wizEl("wizBaseUrl").value = ""; wizEl("wizResult").textContent = ""; wizEl("wizModelHint").innerHTML = "";
-      wizEl("wizBaseUrlField").style.display = "none"; wizEl("wizTestSaveBtn").disabled = false;
-      wizEl("wizSynthProvider").value = ""; wizEl("wizSynthModel").value = ""; wizEl("wizSynthKey").value = "";
-      wizEl("wizSynthBaseUrl").value = ""; wizEl("wizSynthResult").textContent = ""; wizEl("wizSynthSaveBtn").disabled = false;
-      const ccWizCard = wizEl("claude-code-status-wizard"); if (ccWizCard) ccWizCard.style.display = "none";
-    }
-    // Claude Code connection-status card mirrored inside the wizard's own AI step (distinct
-    // cc-*-wizard ids so it doesn't collide with the Settings → AI instance). No hard "ready" gate
-    // exists anywhere in this wizard — Next/Back/Done are never blocked on step completion (every
-    // step, including AI, is explicitly optional/skippable) — so this only surfaces status, it does
-    // not gate navigation.
-    (function () {
-      var sel = wizEl("wizProvider");
-      var card = wizEl("claude-code-status-wizard");
-      if (!sel || !card) return;
-      var dot = wizEl("cc-status-dot-wizard");
-      var msg = wizEl("cc-status-msg-wizard");
-      var connectBtn = wizEl("cc-connect-wizard");
-      var hint = wizEl("cc-connect-hint-wizard");
-      function paint(s) {
-        var colors = { connected: "#16a34a", not_connected: "#d97706", not_installed: "#dc2626" };
-        dot.style.background = colors[s.state] || "#6b7280";
-        msg.textContent = s.message || s.state;
-        connectBtn.style.display = s.state === "not_connected" ? "" : "none";
-      }
-      function refresh() {
-        msg.textContent = "Checking Claude Code…";
-        fetch("/diagnostics/claude-code-status").then(r => r.json()).then(paint)
-          .catch(() => { msg.textContent = "Status check failed."; });
-      }
-      function toggleCcWizCard() {
-        const on = sel.value === "claude-code";
-        card.style.display = on ? "" : "none";
-        if (on) refresh();
-      }
-      sel.addEventListener("change", toggleCcWizCard);
-      connectBtn.addEventListener("click", () => {
-        hint.style.display = "";
-        hint.textContent = "Starting sign-in…";
-        fetch("/diagnostics/claude-code-login", { method: "POST" }).then(r => r.json())
-          .then(r => {
-            if (r.url) hint.innerHTML = "Open this URL to finish signing in, then click Re-check:<br><a href=\"" + escAttr(r.url) + "\" target=\"_blank\" rel=\"noopener\">" + esc(r.url) + "</a>";
-            else if (r.started) hint.textContent = "Sign-in started on the host. Complete it in the browser that opened, then click Re-check.";
-            else hint.textContent = (r.error || "Could not start sign-in") + ". Run `claude auth login` in a terminal on the host, then click Re-check.";
-          }).catch(() => { hint.textContent = "Run `claude auth login` in a terminal on the host, then click Re-check."; });
-      });
-      wizEl("cc-recheck-wizard").addEventListener("click", refresh);
-    })();
-    wizEl("wizProvider").addEventListener("change", e => {
-      const p = e.target.value, hint = wizEl("wizModelHint");
-      hint.innerHTML = WIZ_MODEL_HINTS[p] || "";
-      hint.querySelectorAll("code").forEach(c => { c.title = "Click to use this model"; c.onclick = () => { wizEl("wizModel").value = c.textContent; }; });
-      wizEl("wizBaseUrlField").style.display = LOCAL_PROVIDERS.has(p) ? "" : "none";
-    });
-    async function wizSaveAndTestAi() {
-      const provider = wizEl("wizProvider").value, model = wizEl("wizModel").value.trim();
-      const key = wizEl("wizKey").value.trim(), baseUrl = wizEl("wizBaseUrl").value.trim();
-      // claude-code needs no API key (it shells out to the locally-signed-in Claude Code CLI), same
-      // as the LOCAL_PROVIDERS (ollama/litellm) exemption below.
-      const result = wizEl("wizResult"), local = LOCAL_PROVIDERS.has(provider) || provider === "claude-code";
-      if (!provider) { result.style.color = "#ffb05a"; result.textContent = "Pick a provider first."; return; }
-      if (!model) { result.style.color = "#ffb05a"; result.textContent = "Enter an extraction model."; return; }
-      if (!key && !local) { result.style.color = "#ffb05a"; result.textContent = "Enter an API key (or pick a local provider)."; return; }
-      const btn = wizEl("wizTestSaveBtn"); btn.disabled = true;
-      result.style.color = "#9aa4b2"; result.textContent = "Saving configuration…";
-      const updates = { DFIR_VISION_PROVIDER: provider, DFIR_VISION_MODEL: model };
-      if (key) updates.DFIR_VISION_KEY = key;
-      if (baseUrl) updates.DFIR_VISION_BASE_URL = baseUrl;
-      try {
-        const save = await fetch("/settings/env", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ updates }) });
-        if (!save.ok) { const j = await save.json().catch(() => ({})); result.style.color = "#ff9f9f"; result.textContent = "Could not save: " + esc(j.error || ("HTTP " + save.status)) + " — restart the companion server if this 404s."; btn.disabled = false; return; }
-      } catch (e) { result.style.color = "#ff9f9f"; result.textContent = "Could not reach the server: " + esc(e.message); btn.disabled = false; return; }
-      result.textContent = "Applying & testing the connection…";
-      await fetch("/settings/ai-reload", { method: "POST" }).catch(() => {});
-      try {
-        const r = await fetch("/diagnostics/ai-test", { method: "POST" });
-        const body = await r.json().catch(() => ({}));
-        if (r.status === 501) { result.style.color = "#ffb05a"; result.textContent = "Saved, but " + esc(body.error || "the provider isn't configured yet") + "."; }
-        else if (body.ok) { result.style.color = "#5ad17a"; result.innerHTML = "✓ <strong>" + esc(body.provider) + "</strong> responded in " + body.latencyMs + " ms. Saved to .env — <strong>restart the companion server</strong> to enable AI analysis."; }
-        else { result.style.color = "#ff9f9f"; result.innerHTML = "✗ Saved, but the test failed — <strong>" + esc(body.kind || "error") + "</strong>: " + esc(body.error || "unknown") + ". Fix the value above and test again."; }
-      } catch (e) { result.style.color = "#ff9f9f"; result.textContent = "Saved, but the test request failed: " + esc(e.message); }
-      finally { btn.disabled = false; await wizRefreshStatus(); }
-    }
-    wizEl("wizTestSaveBtn").onclick = wizSaveAndTestAi;
-
+    // Setup wizard AI step (#181) moved to js/dashboard-wizard-ai-step.js (#415 tier 3).
+    if (typeof initWizardAiStep !== "undefined") initWizardAiStep();
+    else dfirFeatureUnavailable("Setup wizard AI step");
     // ── Synthesis model (optional, sub-section of the AI step) ──
     // No live connectivity test here: /diagnostics/ai-test only probes the main extraction
     // provider, so this mirrors Settings → AI (save + apply, no per-field test).
@@ -14459,38 +14378,9 @@
     }
     document.getElementById("showArchivedToggle")?.addEventListener("change", loadCaseList);
 
-    // ── Disk-space warning (#119) ───────────────────────────────────────────
-    // Poll GET /disk-stats once on load. Shows a banner when the cases-root
-    // filesystem is at warning / danger / critical level. Dismissed per-session.
-    let diskWarnDismissed = false;
-    function loadDiskStats() {
-      if (diskWarnDismissed) return;
-      fetch("/disk-stats")
-        .then(r => r.ok ? r.json() : null)
-        .then(d => {
-          if (!d || d.level === "none") { hideDiskWarn(); return; }
-          const banner = document.getElementById("diskWarnBanner");
-          const text   = document.getElementById("diskWarnText");
-          if (!banner || !text) return;
-          const usedGb = ((d.totalBytes - d.freeBytes) / 1e9).toFixed(1);
-          const totalGb = (d.totalBytes / 1e9).toFixed(1);
-          const pct = d.usedPct.toFixed(1);
-          text.textContent = `Disk space ${d.level.toUpperCase()}: ${usedGb} GB used of ${totalGb} GB (${pct}%) on the cases folder filesystem.` +
-            (d.level === "critical" ? " Free space is very low — consider archiving or moving closed cases." :
-             d.level === "danger"   ? " Consider archiving or moving closed cases before this fills." :
-                                      " Monitor disk usage and archive closed cases if needed.");
-          banner.className = `dw-${d.level}`;
-          banner.hidden = false;
-        })
-        .catch(() => {});
-    }
-    function hideDiskWarn() {
-      const el = document.getElementById("diskWarnBanner");
-      if (el) el.hidden = true;
-    }
-    const diskWarnDismissBtn = document.getElementById("diskWarnDismiss");
-    if (diskWarnDismissBtn) diskWarnDismissBtn.onclick = () => { diskWarnDismissed = true; hideDiskWarn(); };
-
+    // Disk-space warning (#1) moved to js/dashboard-disk-warning.js (#415 tier 3).
+    if (typeof initDiskWarning !== "undefined") initDiskWarning();
+    else dfirFeatureUnavailable("Disk-space warning");
     // ── Startup pre-flight banner (#179) ───────────────────────────────────
     // Fetches /diagnostics/preflight once on load (cached 30s server-side).
     // Shows a red banner only when a CRITICAL check (AI provider) failed.
@@ -14658,7 +14548,7 @@
     // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
     // session and reconnect.
     loadCaseList();
-    loadDiskStats();
+    if (typeof loadDiskStats === "function") loadDiskStats();
     (function restore() {
       const fromUrl = new URLSearchParams(location.search).get("caseId");
       const caseId = (fromUrl || localStorage.getItem("dfir.caseId") || "").trim();

@@ -541,6 +541,22 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Setup wizard AI step (#181). Its wiring was a self-calling IIFE — the fourth in this PR.
+    file: "dashboard-wizard-ai-step.js",
+    initializer: "initWizardAiStep",
+    publish: ["initWizardAiStep", "wizResetAiStep"],
+    private: [],
+  },
+  {
+    // Disk-space warning (#1). Its initializer takes a declaration with it: the dismiss button was
+    // captured by `const … = document.getElementById(…)` at module scope, which is null in a <head>
+    // script, so the lookup and its wiring had to move together.
+    file: "dashboard-disk-warning.js",
+    initializer: "initDiskWarning",
+    publish: ["initDiskWarning", "loadDiskStats"],
+    private: ["diskWarnDismissed"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
