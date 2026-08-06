@@ -21,6 +21,7 @@
     "check:us-map": "node scripts/check-us-map.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "inventory:dashboard": "node scripts/dashboard-inventory.mjs",
+    "split:dashboard-section": "node scripts/dashboard-section-split.mjs",
     "pretest": "node scripts/clean-vitest-temp.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
