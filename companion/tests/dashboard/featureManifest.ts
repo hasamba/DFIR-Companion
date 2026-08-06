@@ -373,6 +373,14 @@ export const FEATURES: Feature[] = [
     private: ["GH_SEV_COLOR", "ghArtMeta"],
   },
   {
+    // Narrative Timeline. Two of the six module-scope bindings under its banner stayed in the page:
+    // they wire the import undo/redo buttons to a function six hundred lines away.
+    file: "dashboard-narrative.js",
+    initializer: "initNarrativeTimeline",
+    publish: ["initNarrativeTimeline", "genNarrative", "loadSynthMeta"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
