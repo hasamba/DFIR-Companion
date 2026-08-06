@@ -898,6 +898,23 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Evidence Chain graph. Two ranges: the feature, and the six load-time statements that were its
+    // own controls sitting 4,000 lines away in the page's wiring block. The boundary is exact — the
+    // next statement belongs to report metadata.
+    file: "dashboard-evidence-graph.js",
+    initializer: "initEvidenceGraph",
+    publish: ["initEvidenceGraph", "loadEvidenceGraph", "scheduleEvidenceGraphReload", "hasEvidenceGraph"],
+    private: [
+      "evGraphData",
+      "evTypesEnabled",
+      "evMinSev",
+      "evColorMode",
+      "evGV",
+      "evPathsData",
+      "evPathsShowDismissed",
+    ],
+  },
+  {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so
     // what crosses the boundary is a question — isNewEvent / isNewIoc — not the key sets. No
     // initializer: nothing here runs at load, and loadImportMeta() is already in the refresh fan-out.

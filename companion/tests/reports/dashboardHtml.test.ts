@@ -20,8 +20,13 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/function loadLateralPaths\(caseId\)[\s\S]{0,400}includeDismissed=1/);
     // Dismissing POSTs the route's hostIds (the durable anchor), not the positional path id.
     expect(html).toMatch(/lateral-path-dismissals`[\s\S]{0,300}hostIds: path\.hostIds/);
-    // Restoring DELETEs by the normalized host-sequence key.
-    expect(html).toMatch(/lateral-path-dismissals\/\$\{encodeURIComponent\(key\)\}`, \{ method: "DELETE" \}/);
+    // Restoring DELETEs by the normalized host-sequence key. Whitespace-tolerant on purpose: the
+    // literal `, { method: "DELETE" }` only held while this lived in dashboard.html, which prettier
+    // does not format. In a module prettier wraps the call, and an exact-spacing regex would fail
+    // for a reformat rather than for a behaviour change.
+    expect(html).toMatch(
+      /lateral-path-dismissals\/\$\{encodeURIComponent\(key\)\}`,\s*\{\s*method: "DELETE"\s*\}/,
+    );
     // A dismissed row is visibly struck through and carries the analyst's reason.
     expect(html).toContain("line-through");
     expect(html).toContain("dismissalNote");

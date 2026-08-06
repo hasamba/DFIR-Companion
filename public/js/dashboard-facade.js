@@ -316,6 +316,11 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Evidence Chain graph. `initEvidenceGraph` is the sentinel. hasEvidenceGraph is stubbed so the
+    // refresh fan-out reads "no graph loaded" and skips it, rather than throwing mid-fan-out.
+    "loadEvidenceGraph",
+    "scheduleEvidenceGraphReload",
+    "hasEvidenceGraph",
     // Last-import change tracking. isNewEvent / isNewIoc are stubbed deliberately: falsy means the
     // NEW badge does not appear, which drops a decoration rather than an event.
     "loadImportMeta",
