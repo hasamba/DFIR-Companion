@@ -786,6 +786,29 @@ export const FEATURES: Feature[] = [
     private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES"],
   },
   {
+    // Memory Next Steps (#101). No initializer — the only load-time statement in its range was a
+    // guard stanza an earlier extraction left there.
+    file: "dashboard-memory-next-steps.js",
+    publish: ["toggleMemNextSteps", "resetMemNextSteps", "doMemNextSteps"],
+    private: ["MNS_SEV_COLOR", "MNS_SEV_RANK"],
+  },
+  {
+    // Delete case. Its archive-choice radios AND its three modal controls move — the latter were
+    // in the page's shared modal-wiring block, which every other modal extraction has also taken
+    // its own lines out of.
+    file: "dashboard-delete-case.js",
+    initializer: "initDeleteCase",
+    publish: ["initDeleteCase", "openDeleteCase", "closeDeleteCase", "doDeleteCase"],
+    private: [],
+  },
+  {
+    // Case password protection. Nothing outside calls in, so it publishes only its initializer.
+    file: "dashboard-case-password.js",
+    initializer: "initCasePassword",
+    publish: ["initCasePassword"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

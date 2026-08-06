@@ -214,6 +214,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-view-presets.js": "application/javascript; charset=utf-8",
   // The .env settings form — read, test Presidio, and save only the groups that changed.
   "/js/dashboard-env-settings.js": "application/javascript; charset=utf-8",
+  // Memory Next Steps (#101) — what to look at next in a memory image.
+  "/js/dashboard-memory-next-steps.js": "application/javascript; charset=utf-8",
+  // Delete case, optionally archiving first.
+  "/js/dashboard-delete-case.js": "application/javascript; charset=utf-8",
+  // Case password protection — set, change and remove the password guarding a case.
+  "/js/dashboard-case-password.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

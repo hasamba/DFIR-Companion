@@ -274,6 +274,13 @@
     "loadDashboardViews",
     "fetchEnvSettings",
     "saveSettings",
+    // Memory Next Steps and the delete-case modal. initDeleteCase/initCasePassword are sentinels.
+    "toggleMemNextSteps",
+    "resetMemNextSteps",
+    "doMemNextSteps",
+    "openDeleteCase",
+    "closeDeleteCase",
+    "doDeleteCase",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

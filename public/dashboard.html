@@ -270,6 +270,12 @@
   <script src="/js/dashboard-view-presets.js"></script>
   <!-- The .env settings form. initEnvSettings() wires the Presidio test controls. -->
   <script src="/js/dashboard-env-settings.js"></script>
+  <!-- Memory Next Steps (#101). No initializer. -->
+  <script src="/js/dashboard-memory-next-steps.js"></script>
+  <!-- Delete case. initDeleteCase() wires the archive radios. -->
+  <script src="/js/dashboard-delete-case.js"></script>
+  <!-- Case password protection. initCasePassword() wires its five controls. -->
+  <script src="/js/dashboard-case-password.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -7954,95 +7960,7 @@
 
 
     // Timeline Gaps (#83) moved to js/dashboard-timeline-gaps.js (#415 tier 3). No initializer.
-    // ── Memory Next Steps (#101) ──────────────────────────────────────────────────────────
-    // AI-proposed next Volatility 3 commands for an iterative memory investigation. The section is
-    // shown only when the case has imported Volatility/Rekall evidence (toggled from render()). On
-    // demand (an AI call): the analyst clicks "Suggest next steps", reviews each anomaly + command,
-    // and copies the command to run in their own Volatility. Ephemeral — not persisted.
-    const MNS_SEV_COLOR = { Critical:"#ff5c5c", High:"#ff9f43", Medium:"#ffd93b", Low:"#6bcb77", Info:"#6aa9ff" };
-    const MNS_SEV_RANK = { Critical:0, High:1, Medium:2, Low:3, Info:4 };
-
-    // Show the section iff the (in-scope, non-FP) timeline has any Volatility/Rekall events.
-    function toggleMemNextSteps(ft) {
-      const sec = document.getElementById("sec-mem-nextsteps");
-      if (!sec) return;
-      const hasMem = (ft || []).some(e => (e.sources || []).some(s => s === "Volatility" || s === "Rekall"));
-      // Open/close this section's data gate, then let applySectionsVis() own the actual display so
-      // the user's Settings choice is respected too — it hides the section when EITHER the analyst
-      // switched it off or the case has no memory evidence.
-      sec.dataset.gateOpen = hasMem ? "1" : "";
-      applySectionsVis();
-    }
-
-    function resetMemNextSteps() {
-      const el = document.getElementById("memNextSteps");
-      if (el) el.innerHTML = "";
-      const msg = document.getElementById("memNextStepsMsg");
-      if (msg) msg.textContent = "";
-    }
-
-    function doMemNextSteps() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const btn = document.getElementById("memNextStepsBtn");
-      const msg = document.getElementById("memNextStepsMsg");
-      const el = document.getElementById("memNextSteps");
-      if (!el) return;
-      if (btn) btn.disabled = true;
-      if (msg) msg.textContent = "thinking… (one AI call over the memory evidence)";
-      el.innerHTML = "";
-      fetch(`/cases/${caseId}/memory/next-steps`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
-        .then(({ ok, j }) => {
-          if (!ok || j.error) {
-            if (msg) msg.textContent = "";
-            el.innerHTML = `<div class="mns-empty" data-safe-style="color:var(--sev-high)">error: ${esc(j.error || "could not generate next steps")} — restart the companion server if this 404s</div>`;
-            return;
-          }
-          renderMemNextSteps(j.suggestions || []);
-          const n = (j.suggestions || []).length;
-          if (msg) msg.textContent = n ? `${n} next step(s) proposed` : "";
-        })
-        .catch((e) => { if (msg) msg.textContent = ""; el.innerHTML = `<div class="mns-empty" data-safe-style="color:var(--sev-high)">error: ${esc(e.message)}</div>`; })
-        .finally(() => { if (btn) btn.disabled = false; });
-    }
-
-    function renderMemNextSteps(suggestions) {
-      const el = document.getElementById("memNextSteps");
-      if (!el) return;
-      if (!suggestions.length) {
-        el.innerHTML = `<div class="mns-empty">No next steps proposed — the AI found nothing anomalous in the imported memory evidence to dig into. Import more Volatility 3 / Rekall plugin output (pstree, netscan, malfind, cmdline) and try again.</div>`;
-        return;
-      }
-      const ordered = [...suggestions].sort((a, b) => (MNS_SEV_RANK[a.severity] ?? 9) - (MNS_SEV_RANK[b.severity] ?? 9));
-      const caveat = `<div class="mns-caveat">⚠ AI-suggested commands — review before running. Substitute <code>&lt;image&gt;</code> with your memory image path. Most steps print a table you can paste/Import back here; a <code>--dump</code> / <code>dumpfiles</code> step writes a raw <code>.dmp</code> for offline analysis (YARA / capa / sandbox) — import those results, not the binary.</div>`;
-      const cards = ordered.map((s, idx) => {
-        const sev = s.severity || "Medium";
-        const sevColor = MNS_SEV_COLOR[sev] || "#9aa4b2";
-        const sevBadge = `<span class="mns-sev" data-safe-style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
-        const pid = s.pid ? `<span class="mns-pid">PID ${esc(s.pid)}</span>` : "";
-        const techs = (s.mitreTechniques || []).map((t) => {
-          const u = attackUrl(t);
-          return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" class="mns-tech">${esc(t)}</a>` : `<span class="mns-tech">${esc(t)}</span>`;
-        }).join("");
-        const rationale = s.rationale ? `<div class="mns-rationale">${esc(s.rationale)}</div>` : "";
-        return `<div class="mns-card">`
-          + `<div class="mns-head"><span class="mns-anomaly">${esc(s.anomaly)}</span>${sevBadge}${pid}</div>`
-          + rationale
-          + (techs ? `<div class="mns-techs">${techs}</div>` : "")
-          + `<textarea class="mns-cmd" id="mnsC${idx}" spellcheck="false" rows="1">${esc(s.command)}</textarea>`
-          + `<div class="mns-actions"><button class="mns-copy" data-idx="${idx}">Copy command</button></div>`
-          + `</div>`;
-      }).join("");
-      el.innerHTML = caveat + `<div class="mns-list">${cards}</div>`;
-      el.querySelectorAll(".mns-copy").forEach((b) => b.onclick = () => {
-        const q = document.getElementById("mnsC" + b.dataset.idx);
-        navigator.clipboard.writeText(q ? q.value : "").then(() => {
-          b.textContent = "Copied ✓"; b.classList.add("copied");
-          setTimeout(() => { b.textContent = "Copy command"; b.classList.remove("copied"); }, 1500);
-        }).catch(() => { b.textContent = "copy failed"; });
-      });
-    }
+    // Memory Next Steps (#101) moved to js/dashboard-memory-next-steps.js (#415 tier 3).
 
     // Host & Account Ranking (#202) moved to js/dashboard-host-ranking.js (#415 tier 3). Its one
     // delegated row listener is bound by initHostRanking().
@@ -8158,6 +8076,7 @@
       // table, not the mildest.
       ["importPermissionMessage", "Import progress and permission check"],
       ["applyAiStatus", "AI status banner"],
+      ["doMemNextSteps", "Memory Next Steps"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -10634,90 +10553,9 @@
     }
     // Save as Template moved to js/dashboard-save-template.js (#415 tier 3).
     // IOC block-list export moved to js/dashboard-ioc-blocklist.js (#415 tier 3).
-    // ── Delete case (optionally archive first) ────────────────────────────────
-    function openDeleteCase() {
-      const caseId = document.getElementById("caseId").value.trim();
-      document.getElementById("dcCaseName").textContent =
-        `Delete case "${caseId}"? This permanently removes all its data and cannot be undone.`;
-      document.getElementById("dcArchiveNone").checked = true;
-      document.getElementById("dcPasswordFields").style.display = "none";
-      document.getElementById("dcPassword").value = "";
-      document.getElementById("dcPasswordConfirm").value = "";
-      document.getElementById("dcMsg").textContent = "";
-      document.getElementById("deleteCaseOverlay").classList.add("open");
-    }
-    function closeDeleteCase() { document.getElementById("deleteCaseOverlay").classList.remove("open"); }
-    document.querySelectorAll('input[name="dcArchiveFirst"]').forEach((r) => {
-      r.addEventListener("change", () => {
-        document.getElementById("dcPasswordFields").style.display =
-          document.getElementById("dcArchiveEncrypted").checked ? "block" : "none";
-      });
-    });
-    async function doDeleteCase() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("dcMsg");
-      if (!caseId) { msg.textContent = "no case loaded"; return; }
-      const archiveFirst = document.querySelector('input[name="dcArchiveFirst"]:checked').value;
-      let password;
-      if (archiveFirst === "encrypted") {
-        password = document.getElementById("dcPassword").value;
-        const confirmPassword = document.getElementById("dcPasswordConfirm").value;
-        if (password.length < 8) { msg.textContent = "password must be at least 8 characters"; return; }
-        if (password !== confirmPassword) { msg.textContent = "passwords do not match"; return; }
-      }
-      const btn = document.getElementById("dcDelete");
-      btn.disabled = true;
-      msg.textContent = "deleting… (may take a while for large cases)";
-      try {
-        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/delete`, {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ archiveFirst, ...(password ? { password } : {}) }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || ("HTTP " + res.status));
-        }
-        let deleted;
-        if (archiveFirst === "encrypted") {
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          const cd = res.headers.get("content-disposition") || "";
-          const cdMatch = cd.match(/filename="([^"]*)"/);
-          a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          deleted = res.headers.get("x-case-deleted") === "true";
-        } else {
-          const body = await res.json();
-          deleted = body.deleted;
-        }
-        closeDeleteCase();
-        if (deleted) {
-          // The case is gone — reset the whole dashboard to "no case selected" rather than trying
-          // to unwind the dozens of per-panel load*(caseId) calls connect() fired for it.
-          localStorage.removeItem("dfir.caseId");
-          document.getElementById("status").textContent = archiveFirst === "none"
-            ? "case deleted"
-            : `case archived (${archiveFirst}) and deleted`;
-          window.location.href = location.pathname;
-        } else {
-          document.getElementById("status").textContent = archiveFirst === "none"
-            ? "delete failed — the case still exists, unchanged"
-            : `archived (${archiveFirst}), but deleting the case folder afterward failed — it was not removed`;
-          loadCaseLifecycle(caseId);
-          loadCaseList();
-        }
-      } catch (err) {
-        msg.textContent = "delete failed: " + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
+    // Delete case moved to js/dashboard-delete-case.js (#415 tier 3).
+    if (typeof initDeleteCase !== "undefined") initDeleteCase();
+    else dfirFeatureUnavailable("Delete case");
     // ── New case ── creation lives here (the extension only attaches to existing cases) ──
     async function openNewCase() {
       const idInput = document.getElementById("ncCaseId");
@@ -11370,9 +11208,6 @@
     else dfirFeatureUnavailable("Encrypted case archive export");
     if (typeof initZipArchive !== "undefined") initZipArchive();
     else dfirFeatureUnavailable("ZIP case archive");
-    document.getElementById("dcDelete").onclick = doDeleteCase;
-    document.getElementById("dcCancel").onclick = closeDeleteCase;
-    document.getElementById("deleteCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "deleteCaseOverlay") closeDeleteCase(); });
     document.getElementById("stName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveAsTemplate(); });
 
     // Import case (snapshot / encrypted / DFIR-IRIS) moved to js/dashboard-import-case.js
@@ -12282,77 +12117,9 @@
     // are bound by initCaseLifecycle(), which was a self-calling wireLifecycleButtons().
     if (typeof initCaseLifecycle !== "undefined") initCaseLifecycle();
     else dfirFeatureUnavailable("Case lifecycle");
-    // ── Case password protection ─────────────────────────────────────────────
-    async function openCasePassword() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) { alert("open a case first"); return; }
-      document.getElementById("cpNewPassword").value = "";
-      const msg = document.getElementById("cpMsg");
-      msg.textContent = "";
-      const saveBtn = document.getElementById("cpSave");
-      const removeBtn = document.getElementById("cpRemove");
-      saveBtn.disabled = false;
-      removeBtn.disabled = true; // disabled until we confirm a password actually exists
-      document.getElementById("casePasswordOverlay").classList.add("open");
-      document.getElementById("cpNewPassword").focus();
-      try {
-        const status = await fetch(`/cases/${caseId}/lock-status`).then(r => r.ok ? r.json() : null);
-        if (!status) return;
-        removeBtn.disabled = !status.hasPassword;
-        if (status.hasPassword && !status.unlocked) {
-          // Setting/changing/removing a password requires already being unlocked (same rule
-          // that protects the case itself) — this browser isn't, so neither action would work.
-          saveBtn.disabled = true;
-          removeBtn.disabled = true;
-          msg.textContent = "This case is locked — reload the page and enter the password first to change or remove it.";
-        }
-      } catch (e) {
-        // offline / older server — leave the safe defaults (Remove disabled, Save enabled)
-      }
-    }
-    function closeCasePassword() { document.getElementById("casePasswordOverlay").classList.remove("open"); }
-    async function saveCasePassword() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("cpMsg");
-      const newPassword = document.getElementById("cpNewPassword").value;
-      if (newPassword.length < 6) { msg.textContent = "password must be at least 6 characters"; return; }
-      try {
-        const r = await fetch(`/cases/${caseId}/password`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ newPassword }),
-        });
-        const body = await r.json().catch(() => ({}));
-        if (!r.ok) { msg.textContent = body.error || ("HTTP " + r.status); return; }
-        closeCasePassword();
-        loadCaseList();
-        alert("Case password set.");
-      } catch (e) {
-        msg.textContent = "error: " + e.message;
-      }
-    }
-    async function removeCasePassword() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!confirm(`Remove the password from case "${esc(caseId)}"? Anyone with dashboard access will be able to open it without a password.`)) return;
-      const msg = document.getElementById("cpMsg");
-      try {
-        const r = await fetch(`/cases/${caseId}/password`, { method: "DELETE" });
-        const body = await r.json().catch(() => ({}));
-        if (!r.ok) { msg.textContent = body.error || ("HTTP " + r.status); return; }
-        closeCasePassword();
-        loadCaseList();
-        alert("Case password removed.");
-      } catch (e) {
-        msg.textContent = "error: " + e.message;
-      }
-    }
-    document.getElementById("casePasswordBtn").addEventListener("click", () => {
-      document.getElementById("lifecycleMenu").style.display = "none";
-      openCasePassword();
-    });
-    document.getElementById("cpSave").addEventListener("click", saveCasePassword);
-    document.getElementById("cpRemove").addEventListener("click", removeCasePassword);
-    document.getElementById("cpCancel").addEventListener("click", closeCasePassword);
-    document.getElementById("casePasswordOverlay").addEventListener("click", (e) => { if (e.target.id === "casePasswordOverlay") closeCasePassword(); });
-
+    // Case password protection moved to js/dashboard-case-password.js (#415 tier 3).
+    if (typeof initCasePassword !== "undefined") initCasePassword();
+    else dfirFeatureUnavailable("Case password protection");
     // ── Case unlock prompt ──────────────────────────────────────────────────
     function promptCaseUnlock(caseId) {
       document.getElementById("cuPassword").value = "";
