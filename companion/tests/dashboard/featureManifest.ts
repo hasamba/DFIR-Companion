@@ -6,7 +6,12 @@
 
 import { readFile } from "node:fs/promises";
 import type { DashboardScript } from "../helpers/dashboardAst.js";
-import { dashboardScripts, functionBindingsOf, scriptFromSource } from "../helpers/dashboardAst.js";
+import {
+  dashboardScripts,
+  functionBindingsOf,
+  scriptFromSource,
+  topLevelBindings,
+} from "../helpers/dashboardAst.js";
 import { globalNamesOf } from "../helpers/dashboardModule.js";
 
 // TIER 3 (#415): whole features moved out of the inline script, each owning its own state.
@@ -346,6 +351,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Report Templates (#60). Two of its four controls were bound by passing the function as a
+    // value, so the page could not simply keep calling them by name once they moved.
+    file: "dashboard-report-templates.js",
+    initializer: "initReportTemplates",
+    publish: ["initReportTemplates", "loadReportTemplates", "rtFillEditor", "rtSave", "rtDelete"],
+    private: ["rtTemplates", "rtCurrentId", "rtEditSections", "rtRequiredSections"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
@@ -423,17 +436,35 @@ export const scripts = dashboardScripts();
  * contract lives in the `describe` at the bottom of this file — synthetic module and inline sources
  * carrying the exact mutations that got through, so the seam is exercised and not just its helper.
  */
+/**
+ * Names a module declares that are ALSO still declared at the top level of the inline script.
+ *
+ * The question is "did the feature move as a unit, or is a copy of one of its declarations still
+ * sitting in the page" — and the page's answer is only meaningful at its TOP level. That is what a
+ * later script can see, what can shadow or be shadowed, and what "left behind" can mean.
+ *
+ * IT USED TO COMPARE BOTH SIDES AT ANY DEPTH, and that produced three false positives in one
+ * session, each costing a rename that the code did not want: `tick` → `mcpTick`, `wire` →
+ * `wireToolRules`, `poll` → `pollHuntResults`. The fourth would have been renaming `const v = (elId,
+ * val) => …`, a two-character local, because three unrelated functions elsewhere in the page happen
+ * to name a local `v` too. A nested local in the page is invisible to the module and cannot be a
+ * leftover of anything; flagging it taught the reader to rename around the gate rather than to look.
+ *
+ * The module side stays at any depth on purpose: the module is the thing under test, and a
+ * declaration anywhere in it that matches a page global is worth knowing about.
+ */
 const duplicateBindings = (
   moduleName: string,
   moduleSrc: string,
   inlineScripts: DashboardScript[],
 ): string[] => {
   const declared = functionBindingsOf(scriptFromSource(moduleName, moduleSrc)).map((b) => b.name);
-  return inlineScripts.flatMap((s) =>
-    functionBindingsOf(s)
-      .filter((b) => declared.includes(b.name))
-      .map((b) => `${s.name}:${b.line} ${b.name}`),
-  );
+  return inlineScripts.flatMap((s) => {
+    const pageTopLevel = new Set(topLevelBindings(s).map((b) => b.name));
+    return functionBindingsOf(s)
+      .filter((b) => declared.includes(b.name) && pageTopLevel.has(b.name))
+      .map((b) => `${s.name}:${b.line} ${b.name}`);
+  });
 };
 
 export { duplicateBindings };

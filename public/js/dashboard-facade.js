@@ -125,6 +125,11 @@
     "openAnalysisRuns",
     "closeAnalysisRuns",
     "compareAnalysisRuns",
+    // Report Templates (#60). `initReportTemplates` is the sentinel, so not here.
+    "loadReportTemplates",
+    "rtFillEditor",
+    "rtSave",
+    "rtDelete",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
