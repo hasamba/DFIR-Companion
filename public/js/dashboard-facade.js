@@ -209,6 +209,13 @@
     "wlAddRule",
     "wlImport",
     "wlExport",
+    // The executive summary, the import severity floor and the merge picker. The last two features
+    // here have no initializer at all, so every name they publish is a work function.
+    "genExecSummary",
+    "askMinSeverity",
+    "setImportSevPref",
+    "syncImportSevDefaultSelect",
+    "openMergeModal",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

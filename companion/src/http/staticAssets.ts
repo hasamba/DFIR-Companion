@@ -172,6 +172,14 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-search-scope.js": "application/javascript; charset=utf-8",
   // Import case — a snapshot archive (#56), an encrypted archive, or a case from DFIR-IRIS.
   "/js/dashboard-import-case.js": "application/javascript; charset=utf-8",
+  // Executive summary generator — the short non-technical write-up of a case.
+  "/js/dashboard-exec-summary.js": "application/javascript; charset=utf-8",
+  // Import minimum-severity preference — the floor below which imported findings are dropped.
+  "/js/dashboard-import-severity.js": "application/javascript; charset=utf-8",
+  // Generic merge-target picker — which case to merge the current one into.
+  "/js/dashboard-merge-picker.js": "application/javascript; charset=utf-8",
+  // Startup pre-flight banner — the warning strip when the server's own checks fail.
+  "/js/dashboard-preflight-banner.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

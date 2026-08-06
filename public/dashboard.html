@@ -235,6 +235,10 @@
   <script src="/js/dashboard-search-scope.js"></script>
   <!-- Import case (snapshot / encrypted / DFIR-IRIS). initImportCase() is the whole module. -->
   <script src="/js/dashboard-import-case.js"></script>
+  <script src="/js/dashboard-exec-summary.js"></script>
+  <script src="/js/dashboard-import-severity.js"></script>
+  <script src="/js/dashboard-merge-picker.js"></script>
+  <script src="/js/dashboard-preflight-banner.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -6814,55 +6818,7 @@
       loadVeloBundles();   // populate the bundle list even before a case is connected
     })();
 
-    // --- Executive summary generator ----------------------------------------------
-    // One AI call over the synthesized case → a management-facing prose summary. Shown for review;
-    // "Save" copies it into the report-meta Executive Summary field (which overrides the auto
-    // summary in the generated report).
-    function genExecSummary() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      // A hidden dashboard panel must not spend tokens generating AI content (issue #168).
-      if (!isSectionVisible("sec-exec", loadSectionsVis())) return;
-      const btn = document.getElementById("genExecBtn");
-      const msg = document.getElementById("genExecMsg");
-      const out = document.getElementById("execGenResult");
-      btn.disabled = true; msg.textContent = "generating… (one AI call)"; out.innerHTML = "";
-      fetch(`/cases/${caseId}/executive-summary`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => {
-          const d = await r.json().catch(() => ({}));
-          // 409 + sectionDisabled: the report's Executive summary section is off, so the server
-          // skipped the AI call to save tokens. Surface why instead of a generic failure.
-          if (r.status === 409 && d.sectionDisabled) { const e = new Error(d.error || "section disabled"); e.sectionDisabled = true; throw e; }
-          // Surface the server's real error (e.g. "Budget limit exceeded", "402 billing") instead of a
-          // bare "HTTP 500" — the route returns it in d.error; fall back to the status only when absent.
-          if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
-          return d;
-        })
-        .then(d => {
-          msg.textContent = "";
-          const text = d.summary || "(no summary returned)";
-          out.innerHTML = `<div class="info-card" data-safe-style="border-left:3px solid var(--accent);margin-top:8px">`
-            + `<div data-safe-style="white-space:pre-wrap">${esc(text)}</div>`
-            + `<div data-safe-style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">`
-            + `<button id="execSaveBtn">Save to report's Executive Summary</button>`
-            + `<span id="execSaveMsg" data-safe-style="color:var(--text-muted);font-size:12px"></span></div></div>`;
-          document.getElementById("execSaveBtn").onclick = () => {
-            const ta = document.getElementById("rm-executiveSummary");
-            if (ta) ta.value = text;
-            saveReportMeta();   // persists rm-executiveSummary alongside the rest of the report meta
-            document.getElementById("execSaveMsg").textContent = "saved ✓ — overrides the auto summary in the report";
-            document.getElementById("execSaveBtn").disabled = true;
-          };
-        })
-        .catch(e => {
-          msg.textContent = "";
-          out.innerHTML = e.sectionDisabled
-            ? `<div data-safe-style="color:var(--text-muted);margin-top:8px">${esc(e.message)}</div>`
-            : `<div data-safe-style="color:var(--sev-high);margin-top:8px">generate failed: ${esc(e.message)} — restart the companion server if this 404s</div>`;
-        })
-        .finally(() => { btn.disabled = false; });
-    }
-
+    // Executive summary generator moved to js/dashboard-exec-summary.js (#415 tier 3).
     // Narrative Timeline moved to js/dashboard-narrative.js (#415 tier 3). The two import
     // undo/redo bindings that sat between its controls stayed: they call doImportUndoRedo, which
     // is six hundred lines below and belongs to the import feature, not this one.
@@ -8961,6 +8917,8 @@
       ["doHypothesizeGaps", "Gap Hypotheses"],
       ["openExplainPanel", "Explain Event"],
       ["loadTimelineGaps", "Timeline Gaps"],
+      ["genExecSummary", "Executive summary"],
+      ["askMinSeverity", "Import severity floor"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -12191,58 +12149,7 @@
     // js/dashboard-enrichment.js. Both were assignments of a function as a value.
     if (typeof initEnrichment !== "undefined") initEnrichment();
     else dfirFeatureUnavailable("Threat-intel enrichment");
-    // ── Import minimum-severity preference (per-browser) ──────────────────────
-    // Stored as { value, remember }. When remember is set, askMinSeverity() returns the
-    // saved value WITHOUT showing the dialog. Settings → General → Import severity manages it.
-    const IMPORT_SEV_KEY = "dfir_import_min_severity";
-    const VALID_SEV = ["critical", "high", "medium", "low", "info"];
-    function getImportSevPref() {
-      try { const o = JSON.parse(localStorage.getItem(IMPORT_SEV_KEY) || "null"); return o && typeof o === "object" ? o : null; }
-      catch (e) { return null; }
-    }
-    function setImportSevPref(value, remember) {
-      try {
-        if (!remember) localStorage.removeItem(IMPORT_SEV_KEY);
-        else localStorage.setItem(IMPORT_SEV_KEY, JSON.stringify({ value, remember: true }));
-      } catch (e) { /* quota — non-fatal */ }
-    }
-    // Resolve the minimum severity for an import batch. Returns a normalized severity string,
-    // or null if the user cancelled the whole import. A remembered choice skips the dialog.
-    function askMinSeverity() {
-      return new Promise((resolve) => {
-        const pref = getImportSevPref();
-        if (pref && pref.remember && VALID_SEV.includes(pref.value)) { resolve(pref.value); return; }
-        const overlay = document.getElementById("importSevOverlay");
-        const sel = document.getElementById("importSevSelect");
-        const remember = document.getElementById("importSevRemember");
-        sel.value = (pref && VALID_SEV.includes(pref.value)) ? pref.value : "info";
-        remember.checked = false;
-        overlay.classList.add("open");
-        const cleanup = () => {
-          overlay.classList.remove("open");
-          document.getElementById("importSevOk").onclick = null;
-          document.getElementById("importSevCancel").onclick = null;
-          overlay.onclick = null;
-        };
-        document.getElementById("importSevOk").onclick = () => {
-          const value = sel.value.trim().toLowerCase();
-          setImportSevPref(value, remember.checked);
-          syncImportSevDefaultSelect();
-          cleanup();
-          resolve(value);
-        };
-        const cancel = () => { cleanup(); resolve(null); };
-        document.getElementById("importSevCancel").onclick = cancel;
-        overlay.onclick = (ev) => { if (ev.target.id === "importSevOverlay") cancel(); };
-      });
-    }
-    // Mirror the remembered preference into the Settings → General select (and react to edits there).
-    function syncImportSevDefaultSelect() {
-      const el = document.getElementById("importSevDefault");
-      if (!el) return;
-      const pref = getImportSevPref();
-      el.value = (pref && pref.remember && VALID_SEV.includes(pref.value)) ? pref.value : "";
-    }
+    // Import minimum-severity preference moved to js/dashboard-import-severity.js (#415 tier 3).
 
     // Unified import moved to js/dashboard-unified-import.js (#415 tier 3) — listener wiring only,
     // so the module is nothing but initUnifiedImport().
@@ -12263,51 +12170,9 @@
     // Manual add moved to js/dashboard-manual-add.js (#415 tier 3).
     if (typeof initManualAdd !== "undefined") initManualAdd();
     else dfirFeatureUnavailable("Manual add");
-    // ── Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows
-    // a filterable, click-to-select list of same-type candidates instead of asking the analyst to
-    // type an id/value by hand.
-    let mergeTarget = null;   // { candidates: [{id, label}], selectedId, onConfirm(selectedId) }
-    function renderMergeCandidates() {
-      const term = document.getElementById("mergeSearch").value.trim().toLowerCase();
-      const list = mergeTarget.candidates.filter(c => !term || c.label.toLowerCase().includes(term));
-      const el = document.getElementById("mergeCandidates");
-      if (!list.length) { el.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px;padding:4px'>No matching candidates.</div>"; return; }
-      el.innerHTML = list.map(c => {
-        const selected = c.id === mergeTarget.selectedId;
-        return `<div class="merge-candidate-row" data-id="${escAttr(c.id)}" data-safe-style="cursor:pointer;padding:5px 8px;border-radius:6px;border:1px solid ${selected ? "var(--sev-low)" : "var(--border-color)"};background:${selected ? "rgba(107,203,119,0.12)" : "transparent"}">${esc(c.label)}</div>`;
-      }).join("");
-    }
-    function openMergeModal(title, candidates, onConfirm) {
-      mergeTarget = { candidates, selectedId: null, onConfirm };
-      document.getElementById("mergeTitle").textContent = title;
-      document.getElementById("mergeSearch").value = "";
-      document.getElementById("mergeMsg").textContent = "";
-      document.getElementById("mergeConfirmBtn").disabled = true;
-      renderMergeCandidates();
-      document.getElementById("mergeOverlay").classList.add("open");
-      document.getElementById("mergeSearch").focus();
-    }
-    function closeMergeModal() {
-      mergeTarget = null;
-      document.getElementById("mergeOverlay").classList.remove("open");
-    }
-    document.getElementById("mergeSearch").addEventListener("input", () => { if (mergeTarget) renderMergeCandidates(); });
-    document.getElementById("mergeCandidates").addEventListener("click", (e) => {
-      const row = e.target.closest(".merge-candidate-row");
-      if (!row || !mergeTarget) return;
-      mergeTarget.selectedId = row.dataset.id;
-      document.getElementById("mergeConfirmBtn").disabled = false;
-      renderMergeCandidates();
-    });
-    document.getElementById("mergeCancelBtn").onclick = closeMergeModal;
-    document.getElementById("mergeConfirmBtn").onclick = () => {
-      if (!mergeTarget || !mergeTarget.selectedId) return;
-      const { selectedId, onConfirm } = mergeTarget;
-      document.getElementById("mergeMsg").textContent = "merging…";
-      Promise.resolve(onConfirm(selectedId))
-        .then(() => closeMergeModal())
-        .catch(err => { document.getElementById("mergeMsg").textContent = "failed: " + err; });
-    };
+    // Generic merge-target picker moved to js/dashboard-merge-picker.js (#415 tier 3).
+    if (typeof initMergePicker !== "undefined") initMergePicker();
+    else dfirFeatureUnavailable("Merge target picker");
 
     // Asset overrides moved to js/dashboard-asset-overrides.js (#415 tier 3) — the block was
     // nothing but listener wiring, so the module is nothing but initAssetOverrides().
@@ -13984,53 +13849,9 @@
     // Disk-space warning (#1) moved to js/dashboard-disk-warning.js (#415 tier 3).
     if (typeof initDiskWarning !== "undefined") initDiskWarning();
     else dfirFeatureUnavailable("Disk-space warning");
-    // ── Startup pre-flight banner (#179) ───────────────────────────────────
-    // Fetches /diagnostics/preflight once on load (cached 30s server-side).
-    // Shows a red banner only when a CRITICAL check (AI provider) failed.
-    // "Disable checks" persists the setting so the banner never reappears.
-    let preflightDismissed = false;
-    function loadPreflightBanner() {
-      if (preflightDismissed) return;
-      fetch("/diagnostics/preflight")
-        .then(r => r.ok ? r.json() : null)
-        .then(d => {
-          if (!d || !d.report || d.report.disabled || !d.report.anyCriticalFailed) return;
-          const banner = document.getElementById("preflightBanner");
-          if (!banner || banner.__preflightShown) return;
-          banner.__preflightShown = true;
-          const failed = d.report.items.filter(i => !i.ok && i.critical);
-          const details = failed.map(i => esc(i.name) + ': ' + esc(i.detail)).join(' &bull; ');
-          const span = document.createElement('span');
-          span.innerHTML = '⚠ Pre-flight check failed — ' + details +
-            ' &nbsp;<span data-safe-style="color:#ffaaaa;font-size:11px">You can disable these checks in Settings → Diagnostics.</span>';
-          const openBtn = document.createElement('button');
-          openBtn.type = 'button';
-          openBtn.style.cssText = 'margin-left:10px';
-          openBtn.textContent = 'Open Diagnostics';
-          openBtn.onclick = () => openSettingsTab("diagnostics");
-          const disableBtn = document.createElement('button');
-          disableBtn.type = 'button';
-          disableBtn.textContent = 'Disable checks';
-          disableBtn.onclick = () => {
-            fetch('/diagnostics/preflight/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ disabled: true }) })
-              .then(() => { preflightDismissed = true; banner.hidden = true; })
-              .catch(() => {});
-          };
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.title = 'Dismiss for this session';
-          btn.textContent = '✕';
-          btn.onclick = () => { preflightDismissed = true; banner.hidden = true; };
-          banner.innerHTML = '';
-          banner.appendChild(span);
-          banner.appendChild(openBtn);
-          banner.appendChild(disableBtn);
-          banner.appendChild(btn);
-          banner.hidden = false;
-        })
-        .catch(() => {});
-    }
-    loadPreflightBanner();
+    // Startup pre-flight banner moved to js/dashboard-preflight-banner.js (#415 tier 3).
+    if (typeof initPreflightBanner !== "undefined") initPreflightBanner();
+    else dfirFeatureUnavailable("Startup pre-flight banner");
 
     // Case lifecycle (#119) moved to js/dashboard-case-lifecycle.js (#415 tier 3). Its buttons
     // are bound by initCaseLifecycle(), which was a self-calling wireLifecycleButtons().

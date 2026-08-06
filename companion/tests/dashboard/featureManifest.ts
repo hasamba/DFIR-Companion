@@ -598,6 +598,31 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Executive summary. No initializer — the three load-time statements in its banner range were
+    // all guard stanzas belonging to other features.
+    file: "dashboard-exec-summary.js",
+    publish: ["genExecSummary"],
+    private: [],
+  },
+  {
+    // Import minimum-severity preference. Same: both load-time statements in range were stanzas.
+    file: "dashboard-import-severity.js",
+    publish: ["askMinSeverity", "setImportSevPref", "syncImportSevDefaultSelect"],
+    private: [],
+  },
+  {
+    file: "dashboard-merge-picker.js",
+    initializer: "initMergePicker",
+    publish: ["openMergeModal", "initMergePicker"],
+    private: [],
+  },
+  {
+    file: "dashboard-preflight-banner.js",
+    initializer: "initPreflightBanner",
+    publish: ["initPreflightBanner"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
