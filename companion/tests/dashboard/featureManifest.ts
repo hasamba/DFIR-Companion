@@ -898,6 +898,17 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Inline IOC quick-actions. The audit mark is published, not private: it is the protocol between
+    // this module (which writes it at the head of every audit comment) and render() in the page
+    // (which reads it to pull those comments into the Investigation Log). It is published as an
+    // accessor because the published surface is callables — and because a reader that must survive
+    // this module being absent can then guard on `typeof`.
+    file: "dashboard-ioc-quick-actions.js",
+    initializer: "initIocQuickActions",
+    publish: ["initIocQuickActions", "qaAudit", "qaLinkify", "qaResolveIocId", "qaAuditMark"],
+    private: ["qaCur", "qaTrayEl", "qaCaseId", "QA_MATCHERS", "QA_FILE_EXT", "QA_AUDIT_MARK"],
+  },
+  {
     // Vim-style keyboard navigation. Four of the fifteen load-time statements under its banner were
     // its own — including #miValue's Escape handler, which reads as part of the manual-IOC form
     // until you notice it clears the one-shot recording whether the keyboard opened that form.
