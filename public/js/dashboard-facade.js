@@ -238,6 +238,18 @@
     "applyScope",
     "loadAiToggle",
     "toggleAi",
+    // The CLIENT_EVENT monitors and the triage-bundle builder. initVeloBundles is a sentinel.
+    "loadVeloMonitors",
+    "veloMonBrowse",
+    "veloMonSyncAllClients",
+    "veloMonStart",
+    "veloMonAuto",
+    "renderVeloSelected",
+    "veloClearBuilder",
+    "veloEdit",
+    "veloDuplicate",
+    "veloDeleteBundle",
+    "veloResetBuiltin",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

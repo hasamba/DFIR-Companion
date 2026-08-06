@@ -697,6 +697,38 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Live CLIENT_EVENT monitoring (#84) — one of two features under its banner. No initializer:
+    // the per-row buttons are wired by renderVeloMonitors() as the rows are built.
+    // Its four static controls were bound by the bundle builder's wireVeloTriage(); they drive
+    // THIS feature and moved here, which is why it has an initializer at all.
+    file: "dashboard-velo-monitors.js",
+    initializer: "initVeloMonitors",
+    publish: [
+      "initVeloMonitors",
+      "loadVeloMonitors",
+      "veloMonBrowse",
+      "veloMonSyncAllClients",
+      "veloMonStart",
+      "veloMonAuto",
+    ],
+    private: [],
+  },
+  {
+    // Velociraptor triage bundles — the other half. Its wiring was a self-calling IIFE.
+    file: "dashboard-velo-bundles.js",
+    initializer: "initVeloBundles",
+    publish: [
+      "initVeloBundles",
+      "renderVeloSelected",
+      "veloClearBuilder",
+      "veloEdit",
+      "veloDuplicate",
+      "veloDeleteBundle",
+      "veloResetBuiltin",
+    ],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

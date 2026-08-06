@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { dashboardClientSource } from "../helpers/dashboardModule.js";
 // The Essential-mode rules are CSS, and #415 moved the CSS into its own file.
 import { dashboardStylesheet } from "../helpers/dashboardModule.js";
 
@@ -236,7 +237,11 @@ describe("Settings Essential mode — wiring", () => {
   });
 
   it("routes Settings deep links through the helper that unhides the target tab", async () => {
-    const html = await dashboard();
+    // Whole-client source, not the page plus one module: the three deep links now sit in three
+    // DIFFERENT modules (velo-monitors, settings-tools, views-editor) after #415 tier 3. The
+    // invariant is "no deep link anywhere hand-rolls the tab click", so the haystack has to be
+    // everything the page loads.
+    const html = dashboardClientSource();
     for (const t of ["velociraptor", "tools", "dashboard-views"])
       expect(html).toContain(`openSettingsTab("${t}")`);
     // The old hand-rolled form (open the modal, then click a tab) lands on a hidden tab in Essential.
