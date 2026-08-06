@@ -286,6 +286,19 @@
     "closeSetupWizard",
     "wizRefreshStatus",
     "fetchLogLevel",
+    // Multi-select, the bulk IOC actions and the unlock prompt. initCaseUnlock is a sentinel.
+    "updateBulkBar",
+    "clearSelection",
+    "updateIocBulkBar",
+    "clearIocSelection",
+    "bulkStarIds",
+    "bulkToggleStar",
+    "openBulkTagModal",
+    "bulkMarkFalsePositive",
+    "bulkEnrichIocs",
+    "bulkTagIocs",
+    "bulkMarkIocsFalsePositive",
+    "promptCaseUnlock",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

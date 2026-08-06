@@ -817,6 +817,36 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Multi-select and its bulk actions. The selection itself lives in DfirSelection (tier 2); this
+    // is the UI over it. No initializer: the bars re-render on every selection change.
+    file: "dashboard-bulk-select.js",
+    publish: [
+      "updateBulkBar",
+      "clearSelection",
+      "updateIocBulkBar",
+      "clearIocSelection",
+      "bulkStarIds",
+      "bulkToggleStar",
+      "openBulkTagModal",
+      "bulkMarkFalsePositive",
+    ],
+    private: [],
+  },
+  {
+    // Bulk IOC operations — the sibling of the module above. They share DfirSelection, nothing else.
+    file: "dashboard-bulk-ioc.js",
+    publish: ["bulkEnrichIocs", "bulkTagIocs", "bulkMarkIocsFalsePositive"],
+    private: [],
+  },
+  {
+    // Case unlock prompt. What followed its controls in the inline block is the page's own startup
+    // sequence — loadCaseList(), restore() and two guard stanzas — and none of it came along.
+    file: "dashboard-case-unlock.js",
+    initializer: "initCaseUnlock",
+    publish: ["initCaseUnlock", "promptCaseUnlock"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

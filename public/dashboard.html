@@ -278,6 +278,12 @@
   <script src="/js/dashboard-case-password.js"></script>
   <!-- Comprehensive setup wizard (#181). initSetupWizard() owns all its load-time work. -->
   <script src="/js/dashboard-setup-wizard.js"></script>
+  <!-- Multi-select and its bulk actions. No initializer. -->
+  <script src="/js/dashboard-bulk-select.js"></script>
+  <!-- Bulk IOC operations. No initializer. -->
+  <script src="/js/dashboard-bulk-ioc.js"></script>
+  <!-- Case unlock prompt. initCaseUnlock() wires its four controls. -->
+  <script src="/js/dashboard-case-unlock.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -5453,126 +5459,8 @@
       }).catch(revert);
     }
 
-    // --- Multi-select (session-only, cleared on re-render) ----------------------
-    // The three selections moved to js/dashboard-selection.js as DfirSelection (#415, tier 2).
-    function updateBulkBar() {
-      const bar = document.getElementById("evBulkBar");
-      if (!bar) return;
-      if (DfirSelection.events.count() > 0) {
-        bar.classList.add("active");
-        document.getElementById("evBulkCount").textContent = `${DfirSelection.events.count()} event${DfirSelection.events.count() !== 1 ? "s" : ""} selected`;
-      } else {
-        bar.classList.remove("active");
-      }
-    }
-    function clearSelection() { DfirSelection.events.clear(); updateBulkBar(); renderTimelineEvents(DfirState.lastFt()); swSelToolbar(); swRenderCanvas(); }
-    function updateIocBulkBar() {
-      const bar = document.getElementById("iocBulkBar");
-      if (!bar) return;
-      if (DfirSelection.iocs.count() > 0) {
-        bar.classList.add("active");
-        document.getElementById("iocBulkCount").textContent = `${DfirSelection.iocs.count()} IOC${DfirSelection.iocs.count() !== 1 ? "s" : ""} selected`;
-      } else {
-        bar.classList.remove("active");
-      }
-    }
-    function clearIocSelection() { DfirSelection.iocs.clear(); if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []); }
-    // Bulk star/unstar N events: any unstarred → star all, else unstar all. SERIALIZED requests —
-    // TagsStore.add() is read-modify-write on tags.json (same reason addTag()'s bulk mode awaits
-    // each call). Set updates are reconciled into the UI by the per-tag ws broadcasts and the final loadTags().
-    async function bulkStarIds(caseId, ids, msgEl) {
-      if (!caseId || !ids.length) return;
-      const anyUnstarred = ids.some(id => !DfirStarred.has(id));
-      try {
-        for (let i = 0; i < ids.length; i++) {
-          const id = ids[i];
-          if (msgEl) { msgEl.style.color = "var(--text-muted)"; msgEl.textContent = `${anyUnstarred ? "starring" : "unstarring"}… (${i + 1}/${ids.length})`; }
-          if (anyUnstarred && !DfirStarred.has(id)) {
-            const r = await fetch(`/cases/${caseId}/tags`, { method: "POST", headers: { "content-type": "application/json" },
-              body: JSON.stringify({ targetType: "event", targetId: id, author: investigatorName(), label: "starred" }) });
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            DfirStarred.toggle(id, true);
-          } else if (!anyUnstarred && starredTagIds.has(id)) {
-            const r = await fetch(`/cases/${caseId}/tags/${encodeURIComponent(starredTagIds.get(id))}`, { method: "DELETE" });
-            if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);   // 404 = already gone
-            DfirStarred.toggle(id, false);
-          }
-        }
-        if (msgEl) msgEl.textContent = "";
-      } catch (e) {
-        if (msgEl) { msgEl.style.color = "var(--badge-danger-text)"; msgEl.textContent = "star failed: " + e.message; }
-      }
-      loadTags(caseId);   // reconcile + refresh both timelines (loadTags reloads the super view)
-    }
-    function bulkToggleStar() {
-      const caseId = document.getElementById("caseId").value.trim();
-      bulkStarIds(caseId, DfirSelection.events.ids(), document.getElementById("evBulkCount"));
-    }
-    function openBulkTagModal(ids, targetType) {
-      tagTarget = { bulk: true, ids, targetType: targetType || "event" };
-      document.getElementById("tagOverlay").classList.add("open");
-      renderTagModal();
-      document.getElementById("tagInput").focus();
-    }
-    // Mark every selected event as a false positive (benign, excluded from analysis) in ONE
-    // request — the /false-positive/batch route writes all markers with a single
-    // read-modify-write and a single re-synthesis, avoiding the race (and N re-synths) of firing
-    // one /false-positive call per event. Opens the mark-FP modal on the first selected event as
-    // the anchor (for the similarity suggestions); the rest ride along as extraRefs regardless of
-    // what's checked in the modal.
-    function bulkMarkFalsePositive() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !DfirSelection.events.count()) return;
-      const ids = DfirSelection.events.ids();
-      const descById = new Map((DfirState.lastFt() || []).map(e => [String(e.id), String(e.description || "")]));
-      const [firstId, ...restIds] = ids;
-      const extraRefs = restIds.map(id => ({ kind: "event", ref: id, label: descById.get(id) ?? "" }));
-      openFalsePositiveModal("event", firstId, descById.get(firstId) ?? "", extraRefs, () => {
-        DfirSelection.events.clear();
-        renderTimelineEvents(DfirState.lastFt());
-        swSelToolbar(); swRenderCanvas();   // clear the rings + hide the swimlane selection bar
-      });
-    }
-
-    // --- Bulk IOC operations -------------------------------------------------------
-    async function bulkEnrichIocs() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !DfirSelection.iocs.count()) return;
-      const ids = DfirSelection.iocs.ids();
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = `enriching ${ids.length} IOC${ids.length !== 1 ? "s" : ""}…`;
-      try {
-        const r = await fetch(`/cases/${caseId}/iocs/bulk-enrich`, { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ iocIds: ids }) });
-        if (!r.ok) {
-          const e = await r.json().catch(() => ({}));
-          throw new Error(e.error || "HTTP " + r.status);
-        }
-        statusEl.textContent = `enrichment started for ${ids.length} IOC${ids.length !== 1 ? "s" : ""} (see AI status)`;
-      } catch (e) {
-        statusEl.textContent = "enrich failed: " + e.message;
-      }
-    }
-    function bulkTagIocs() {
-      if (DfirSelection.iocs.count()) openBulkTagModal(DfirSelection.iocs.ids(), "ioc");
-    }
-    // Opens the mark-FP modal on the first selected IOC as the anchor; the rest ride along as
-    // extraRefs regardless of what's checked in the modal (bulk IOC marking has no per-item
-    // whitelist-promotion — see the "Confirm" handler's addToWhitelist note).
-    function bulkMarkIocsFalsePositive() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId || !DfirSelection.iocs.count()) return;
-      const ids = DfirSelection.iocs.ids();
-      const iocById = new Map((DfirState.lastState()?.iocs || []).map(i => [i.id, i.value]));
-      const [firstId, ...restIds] = ids;
-      const firstVal = iocById.get(firstId) ?? firstId;
-      const extraRefs = restIds.map(id => ({ kind: "ioc", ref: iocById.get(id) ?? id, label: iocById.get(id) ?? id }));
-      openFalsePositiveModal("ioc", firstVal, firstVal, extraRefs, () => {
-        DfirSelection.iocs.clear();
-        if (DfirState.lastState()) renderIocs(DfirState.lastState().iocs || []);
-      });
-    }
-
+    // Multi-select and its bulk actions moved to js/dashboard-bulk-select.js (#415 tier 3).
+    // Bulk IOC operations moved to js/dashboard-bulk-ioc.js (#415 tier 3).
     // --- Bulk finding operations ----------------------------------------------------
     function updateFindingBulkBar() {
       const bar = document.getElementById("findingBulkBar");
@@ -8079,6 +7967,8 @@
       ["importPermissionMessage", "Import progress and permission check"],
       ["applyAiStatus", "AI status banner"],
       ["doMemNextSteps", "Memory Next Steps"],
+      ["updateBulkBar", "Multi-select bulk actions"],
+      ["bulkEnrichIocs", "Bulk IOC operations"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -11870,46 +11760,9 @@
     // Case password protection moved to js/dashboard-case-password.js (#415 tier 3).
     if (typeof initCasePassword !== "undefined") initCasePassword();
     else dfirFeatureUnavailable("Case password protection");
-    // ── Case unlock prompt ──────────────────────────────────────────────────
-    function promptCaseUnlock(caseId) {
-      document.getElementById("cuPassword").value = "";
-      document.getElementById("cuRemember").checked = false;
-      document.getElementById("cuMsg").textContent = "";
-      document.getElementById("cuCaseLabel").textContent = `Case "${caseId}" is password-protected.`;
-      const overlay = document.getElementById("caseUnlockOverlay");
-      overlay.dataset.caseId = caseId;
-      overlay.classList.add("open");
-      document.getElementById("cuPassword").focus();
-    }
-    function closeCaseUnlock() { document.getElementById("caseUnlockOverlay").classList.remove("open"); }
-    async function doCaseUnlock() {
-      const overlay = document.getElementById("caseUnlockOverlay");
-      const caseId = overlay.dataset.caseId;
-      const msg = document.getElementById("cuMsg");
-      const password = document.getElementById("cuPassword").value;
-      const remember = document.getElementById("cuRemember").checked;
-      if (!password) { msg.textContent = "enter the password"; return; }
-      try {
-        const r = await fetch(`/cases/${caseId}/unlock`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, remember }),
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          msg.textContent = body.error || "incorrect password";
-          return;
-        }
-        activeUnlockedCaseId = caseId;
-        activeUnlockRemembered = remember;
-        closeCaseUnlock();
-        proceedConnect(caseId);
-      } catch (e) {
-        msg.textContent = "error: " + e.message;
-      }
-    }
-    document.getElementById("cuUnlock").addEventListener("click", doCaseUnlock);
-    document.getElementById("cuCancel").addEventListener("click", closeCaseUnlock);
-    document.getElementById("cuPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") doCaseUnlock(); });
-    document.getElementById("caseUnlockOverlay").addEventListener("click", (e) => { if (e.target.id === "caseUnlockOverlay") closeCaseUnlock(); });
+    // Case unlock prompt moved to js/dashboard-case-unlock.js (#415 tier 3).
+    if (typeof initCaseUnlock !== "undefined") initCaseUnlock();
+    else dfirFeatureUnavailable("Case unlock prompt");
 
     // On load, populate the case picker, then restore the case from the URL (?caseId=) or last
     // session and reconnect.
