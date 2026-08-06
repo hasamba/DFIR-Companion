@@ -134,6 +134,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-unified-import.js": "application/javascript; charset=utf-8",
   // Asset overrides — rename / add / suppress / link. Listener wiring only.
   "/js/dashboard-asset-overrides.js": "application/javascript; charset=utf-8",
+  // Encrypted case archive export — the password-protected archive of a whole case.
+  "/js/dashboard-encrypted-export.js": "application/javascript; charset=utf-8",
+  // Redacted case export (#54) — the same case with names, hosts and accounts masked.
+  "/js/dashboard-redacted-export.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

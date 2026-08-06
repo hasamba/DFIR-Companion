@@ -55,6 +55,12 @@ const lineOf = (pos) => code.slice(0, pos).split("\n").length + START + 1;
 
 const declarations = [];
 const runsAtLoad = [];
+// A declaration whose initializer touches the DOM is not safely a declaration. `const overlay =
+// document.getElementById("importCaseOverlay")` reads as one to "is this a VariableStatement", and
+// in a <head> script it evaluates to null before the markup exists — every later use of it then
+// throws or silently does nothing. It has to be split: the binding stays, the lookup moves into the
+// initializer, or the whole thing does. Reported separately rather than guessed at.
+const domInDeclaration = [];
 for (const st of sf.statements) {
   const from = lineOf(st.getStart(sf));
   if (from < FROM || from > TO) continue;
@@ -63,8 +69,15 @@ for (const st of sf.statements) {
   // something, the moment the script is parsed. That is the whole distinction — deliberately not
   // "does it mention the DOM", which both misses a wrapper block and would miss a timer or a fetch
   // kicked off at load.
-  if (ts.isFunctionDeclaration(st) || ts.isVariableStatement(st)) declarations.push(range);
-  else runsAtLoad.push(range);
+  if (ts.isFunctionDeclaration(st) || ts.isVariableStatement(st)) {
+    declarations.push(range);
+    if (
+      ts.isVariableStatement(st) &&
+      /document\.(getElementById|querySelector|querySelectorAll)\(/.test(st.getText(sf))
+    ) {
+      domInDeclaration.push(range);
+    }
+  } else runsAtLoad.push(range);
 }
 
 // A statement that starts inside the range and ends past it means the range cuts it in half, and
@@ -82,7 +95,7 @@ if (straddling.length) {
 }
 
 if (asJson) {
-  console.log(JSON.stringify({ declarations, runsAtLoad }, null, 2));
+  console.log(JSON.stringify({ declarations, runsAtLoad, domInDeclaration }, null, 2));
 } else {
   const span = (r) => (r[0] === r[1] ? `${r[0]}` : `${r[0]}-${r[1]}`);
   const count = (rs) => rs.reduce((n, r) => n + (r[1] - r[0] + 1), 0);
@@ -95,6 +108,16 @@ if (asJson) {
   console.log(`  ${runsAtLoad.map(span).join("  ") || "(none)"}`);
   for (const r of runsAtLoad) {
     console.log(`\n  ${span(r)}: ${lines[r[0] - 1].trim().slice(0, 92)}`);
+  }
+  if (domInDeclaration.length) {
+    console.log(`\nCAREFUL — ${domInDeclaration.length} declaration(s) read the DOM while the page loads:`);
+    for (const r of domInDeclaration) {
+      console.log(`  ${span(r)}: ${lines[r[0] - 1].trim().slice(0, 88)}`);
+    }
+    console.log(
+      "  These look like module body and are not. In a <head> script the lookup returns null before\n" +
+        "  the markup exists. Move the lookup into the initializer, or the whole statement.",
+    );
   }
   if (!runsAtLoad.length) {
     console.log("\n  Nothing runs at load, so this block needs no initializer of its own — but check");

@@ -197,6 +197,10 @@
   <script src="/js/dashboard-unified-import.js"></script>
   <!-- Asset overrides. Wiring only: initAssetOverrides() is the whole module. -->
   <script src="/js/dashboard-asset-overrides.js"></script>
+  <!-- Encrypted case archive export. initEncryptedExport() binds its three controls. -->
+  <script src="/js/dashboard-encrypted-export.js"></script>
+  <!-- Redacted case export (#54). initRedactedExport() binds its three. -->
+  <script src="/js/dashboard-redacted-export.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -11612,58 +11616,7 @@
       closeIocBlocklist();
     }
 
-    // ── Redacted case export (#54) ────────────────────────────────────────────
-    function openRedactedExport() {
-      document.getElementById("reMsg").textContent = "";
-      document.getElementById("redactedExportOverlay").classList.add("open");
-    }
-    function closeRedactedExport() { document.getElementById("redactedExportOverlay").classList.remove("open"); }
-    async function doRedactedExport() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("reMsg");
-      if (!caseId) { msg.textContent = "no case loaded"; return; }
-      const ck = (id) => document.getElementById(id).checked ? "1" : "0";
-      const q = new URLSearchParams({
-        report: ck("reIncludeReport"),
-        csvs: ck("reIncludeCsvs"),
-        state: ck("reIncludeState"),
-        screenshots: ck("reIncludeScreens"),
-        blur: ck("reBlur"),
-      }).toString();
-      const btn = document.getElementById("reDownload");
-      btn.disabled = true;
-      msg.textContent = "building… (OCR may take a while for many screenshots)";
-      try {
-        // Fetch the whole archive (so errors surface as JSON), then save it via an object URL.
-        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/export/redacted?${q}`);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || ("HTTP " + res.status));
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `case-${caseId}-redacted.zip`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        closeRedactedExport();
-        document.getElementById("status").textContent = "redacted package downloaded";
-      } catch (err) {
-        msg.textContent = "export failed: " + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    // Report versions: diff & rollback (#77) moved to js/dashboard-report-versions.js (#415 tier
-    // 3). Its controls are bound by initReportVersions(), called from the shared modal-wiring
-    // block below, which is also where a missing file is reported.
-    // Reproducible analysis runs (#377) moved to js/dashboard-analysis-runs.js (#415 tier 3).
-    // Its controls are bound by initAnalysisRuns(), called from the shared modal-wiring block
-    // below, which is also where a missing file is reported.
+    // Redacted case export (#54) moved to js/dashboard-redacted-export.js (#415 tier 3).
     // ── ZIP case archive (unencrypted, "(no password)" in the filename) ─────
     function openZipArchive() {
       document.getElementById("zaRemoveFromList").checked = false;
@@ -11698,63 +11651,7 @@
       }
     }
 
-    // ── Encrypted case archive export (replaces #56's JSON snapshot) ─────────
-    function openEncryptedExport() {
-      document.getElementById("eePassword").value = "";
-      document.getElementById("eePasswordConfirm").value = "";
-      document.getElementById("eeRemoveFromList").checked = false;
-      document.getElementById("eeMsg").textContent = "";
-      document.getElementById("encryptedExportOverlay").classList.add("open");
-      document.getElementById("eePassword").focus();
-    }
-    function closeEncryptedExport() { document.getElementById("encryptedExportOverlay").classList.remove("open"); }
-    async function doEncryptedExport() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("eeMsg");
-      if (!caseId) { msg.textContent = "no case loaded"; return; }
-      const password = document.getElementById("eePassword").value;
-      const confirmPassword = document.getElementById("eePasswordConfirm").value;
-      if (password.length < 8) { msg.textContent = "password must be at least 8 characters"; return; }
-      if (password !== confirmPassword) { msg.textContent = "passwords do not match"; return; }
-      const removeFromList = document.getElementById("eeRemoveFromList").checked;
-      const btn = document.getElementById("eeDownload");
-      btn.disabled = true;
-      msg.textContent = "building… (may take a while for large cases)";
-      try {
-        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/export/encrypted`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password, removeFromList }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || ("HTTP " + res.status));
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        // Server names the file "<caseId> - <case name>.dfircase" (falls back to just the caseId
-        // when the case has no distinct name); read it from the response instead of hardcoding it.
-        const cd = res.headers.get("content-disposition") || "";
-        const cdMatch = cd.match(/filename="([^"]*)"/);
-        a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        closeEncryptedExport();
-        const wasRemoved = res.headers.get("x-case-removed-from-list") === "true";
-        loadCaseLifecycle(caseId);
-        loadCaseList();
-        document.getElementById("status").textContent = wasRemoved
-          ? "encrypted case archive downloaded and removed from the active list"
-          : "encrypted case archive downloaded";
-      } catch (err) {
-        msg.textContent = "export failed: " + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
+    // Encrypted case archive export moved to js/dashboard-encrypted-export.js (#415 tier 3).
     // ── Delete case (optionally archive first) ────────────────────────────────
     function openDeleteCase() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -12481,9 +12378,8 @@
     document.getElementById("blDlStix").onclick = () => downloadIocBlocklist("stix");
     document.getElementById("blCancel").onclick = closeIocBlocklist;
     document.getElementById("iocBlocklistOverlay").addEventListener("click", (e) => { if (e.target.id === "iocBlocklistOverlay") closeIocBlocklist(); });
-    document.getElementById("reDownload").onclick = doRedactedExport;
-    document.getElementById("reCancel").onclick = closeRedactedExport;
-    document.getElementById("redactedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "redactedExportOverlay") closeRedactedExport(); });
+    if (typeof initRedactedExport !== "undefined") initRedactedExport();
+    else dfirFeatureUnavailable("Redacted case export");
     // Report versions (#77) binds its own three controls in initReportVersions() — see
     // js/dashboard-report-versions.js. Guarded: they are this module's functions, and reading
     // them here as values would throw at load if that file 404s.
@@ -12493,9 +12389,8 @@
     // js/dashboard-analysis-runs.js. Guarded: they are that module's functions.
     if (typeof initAnalysisRuns !== "undefined") initAnalysisRuns();
     else dfirFeatureUnavailable("Reproducible analysis runs");
-    document.getElementById("eeDownload").onclick = doEncryptedExport;
-    document.getElementById("eeCancel").onclick = closeEncryptedExport;
-    document.getElementById("encryptedExportOverlay").addEventListener("click", (e) => { if (e.target.id === "encryptedExportOverlay") closeEncryptedExport(); });
+    if (typeof initEncryptedExport !== "undefined") initEncryptedExport();
+    else dfirFeatureUnavailable("Encrypted case archive export");
     document.getElementById("zaArchive").onclick = doZipArchive;
     document.getElementById("zaCancel").onclick = closeZipArchive;
     document.getElementById("zipArchiveOverlay").addEventListener("click", (e) => { if (e.target.id === "zipArchiveOverlay") closeZipArchive(); });

@@ -455,6 +455,20 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Encrypted case archive export. Two of its three bindings pass a function as a value.
+    file: "dashboard-encrypted-export.js",
+    initializer: "initEncryptedExport",
+    publish: ["initEncryptedExport", "openEncryptedExport", "closeEncryptedExport", "doEncryptedExport"],
+    private: [],
+  },
+  {
+    // Redacted case export (#54). Same shape as the encrypted archive beside it.
+    file: "dashboard-redacted-export.js",
+    initializer: "initRedactedExport",
+    publish: ["initRedactedExport", "openRedactedExport", "closeRedactedExport", "doRedactedExport"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

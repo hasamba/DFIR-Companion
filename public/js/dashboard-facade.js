@@ -166,6 +166,13 @@
     "loadEnrichToggle",
     "openEnrichModal",
     "saveEnrich",
+    // The two case-export modals. Their initializers are the sentinels, so not here.
+    "openEncryptedExport",
+    "closeEncryptedExport",
+    "doEncryptedExport",
+    "openRedactedExport",
+    "closeRedactedExport",
+    "doRedactedExport",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

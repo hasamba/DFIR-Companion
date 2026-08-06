@@ -518,6 +518,8 @@
     "ROUTE GET /js/dashboard-enrichment.js",
     "ROUTE GET /js/dashboard-unified-import.js",
     "ROUTE GET /js/dashboard-asset-overrides.js",
+    "ROUTE GET /js/dashboard-encrypted-export.js",
+    "ROUTE GET /js/dashboard-redacted-export.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",

@@ -75,6 +75,31 @@ describe("dashboard section split", () => {
     }
   });
 
+  it("warns about a declaration whose initializer reads the DOM", () => {
+    // `const overlay = document.getElementById("x")` is a VariableStatement, so "is this a
+    // declaration" files it under module body — where, in a <head> script, it evaluates to null
+    // before the markup exists and every later use of it silently does nothing. It is neither
+    // cleanly body nor cleanly initializer, so it is reported separately instead of guessed at.
+    const { dir, path } = dashboardWith([
+      '  const overlay = document.getElementById("overlay");',
+      "  function usesIt() { overlay.hidden = true; }",
+      "  const plain = 1;",
+    ]);
+    try {
+      const r = split(path, 3, 5);
+      expect(r.domInDeclaration).toEqual([[3, 3]]);
+      // Still counted as declarations — the warning is additional, not a reclassification.
+      expect(r.declarations).toEqual([
+        [3, 3],
+        [4, 4],
+        [5, 5],
+      ]);
+      expect(r.runsAtLoad).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a range that cuts a statement in half", () => {
     // Line numbers go stale as soon as another feature is extracted, and copying a truncated range
     // produces JavaScript that does not parse. Refusing beats handing back half a function.
