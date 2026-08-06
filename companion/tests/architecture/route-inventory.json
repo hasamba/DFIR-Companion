@@ -510,6 +510,7 @@
     "ROUTE GET /js/dashboard-adversary-hints.js",
     "ROUTE GET /js/dashboard-gap-hypotheses.js",
     "ROUTE GET /js/dashboard-narrative.js",
+    "ROUTE GET /js/dashboard-host-ranking.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",

@@ -381,6 +381,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Host & Account Ranking (#202). One delegated listener rather than per-row handlers, because
+    // the rows are re-rendered on every refresh.
+    file: "dashboard-host-ranking.js",
+    initializer: "initHostRanking",
+    publish: ["initHostRanking", "loadHostRanking", "scheduleHostRankingReload", "applyHostRankingScope"],
+    private: ["hostRankingData", "hostRankingTimer", "hostRankingExpanded"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

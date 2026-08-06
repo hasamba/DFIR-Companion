@@ -141,6 +141,10 @@
     // Narrative Timeline. `initNarrativeTimeline` is the sentinel, so not here.
     "genNarrative",
     "loadSynthMeta",
+    // Host & Account Ranking (#202). `initHostRanking` is the sentinel, so not here.
+    "loadHostRanking",
+    "scheduleHostRankingReload",
+    "applyHostRankingScope",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
