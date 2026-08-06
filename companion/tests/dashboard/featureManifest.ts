@@ -847,6 +847,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // New case creation. Its banner is 692 lines and 595 of them are the page's shared wiring run
+    // with nineteen guard stanzas threaded through it — only this feature's own eight lines moved.
+    file: "dashboard-new-case.js",
+    initializer: "initNewCase",
+    publish: ["initNewCase", "openNewCase", "closeNewCase", "createNewCase", "loadDemoCase"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

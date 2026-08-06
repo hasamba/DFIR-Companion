@@ -299,6 +299,11 @@
     "bulkTagIocs",
     "bulkMarkIocsFalsePositive",
     "promptCaseUnlock",
+    // New case creation. `initNewCase` is the sentinel, so not here.
+    "openNewCase",
+    "closeNewCase",
+    "createNewCase",
+    "loadDemoCase",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

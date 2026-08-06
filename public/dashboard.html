@@ -284,6 +284,8 @@
   <script src="/js/dashboard-bulk-ioc.js"></script>
   <!-- Case unlock prompt. initCaseUnlock() wires its four controls. -->
   <script src="/js/dashboard-case-unlock.js"></script>
+  <!-- New case creation. initNewCase() wires its eight controls. -->
+  <script src="/js/dashboard-new-case.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -10448,103 +10450,9 @@
     // Delete case moved to js/dashboard-delete-case.js (#415 tier 3).
     if (typeof initDeleteCase !== "undefined") initDeleteCase();
     else dfirFeatureUnavailable("Delete case");
-    // ── New case ── creation lives here (the extension only attaches to existing cases) ──
-    async function openNewCase() {
-      const idInput = document.getElementById("ncCaseId");
-      idInput.value = "";
-      document.getElementById("ncName").value = "";
-      document.getElementById("ncInvestigator").value =
-        (localStorage.getItem("dfir.investigator") || "").trim();
-      document.getElementById("ncMsg").textContent = "";
-      document.getElementById("ncTemplateDesc").style.display = "none";
-      populateTemplateSelect();  // async, fills while user edits fields
-      document.getElementById("newCaseOverlay").classList.add("open");
-      // Auto-suggest the next incident id — still fully editable (focus + select so a
-      // manually-typed id overtypes it in one keystroke).
-      idInput.value = await suggestCaseId();
-      idInput.focus();
-      idInput.select();
-    }
-    // Next free INC-YYYY-NNN: the highest NNN among this year's existing INC-YYYY-* cases,
-    // plus one, zero-padded to 3. Falls back to a date+time id if the case list can't be
-    // fetched, so the field is never left blank.
-    async function suggestCaseId() {
-      const year = new Date().getFullYear();
-      try {
-        const cases = await fetch("/cases").then(r => r.ok ? r.json() : []);
-        const re = new RegExp(`^INC-${year}-(\\d+)$`);
-        let max = 0;
-        for (const c of cases) {
-          const m = String(c.caseId || "").match(re);
-          if (m) max = Math.max(max, parseInt(m[1], 10));
-        }
-        return `INC-${year}-${String(max + 1).padStart(3, "0")}`;
-      } catch {
-        const d = new Date(), p = n => String(n).padStart(2, "0");
-        return `INC-${year}-${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-      }
-    }
-    function closeNewCase() { document.getElementById("newCaseOverlay").classList.remove("open"); }
-    async function createNewCase() {
-      const caseId = document.getElementById("ncCaseId").value.trim();
-      const name = document.getElementById("ncName").value.trim();
-      const investigator = document.getElementById("ncInvestigator").value.trim();
-      const picked = selectedNewCasePlaybook();
-      const msg = document.getElementById("ncMsg");
-      if (!caseId || !name) { msg.textContent = "case id and name are required"; return; }
-      msg.textContent = "creating…";
-      try {
-        const res = await fetch("/cases", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            caseId, name, investigator: investigator || "unknown", aiProvider: null,
-            templateId: picked.kind === "tpl" ? picked.id : undefined,
-            incidentTypeId: picked.kind === "type" ? picked.id : undefined,
-          }),
-        });
-        if (res.status === 201) {
-          closeNewCase();
-          document.getElementById("caseId").value = caseId;
-          loadCaseList();   // add the new case to the combo box
-          connect();        // attach the dashboard to the case we just created
-        } else if (res.status === 409) {
-          msg.textContent = "a case with that id already exists — pick a different id, or Cancel and Connect to it";
-        } else {
-          const body = await res.json().catch(() => ({}));
-          msg.textContent = "create failed: HTTP " + res.status + (body.error ? " — " + body.error : "");
-        }
-      } catch (err) {
-        msg.textContent = "create failed: " + err.message + " — is the companion running?";
-      }
-    }
-
-    async function loadDemoCase() {
-      const btn = document.getElementById("seedDemoBtn");
-      const orig = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "Loading…";
-      try {
-        let res = await fetch("/cases/seed-demo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
-        if (res.status === 409) {
-          if (!confirm("Demo case already exists. Overwrite it?")) { btn.disabled = false; btn.textContent = orig; return; }
-          res = await fetch("/cases/seed-demo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ force: true }) });
-        }
-        if (!res.ok) {
-          const b = await res.json().catch(() => ({}));
-          alert("Demo case error: " + (b.error || "HTTP " + res.status));
-        } else {
-          const { caseId } = await res.json();
-          document.getElementById("caseId").value = caseId;
-          loadCaseList();
-          connect();
-        }
-      } catch (err) {
-        alert("Demo case error: " + err.message + " — is the companion running?");
-      } finally {
-        btn.disabled = false;
-        btn.textContent = orig;
-      }
-    }
+    // New case creation moved to js/dashboard-new-case.js (#415 tier 3). Only its own five
+    // functions and eight wiring lines went; the 595 lines of shared wiring under this banner,
+    // and the nineteen guard stanzas threaded through them, stay.
 
     // Asset-type toggles mutate the enabled Set, then rebuild through the module.
     document.querySelectorAll(".asset-type-toggle").forEach((cb) => cb.addEventListener("change", () => {
@@ -11073,14 +10981,8 @@
       el.addEventListener("focus", () => { loadCaseList(); prev = el.value; el.value = ""; });
       el.addEventListener("blur", () => { if (!el.value.trim()) el.value = prev; });
     })();
-    document.getElementById("newCaseBtn").onclick = openNewCase;
-    document.getElementById("seedDemoBtn").onclick = loadDemoCase;
-    document.getElementById("ncCreate").onclick = createNewCase;
-    document.getElementById("ncCancel").onclick = closeNewCase;
-    document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
-    document.getElementById("newCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "newCaseOverlay") closeNewCase(); });
-    ["ncCaseId", "ncName", "ncInvestigator"].forEach((id) =>
-      document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
+    if (typeof initNewCase !== "undefined") initNewCase();
+    else dfirFeatureUnavailable("New case creation");
     if (typeof initSaveTemplate !== "undefined") initSaveTemplate();
     else dfirFeatureUnavailable("Save as Template");
     if (typeof initIocBlocklist !== "undefined") initIocBlocklist();
