@@ -327,6 +327,17 @@ export const FEATURES: Feature[] = [
     private: ["yqNorm", "yq", "sigmaVals", "yaraHashFn", "suriContent", "suriMsg"],
   },
   {
+    // Push ingest token (#84). The banner it sat under also covers eleven velo* functions that
+    // belong to the Velociraptor bundle builder above it — only these five moved.
+    file: "dashboard-push-token.js",
+    initializer: "initPushToken",
+    publish: ["initPushToken", "loadPushToken"],
+    // Only the binding. renderPushToken/pushTokenGenerate/pushTokenClear are function
+    // declarations, which cannot become implicit globals, and this list is checked against
+    // let/const/var.
+    private: ["_pushTokenInfo"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

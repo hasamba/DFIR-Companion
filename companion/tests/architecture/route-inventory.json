@@ -504,6 +504,7 @@
     "ROUTE GET /js/dashboard-report-versions.js",
     "ROUTE GET /js/dashboard-settings-tools.js",
     "ROUTE GET /js/dashboard-sigma-hunt.js",
+    "ROUTE GET /js/dashboard-push-token.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",
