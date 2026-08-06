@@ -423,6 +423,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Case lifecycle (#119). Its wiring was already a self-calling wireLifecycleButtons() — the
+    // same load-time trap in a shape that looks deliberate — and is 113 of the block's 149 lines.
+    file: "dashboard-case-lifecycle.js",
+    initializer: "initCaseLifecycle",
+    publish: ["initCaseLifecycle", "loadCaseLifecycle"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
