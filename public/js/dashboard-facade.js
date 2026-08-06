@@ -110,6 +110,9 @@
     "openReportVersions",
     "closeReportVersions",
     "doReportVersionsDiff",
+    // Settings → Tools + update check (#127). `initSettingsTools` is the sentinel, so not here.
+    "loadTools",
+    "loadUpdateCheck",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

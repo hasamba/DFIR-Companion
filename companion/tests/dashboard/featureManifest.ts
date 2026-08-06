@@ -300,6 +300,14 @@ export const FEATURES: Feature[] = [
     private: ["rvReviewMode", "rvReviewers", "rvReleased"],
   },
   {
+    // Settings → Tools, MCP servers and the update check (#127). Three panels under one banner that
+    // named only the last of them; they are one Settings screen and share nothing with the rest.
+    file: "dashboard-settings-tools.js",
+    initializer: "initSettingsTools",
+    publish: ["initSettingsTools", "loadTools", "loadUpdateCheck"],
+    private: ["_mcpDiscovered"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
