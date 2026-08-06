@@ -162,6 +162,14 @@
 
   // The two controls the page's modal-wiring block used to bind.
   function initEnrichment() {
+    // The overlay's Cancel button and backdrop. These sat in the search/scope wiring block,
+    // adjacent to this feature's other controls only by position; they belong here.
+    document.getElementById("enrichCancel").onclick = () =>
+      document.getElementById("enrichOverlay").classList.remove("open");
+    document.getElementById("enrichOverlay").addEventListener("click", (e) => {
+      if (e.target.id === "enrichOverlay")
+        document.getElementById("enrichOverlay").classList.remove("open");
+    });
     document.getElementById("enrichToggle").onclick = openEnrichModal;
     document.getElementById("enrichSave").onclick = saveEnrich;
   }

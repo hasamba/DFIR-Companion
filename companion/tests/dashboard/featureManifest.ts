@@ -582,6 +582,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Search bar, time range and scope. 220 lines, nineteen statements, no declarations and nothing
+    // published but the initializer — three of the nineteen were self-calling IIFEs.
+    file: "dashboard-search-scope.js",
+    initializer: "initSearchAndScope",
+    publish: ["initSearchAndScope"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
