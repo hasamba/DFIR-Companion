@@ -251,6 +251,14 @@ const rows = sections.map((sec) => {
   const publish = [...escaped.keys()].filter((n) => decls.get(n).kind === "fn");
   const stateEscapes = [...escaped.keys()].filter((n) => decls.get(n).kind === "var");
 
+  // CORE MACHINERY IS NOT A FEATURE, and the cohesion check cannot tell the difference. The
+  // "Cross-case capture warning" block reports as ONE cohesive cluster of 24 and is in fact the
+  // page's case-load path: connect(), the state save that every `if (DfirState.lastState())
+  // render(...)` refresh depends on, and the refresh fan-out itself. Extracting it passed every
+  // filter here and was rejected by two lifecycle gates — "a call runs ahead of the state save"
+  // and "no refresh fan-out found". Those gates are the check on this one; a section whose
+  // declarations include connect/proceedConnect is the page, not a feature.
+  //
   // How hard the most-called published function is pulled on from outside. A feature's own entry
   // points have a handful of external callers; shared machinery has dozens. This is the check on
   // the boundaries themselves: banner comments are the author's grouping, not a guarantee that
