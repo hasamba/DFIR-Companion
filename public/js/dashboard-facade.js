@@ -281,6 +281,11 @@
     "openDeleteCase",
     "closeDeleteCase",
     "doDeleteCase",
+    // The setup wizard. `initSetupWizard` is the sentinel, so not here.
+    "openSetupWizard",
+    "closeSetupWizard",
+    "wizRefreshStatus",
+    "fetchLogLevel",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

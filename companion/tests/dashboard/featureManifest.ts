@@ -809,6 +809,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Comprehensive setup wizard (#181). Everything load-time is in the initializer, including two
+    // `const`s that read the DOM and would be null in a <head> script.
+    file: "dashboard-setup-wizard.js",
+    initializer: "initSetupWizard",
+    publish: ["initSetupWizard", "openSetupWizard", "closeSetupWizard", "wizRefreshStatus", "fetchLogLevel"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
