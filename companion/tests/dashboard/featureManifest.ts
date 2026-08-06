@@ -899,6 +899,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Attack Phases. Reunited with its own renderPhases first — 230 lines of IOC provenance code
+    // shared its banner and had split the feature in two. That split banner took the block from
+    // five state escapes to one, and the one crosses as hasPhases().
+    file: "dashboard-attack-phases.js",
+    initializer: "initAttackPhases",
+    publish: ["initAttackPhases", "loadPhases", "schedulePhasesReload", "renderPhases", "hasPhases"],
+    private: ["phasesData", "phOpen", "phasesTimer"],
+  },
+  {
     // Second LLM opinion (#116). Two sources: the section, and the button + panel handler that
     // dashboard-search-scope.js had been carrying since an earlier extraction swept them in. The
     // capability flags cross as a setter (the /health poller writes them) and a predicate.

@@ -317,6 +317,12 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Attack Phases. `initAttackPhases` is the sentinel. hasPhases stubs falsy so the refresh
+    // fan-out skips the panel instead of throwing.
+    "loadPhases",
+    "schedulePhasesReload",
+    "renderPhases",
+    "hasPhases",
     // Second LLM opinion. `initSecondOpinion` is the sentinel. The two capability answers are
     // stubbed on purpose: falsy hides an AI button, which beats leaving a dead one on screen.
     "setSecondOpinionCapabilities",
