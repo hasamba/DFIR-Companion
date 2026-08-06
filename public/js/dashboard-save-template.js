@@ -49,7 +49,10 @@
         }),
       });
       if (res.status === 201) {
-        _cachedTemplates = null; // invalidate cache
+        // The cache belongs to js/dashboard-case-templates.js; ask it to drop it rather than
+        // writing its binding across the shared global lexical environment.
+        if (typeof invalidateTemplateCache === "function")
+          invalidateTemplateCache();
         closeSaveTemplate();
         document.getElementById("status").textContent = "template saved";
       } else {

@@ -286,6 +286,8 @@
   <script src="/js/dashboard-case-unlock.js"></script>
   <!-- New case creation. initNewCase() wires its eight controls. -->
   <script src="/js/dashboard-new-case.js"></script>
+  <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
+  <script src="/js/dashboard-case-templates.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -7971,6 +7973,7 @@
       ["doMemNextSteps", "Memory Next Steps"],
       ["updateBulkBar", "Multi-select bulk actions"],
       ["bulkEnrichIocs", "Bulk IOC operations"],
+      ["loadTemplates", "Case templates"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -10366,85 +10369,9 @@
       };
     }
 
-    // ── Case templates ────────────────────────────────────────────────────────────────────
-    let _cachedTemplates = null;
-    async function loadTemplates() {
-      if (_cachedTemplates) return _cachedTemplates;
-      try {
-        const r = await fetch("/templates");
-        _cachedTemplates = r.ok ? await r.json() : [];
-      } catch { _cachedTemplates = []; }
-      return _cachedTemplates;
-    }
-    // Incident types (#236) are a strict superset of the five BUILT-IN case templates — same
-    // incidents, plus the expected-finding seeds and the synthesis hint. So the New Case dialog
-    // offers ONE picker: every incident type, then any template the analyst saved themselves.
-    // Listing the built-in templates too would show "Ransomware" twice, differing only in which one
-    // does more. Option values are prefixed so the create call knows which field to send.
-    let _cachedIncidentTypes = null;
-    async function loadIncidentTypes() {
-      if (_cachedIncidentTypes) return _cachedIncidentTypes;
-      try {
-        const r = await fetch("/incident-types");
-        _cachedIncidentTypes = r.ok ? await r.json() : [];
-      } catch { _cachedIncidentTypes = []; }
-      return _cachedIncidentTypes;
-    }
-    async function populateTemplateSelect() {
-      const sel = document.getElementById("ncTemplate");
-      const [types, templates] = await Promise.all([loadIncidentTypes(), loadTemplates()]);
-      // Remove all options except the first ("No incident type")
-      while (sel.options.length > 1) sel.remove(1);
-      const addGroup = (label, items, prefix) => {
-        if (!items.length) return;
-        const group = document.createElement("optgroup");
-        group.label = label;
-        for (const t of items) {
-          const opt = document.createElement("option");
-          opt.value = prefix + t.id;
-          opt.textContent = (t.builtIn ? "" : "★ ") + t.name;
-          group.appendChild(opt);
-        }
-        sel.appendChild(group);
-      };
-      addGroup("Incident types", types, "type:");
-      addGroup("Your saved templates", templates.filter(t => !t.builtIn), "tpl:");
-    }
-    // Resolve the picker's prefixed value back to { kind, def } against the right cache.
-    function selectedNewCasePlaybook() {
-      const raw = document.getElementById("ncTemplate").value || "";
-      if (raw.startsWith("type:")) {
-        const id = raw.slice(5);
-        return { kind: "type", id, def: (_cachedIncidentTypes || []).find(t => t.id === id) };
-      }
-      if (raw.startsWith("tpl:")) {
-        const id = raw.slice(4);
-        return { kind: "tpl", id, def: (_cachedTemplates || []).find(t => t.id === id) };
-      }
-      return { kind: "", id: "", def: undefined };
-    }
-    function onTemplateSelectChange() {
-      const descEl = document.getElementById("ncTemplateDesc");
-      const { kind, def: t } = selectedNewCasePlaybook();
-      if (t && t.description) {
-        const hints = [];
-        // For an incident type, the import ORDER is the guidance ("EDR first, then DC logs") —
-        // show it instead of the unordered recommended-imports list a plain template carries.
-        const imports = kind === "type" && t.recommendedImportOrder?.length
-          ? { label: "Collect in order", value: t.recommendedImportOrder.map(id => CP_LABELS[id] || id).join(" → ") }
-          : t.recommendedImports?.length
-            ? { label: "Imports", value: t.recommendedImports.join(", ") }
-            : null;
-        if (imports) hints.push(esc(imports.label) + ": " + esc(imports.value));
-        if (t.huntPlatforms?.length) hints.push("Platforms: " + esc(t.huntPlatforms.join(", ")));
-        if (t.findingsSeeds?.length) hints.push(t.findingsSeeds.length + " expected findings to confirm/deny");
-        const hintText = hints.length ? " · " + hints.join(" · ") : "";
-        descEl.innerHTML = esc(t.description) + hintText;
-        descEl.style.display = "block";
-      } else {
-        descEl.style.display = "none";
-      }
-    }
+    // Case templates and incident types moved to js/dashboard-case-templates.js (#415 tier 3).
+    // It owns the two caches; js/dashboard-save-template.js calls its invalidateTemplateCache()
+    // instead of writing _cachedTemplates across the shared global lexical environment.
     // Save as Template moved to js/dashboard-save-template.js (#415 tier 3).
     // IOC block-list export moved to js/dashboard-ioc-blocklist.js (#415 tier 3).
     // Delete case moved to js/dashboard-delete-case.js (#415 tier 3).

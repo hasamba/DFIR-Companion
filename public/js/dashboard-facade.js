@@ -304,6 +304,15 @@
     "closeNewCase",
     "createNewCase",
     "loadDemoCase",
+    // Case templates. invalidateTemplateCache is included deliberately: js/dashboard-save-template.js
+    // calls it after a save, and a missing templates module must not turn a successful save into a
+    // ReferenceError.
+    "loadTemplates",
+    "loadIncidentTypes",
+    "populateTemplateSelect",
+    "selectedNewCasePlaybook",
+    "onTemplateSelectChange",
+    "invalidateTemplateCache",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

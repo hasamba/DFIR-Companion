@@ -855,6 +855,21 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Case templates and incident types. Its `_cachedTemplates` was written from
+    // js/dashboard-save-template.js across the shared global lexical environment; the escape is
+    // CLOSED by publishing invalidateTemplateCache() rather than the binding.
+    file: "dashboard-case-templates.js",
+    publish: [
+      "loadTemplates",
+      "loadIncidentTypes",
+      "populateTemplateSelect",
+      "selectedNewCasePlaybook",
+      "onTemplateSelectChange",
+      "invalidateTemplateCache",
+    ],
+    private: ["_cachedTemplates", "_cachedIncidentTypes"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
