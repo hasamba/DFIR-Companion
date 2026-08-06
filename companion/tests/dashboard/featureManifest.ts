@@ -308,6 +308,25 @@ export const FEATURES: Feature[] = [
     private: ["_mcpDiscovered"],
   },
   {
+    // Sigma draft (#89) + the hunt modal. showToast sits under the same banner and did NOT move: it
+    // is a page-wide helper and js/dashboard-tickets.js calls it, so moving it would have made an
+    // unrelated module depend on this feature for a toast.
+    file: "dashboard-sigma-hunt.js",
+    initializer: "initHuntModal",
+    publish: [
+      "initHuntModal",
+      "exportFindingSigma",
+      "sigmaExportChip",
+      "openHuntModal",
+      "closeHuntModal",
+      "launchHuntInto",
+    ],
+    // The Sigma/hunt helpers: YAML quoting and value-list building, and the per-format escapers.
+    // No mutable state — toastTimer was the only `let` under this banner and it stayed with
+    // showToast.
+    private: ["yqNorm", "yq", "sigmaVals", "yaraHashFn", "suriContent", "suriMsg"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

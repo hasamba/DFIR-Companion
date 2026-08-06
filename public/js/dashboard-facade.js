@@ -113,6 +113,12 @@
     // Settings → Tools + update check (#127). `initSettingsTools` is the sentinel, so not here.
     "loadTools",
     "loadUpdateCheck",
+    // Sigma draft + hunt modal (#89). `initHuntModal` is the sentinel, so not here.
+    "exportFindingSigma",
+    "sigmaExportChip",
+    "openHuntModal",
+    "closeHuntModal",
+    "launchHuntInto",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

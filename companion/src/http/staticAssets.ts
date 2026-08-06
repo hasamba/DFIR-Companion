@@ -104,6 +104,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-report-versions.js": "application/javascript; charset=utf-8",
   // Settings → Tools, the MCP server registry, and the update check (#127).
   "/js/dashboard-settings-tools.js": "application/javascript; charset=utf-8",
+  // Sigma draft export (#89) and the ES|QL / YARA / Suricata hunt modal built from the same context.
+  "/js/dashboard-sigma-hunt.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.
