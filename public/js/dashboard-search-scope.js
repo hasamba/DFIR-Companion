@@ -262,8 +262,8 @@
           if (r.status === 409) {
             const body = await r.json().catch(() => ({}));
             if (body.error === "presidio_approval_required") {
-              presidioPending = body.findings || [];
-              renderPresidioPending();
+              if (typeof setPresidioPending === "function")
+                setPresidioPending(body.findings);
               document.getElementById("status").textContent =
                 "synthesis held — Presidio found new value(s) to review (see Anonymization)";
               return null;

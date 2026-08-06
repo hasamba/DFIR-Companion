@@ -898,6 +898,24 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Presidio approval panel. Its escape was written from three places outside the section, each
+    // open-coding the same assign-then-render pair. setPresidioPending() is that pair, owned here,
+    // so a caller can no longer update the findings and forget the badge.
+    file: "dashboard-presidio.js",
+    initializer: "initPresidio",
+    publish: [
+      "initPresidio",
+      "loadPresidioPending",
+      "renderPresidioPending",
+      "setPresidioPending",
+      "addCustomEntity",
+      "openAnonModal",
+      "saveAnon",
+      "setAi",
+    ],
+    private: ["presidioPending"],
+  },
+  {
     // Hypotheses (#140). Its one escape was a WRITE from dashboard-data-act.js, which assigned
     // pendingHuntHypothesis = null directly. The owner exports clearPendingHuntHypothesis() and the
     // caller asks for it, so the binding can stay private here.

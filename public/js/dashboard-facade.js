@@ -316,6 +316,14 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Presidio approval panel. `initPresidio` is the sentinel.
+    "loadPresidioPending",
+    "renderPresidioPending",
+    "setPresidioPending",
+    "addCustomEntity",
+    "openAnonModal",
+    "saveAnon",
+    "setAi",
     // Hypotheses. `initHypotheses` is the sentinel. consumePendingHuntHypothesis is stubbed
     // because dashboard-sigma-hunt.js calls it on every launch: undefined just means "no hypothesis
     // to attach", which is the right answer when the module is gone.
