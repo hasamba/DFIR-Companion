@@ -209,6 +209,12 @@
   <script src="/js/dashboard-unified-export.js"></script>
   <!-- Manual add. initManualAdd() wires the three forms. -->
   <script src="/js/dashboard-manual-add.js"></script>
+  <!-- Correlation profile. initCorrelationProfile() wires its controls. -->
+  <script src="/js/dashboard-correlation-profile.js"></script>
+  <!-- Settings modal (Essential / All). initSettingsModal() wires its tabs. -->
+  <script src="/js/dashboard-settings-modal.js"></script>
+  <!-- Responsive toolbar. Wiring only. -->
+  <script src="/js/dashboard-toolbar-responsive.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -6846,54 +6852,9 @@
     // js/dashboard-import-undo.js. They were only ever here by proximity to the narrative controls.
     if (typeof initImportUndoRedo !== "undefined") initImportUndoRedo();
     else dfirFeatureUnavailable("Import undo / redo");
-    // --- Correlation profile (per-case cross-source event merge window) -------------------------
-    const CORR_PROFILE_WINDOWS = { strict: 0, moderate: 2, aggressive: 300 };
-    function loadCorrProfile(caseId) {
-      fetch(`/cases/${caseId}/correlation-profile`)
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(p => {
-          const sel = document.getElementById("corrProfileSel");
-          const winEl = document.getElementById("corrWindowSec");
-          if (!sel) return;
-          const name = p.profileName || "moderate";
-          sel.value = name;
-          if (name === "custom" && winEl) { winEl.style.display = ""; winEl.value = p.windowSeconds ?? 2; }
-          else if (winEl) winEl.style.display = "none";
-          _updateCorrProfileInfo(p);
-        })
-        .catch(() => {}); // endpoint absent on older servers — silently skip
-    }
-    function _updateCorrProfileInfo(p) {
-      const el = document.getElementById("corrProfileInfo");
-      if (!el) return;
-      const labels = { strict: "exact match only", moderate: "±2 s window", aggressive: "±5 min window" };
-      el.textContent = labels[p.profileName] || `±${p.windowSeconds}s window`;
-    }
-    function applyCorrProfile() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const sel = document.getElementById("corrProfileSel");
-      const winEl = document.getElementById("corrWindowSec");
-      if (!sel) return;
-      const profileName = sel.value;
-      const windowSeconds = profileName === "custom"
-        ? (winEl ? Math.max(0, parseInt(winEl.value, 10) || 0) : 2)
-        : (CORR_PROFILE_WINDOWS[profileName] ?? 2);
-      fetch(`/cases/${caseId}/correlation-profile`, {
-        method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ profileName, windowSeconds }),
-      })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(p => { _updateCorrProfileInfo(p); document.getElementById("status").textContent = "Correlation profile saved — takes effect on next synthesis."; })
-        .catch(() => { document.getElementById("status").textContent = "Correlation profile save failed — restart the companion server."; });
-    }
-    document.getElementById("corrProfileSel").addEventListener("change", function() {
-      const winEl = document.getElementById("corrWindowSec");
-      if (!winEl) return;
-      winEl.style.display = this.value === "custom" ? "" : "none";
-    });
-    document.getElementById("applyCorrProfile").addEventListener("click", applyCorrProfile);
-
+    // Correlation profile moved to js/dashboard-correlation-profile.js (#415 tier 3).
+    if (typeof initCorrelationProfile !== "undefined") initCorrelationProfile();
+    else dfirFeatureUnavailable("Correlation profile");
     // --- Second LLM opinion (#116): independent-model QA cross-check ----------------------------
     // A DIFFERENT model re-synthesizes the case; we surface where it disagrees with the primary
     // synthesis (findings it adds/drops, severity, ATT&CK technique) and the analyst accepts/rejects
@@ -13653,84 +13614,9 @@
       return ok;
     }
 
-    // ── Essential / All view ────────────────────────────────────────────────────────────────
-    // Essential shows only the controls a feature is dead without — API keys, service URLs, tool
-    // binaries. Everything with a working default shows only under All. Which fields those are is authored
-    // in the markup as `data-essential` and enforced by tests/settings/settingsEssentialAll.test.ts;
-    // all this code does is set the mode. Stored per browser, like dfir.investigator.
-    const SETTINGS_MODE_KEY = "dfir.settingsMode";
-
-    function settingsMode() {
-      return localStorage.getItem(SETTINGS_MODE_KEY) === "all" ? "all" : "essential";
-    }
-
-    function applySettingsMode(mode) {
-      const modal = document.querySelector(".settings-modal");
-      modal.dataset.mode = mode;
-      localStorage.setItem(SETTINGS_MODE_KEY, mode);
-      document.getElementById("settingsModeEssential").classList.toggle("active", mode === "essential");
-      document.getElementById("settingsModeAll").classList.toggle("active", mode === "all");
-      // Switching to Essential can hide the tab you were on — fall back to the first one still shown.
-      const active = document.querySelector(".stab.active");
-      if (active && stabHidden(active, mode)) {
-        const first = [...document.querySelectorAll(".stab")].find(b => !stabHidden(b, mode));
-        if (first) first.click();
-      }
-    }
-
-    // Open Settings on a named tab. A tab hidden in Essential (Velociraptor, Dashboard Views, …)
-    // forces All first, so an in-app deep link can never land on a tab that isn't there.
-    function openSettingsTab(name) {
-      document.getElementById("settingsBtn").click();
-      const tab = document.querySelector(`.stab[data-stab="${name}"]`);
-      if (!tab) return;
-      if (stabHidden(tab, settingsMode())) applySettingsMode("all");
-      tab.click();
-    }
-
-    function openSettingsModal() {
-      document.getElementById("settingsInvestigator").value = localStorage.getItem("dfir.investigator") || "";
-      document.getElementById("kbdShortcutsChk").checked = kbdShortcutsEnabled();
-      renderSecChecks();
-      renderTlChecks();
-      syncImportSevDefaultSelect();
-      fetchEnvSettings();
-      fetchLogLevel();
-      // Reset to first tab
-      document.querySelectorAll(".stab").forEach((b, i) => b.classList.toggle("active", i === 0));
-      document.querySelectorAll(".stab-pane").forEach((p, i) => p.classList.toggle("active", i === 0));
-      document.getElementById("settingsSaveMsg").textContent = "";
-      // Refresh the Velociraptor triage panel (bundles + current hunt job + live monitors) so it's current when opened.
-      veloClearBuilder();
-      loadVeloBundles();
-      loadVeloHuntJobs(veloCaseId());
-      loadVeloClients();
-      loadVeloMonitors(veloCaseId());
-      loadPushToken(veloCaseId());
-      loadUpdateCheck();
-      // After the reset-to-first-tab above, so the fallback in applySettingsMode sees a real
-      // active tab; before .open, so Essential mode never flashes the full list.
-      window.DfirSettingsSearch?.reset();
-      applySettingsMode(settingsMode());
-      document.getElementById("settingsOverlay").classList.add("open");
-    }
-
-    function closeSettingsModal() {
-      document.getElementById("settingsOverlay").classList.remove("open");
-    }
-
-    document.getElementById("settingsBtn").onclick = openSettingsModal;
-    document.getElementById("settingsSaveBtn").onclick = saveSettings;
-    document.getElementById("settingsCloseBtn").onclick = closeSettingsModal;
-    document.getElementById("settingsModeEssential").onclick = () => applySettingsMode("essential");
-    document.getElementById("settingsModeAll").onclick = () => applySettingsMode("all");
-
-    // Live references, not snapshots — the search module calls applyMode() when the box is cleared
-    // so a tab Essential hides falls back through the code above rather than a duplicate of it.
-    // Set at inline-script top level, read by the module at call time: module scripts run after
-    // classic inline ones, so there is no ordering handshake to get wrong in either direction.
-    window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };
-
+    // Settings modal (Essential / All view) moved to js/dashboard-settings-modal.js (#415 tier 3).
+    if (typeof initSettingsModal !== "undefined") initSettingsModal();
+    else dfirFeatureUnavailable("Settings modal");
     // ── Comprehensive Setup wizard (#181) ───────────────────────────────────────────────────
     // A multi-step onboarding overlay covering every config that has no default and won't work
     // until set. Step 1 (AI) keeps its original #181 element IDs + save→/settings/ai-reload→
@@ -14924,49 +14810,9 @@
       window.addEventListener("scroll", hide, true);
     })();
 
-    // ── Responsive toolbar: collapse action buttons to icon-only when the row would wrap ──
-    // Keeps the toolbar on one line (plus the scope row) regardless of viewport width or the
-    // dynamic toggle/case-name text. Pure layout measurement — no persisted setting to manage.
-    (function () {
-      const tb = document.getElementById("toolbarMain");
-      if (!tb) return;
-      let queued = false;
-      function fitToolbar() {
-        if (queued) return;
-        queued = true;
-        requestAnimationFrame(() => {
-          queued = false;
-          tb.classList.remove("icons-only");        // measure with full labels showing
-          const btn = tb.querySelector("button");
-          const rowH = btn ? btn.offsetHeight : 34;  // one action-row height
-          if (tb.scrollHeight > rowH * 1.6) tb.classList.add("icons-only");  // it wrapped → collapse
-        });
-      }
-      // React to viewport width changes via the (full-width, height-stable) header, so toggling
-      // the class on toolbarMain — which only changes its HEIGHT — never re-triggers a loop.
-      const hdr = document.querySelector("header");
-      if (window.ResizeObserver && hdr) {
-        let lastW = -1;
-        new ResizeObserver((es) => {
-          const w = es[0].contentRect.width;
-          if (Math.abs(w - lastW) > 1) { lastW = w; fitToolbar(); }
-        }).observe(hdr);
-      } else {
-        window.addEventListener("resize", fitToolbar);
-      }
-       // React to dynamic label changes (Enrich/Anon/AI toggle text, Collapse/Expand, case load).
-       // Observe text/children only — NOT attributes — so our own class toggle doesn't loop.
-       if (window.MutationObserver) {
-         new MutationObserver(changes => {
-           const affectsToolbarLayout = changes.some(change => {
-             const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
-             return !target || !target.closest("#jobsMenu");
-           });
-           if (affectsToolbarLayout) fitToolbar();
-         }).observe(tb, { childList: true, characterData: true, subtree: true });
-       }
-      fitToolbar();
-    })();
+    // Responsive toolbar moved to js/dashboard-toolbar-responsive.js (#415 tier 3) — wiring only.
+    if (typeof initResponsiveToolbar !== "undefined") initResponsiveToolbar();
+    else dfirFeatureUnavailable("Responsive toolbar");
   </script>
 </body>
 </html>

@@ -17,33 +17,58 @@ import { validateEnvUpdates } from "../../src/settings/envManager.js";
 
 /** The env keys each Settings tab shows in Essential mode. One entry per tab that has any. */
 const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
-  general: [],   // the Essential General view is the setup-wizard button + investigator name, no env fields
+  general: [], // the Essential General view is the setup-wizard button + investigator name, no env fields
   // The three models you can point somewhere. Timeouts, token caps, prompt-file overrides and the
   // VQL hunt model are All-only — each has a working default or falls back to the synthesis model.
   ai: [
-    "DFIR_VISION_PROVIDER", "DFIR_VISION_MODEL", "DFIR_VISION_KEY", "DFIR_VISION_BASE_URL",
-    "DFIR_AI_SYNTH_PROVIDER", "DFIR_AI_SYNTH_MODEL", "DFIR_AI_SYNTH_KEY", "DFIR_AI_SYNTH_BASE_URL",
-    "DFIR_AI_SECOND_OPINION_PROVIDER", "DFIR_AI_SECOND_OPINION_MODEL",
-    "DFIR_AI_SECOND_OPINION_KEY", "DFIR_AI_SECOND_OPINION_BASE_URL",
+    "DFIR_VISION_PROVIDER",
+    "DFIR_VISION_MODEL",
+    "DFIR_VISION_KEY",
+    "DFIR_VISION_BASE_URL",
+    "DFIR_AI_SYNTH_PROVIDER",
+    "DFIR_AI_SYNTH_MODEL",
+    "DFIR_AI_SYNTH_KEY",
+    "DFIR_AI_SYNTH_BASE_URL",
+    "DFIR_AI_SECOND_OPINION_PROVIDER",
+    "DFIR_AI_SECOND_OPINION_MODEL",
+    "DFIR_AI_SECOND_OPINION_KEY",
+    "DFIR_AI_SECOND_OPINION_BASE_URL",
   ],
   // Credentials only. `_CA`/`_INSECURE` (the default trust store works), the keyless hashlookup/
   // RDAP/GeoIP endpoint URLs, the GeoIP map limits, and every throttle delay are All-only.
   enrichment: [
-    "DFIR_VT_KEY", "DFIR_ABUSEIPDB_KEY", "DFIR_HUNTINGCH_KEY", "DFIR_ROCKYRACCOON_KEY",
-    "DFIR_CROWDSTRIKE_CLIENT_ID", "DFIR_CROWDSTRIKE_CLIENT_SECRET",
-    "DFIR_MISP_URL", "DFIR_MISP_KEY", "DFIR_YETI_URL", "DFIR_YETI_KEY",
-    "DFIR_OPENCTI_URL", "DFIR_OPENCTI_KEY", "DFIR_GEOIP_KEY",
+    "DFIR_VT_KEY",
+    "DFIR_ABUSEIPDB_KEY",
+    "DFIR_HUNTINGCH_KEY",
+    "DFIR_ROCKYRACCOON_KEY",
+    "DFIR_CROWDSTRIKE_CLIENT_ID",
+    "DFIR_CROWDSTRIKE_CLIENT_SECRET",
+    "DFIR_MISP_URL",
+    "DFIR_MISP_KEY",
+    "DFIR_YETI_URL",
+    "DFIR_YETI_KEY",
+    "DFIR_OPENCTI_URL",
+    "DFIR_OPENCTI_KEY",
+    "DFIR_GEOIP_KEY",
   ],
   // Keys only. Domain limits, the HIBP user-agent, the DeHashed base URL and the delay all default.
   exposure: ["DFIR_LEAKCHECK_KEY", "DFIR_HIBP_KEY", "DFIR_DEHASHED_KEY", "DFIR_SHODAN_KEY"],
   // What each integration needs to connect at all. Optional IRIS ids, `_CA`/`_INSECURE`, the 15
   // Velociraptor tuning/VQL knobs, and DFIR_PUBLIC_URL (link rendering only) are All-only.
   integrations: [
-    "DFIR_IRIS_URL", "DFIR_IRIS_KEY",
-    "DFIR_TIMESKETCH_URL", "DFIR_TIMESKETCH_USER", "DFIR_TIMESKETCH_PASSWORD",
-    "DFIR_NOTION_TOKEN", "DFIR_NOTION_DATABASE_ID", "DFIR_NOTION_PARENT_PAGE_ID",
-    "DFIR_CLICKUP_TOKEN", "DFIR_CLICKUP_LIST_ID",
-    "DFIR_VELOCIRAPTOR_API_CONFIG", "DFIR_VELOCIRAPTOR_BINARY", "DFIR_VELOCIRAPTOR_GUI_URL",
+    "DFIR_IRIS_URL",
+    "DFIR_IRIS_KEY",
+    "DFIR_TIMESKETCH_URL",
+    "DFIR_TIMESKETCH_USER",
+    "DFIR_TIMESKETCH_PASSWORD",
+    "DFIR_NOTION_TOKEN",
+    "DFIR_NOTION_DATABASE_ID",
+    "DFIR_NOTION_PARENT_PAGE_ID",
+    "DFIR_CLICKUP_TOKEN",
+    "DFIR_CLICKUP_LIST_ID",
+    "DFIR_VELOCIRAPTOR_API_CONFIG",
+    "DFIR_VELOCIRAPTOR_BINARY",
+    "DFIR_VELOCIRAPTOR_GUI_URL",
     "DFIR_PUSH_TOKEN",
   ],
   // Tools is All-only in full — no entry here, and its tab is hidden in Essential. Every external
@@ -56,8 +81,17 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
 
 const ALL_ESSENTIAL = Object.values(ESSENTIAL_ENV_KEYS).flat().sort();
 
+// The markup is still in dashboard.html; the Essential/All WIRING moved to
+// js/dashboard-settings-modal.js (#415 tier 3). Both are read here so the assertions about markup
+// and the assertions about behaviour keep working from one source, as they did when the two lived
+// in the same file. Reading only the page would have made every wiring assertion compare against
+// "" — which is a pass for `not.toContain` and a confusing failure for the rest.
 async function dashboard(): Promise<string> {
-  return readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  const [page, modal] = await Promise.all([
+    readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8"),
+    readFile(new URL("../../../public/js/dashboard-settings-modal.js", import.meta.url), "utf8"),
+  ]);
+  return `${page}\n${modal}`;
 }
 
 /** Whole-token class match. A `\b`-based regex would read `class="sfield-row"` as having `sfield`
@@ -83,7 +117,9 @@ function divBlocks(html: string, pred: (attrs: string) => boolean): string[] {
     if (!pred(m[1])) continue;
     const tok = /<div\b[^>]*>|<\/div>/g;
     tok.lastIndex = open.lastIndex;
-    let depth = 1, end = open.lastIndex, t: RegExpExecArray | null;
+    let depth = 1,
+      end = open.lastIndex,
+      t: RegExpExecArray | null;
     while (depth > 0 && (t = tok.exec(html))) {
       depth += t[0] === "</div>" ? -1 : 1;
       end = tok.lastIndex;
@@ -96,13 +132,13 @@ function divBlocks(html: string, pred: (attrs: string) => boolean): string[] {
 /** The env keys visible in Essential mode: those inside a `.sfield` that carries `data-essential`. */
 function essentialEnvKeys(html: string): string[] {
   const keys = new Set<string>();
-  for (const block of divBlocks(html, a => hasClass(a, "sfield") && isMarked(a)))
+  for (const block of divBlocks(html, (a) => hasClass(a, "sfield") && isMarked(a)))
     for (const m of block.matchAll(/id="env-([A-Za-z0-9_]+)"/g)) keys.add(m[1]);
   return [...keys].sort();
 }
 
 function paneInfo(html: string): { id: string; all: boolean; hasEssential: boolean }[] {
-  return divBlocks(html, a => hasClass(a, "stab-pane")).map(block => {
+  return divBlocks(html, (a) => hasClass(a, "stab-pane")).map((block) => {
     const openTag = block.slice(0, block.indexOf(">") + 1);
     const id = /id="stab-([a-z-]+)"/.exec(openTag)![1];
     const all = /data-essential="pane"/.test(openTag);
@@ -117,13 +153,15 @@ describe("Settings Essential mode — the pinned field set", () => {
 
   it("never shows an Essential field the server would refuse to save", async () => {
     const keys = essentialEnvKeys(await dashboard());
-    expect(validateEnvUpdates(Object.fromEntries(keys.map(k => [k, "x"])))).toEqual([]);
+    expect(validateEnvUpdates(Object.fromEntries(keys.map((k) => [k, "x"])))).toEqual([]);
   });
 
   it("never marks a read-only field Essential", async () => {
     const html = await dashboard();
-    const readOnly = [...html.matchAll(/id="env-([A-Za-z0-9_]+)"[^>]*\b(?:readonly|disabled)\b/g)].map(m => m[1]);
-    expect(essentialEnvKeys(html).filter(k => readOnly.includes(k))).toEqual([]);
+    const readOnly = [...html.matchAll(/id="env-([A-Za-z0-9_]+)"[^>]*\b(?:readonly|disabled)\b/g)].map(
+      (m) => m[1],
+    );
+    expect(essentialEnvKeys(html).filter((k) => readOnly.includes(k))).toEqual([]);
   });
 });
 
@@ -131,10 +169,12 @@ describe("Settings Essential mode — structural invariants the CSS depends on",
   it("marks the row around every Essential field, so the CSS can't swallow it", async () => {
     const html = await dashboard();
     const swallowed: string[] = [];
-    for (const row of divBlocks(html, a => ["sfield-row", "sfield-row3", "sgrid"].some(c => hasClass(a, c)))) {
+    for (const row of divBlocks(html, (a) =>
+      ["sfield-row", "sfield-row3", "sgrid"].some((c) => hasClass(a, c)),
+    )) {
       const openTag = row.slice(0, row.indexOf(">") + 1);
       if (isMarked(openTag)) continue;
-      for (const sf of divBlocks(row.slice(openTag.length), a => hasClass(a, "sfield") && isMarked(a)))
+      for (const sf of divBlocks(row.slice(openTag.length), (a) => hasClass(a, "sfield") && isMarked(a)))
         for (const m of sf.matchAll(/id="env-([A-Za-z0-9_]+)"/g)) swallowed.push(m[1]);
     }
     expect(swallowed).toEqual([]);
@@ -144,17 +184,22 @@ describe("Settings Essential mode — structural invariants the CSS depends on",
     const html = await dashboard();
     // Attribute-order agnostic on purpose: where `data-essential` sits in the tag is a style choice,
     // and a contributor who writes it in a different order deserves a real failure, not this one.
-    const tabs = new Map([...html.matchAll(/<button\b([^>]*\bdata-stab="([a-z-]+)"[^>]*)>/g)]
-      .map(m => [m[2], /\bdata-essential\b/.test(m[1])] as const));
+    const tabs = new Map(
+      [...html.matchAll(/<button\b([^>]*\bdata-stab="([a-z-]+)"[^>]*)>/g)].map(
+        (m) => [m[2], /\bdata-essential\b/.test(m[1])] as const,
+      ),
+    );
     for (const { id, hasEssential } of paneInfo(html)) {
       expect({ tab: id, shown: tabs.get(id) }).toEqual({ tab: id, shown: hasEssential });
     }
   });
 
   it("uses the whole-pane escape hatch only for Notifications", async () => {
-    const all = paneInfo(await dashboard()).filter(p => p.all).map(p => p.id);
+    const all = paneInfo(await dashboard())
+      .filter((p) => p.all)
+      .map((p) => p.id);
     expect(all.length).toBeLessThanOrEqual(1);
-    expect(all.filter(id => id !== "notifications")).toEqual([]);
+    expect(all.filter((id) => id !== "notifications")).toEqual([]);
   });
 });
 
@@ -179,13 +224,21 @@ describe("Settings Essential mode — wiring", () => {
   it("opens in Essential unless the analyst chose All", async () => {
     const html = await dashboard();
     const fn = html.slice(html.indexOf("function settingsMode()"), html.indexOf("function stabHidden("));
-    expect(fn).toContain('localStorage.getItem(SETTINGS_MODE_KEY) === "all" ? "all" : "essential"');
-    expect(html.slice(html.indexOf("function openSettingsModal()"))).toMatch(/applySettingsMode\(settingsMode\(\)\)/);
+    // Whitespace-tolerant: this was one line in the inline block and is four after prettier
+    // formatted the extracted module. What matters is that "all" is the only stored value that
+    // selects All, so anything else — including a missing key — opens Essential.
+    expect(fn.replace(/\s+/g, " ")).toContain(
+      'localStorage.getItem(SETTINGS_MODE_KEY) === "all" ? "all" : "essential"',
+    );
+    expect(html.slice(html.indexOf("function openSettingsModal()"))).toMatch(
+      /applySettingsMode\(settingsMode\(\)\)/,
+    );
   });
 
   it("routes Settings deep links through the helper that unhides the target tab", async () => {
     const html = await dashboard();
-    for (const t of ["velociraptor", "tools", "dashboard-views"]) expect(html).toContain(`openSettingsTab("${t}")`);
+    for (const t of ["velociraptor", "tools", "dashboard-views"])
+      expect(html).toContain(`openSettingsTab("${t}")`);
     // The old hand-rolled form (open the modal, then click a tab) lands on a hidden tab in Essential.
     expect(html).not.toMatch(/querySelector\('\.stab\[data-stab="[a-z-]+"\]'\)/);
   });

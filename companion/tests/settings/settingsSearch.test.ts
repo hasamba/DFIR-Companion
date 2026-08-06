@@ -90,7 +90,16 @@ describe("searchMessage", () => {
   });
 });
 
-const dashboard = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+// dashboard.html plus the settings modal module: the search config the settings-search module reads
+// is published from js/dashboard-settings-modal.js since #415 tier 3, while the markup it describes
+// is still in the page.
+const dashboard = async () =>
+  (
+    await Promise.all([
+      readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8"),
+      readFile(new URL("../../../public/js/dashboard-settings-modal.js", import.meta.url), "utf8"),
+    ])
+  ).join("\n");
 // The search behaviour is implemented as CSS, and since #415 the CSS is in its own file. These
 // rules moved verbatim; only the file they are read from changed.
 const dashboardCss = dashboardStylesheet;
@@ -241,11 +250,14 @@ describe("dashboard.html search wiring", () => {
     const h = await dashboard();
     // Live references, not snapshots: the module calls applyMode() on clear so a tab Essential
     // hides falls back through the inline script's own path rather than a copy of it.
-    expect(h).toContain(
-      "window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode };",
+    // Whitespace-collapsed on both sides: prettier broke this object across four lines when the
+    // code moved into js/dashboard-settings-modal.js. The assertion is about WHICH functions the
+    // settings-search module is handed, not how they are laid out.
+    expect(h.replace(/\s+/g, " ")).toContain(
+      "window.DfirSettingsSearchConfig = { applyMode: applySettingsMode, mode: settingsMode, };",
     );
     // Optional chaining: openSettingsModal is defined in a classic inline script, which runs
     // BEFORE the module that publishes window.DfirSettingsSearch.
-    expect(h).toContain("window.DfirSettingsSearch?.reset();");
+    expect(h.replace(/\s+/g, " ")).toContain("window.DfirSettingsSearch?.reset();");
   });
 });

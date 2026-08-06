@@ -498,6 +498,28 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Correlation profile. CORR_PROFILE_WINDOWS is the reason for the IIFE — a per-profile time
+    // window table has no business being a page-wide global.
+    file: "dashboard-correlation-profile.js",
+    initializer: "initCorrelationProfile",
+    publish: ["initCorrelationProfile", "loadCorrProfile", "applyCorrProfile"],
+    private: ["CORR_PROFILE_WINDOWS"],
+  },
+  {
+    // Settings modal. openSettingsTab is called from three places across the page, so it publishes.
+    file: "dashboard-settings-modal.js",
+    initializer: "initSettingsModal",
+    publish: ["initSettingsModal", "openSettingsTab", "closeSettingsModal", "openSettingsModal"],
+    private: ["SETTINGS_MODE_KEY"],
+  },
+  {
+    // Responsive toolbar. Wiring only — one statement forty lines long.
+    file: "dashboard-toolbar-responsive.js",
+    initializer: "initResponsiveToolbar",
+    publish: ["initResponsiveToolbar"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

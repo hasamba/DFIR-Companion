@@ -146,6 +146,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-unified-export.js": "application/javascript; charset=utf-8",
   // Manual add — event / IOC / finding typed in by hand.
   "/js/dashboard-manual-add.js": "application/javascript; charset=utf-8",
+  // Correlation profile — how tightly the correlator joins events into one activity.
+  "/js/dashboard-correlation-profile.js": "application/javascript; charset=utf-8",
+  // Settings modal — the Essential / All view toggle and opening on a named tab.
+  "/js/dashboard-settings-modal.js": "application/javascript; charset=utf-8",
+  // Responsive toolbar — collapse the button row into an overflow menu when it will not fit.
+  "/js/dashboard-toolbar-responsive.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

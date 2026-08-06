@@ -178,6 +178,12 @@
     "openExplainPanel",
     "loadTimelineGaps",
     "scheduleTimelineGapsReload",
+    // Correlation profile and the settings modal. Their initializers are the sentinels, so not here.
+    "loadCorrProfile",
+    "applyCorrProfile",
+    "openSettingsTab",
+    "closeSettingsModal",
+    "openSettingsModal",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
