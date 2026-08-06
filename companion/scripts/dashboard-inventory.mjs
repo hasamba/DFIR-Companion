@@ -88,12 +88,19 @@ const sections = banners.map((b, i) => ({
 // Top-level declarations only. A nested one cannot be referenced from another section anyway, so
 // including it would inflate every count.
 const decls = new Map();
+const declEnd = new Map(); // name -> last line of its declaration, for the cohesion pass below
 for (const st of sf.statements) {
   const line = lineOf(st.getStart(sf));
-  if (ts.isFunctionDeclaration(st) && st.name) decls.set(st.name.text, { line, kind: "fn" });
-  else if (ts.isVariableStatement(st)) {
+  const end = lineOf(st.getEnd());
+  if (ts.isFunctionDeclaration(st) && st.name) {
+    decls.set(st.name.text, { line, kind: "fn" });
+    declEnd.set(st.name.text, end);
+  } else if (ts.isVariableStatement(st)) {
     for (const d of st.declarationList.declarations) {
-      if (ts.isIdentifier(d.name)) decls.set(d.name.text, { line, kind: "var" });
+      if (ts.isIdentifier(d.name)) {
+        decls.set(d.name.text, { line, kind: "var" });
+        declEnd.set(d.name.text, end);
+      }
     }
   }
 }
@@ -216,6 +223,43 @@ const rows = sections.map((sec) => {
   let dom = 0;
   for (const [line, hits] of domByLine) if (inSection(line)) dom += hits;
 
+  // COHESION: does this block hold one feature, or several that share a banner? Three sections in a
+  // row turned out to be two features under a heading naming only one — the Settings block is three
+  // panels, the Sigma block is Sigma plus the hunt modal, and "Push ingest token" heads 222 lines of
+  // which 47 are the push token and the rest are the Velociraptor bundle builder above it.
+  // Extracting to the banner in that last case would have cut a live feature in half.
+  //
+  // Measured as connected components over the block's OWN declarations: two functions are joined if
+  // either references the other. Functions that never touch each other are not one feature, whatever
+  // comment sits above them. This is a reading prompt, not a verdict — a real feature can have a
+  // genuinely standalone helper — but a block reporting three components deserves a look before its
+  // line range is trusted.
+  const ownArr = own.map(([n]) => n);
+  const idx = new Map(ownArr.map((n, i) => [n, i]));
+  const parent = ownArr.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (a, b) => {
+    const ra = find(a),
+      rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+  for (const [name, d] of own) {
+    // Every reference inside this declaration's own line span to another of the block's names.
+    const end = declEnd.get(name) ?? d.line;
+    for (const r of refs) {
+      if (r.line < d.line || r.line > end) continue;
+      if (r.name === name || !idx.has(r.name)) continue;
+      union(idx.get(name), idx.get(r.name));
+    }
+  }
+  const components = new Map();
+  ownArr.forEach((n, i) => {
+    const root = find(i);
+    components.set(root, (components.get(root) ?? 0) + 1);
+  });
+  // Singletons are noise — a lone constant is not a second feature. Count only clusters of 2+.
+  const clusters = [...components.values()].filter((n) => n >= 2).sort((a, b) => b - a);
+
   return {
     label: sec.label,
     start: sec.line,
@@ -230,6 +274,8 @@ const rows = sections.map((sec) => {
     moduleScopeDom: dom,
     boundElsewhere: [...boundElsewhere].sort(),
     needsInitializer: dom > 0 || boundElsewhere.size > 0,
+    clusters,
+    looksLikeTwoFeatures: clusters.length > 1,
   };
 });
 

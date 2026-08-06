@@ -35,6 +35,8 @@ const run = (): {
     moduleScopeDom: number;
     boundElsewhere: string[];
     needsInitializer: boolean;
+    clusters: number[];
+    looksLikeTwoFeatures: boolean;
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
 
@@ -239,6 +241,71 @@ describe("dashboard extraction inventory", () => {
       expect(feature.needsInitializer).toBe(false);
       // Still an escape that must be published — only the load-time urgency differs.
       expect(feature.publish).toContain("closeThing");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags a banner that covers two families of functions that never call each other", () => {
+    // Three sections in a row turned out to be two features sharing a heading that named only one.
+    // The worst was "Push ingest token (#84)": 222 lines of which 47 are the push token and the rest
+    // are the Velociraptor bundle builder belonging to the feature ABOVE the banner. Extracting to
+    // the banner would have cut a live feature in half.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- One banner, two features ----",
+        "  function aOne() { return aTwo(); }",
+        "  function aTwo() { return 1; }",
+        "  function bOne() { return bTwo(); }",
+        "  function bTwo() { return 2; }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const only = r.sections[0];
+      expect(only.clusters).toEqual([2, 2]);
+      expect(only.looksLikeTwoFeatures).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not flag one feature just because it has several functions", () => {
+    // The complement, and the one that keeps this usable: without it the flag could fire on every
+    // section and mean nothing. One reference joining the two halves is enough to make them one.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- One banner, one feature ----",
+        "  function aOne() { return aTwo(); }",
+        "  function aTwo() { return bOne(); }",
+        "  function bOne() { return bTwo(); }",
+        "  function bTwo() { return 2; }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      expect(r.sections[0].clusters).toEqual([4]);
+      expect(r.sections[0].looksLikeTwoFeatures).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

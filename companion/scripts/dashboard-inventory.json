@@ -21,7 +21,9 @@
       "sharedMachinery": ["themeColor"],
       "moduleScopeDom": 0,
       "boundElsewhere": ["applyTheme", "storedTheme", "systemTheme"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [9],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Theme picker",
@@ -83,7 +85,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 12,
       "boundElsewhere": ["saveReportMeta"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [5, 5, 5, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Compromised assets + asset↔IoC graph",
@@ -105,7 +109,9 @@
       "sharedMachinery": ["loadAssetGraph", "loadAssetOverrides"],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [5, 3, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Login Graph (cytoscape)",
@@ -127,7 +133,9 @@
       "sharedMachinery": ["lgEl"],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [22],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Evidence Chain graph (causal: process trees + lateral movement)",
@@ -156,7 +164,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [26],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Investigator comments (collaboration)",
@@ -190,7 +200,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeCommentModal", "postComment"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [12],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Analyst triage tags",
@@ -214,7 +226,9 @@
       "sharedMachinery": ["loadTags"],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeTagModal"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [12],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Pinned findings (#220)",
@@ -229,7 +243,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [5],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Finding assignment + workflow status (#87)",
@@ -251,7 +267,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [10, 7],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Mark-false-positive modal (#227)",
@@ -266,7 +284,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeFalsePositiveModal"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Analyst notebook",
@@ -281,7 +301,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 8,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Hypotheses (issue #140)",
@@ -304,7 +326,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 16,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [10, 3, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Super-Timeline",
@@ -319,7 +343,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Hunt-pivot query generator",
@@ -334,7 +360,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Starred events (per case, tag-backed)",
@@ -355,7 +383,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [4, 3, 3, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Multi-select (session-only, cleared on re-render)",
@@ -379,7 +409,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [2, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Bulk IOC operations",
@@ -394,7 +426,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Bulk finding operations",
@@ -434,7 +468,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [9, 7, 2, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Velociraptor triage bundles",
@@ -467,7 +503,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [24],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Live CLIENT_EVENT monitoring (#84)",
@@ -491,7 +529,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 14,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [10, 8],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Executive summary generator",
@@ -506,7 +546,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Narrative Timeline",
@@ -521,7 +563,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 17,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Correlation profile (per-case cross-source event merge window)",
@@ -536,7 +580,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 3,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Second LLM opinion (#116): independent-model QA cross-check",
@@ -563,7 +609,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["runSecondOpinion"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [8],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Last-import change tracking (what the last import added to the timeline + IOCs)",
@@ -584,7 +632,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [18],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Import undo / redo (#76)",
@@ -599,7 +649,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["doAsk"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [3],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Explain Event (#141)",
@@ -614,7 +666,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Query Translator (natural language → hunt queries, #100)",
@@ -629,7 +683,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["applyScope", "doTranslateQuery", "renderNlqPlatforms", "toggleAi"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [5, 4],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Threat-intel enrichment — per-source selection (local on by default; external opt-in)",
@@ -644,7 +700,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["openEnrichModal", "saveEnrich"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [8],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Anonymization — tokenize sensitive victim data before the AI; restore on display",
@@ -666,7 +724,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [7, 4],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Presidio approval panel (analyst-run PII-detector container found unseen values)",
@@ -688,7 +748,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": ["addCustomEntity", "openAnonModal", "saveAnon"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Import progress bar helpers",
@@ -711,7 +773,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [8],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Background jobs (#225)",
@@ -734,7 +798,9 @@
       "sharedMachinery": ["esc", "escAttr"],
       "moduleScopeDom": 10,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [18, 3, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Inline IOC quick-actions (#221)",
@@ -749,7 +815,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [9, 3],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Screenshot OCR full-text search (#176)",
@@ -764,7 +832,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 5,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [6, 5],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Attack Phases (temporal bursts; grouped by time gap, derived server-side, no AI)",
@@ -807,7 +877,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7, 6, 6, 5, 5],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Timeline Gaps (#83)",
@@ -822,7 +894,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [5],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Gap Hypotheses (#96)",
@@ -837,7 +911,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Memory Next Steps (#101)",
@@ -852,7 +928,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Host & Account Ranking (#202)",
@@ -867,7 +945,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [8],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Adversary Hints (#46)",
@@ -882,7 +962,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [6],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Suggested Fleet Hunts (#57)",
@@ -897,7 +979,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Activity Log (#238)",
@@ -949,7 +1033,9 @@
       "sharedMachinery": ["dfirFeatureUnavailable", "renderIocs"],
       "moduleScopeDom": 9,
       "boundElsewhere": ["dfirFeatureUnavailable", "runCustomerExposureCheck"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [12, 8, 7, 4, 3, 3, 3, 3, 3, 3, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Event-density heatmap (#219)",
@@ -964,7 +1050,9 @@
       "sharedMachinery": ["renderTimelineEvents"],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Vim-style keyboard navigation (Forensic Timeline)",
@@ -979,7 +1067,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 37,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [11, 3],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Now investigator cockpit (#375)",
@@ -1001,7 +1091,9 @@
       "sharedMachinery": ["render"],
       "moduleScopeDom": 2,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [6],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Cross-case capture warning",
@@ -1016,7 +1108,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 3,
       "boundElsewhere": ["connect"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [24],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Case templates",
@@ -1031,7 +1125,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["onTemplateSelectChange"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Save as Template",
@@ -1046,7 +1142,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeSaveTemplate", "saveAsTemplate"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "IOC block-list export (#87)",
@@ -1061,7 +1159,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeIocBlocklist"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Redacted case export (#54)",
@@ -1076,7 +1176,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeRedactedExport", "doRedactedExport"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Reproducible analysis runs (#377)",
@@ -1091,7 +1193,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeAnalysisRuns", "compareAnalysisRuns"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "ZIP case archive (unencrypted, \"(no password)\" in the filename)",
@@ -1106,7 +1210,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeZipArchive", "doZipArchive"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Encrypted case archive export (replaces #56's JSON snapshot)",
@@ -1121,7 +1227,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["closeEncryptedExport", "doEncryptedExport"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Delete case (optionally archive first)",
@@ -1136,7 +1244,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 3,
       "boundElsewhere": ["closeDeleteCase", "doDeleteCase"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "New case  creation lives here (the extension only attaches to existing cases)",
@@ -1151,7 +1261,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 118,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Import case (snapshot — issue #56 — or from DFIR-IRIS — issue #88)",
@@ -1166,7 +1278,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 24,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Search bar + time-range filter listeners",
@@ -1181,7 +1295,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 49,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Import minimum-severity preference (per-browser)",
@@ -1196,7 +1312,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [6],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Unified import: one button, the server auto-detects the file type",
@@ -1211,7 +1329,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 8,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Unified export menu",
@@ -1226,7 +1346,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 12,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Presentation mode (#177)",
@@ -1241,7 +1363,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 3,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Manual add (event / IOC the AI didn't catch)",
@@ -1256,7 +1380,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 25,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Generic merge-target picker modal (#82) — used for both asset merge and IOC merge. Shows",
@@ -1271,7 +1397,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 7,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Asset overrides (rename / add / suppress / link)",
@@ -1286,7 +1414,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 19,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Collapsible sections",
@@ -1301,7 +1431,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 2,
       "boundElsewhere": ["setupCollapsible", "setupReorder"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [8],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "data-act dispatch (CSP: no inline handlers)",
@@ -1316,7 +1448,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 4,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Settings modal",
@@ -1331,7 +1465,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [2, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Command palette registry (issue #238)",
@@ -1346,7 +1482,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["applySectionsVis"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [6, 4],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Timeline row display toggles",
@@ -1361,7 +1499,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["applyTlDisplayFromChecks"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Dashboard view presets (#142)",
@@ -1385,7 +1525,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 4,
       "boundElsewhere": ["saveSettings"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [12, 6, 3],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Essential / All view",
@@ -1400,7 +1542,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 5,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [5],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Comprehensive Setup wizard (#181)",
@@ -1423,7 +1567,9 @@
       "sharedMachinery": ["wizEl"],
       "moduleScopeDom": 0,
       "boundElsewhere": ["wizEl"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "AI step logic (#181, preserved)",
@@ -1438,7 +1584,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Synthesis model (optional, sub-section of the AI step)",
@@ -1453,7 +1601,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 81,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [10, 4],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Report Templates (#60) — global branded report layouts, Settings → Report Templates",
@@ -1468,7 +1618,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["rtDelete", "rtSave"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [13],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Dashboard Views (#142) — global panel-layout presets, Settings → Dashboard Views",
@@ -1483,7 +1635,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["dvDelete", "dvSave"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [11],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Per-case report-template picker (in Case Details)",
@@ -1498,7 +1652,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["saveCaseTemplate"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist",
@@ -1513,7 +1669,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["wlAddRule", "wlImport"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Custom importers (declarative external plugin layer) — global, Settings → Importers",
@@ -1535,7 +1693,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": ["impAdd", "impCopyPrompt", "impReload", "impSetPrecedence", "wlApplyToCase"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [4],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "NSRL known-good hashes (#63) — global hash set, Settings → NSRL",
@@ -1565,7 +1725,9 @@
         "nsrlImport",
         "nsrlImportFile"
       ],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [7],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications",
@@ -1587,7 +1749,9 @@
       "sharedMachinery": ["loadCaseList"],
       "moduleScopeDom": 1,
       "boundElsewhere": ["loadCaseList", "ntfAddChannel", "ntfTypeChanged"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [6, 2],
+      "looksLikeTwoFeatures": true
     },
     {
       "label": "Disk-space warning (#119)",
@@ -1602,7 +1766,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 1,
       "boundElsewhere": ["loadDiskStats"],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [3],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Startup pre-flight banner (#179)",
@@ -1617,7 +1783,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Case lifecycle (#119)",
@@ -1632,7 +1800,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 12,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Case password protection",
@@ -1647,7 +1817,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 6,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [3],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Case unlock prompt",
@@ -1662,7 +1834,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 5,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [2],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Custom tooltip",
@@ -1677,7 +1851,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 0,
       "boundElsewhere": [],
-      "needsInitializer": false
+      "needsInitializer": false,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     },
     {
       "label": "Responsive toolbar: collapse action buttons to icon-only when the row would wrap",
@@ -1692,7 +1868,9 @@
       "sharedMachinery": [],
       "moduleScopeDom": 2,
       "boundElsewhere": [],
-      "needsInitializer": true
+      "needsInitializer": true,
+      "clusters": [],
+      "looksLikeTwoFeatures": false
     }
   ]
 }
