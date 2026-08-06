@@ -224,6 +224,14 @@
     "assignFinding",
     "renderPinned",
     "togglePin",
+    // The palette registry and the section order/visibility code. initPaletteConfig is a sentinel.
+    "revealSection",
+    "buildPaletteActions",
+    "saveSectionsOrder",
+    "getEffectiveOrder",
+    "applySecOrder",
+    "applySectionsVis",
+    "renderSecChecks",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

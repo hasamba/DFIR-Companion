@@ -657,6 +657,26 @@ export const FEATURES: Feature[] = [
     private: ["pinDragActive", "_pinnedSig", "pinMsgTimer"],
   },
   {
+    // Command palette registry (#238). Split from the section-order code sharing its banner.
+    // DfirPaletteConfig is published from an initializer so the assignment happens in order.
+    file: "dashboard-palette-registry.js",
+    initializer: "initPaletteConfig",
+    publish: ["revealSection", "buildPaletteActions", "initPaletteConfig"],
+    private: ["PALETTE_BUTTONS"],
+  },
+  {
+    // Section order and visibility (#238) — the other half of that banner.
+    file: "dashboard-section-order.js",
+    publish: [
+      "saveSectionsOrder",
+      "getEffectiveOrder",
+      "applySecOrder",
+      "applySectionsVis",
+      "renderSecChecks",
+    ],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

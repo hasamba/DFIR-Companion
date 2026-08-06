@@ -246,6 +246,10 @@
   <script src="/js/dashboard-finding-workflow.js"></script>
   <!-- Pinned findings (#220). No initializer. -->
   <script src="/js/dashboard-pinned-findings.js"></script>
+  <!-- Command palette registry (#238). initPaletteConfig() publishes DfirPaletteConfig. -->
+  <script src="/js/dashboard-palette-registry.js"></script>
+  <!-- Section order and visibility (#238). No initializer. -->
+  <script src="/js/dashboard-section-order.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -8720,6 +8724,7 @@
       ["askMinSeverity", "Import severity floor"],
       ["loadFindingWorkflow", "Finding assignment"],
       ["renderPinned", "Pinned findings"],
+      ["applySectionsVis", "Section order and visibility"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -12146,199 +12151,10 @@
       return vis[id] !== false;
     }
 
-    // ── Command palette registry (issue #238) ────────────────────────────────────────────────────
-    // The matching, ranking and overlay live in /js/command-palette.js; only the registry lives
-    // here, because this is the only scope that can see the dashboard's own functions and state.
-    //
-    // Almost every entry is DERIVED from a control that already exists — the section list, the two
-    // export <select>s, the toolbar buttons — rather than transcribed into a parallel list. A
-    // hand-written registry is stale the day someone adds a panel or an export, and stale entries
-    // are worse than missing ones: they point at ids that no longer resolve.
-
-    // The un-collapse + scroll idiom used by the panel deep-links elsewhere in this file.
-    function revealSection(id) {
-      const sec = document.getElementById(id);
-      if (!sec) return;
-      sec.classList.remove("collapsed");
-      sec.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-
-    // Curated entries: the toolbar controls, driven by .click() so each one reuses the handler that
-    // is already wired to it. Availability comes free — buttons the dashboard hides or disables for
-    // the current case state (2nd opinion, undo import, lifecycle, demo seed) drop out of the
-    // palette on their own, with no second copy of the gating logic to keep in sync.
-    const PALETTE_BUTTONS = [
-      { id: "act.synthesize",    btn: "synthesize",      category: "Actions",    label: "AI Re-synthesize",                        keywords: ["synthesize", "ai", "analysis", "rerun"] },
-      { id: "act.deepPass",      btn: "deepPassBtn",     category: "Actions",    label: "Run Deep Pass",                           keywords: ["deep", "pass", "reasoning"] },
-      { id: "act.secondOpinion", btn: "secondOpinion",   category: "Actions",    label: "Second Opinion",                          keywords: ["second", "opinion", "review", "model"] },
-      { id: "act.import",        btn: "importBtn",       category: "Actions",    label: "Import Evidence",                         keywords: ["import", "ingest", "upload", "evidence"] },
-      { id: "act.importUndo",    btn: "importUndoBtn",   category: "Actions",    label: "Undo Import",                             keywords: ["undo", "import", "revert"] },
-      { id: "act.importRedo",    btn: "importRedoBtn",   category: "Actions",    label: "Redo Import",                             keywords: ["redo", "import"] },
-      { id: "act.present",       btn: "presentBtn",      category: "Actions",    label: "Presentation Mode",                       keywords: ["present", "slides", "deck", "briefing"] },
-      { id: "nav.filter",        btn: "toggleSearchBar", category: "Navigation", label: "Search & Filter",                         keywords: ["search", "filter", "find", "query"] },
-      { id: "nav.toggleAll",     btn: "toggleAll",       category: "Navigation", label: "Collapse / Expand All Sections",          keywords: ["collapse", "expand", "all", "sections"] },
-      { id: "nav.jobs",          btn: "jobsBadge",       category: "Navigation", label: "Background Jobs",                         keywords: ["jobs", "queue", "background", "tasks"] },
-      { id: "set.settings",      btn: "settingsBtn",     category: "Settings",   label: "Open Settings",                           keywords: ["settings", "preferences", "config", "options"] },
-      { id: "set.theme",         btn: "themeToggle",     category: "Settings",   label: "Change Theme",                            keywords: ["theme", "dark", "light", "appearance", "colour", "color", "nord", "gruvbox"] },
-      { id: "set.ai",            btn: "aiToggle",        category: "Settings",   label: "Toggle AI",                               keywords: ["ai", "llm", "enable", "disable"] },
-      { id: "set.enrich",        btn: "enrichToggle",    category: "Settings",   label: "Toggle Enrichment",                       keywords: ["enrich", "threatintel", "lookup"] },
-      { id: "set.anon",          btn: "anonToggle",      category: "Settings",   label: "Toggle Anonymization",                    keywords: ["anon", "anonymize", "redact", "privacy"] },
-      { id: "set.views",         btn: "dashViewBtn",     category: "Settings",   label: "Dashboard Views",                         keywords: ["view", "layout", "dashboard", "saved"] },
-      { id: "set.manual",        btn: "helpBtn",         category: "Settings",   label: "Open User Manual",                        keywords: ["help", "manual", "docs", "documentation"] },
-      { id: "case.new",          btn: "newCaseBtn",      category: "Case",       label: "New Case",                                keywords: ["new", "case", "create"] },
-      { id: "case.connect",      btn: "connect",         category: "Case",       label: "Connect to Case",                         keywords: ["connect", "open", "switch", "case"] },
-      { id: "case.import",       btn: "importCaseBtn",   category: "Case",       label: "Import Case",                             keywords: ["import", "case", "restore"] },
-      { id: "case.lifecycle",    btn: "lifecycleBtn",    category: "Case",       label: "Case Lifecycle (archive, close, delete)", keywords: ["archive", "close", "delete", "lifecycle", "status"] },
-      { id: "case.demo",         btn: "seedDemoBtn",     category: "Case",       label: "Seed Demo Case",                          keywords: ["demo", "seed", "sample", "example"] },
-    ];
-
-    // Turns the options of one toolbar <select> into actions. Running one sets the value and fires
-    // change, which is exactly what picking it with the mouse does — the existing onchange handler
-    // stays the single implementation of every export.
-    function paletteSelectActions(selectId, idPrefix, keywords, gate) {
-      const sel = document.getElementById(selectId);
-      if (!sel) return [];
-      return [...sel.options].filter(o => o.value).map(o => ({
-        id: idPrefix + o.value,
-        label: o.textContent.replace(/…\s*$/, "").trim(),
-        category: "Exports",
-        keywords: keywords,
-        available: () => gate() && !o.disabled && !sel.disabled,
-        run: () => { sel.value = o.value; sel.dispatchEvent(new Event("change")); },
-      }));
-    }
-
-    function buildPaletteActions() {
-      const vis = loadSectionsVis();                     // read once per keystroke, not once per panel
-      const caseIdEl = document.getElementById("caseId");
-      const hasCase = () => !!(caseIdEl && caseIdEl.value.trim());
-
-      const nav = SECTION_DEFS.map(s => ({
-        id: "nav." + s.id,
-        label: "Go to " + s.label,
-        category: "Navigation",
-        keywords: paletteSectionKeywords(s.label),
-        // A panel the analyst has switched off in Settings is not somewhere to jump to.
-        available: () => !!document.getElementById(s.id) && isSectionVisible(s.id, vis),
-        run: () => revealSection(s.id),
-      }));
-
-      const buttons = PALETTE_BUTTONS.map(b => ({
-        id: b.id,
-        label: b.label,
-        category: b.category,
-        keywords: b.keywords,
-        available: () => {
-          const el = document.getElementById(b.btn);
-          return paletteVisible(el) && !el.disabled;
-        },
-        run: () => document.getElementById(b.btn).click(),
-      }));
-
-      // Every export needs a connected case — the onchange handler bails without one, so offering
-      // them on an empty dashboard would produce actions that silently do nothing.
-      const exports = paletteSelectActions("exportSelect", "exp.", ["export", "download", "save"], hasCase);
-      const pushes = paletteSelectActions("pushSelect", "push.", ["push", "send", "integration"],
-        () => hasCase() && paletteVisible(document.getElementById("pushSelect")));
-
-      const extras = [{
-        id: "set.shortcuts",
-        label: "Keyboard Shortcuts",
-        category: "Settings",
-        keywords: ["keyboard", "shortcuts", "keys", "cheat", "help"],
-        run: () => kbdOpenHelp(),
-      }];
-
-      return [...nav, ...buttons, ...exports, ...pushes, ...extras];
-    }
-
-    // Published as a global rather than passed in a call because module scripts run AFTER this
-    // inline one — the palette module reads this when it loads, so neither side has to wait on the
-    // other. Both fields are thunks: the registry and `DfirState.lastState()` are re-read on every keystroke,
-    // so a palette opened before the case loads is correct the moment it does.
-    window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => DfirState.lastState() };
-
-    function loadSectionsOrder() {
-      try { return JSON.parse(localStorage.getItem(SECTIONS_ORDER_KEY) || "[]"); } catch { return []; }
-    }
-    function saveSectionsOrder(ids) {
-      localStorage.setItem(SECTIONS_ORDER_KEY, JSON.stringify(ids));
-    }
-    function getEffectiveOrder() {
-      const saved = loadSectionsOrder();
-      if (!saved.length) return [...SECTION_DEFS];
-      const byId = Object.fromEntries(SECTION_DEFS.map(d => [d.id, d]));
-      const result = saved.filter(id => byId[id]).map(id => byId[id]);
-      const savedSet = new Set(saved);
-      // Insert any section missing from the saved order at its CANONICAL position (right after its
-      // nearest preceding SECTION_DEFS sibling that's already placed) rather than dumping it at the
-      // end — so a newly-added section (e.g. Playbook) appears where it's defined, not at the bottom.
-      SECTION_DEFS.forEach((def, i) => {
-        if (savedSet.has(def.id)) return;
-        let insertAt = result.length;
-        for (let j = i - 1; j >= 0; j--) {
-          const idx = result.findIndex(d => d.id === SECTION_DEFS[j].id);
-          if (idx >= 0) { insertAt = idx + 1; break; }
-        }
-        result.splice(insertAt, 0, def);
-      });
-      return result;
-    }
-    function applySecOrder() {
-      const main = document.querySelector("main");
-      if (!main) return;
-      getEffectiveOrder().forEach(({ id }) => {
-        const el = document.getElementById(id);
-        if (el && el.parentElement === main) main.appendChild(el);
-      });
-    }
-
-    function applySectionsVis() {
-      applySecOrder();
-      const vis = loadSectionsVis();
-      SECTION_DEFS.forEach(({ id }) => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = isSectionVisible(id, vis) && isSectionDataOpen(el) ? "" : "none";
-      });
-    }
-
-    function renderSecChecks() {
-      const container = document.getElementById("secChecks");
-      if (!container) return;
-      const vis = loadSectionsVis();
-      const ordered = getEffectiveOrder();
-      container.innerHTML = ordered.map(({ id, label }) =>
-        `<label class="sec-check" draggable="true" data-id="${esc(id)}"><span class="drag-handle" title="Drag to reorder">⠿</span><input type="checkbox" id="scb-${esc(id)}" ${isSectionVisible(id, vis) ? "checked" : ""}> ${esc(label)}</label>`
-      ).join("");
-      let dragSrc = null;
-      container.querySelectorAll(".sec-check").forEach(row => {
-        row.addEventListener("dragstart", e => { dragSrc = row; e.dataTransfer.effectAllowed = "move"; });
-        row.addEventListener("dragover", e => {
-          e.preventDefault(); e.dataTransfer.dropEffect = "move";
-          if (row !== dragSrc) {
-            container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
-            row.classList.add("drag-over");
-          }
-        });
-        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
-        row.addEventListener("drop", e => {
-          e.preventDefault(); row.classList.remove("drag-over");
-          if (dragSrc && dragSrc !== row) {
-            container.insertBefore(dragSrc, row);
-            saveSectionsOrder([...container.querySelectorAll(".sec-check")].map(r => r.dataset.id));
-            applySecOrder();
-            // Same as the in-page drag grip: a manual reorder here makes this a Custom layout, so
-            // the next load's applySavedViewForCase() doesn't overwrite it with the active preset.
-            if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });
-          }
-        });
-        row.addEventListener("dragend", () => {
-          dragSrc = null;
-          container.querySelectorAll(".sec-check").forEach(r => r.classList.remove("drag-over"));
-        });
-      });
-    }
-
+    // Command palette registry (#238) moved to js/dashboard-palette-registry.js, and the section
+    // order/visibility code that shared its banner to js/dashboard-section-order.js (#415 tier 3).
+    if (typeof initPaletteConfig !== "undefined") initPaletteConfig();
+    else dfirFeatureUnavailable("Command palette registry");
     // ── Timeline row display toggles ───────────────────────────────────────────
     // Per-browser choice of which sub-elements appear in each forensic-timeline event row.
     // Timeline row display toggles moved to js/dashboard-timeline-display.js (#415 tier 3).
@@ -13479,7 +13295,7 @@
         .then(r => { if (r.ok) loadNotifications(); }).catch(() => {});
     }
 
-    applySectionsVis();
+    if (typeof applySectionsVis === "function") applySectionsVis();
 
     // Populate the case-ID combo box (datalist) with existing cases from the server, so the field
     // shows a dropdown of available cases while still accepting free text. Safe on older servers /
