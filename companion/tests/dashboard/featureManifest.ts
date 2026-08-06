@@ -292,6 +292,14 @@ export const FEATURES: Feature[] = [
     private: ["diagCopyText", "diagSupportText", "diagSupportFilename"],
   },
   {
+    // Report versions (#77). Its three controls were bound in the page's shared modal-wiring block,
+    // not in its own — the block wires nothing, which is not the same as nothing wiring the block.
+    file: "dashboard-report-versions.js",
+    initializer: "initReportVersions",
+    publish: ["initReportVersions", "openReportVersions", "closeReportVersions", "doReportVersionsDiff"],
+    private: ["rvReviewMode", "rvReviewers", "rvReleased"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

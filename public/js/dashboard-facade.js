@@ -106,6 +106,10 @@
     "diagCopy",
     "diagDownloadSupport",
     "diagPreviewSupport",
+    // Report versions (#77). `initReportVersions` is absent on purpose — the sentinel again.
+    "openReportVersions",
+    "closeReportVersions",
+    "doReportVersionsDiff",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
