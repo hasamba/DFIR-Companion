@@ -251,14 +251,24 @@ const rows = sections.map((sec) => {
   const publish = [...escaped.keys()].filter((n) => decls.get(n).kind === "fn");
   const stateEscapes = [...escaped.keys()].filter((n) => decls.get(n).kind === "var");
 
-  // CORE MACHINERY IS NOT A FEATURE, and the cohesion check cannot tell the difference. The
-  // "Cross-case capture warning" block reports as ONE cohesive cluster of 24 and is in fact the
-  // page's case-load path: connect(), the state save that every `if (DfirState.lastState())
-  // render(...)` refresh depends on, and the refresh fan-out itself. Extracting it passed every
-  // filter here and was rejected by two lifecycle gates — "a call runs ahead of the state save"
-  // and "no refresh fan-out found". Those gates are the check on this one; a section whose
-  // declarations include connect/proceedConnect is the page, not a feature.
+  // CORE MACHINERY IS NOT A FEATURE, and cohesion cannot tell the difference — so it is named
+  // instead of inferred. A section that declares any of these owns the page's own spine: the
+  // case-load path, the state save every `if (DfirState.lastState()) render(...)` refresh depends
+  // on, or the render entry points themselves. Extracting one takes the refresh fan-out with it.
   //
+  // This list is short and explicit on purpose. It was learned the expensive way: the "Cross-case
+  // capture warning" block reports as ONE cohesive cluster of 24 with three cleanly-fixable state
+  // escapes, passes every other filter here, and is the page's connect() path. Two lifecycle gates
+  // caught the extraction; nothing in this file did.
+  const CORE_MACHINERY = new Set([
+    "connect",
+    "proceedConnect",
+    "render",
+    "renderIocs",
+    "setLastState",
+    "dfirFeatureUnavailable",
+  ]);
+
   // How hard the most-called published function is pulled on from outside. A feature's own entry
   // points have a handful of external callers; shared machinery has dozens. This is the check on
   // the boundaries themselves: banner comments are the author's grouping, not a guarantee that
@@ -284,6 +294,7 @@ const rows = sections.map((sec) => {
   // genuinely standalone helper — but a block reporting three components deserves a look before its
   // line range is trusted.
   const ownArr = own.map(([n]) => n);
+  const coreMachinery = ownArr.filter((n) => CORE_MACHINERY.has(n)).sort();
   const idx = new Map(ownArr.map((n, i) => [n, i]));
   const parent = ownArr.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
@@ -344,6 +355,8 @@ const rows = sections.map((sec) => {
     foreignStanzas: [...foreignStanzaLines]
       .filter(([line]) => inSection(line))
       .map(([line, name]) => `${line} ${name}`),
+    coreMachinery,
+    isCoreMachinery: coreMachinery.length > 0,
     boundElsewhere: [...boundElsewhere].sort(),
     needsInitializer: dom > 0 || boundElsewhere.size > 0,
     clusters,
@@ -402,6 +415,8 @@ if (process.argv.includes("--update")) {
     "\nesc = state bindings read from outside the block (the blocker). Functions called from " +
       "outside\nare not counted: an extracted module publishes those onto `window`.\n" +
       "dom = DOM access at module scope, so the block needs its wiring wrapped in an initializer.\n" +
+      "core = the section declares one of the page's own spine functions (connect, render, the " +
+      "state save).\nIt is not a feature; extracting it takes the refresh fan-out with it.\n" +
       "fan = external call sites of its most-used function. Dozens means the block is holding " +
       "shared\nmachinery that a banner comment happened to enclose — read it before trusting its size.",
   );

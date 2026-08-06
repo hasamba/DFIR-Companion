@@ -37,6 +37,8 @@ const run = (): {
     needsInitializer: boolean;
     clusters: number[];
     looksLikeTwoFeatures: boolean;
+    coreMachinery: string[];
+    isCoreMachinery: boolean;
     foreignStanzas: string[];
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
@@ -445,6 +447,50 @@ describe("dashboard extraction inventory", () => {
         }),
       );
       expect(r.sections[0].foreignStanzas).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("names the sections that hold the page's own spine", () => {
+    // Cohesion cannot tell core machinery from a feature — machinery calls itself more tightly
+    // than any feature does. "Cross-case capture warning" reports as ONE cluster of 24 with three
+    // cleanly-fixable state escapes, passes every other filter, and is the page's connect() path;
+    // extracting it took the refresh fan-out with it and two lifecycle gates rejected it. So the
+    // spine functions are named rather than inferred.
+    const flagged = report.sections.filter((s) => s.isCoreMachinery);
+    expect(flagged.length, "the core-machinery list matches nothing — it has gone stale").toBeGreaterThan(0);
+    const byLabel = Object.fromEntries(flagged.map((s) => [s.label.slice(0, 20), s.coreMachinery]));
+    expect(byLabel["Cross-case capture w"], "the block that taught this lesson").toContain("connect");
+    for (const s of report.sections) {
+      expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0);
+    }
+  });
+
+  it("does not flag an ordinary feature as core machinery", () => {
+    // The complement: without it, a list that matched everything would read as caution.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- An ordinary feature ----",
+        "  function loadThing() {}",
+        "  function renderThingRow() {}",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      // renderThingRow must NOT match on a prefix — the list is exact names, not shapes.
+      expect(r.sections[0].coreMachinery).toEqual([]);
+      expect(r.sections[0].isCoreMachinery).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
