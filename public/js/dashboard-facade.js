@@ -250,6 +250,21 @@
     "veloDuplicate",
     "veloDeleteBundle",
     "veloResetBuiltin",
+    // Import progress, the AI status banner and the custom importers. None has an initializer.
+    "showImportProgress",
+    "showImportProgressIndeterminate",
+    "hideImportProgress",
+    "cancelImportProgress",
+    "importPermissionMessage",
+    "readFileTextWithProgress",
+    "applyAiStatus",
+    "clearTransientStatus",
+    "loadImporters",
+    "impAdd",
+    "impReload",
+    "impSetPrecedence",
+    "impCopyPrompt",
+    "wlApplyToCase",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

@@ -260,6 +260,12 @@
   <script src="/js/dashboard-velo-monitors.js"></script>
   <!-- Velociraptor triage bundles. initVeloBundles() wires the builder controls. -->
   <script src="/js/dashboard-velo-bundles.js"></script>
+  <!-- Import progress bar helpers. No initializer. -->
+  <script src="/js/dashboard-import-progress.js"></script>
+  <!-- AI status banner. No initializer. -->
+  <script src="/js/dashboard-ai-status.js"></script>
+  <!-- Custom importers. No initializer. -->
+  <script src="/js/dashboard-custom-importers.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -7040,121 +7046,8 @@
       el.title = "AI: " + text;  // full text on hover (the badge truncates in the tight icons-only toolbar)
     }
 
-    // ── Import progress bar helpers ───────────────────────────────────────────
-    // The bar is a fixed strip whose ::after pseudo-element is driven by --ipb-w.
-    // Indeterminate mode uses a CSS animation on ::after instead of the custom property.
-    const _ipb = () => document.getElementById("importProgressBar");
-    function showImportProgress(pct) {
-      const b = _ipb(); if (!b) return;
-      b.classList.remove("ipb-indeterminate");
-      b.classList.add("ipb-active");
-      b.style.setProperty("--ipb-w", Math.min(95, Math.max(0, pct)).toFixed(1) + "%");
-    }
-    function showImportProgressIndeterminate() {
-      const b = _ipb(); if (!b) return;
-      b.classList.remove("ipb-indeterminate");
-      b.classList.add("ipb-active");
-      void b.offsetWidth; // force reflow so the animation restarts cleanly
-      b.classList.add("ipb-indeterminate");
-    }
-    function hideImportProgress() {
-      const b = _ipb(); if (!b) return;
-      b.classList.remove("ipb-indeterminate");
-      b.style.setProperty("--ipb-w", "100%");
-      setTimeout(() => { b.classList.remove("ipb-active"); b.style.setProperty("--ipb-w", "0%"); }, 400);
-    }
-    function cancelImportProgress() {
-      const b = _ipb(); if (!b) return;
-      b.classList.remove("ipb-active", "ipb-indeterminate");
-      b.style.setProperty("--ipb-w", "0%");
-    }
-    function importPermissionMessage(caseId) {
-      const state = window.dfirAuthState;
-      if (!state || !state.enabled || !state.authenticated) return "";
-      if (state.identity && state.identity.globalRole === "administrator") return "";
-      const role = state.caseRoles && state.caseRoles[caseId];
-      if (role === "investigator" || role === "administrator") return "";
-      if (role) {
-        return `Your ${role} role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.`;
-      }
-      return "You do not have a case role that permits importing evidence. Ask a case administrator for the investigator or administrator role.";
-    }
-    // Read a File as text while driving the progress bar (0 → 40%).
-    function readFileTextWithProgress(file) {
-      return new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onprogress = (e) => { if (e.lengthComputable) showImportProgress((e.loaded / e.total) * 40); };
-        fr.onload = (e) => resolve(e.target.result);
-        fr.onerror = () => reject(new Error("file read failed"));
-        fr.readAsText(file);
-      });
-    }
-
-    function applyAiStatus(evt) {
-      if (evt.status === "analyzing") {
-        // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
-        const m = evt.detail && evt.detail.match(/import\s*[—\-]\s*(\d+)\/(\d+)/i);
-        if (m) { const d = +m[1], t = +m[2]; if (t > 0) showImportProgress(40 + (d / t) * 55); }
-        // Deterministic evidence import/ingest is NOT AI work: it runs even with AI switched off
-        // (resynthesizeInBackground gates the LLM on the per-case toggle server-side). The import
-        // routes only reuse this AI-status channel to drive the progress bar, so relabel their
-        // updates honestly instead of claiming "AI: processing…" while the AI is off. Import
-        // updates are recognisable by the detail text ("importing …" / "<kind> import — N/M");
-        // screenshot extraction + synthesis (genuine AI) keep the AI label.
-        // NOTE: the `!aiEnabled` fallback below is belt-and-suspenders for the AUTO live-analysis loop
-        // ONLY — aiEnabled is the per-case "live analysis paused/resumed" toggle, not "is AI configured".
-        // Manual on-demand AI (Re-synthesize, Second opinion, Ask …) can run while that toggle is OFF,
-        // so every server route emitting one of those MUST set `phase: "synthesizing"` (checked first,
-        // below) rather than relying on this fallback — otherwise a genuine AI call gets mislabeled
-        // "deterministic import — not AI" whenever the analyst has paused live analysis (found live: the
-        // second-opinion badge showed that exact false label with the toggle off — see aiSynthesis.ts).
-        const isIngest = !!m || (evt.detail && /^importing\b/i.test(evt.detail)) || !aiEnabled;
-        // Deep pass (#204) carries its own phase because its detail already reads as a full sentence
-        // ("deep pass (Medium+) — reading batch 2 of 5") and it is the longest AI run in the product:
-        // it must never fall through to the isIngest branch, which would label it a deterministic
-        // import whenever live analysis is paused — a deep pass runs regardless of that toggle.
-        if (evt.phase === "deep-pass") setAi("analyzing", evt.detail || "deep pass running…");
-        else if (evt.phase === "synthesizing") setAi("analyzing", "synthesizing findings… " + (evt.detail || ""));
-        else if (evt.detail && /^enriching IOC/.test(evt.detail)) {
-          const el = document.getElementById("aiStatus");
-          el.className = "ai-analyzing";
-          el.textContent = evt.detail;
-          el.title = evt.detail;
-        } else if (isIngest) {
-          const el = document.getElementById("aiStatus");
-          el.className = "ai-analyzing";
-          const label = evt.detail || "importing evidence…";
-          el.textContent = label;                                   // no "AI:" prefix — this is deterministic ingest
-          el.title = label + " (deterministic import — not AI)";
-        } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
-      } else if (evt.status === "idle") {
-        hideImportProgress();
-        setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
-        clearTransientStatus();  // re-synthesis finished → drop the "…re-synthesizing" line
-      } else if (evt.status === "error") {
-        hideImportProgress();
-        setAi("error", "error — " + (evt.detail || "see server log"));
-        clearTransientStatus();
-        // Imports are fire-and-forget (202 immediately, pipeline runs in the background) — when the
-        // Presidio approval gate stops one, there is no synchronous response to carry a 409, so this
-        // is how that case surfaces at all. Re-check the persisted pending list rather than assume
-        // the error text; it's cheap and this is the ONLY path a stopped import gets noticed on.
-        loadPresidioPending(activeCaseId);
-      }
-    }
-
-    // Reset the #status line to the normal connected state, but only when it is
-    // showing a transient background-work message (so we don't clobber e.g. a
-    // "report written: …" notice).
-    function clearTransientStatus() {
-      const el = document.getElementById("status");
-      // "catching up" is the optimistic message toggleAi() writes when AI is switched on; it must
-      // be cleared once the backfill reports idle, or it stays stuck (it's not a live indicator).
-      if (/synthesiz|applying scope|marking false positive|import|catching up/i.test(el.textContent)) {
-        el.textContent = ws && ws.readyState === 1 ? "connected (live)" : "disconnected";
-      }
-    }
-
+    // Import progress bar helpers moved to js/dashboard-import-progress.js (#415 tier 3).
+    // AI status banner moved to js/dashboard-ai-status.js (#415 tier 3).
     // ── Background jobs (#225) ──────────────────────────────────────────────────
     // MCP Analysis (#296) moved to js/dashboard-mcp.js (#415 tier 3). Its DOM wiring is an
     // initializer because that file is a <head> script: running it there would query #sec-mcp
@@ -8256,6 +8149,11 @@
       ["applySectionsVis", "Section order and visibility"],
       ["applyScope", "Scope filter"],
       ["loadAiToggle", "AI toggle"],
+      // importPermissionMessage is the read-only import guard. A stub returns undefined, which the
+      // caller reads as "allowed" — so this one going missing quietly is the worst case in the
+      // table, not the mildest.
+      ["importPermissionMessage", "Import progress and permission check"],
+      ["applyAiStatus", "AI status banner"],
     ]) {
       if (window.DfirFacade && window.DfirFacade.filled.includes(probe)) dfirFeatureUnavailable(label);
     }
@@ -12462,22 +12360,11 @@
 
     if (typeof initWhitelist !== "undefined") initWhitelist();
     else dfirFeatureUnavailable("IOC whitelist");
-    document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
     // NSRL known-good hashes (#63)
     if (typeof initNsrl !== "undefined") initNsrl();
     else dfirFeatureUnavailable("NSRL known-good hashes");
-    // Custom importers (declarative external plugin layer)
-    document.getElementById("impAddBtn").addEventListener("click", impAdd);
-    document.getElementById("impReloadBtn").addEventListener("click", impReload);
-    document.getElementById("impPromptBtn").addEventListener("click", impCopyPrompt);
-    document.getElementById("impPrecedence").addEventListener("change", impSetPrecedence);
-    document.getElementById("impList").addEventListener("click", e => {
-      const del = e.target.closest(".imp-del");
-      if (del) {
-        fetch("/importers/" + encodeURIComponent(del.dataset.id), { method: "DELETE" })
-          .then(r => { if (r.ok) loadImporters(); }).catch(() => {});
-      }
-    });
+    if (typeof initCustomImporters !== "undefined") initCustomImporters();
+    else dfirFeatureUnavailable("Custom importers");
     // CISA KEV catalog (#99) — js/dashboard-kev.js. THE BLOCK is guarded, not each call: three of
     // these four lines pass the handler as a REFERENCE, and a ReferenceError on an undeclared name
     // fires when the ARGUMENT is evaluated, before addEventListener is ever entered. Wrapping the
@@ -12614,109 +12501,9 @@
     // controls are bound by initDashboardViewsEditor(), called from the Settings block above.
     // Per-case report-template picker moved to js/dashboard-case-template-picker.js (#415).
     // IOC Whitelist moved to js/dashboard-ioc-whitelist.js (#415 tier 3).
-    // --- Custom importers (declarative external plugin layer) — global, Settings → Importers -------
-    function renderImporters(d) {
-      const list = document.getElementById("impList");
-      const status = document.getElementById("impStatus");
-      const cnt = document.getElementById("impCount");
-      const errBox = document.getElementById("impErrors");
-      const errCnt = document.getElementById("impErrCount");
-      const importers = (d && d.importers) || [];
-      const errors = (d && d.errors) || [];
-      const prec = document.getElementById("impPrecedence");
-      if (prec && d && d.precedence) prec.value = d.precedence;
-      if (cnt) cnt.textContent = importers.length ? `(${importers.length})` : "";
-      if (status) status.textContent = importers.length
-        ? `${importers.length} custom importer${importers.length !== 1 ? "s" : ""} loaded — applied on every matching import.`
-        : "No custom importers loaded — paste a definition below or drop one in the importers/ folder.";
-      if (list) {
-        list.innerHTML = importers.length ? importers.map(m =>
-          `<div data-safe-style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border-subtle);font-size:12px">`
-          + `<span data-safe-style="flex:1;word-break:break-all"><b>${esc(m.label)}</b> <code data-safe-style="color:var(--text-muted)">${esc(m.id)}</code></span>`
-          + `<span data-safe-style="flex:0 0 auto;color:var(--text-dim)">priority ${esc(m.priority)}</span>`
-          + `<button class="imp-del" data-id="${escAttr(m.id)}" title="Delete importer" data-safe-style="background:transparent;border:1px solid var(--danger-border);color:var(--tag-red-text);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
-          + `</div>`).join("") : "";
-      }
-      if (errCnt) errCnt.textContent = errors.length ? `(${errors.length})` : "";
-      if (errBox) {
-        errBox.innerHTML = errors.length ? errors.map(e =>
-          `<div data-safe-style="padding:2px 0">⚠ <code>${esc(e.file)}</code>: ${esc((e.errors || []).map(x => x.path + " — " + x.message).join("; "))}</div>`
-        ).join("") : "";
-      }
-    }
-    function loadImporters() {
-      const status = document.getElementById("impStatus");
-      fetch("/importers")
-        .then(r => {
-          if (!r.ok) throw new Error(r.status === 404 ? "404" : "HTTP " + r.status);
-          return r.json();
-        })
-        .then(renderImporters)
-        .catch(e => { if (status) status.textContent = e.message === "404" ? "Restart the companion server — /importers 404 (server is stale)." : "Could not load importers: " + e.message; });
-    }
-    function impAdd() {
-      const box = document.getElementById("impPasteBox");
-      const msg = document.getElementById("impMsg");
-      let spec;
-      try { spec = JSON.parse(box.value); }
-      catch (e) { msg.textContent = "Not valid JSON: " + e.message; return; }
-      msg.textContent = "adding…";
-      fetch("/importers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec }) })
-        .then(async r => {
-          const j = await r.json().catch(() => ({}));
-          if (r.ok) { msg.textContent = "Added " + (j.id || "importer"); box.value = ""; loadImporters(); }
-          else if (r.status === 404) { msg.textContent = "Restart the companion server — /importers 404 (server is stale)."; }
-          else { msg.textContent = "Invalid: " + ((j.errors || []).map(x => x.path + " — " + x.message).join("; ") || j.error || "HTTP " + r.status); }
-        })
-        .catch(e => { msg.textContent = "failed: " + e.message; });
-    }
-    function impReload() {
-      const msg = document.getElementById("impMsg");
-      msg.textContent = "reloading…";
-      fetch("/importers/reload", { method: "POST" })
-        .then(async r => { if (!r.ok) throw new Error(r.status === 404 ? "Restart the companion server — /importers 404." : "HTTP " + r.status); return r.json(); })
-        .then(d => { msg.textContent = "reloaded"; renderImporters(d); loadImporters(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function impSetPrecedence(e) {
-      const msg = document.getElementById("impMsg");
-      const precedence = e.target.value;
-      fetch("/importers/precedence", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ precedence }) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(() => { msg.textContent = `precedence set to ${precedence}`; })
-        .catch(err => { msg.textContent = "failed: " + err.message + " — restart the server if the endpoint 404s."; });
-    }
-    function impCopyPrompt() {
-      const msg = document.getElementById("impMsg");
-      fetch("/importers/prompt")
-        .then(async r => { if (!r.ok) throw new Error(r.status === 404 ? "Restart the companion server — /importers 404." : "HTTP " + r.status); return r.json(); })
-        .then(j => navigator.clipboard.writeText(j.prompt || "").then(
-          () => { msg.textContent = "LLM prompt copied — paste it + your file sample into any LLM."; },
-          () => { msg.textContent = "Could not copy to clipboard — check browser permissions."; }
-        ))
-        .catch(e => { msg.textContent = e.message; });
-    }
-
-    function wlApplyToCase() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("wlApplyMsg");
-      if (!caseId) { msg.textContent = "load a case first"; return; }
-      msg.textContent = "applying…";
-      fetch(`/cases/${caseId}/ioc-whitelist/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => {
-          msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
-          if (j.legitimate) renderFalsePositives(j.legitimate);
-        })
-        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
-    }
-
-    // NSRL known-good hashes (#63) moved to js/dashboard-nsrl.js (#415 tier 3). Its nine controls
-    // are bound by initNsrl(), called from the Settings block above.
-
-    // Settings → Tools, MCP servers and the update check (#127) moved to
-    // js/dashboard-settings-tools.js (#415 tier 3). Three panels, one Settings screen; the banner
-    // here named only the last of them.
+    // Custom importers moved to js/dashboard-custom-importers.js (#415 tier 3).
+    // wlApplyToCase went home to js/dashboard-ioc-whitelist.js — it was only ever here by
+    // position.
     if (typeof initSettingsTools !== "undefined") initSettingsTools();
     else dfirFeatureUnavailable("Settings tools and update check");
     // --- Notifications (issue #58) — Slack/Teams/SMTP channels, Settings → Notifications ----------

@@ -38,11 +38,14 @@ describe("team authentication UI", () => {
     expect(pickerAt).toBeGreaterThan(guardAt);
     expect(dashboard).toContain("investigator or administrator role");
     expect(dashboard).toContain("cancelImportProgress()");
-    // And the guard is not merely present-and-ordered: importPermissionMessage still lives in the
-    // page, so the module reaching it at all is what makes the check real rather than a local
-    // stub that always returns "".
-    const page = await loadPublic("dashboard.html");
-    expect(page).toMatch(/function importPermissionMessage\(/);
+    // And the guard is not merely present-and-ordered. importPermissionMessage now lives in
+    // js/dashboard-import-progress.js (#415 tier 3) — it must be declared THERE and nowhere in the
+    // module that calls it, because a local copy would be a stub that always allows the import.
+    const guard = await loadPublic("js/dashboard-import-progress.js");
+    expect(guard).toMatch(/function importPermissionMessage\(/);
+    expect(dashboard, "a local copy would defeat the check it is asked to make").not.toMatch(
+      /function importPermissionMessage\(/,
+    );
   });
 
   it("uses the same six-character minimum and account wording on the HTML pages", async () => {

@@ -578,7 +578,7 @@ export const FEATURES: Feature[] = [
     // Five of six bindings moved: wlApplyBtn calls wlApplyToCase, declared below the block.
     file: "dashboard-ioc-whitelist.js",
     initializer: "initWhitelist",
-    publish: ["initWhitelist", "loadWhitelist", "wlAddRule", "wlImport", "wlExport"],
+    publish: ["initWhitelist", "loadWhitelist", "wlAddRule", "wlImport", "wlExport", "wlApplyToCase"],
     private: [],
   },
   {
@@ -725,6 +725,39 @@ export const FEATURES: Feature[] = [
       "veloDuplicate",
       "veloDeleteBundle",
       "veloResetBuiltin",
+    ],
+    private: [],
+  },
+  {
+    // Import progress bar helpers. Split from the AI status banner that shared its heading.
+    file: "dashboard-import-progress.js",
+    publish: [
+      "showImportProgress",
+      "showImportProgressIndeterminate",
+      "hideImportProgress",
+      "cancelImportProgress",
+      "importPermissionMessage",
+      "readFileTextWithProgress",
+    ],
+    private: ["_ipb"],
+  },
+  {
+    // The AI status banner — the singleton cluster under that heading.
+    file: "dashboard-ai-status.js",
+    publish: ["applyAiStatus", "clearTransientStatus"],
+    private: [],
+  },
+  {
+    // Custom importers. wlApplyToCase sat here by position and went home to the whitelist module.
+    file: "dashboard-custom-importers.js",
+    initializer: "initCustomImporters",
+    publish: [
+      "initCustomImporters",
+      "loadImporters",
+      "impAdd",
+      "impReload",
+      "impSetPrecedence",
+      "impCopyPrompt",
     ],
     private: [],
   },

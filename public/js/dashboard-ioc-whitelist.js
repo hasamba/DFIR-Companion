@@ -106,8 +106,45 @@
     window.open(`/ioc-whitelist/export?format=${format}`, "_blank");
   }
 
+  // Reunited with the feature it belongs to. It sat in the custom-importers block by position,
+  // which is why the whitelist extraction had to leave its button wired in the page.
+  function wlApplyToCase() {
+    const caseId = document.getElementById("caseId").value.trim();
+    const msg = document.getElementById("wlApplyMsg");
+    if (!caseId) {
+      msg.textContent = "load a case first";
+      return;
+    }
+    msg.textContent = "applying…";
+    fetch(`/cases/${caseId}/ioc-whitelist/apply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+      .then(async (r) => {
+        if (!r.ok)
+          throw new Error(
+            (await r.json().catch(() => ({}))).error || "HTTP " + r.status,
+          );
+        return r.json();
+      })
+      .then((j) => {
+        msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
+        if (j.legitimate) renderFalsePositives(j.legitimate);
+      })
+      .catch((e) => {
+        msg.textContent =
+          "failed: " +
+          e.message +
+          " — restart the server if the endpoint 404s.";
+      });
+  }
+
   // The controls the page bound at module scope. Order unchanged.
   function initWhitelist() {
+    document
+      .getElementById("wlApplyBtn")
+      .addEventListener("click", wlApplyToCase);
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", (e) => {
       if (e.key === "Enter") wlAddRule();
@@ -125,5 +162,6 @@
   window.wlAddRule = wlAddRule;
   window.wlImport = wlImport;
   window.wlExport = wlExport;
+  window.wlApplyToCase = wlApplyToCase;
   window.initWhitelist = initWhitelist;
 })();
