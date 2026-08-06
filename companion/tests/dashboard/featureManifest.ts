@@ -643,6 +643,20 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Finding assignment + workflow status (#87). Split out of a banner that also covered Pinned
+    // findings; the cohesion check reported clusters of 7 and 10 and was right.
+    file: "dashboard-finding-workflow.js",
+    publish: ["loadFindingWorkflow", "findingWorkflowControls", "setFindingWorkflowStatus", "assignFinding"],
+    private: ["workflowByFinding", "FINDING_WF_STATUS_LABELS"],
+  },
+  {
+    // Pinned findings (#220) — the other half of that banner. Nothing here references the feature
+    // above it and nothing there references this.
+    file: "dashboard-pinned-findings.js",
+    publish: ["renderPinned", "togglePin"],
+    private: ["pinDragActive", "_pinnedSig", "pinMsgTimer"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

@@ -544,6 +544,8 @@
     "ROUTE GET /js/dashboard-data-act.js",
     "ROUTE GET /js/dashboard-tooltip.js",
     "ROUTE GET /js/dashboard-presentation-mode.js",
+    "ROUTE GET /js/dashboard-finding-workflow.js",
+    "ROUTE GET /js/dashboard-pinned-findings.js",
     "ROUTE GET /js/dashboard-facade.js",
     "ROUTE GET /js/a11y/modal-autowire.js",
     "ROUTE GET /js/a11y/modal.js",

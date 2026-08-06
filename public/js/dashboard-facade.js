@@ -216,6 +216,14 @@
     "setImportSevPref",
     "syncImportSevDefaultSelect",
     "openMergeModal",
+    // Finding workflow and pinned findings — neither has an initializer, so every published name
+    // is a work function and the facade's `filled` list is how each reports a missing file.
+    "loadFindingWorkflow",
+    "findingWorkflowControls",
+    "setFindingWorkflowStatus",
+    "assignFinding",
+    "renderPinned",
+    "togglePin",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
