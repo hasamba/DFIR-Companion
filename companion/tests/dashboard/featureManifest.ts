@@ -520,6 +520,27 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Save as Template. Both controls were bound by assigning the function as a value.
+    file: "dashboard-save-template.js",
+    initializer: "initSaveTemplate",
+    publish: ["initSaveTemplate", "openSaveTemplate", "closeSaveTemplate", "saveAsTemplate"],
+    private: [],
+  },
+  {
+    // ZIP case archive — the unencrypted sibling of dashboard-encrypted-export.js.
+    file: "dashboard-zip-archive.js",
+    initializer: "initZipArchive",
+    publish: ["initZipArchive", "openZipArchive", "closeZipArchive", "doZipArchive"],
+    private: [],
+  },
+  {
+    // Timeline row display toggles.
+    file: "dashboard-timeline-display.js",
+    initializer: "initTimelineDisplay",
+    publish: ["initTimelineDisplay", "loadTlDisplay", "renderTlChecks", "applyTlDisplayFromChecks", "tlShow"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

@@ -215,6 +215,12 @@
   <script src="/js/dashboard-settings-modal.js"></script>
   <!-- Responsive toolbar. Wiring only. -->
   <script src="/js/dashboard-toolbar-responsive.js"></script>
+  <!-- Save as Template. initSaveTemplate() binds its two controls. -->
+  <script src="/js/dashboard-save-template.js"></script>
+  <!-- ZIP case archive. initZipArchive() binds its three. -->
+  <script src="/js/dashboard-zip-archive.js"></script>
+  <!-- Timeline row display toggles. initTimelineDisplay() binds the checkbox list. -->
+  <script src="/js/dashboard-timeline-display.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -11415,44 +11421,7 @@
         descEl.style.display = "none";
       }
     }
-    // ── Save as Template ──────────────────────────────────────────────────────────────────
-    function openSaveTemplate() {
-      document.getElementById("stName").value = "";
-      document.getElementById("stDesc").value = "";
-      document.getElementById("stMsg").textContent = "";
-      document.getElementById("saveTemplateOverlay").classList.add("open");
-      document.getElementById("stName").focus();
-    }
-    function closeSaveTemplate() { document.getElementById("saveTemplateOverlay").classList.remove("open"); }
-    async function saveAsTemplate() {
-      const name = document.getElementById("stName").value.trim();
-      const description = document.getElementById("stDesc").value.trim();
-      const msg = document.getElementById("stMsg");
-      if (!name) { msg.textContent = "template name is required"; return; }
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) { msg.textContent = "no case loaded"; return; }
-      msg.textContent = "saving…";
-      try {
-        // Collect the current case's key questions to pre-populate the template
-        const state = await fetch(`/cases/${encodeURIComponent(caseId)}/state`).then(r => r.ok ? r.json() : null);
-        const initialKeyQuestions = (state?.keyQuestions ?? []).map(q => q.question).filter(Boolean);
-        const res = await fetch("/templates", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name, description, initialKeyQuestions, recommendedImports: [], huntPlatforms: [], severityFloor: null }),
-        });
-        if (res.status === 201) {
-          _cachedTemplates = null; // invalidate cache
-          closeSaveTemplate();
-          document.getElementById("status").textContent = "template saved";
-        } else {
-          const body = await res.json().catch(() => ({}));
-          msg.textContent = "save failed: HTTP " + res.status + (body.error ? " — " + body.error : "");
-        }
-      } catch (err) {
-        msg.textContent = "save failed: " + err.message;
-      }
-    }
-
+    // Save as Template moved to js/dashboard-save-template.js (#415 tier 3).
     // ── IOC block-list export (#87) ──────────────────────────────────────────
     function openIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.add("open"); }
     function closeIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.remove("open"); }
@@ -11475,41 +11444,7 @@
     }
 
     // Redacted case export (#54) moved to js/dashboard-redacted-export.js (#415 tier 3).
-    // ── ZIP case archive (unencrypted, "(no password)" in the filename) ─────
-    function openZipArchive() {
-      document.getElementById("zaRemoveFromList").checked = false;
-      document.getElementById("zaMsg").textContent = "";
-      document.getElementById("zipArchiveOverlay").classList.add("open");
-    }
-    function closeZipArchive() { document.getElementById("zipArchiveOverlay").classList.remove("open"); }
-    async function doZipArchive() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("zaMsg");
-      if (!caseId) { msg.textContent = "no case loaded"; return; }
-      const removeFromList = document.getElementById("zaRemoveFromList").checked;
-      const btn = document.getElementById("zaArchive");
-      btn.disabled = true;
-      msg.textContent = "archiving… (may take a while for large cases)";
-      try {
-        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/archive`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ removeFromList }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
-        closeZipArchive();
-        loadCaseLifecycle(caseId);
-        loadCaseList();
-        document.getElementById("status").textContent = removeFromList
-          ? "case archived to ZIP and removed from the active list"
-          : "case archived to ZIP";
-      } catch (err) {
-        msg.textContent = "archive failed: " + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    // Encrypted case archive export moved to js/dashboard-encrypted-export.js (#415 tier 3).
+    // ZIP case archive moved to js/dashboard-zip-archive.js (#415 tier 3).
     // ── Delete case (optionally archive first) ────────────────────────────────
     function openDeleteCase() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -12228,9 +12163,8 @@
     document.getElementById("newCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "newCaseOverlay") closeNewCase(); });
     ["ncCaseId", "ncName", "ncInvestigator"].forEach((id) =>
       document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
-    document.getElementById("stSave").onclick = saveAsTemplate;
-    document.getElementById("stCancel").onclick = closeSaveTemplate;
-    document.getElementById("saveTemplateOverlay").addEventListener("click", (e) => { if (e.target.id === "saveTemplateOverlay") closeSaveTemplate(); });
+    if (typeof initSaveTemplate !== "undefined") initSaveTemplate();
+    else dfirFeatureUnavailable("Save as Template");
     document.getElementById("blDlTxt").onclick = () => downloadIocBlocklist("txt");
     document.getElementById("blDlCsv").onclick = () => downloadIocBlocklist("csv");
     document.getElementById("blDlStix").onclick = () => downloadIocBlocklist("stix");
@@ -12249,9 +12183,8 @@
     else dfirFeatureUnavailable("Reproducible analysis runs");
     if (typeof initEncryptedExport !== "undefined") initEncryptedExport();
     else dfirFeatureUnavailable("Encrypted case archive export");
-    document.getElementById("zaArchive").onclick = doZipArchive;
-    document.getElementById("zaCancel").onclick = closeZipArchive;
-    document.getElementById("zipArchiveOverlay").addEventListener("click", (e) => { if (e.target.id === "zipArchiveOverlay") closeZipArchive(); });
+    if (typeof initZipArchive !== "undefined") initZipArchive();
+    else dfirFeatureUnavailable("ZIP case archive");
     document.getElementById("dcDelete").onclick = doDeleteCase;
     document.getElementById("dcCancel").onclick = closeDeleteCase;
     document.getElementById("deleteCaseOverlay").addEventListener("click", (e) => { if (e.target.id === "deleteCaseOverlay") closeDeleteCase(); });
@@ -13196,44 +13129,7 @@
 
     // ── Timeline row display toggles ───────────────────────────────────────────
     // Per-browser choice of which sub-elements appear in each forensic-timeline event row.
-    // The timestamp + message are always shown ("the event itself"); everything else is opt-out.
-    // Default = all ON (current behavior). Read by renderTimelineEvents via tlShow().
-    const TL_DISPLAY_KEY = "dfir.tlDisplay";
-    const TL_FIELDS = [
-      ["icons",    "Action icons (★ star · 💬 comment · 🏷 tag · 🔍 hunt · 💡 explain · 📍 map)"],
-      ["tags",     "Analyst tag pills"],
-      ["badges",   "Badges (×count · ⊕ sources · chain · NEW)"],
-      ["host",     "Host / asset chip"],
-      ["mitre",    "MITRE techniques"],
-      ["findings", "Related findings"],
-      ["evidence", "Evidence links"],
-    ];
-    function loadTlDisplay() {
-      try { return JSON.parse(localStorage.getItem(TL_DISPLAY_KEY) || "{}"); } catch { return {}; }
-    }
-    // A field is shown unless the user explicitly turned it off (default ON).
-    function tlShow(key, d) { d = d || loadTlDisplay(); return d[key] !== false; }
-    function saveTlDisplay(d) {
-      try { localStorage.setItem(TL_DISPLAY_KEY, JSON.stringify(d)); } catch {}
-    }
-    function renderTlChecks() {
-      const container = document.getElementById("tlDisplayChecks");
-      if (!container) return;
-      const d = loadTlDisplay();
-      container.innerHTML = TL_FIELDS.map(([key, label]) =>
-        `<label class="sec-check" data-safe-style="cursor:pointer"><input type="checkbox" class="tl-disp-cb" data-key="${esc(key)}" ${tlShow(key, d) ? "checked" : ""}> ${esc(label)}</label>`
-      ).join("");
-    }
-    // Apply the checkbox states → localStorage and re-render the timeline immediately.
-    function applyTlDisplayFromChecks() {
-      const d = {};
-      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { d[cb.dataset.key] = cb.checked; });
-      saveTlDisplay(d);
-      if (typeof DfirState.lastFt() !== "undefined") renderTimelineEvents(DfirState.lastFt());
-    }
-
-    // ── Dashboard view presets (#142) ─────────────────────────────────────────
-    // Named role/phase layouts fetched from the server (GET /dashboard-views). Picking one
+    // Timeline row display toggles moved to js/dashboard-timeline-display.js (#415 tier 3).
     // re-arranges panels (reusing the section show/hide + order machinery above) and applies a
     // severity / top-N filter to the findings list and forensic timeline. The choice is remembered
     // per-case in this browser. "Custom" = no preset (your own layout, no view filter).
@@ -14220,15 +14116,8 @@
       setImportSevPref(v, !!v);
     });
     // Timeline row display — apply immediately on any change (toggle or select/deselect all).
-    document.getElementById("tlDisplayChecks").addEventListener("change", applyTlDisplayFromChecks);
-    document.getElementById("tlSelectAll").addEventListener("click", () => {
-      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { cb.checked = true; });
-      applyTlDisplayFromChecks();
-    });
-    document.getElementById("tlDeselectAll").addEventListener("click", () => {
-      document.querySelectorAll("#tlDisplayChecks .tl-disp-cb").forEach(cb => { cb.checked = false; });
-      applyTlDisplayFromChecks();
-    });
+    if (typeof initTimelineDisplay !== "undefined") initTimelineDisplay();
+    else dfirFeatureUnavailable("Timeline row display");
     document.querySelectorAll(".stab").forEach(btn => {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.stab;

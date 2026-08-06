@@ -184,6 +184,17 @@
     "openSettingsTab",
     "closeSettingsModal",
     "openSettingsModal",
+    // Save as Template, the ZIP archive and the timeline row toggles. Initializers are sentinels.
+    "openSaveTemplate",
+    "closeSaveTemplate",
+    "saveAsTemplate",
+    "openZipArchive",
+    "closeZipArchive",
+    "doZipArchive",
+    "loadTlDisplay",
+    "renderTlChecks",
+    "applyTlDisplayFromChecks",
+    "tlShow",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
