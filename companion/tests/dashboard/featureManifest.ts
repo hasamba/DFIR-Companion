@@ -762,6 +762,30 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Dashboard view PRESETS (#142) — applying a saved layout. Not the views EDITOR of the same
+    // issue number, which is a separate module.
+    file: "dashboard-view-presets.js",
+    initializer: "initViewPresets",
+    publish: [
+      "initViewPresets",
+      "viewFilters",
+      "viewMeetsMinSev",
+      "viewTopN",
+      "applyDashboardView",
+      "applySavedViewForCase",
+      "loadDashboardViews",
+    ],
+    private: ["RT_FRIENDLY"],
+  },
+  {
+    // The .env settings form. loadedEnvValues is why the IIFE matters: it is the snapshot that
+    // decides which integration groups get rebuilt on save (#178).
+    file: "dashboard-env-settings.js",
+    initializer: "initEnvSettings",
+    publish: ["initEnvSettings", "fetchEnvSettings", "saveSettings"],
+    private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

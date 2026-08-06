@@ -210,6 +210,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-ai-status.js": "application/javascript; charset=utf-8",
   // Custom importers — the declarative external plugin layer.
   "/js/dashboard-custom-importers.js": "application/javascript; charset=utf-8",
+  // Dashboard view presets (#142) — the saved panel layouts, and applying one to the page.
+  "/js/dashboard-view-presets.js": "application/javascript; charset=utf-8",
+  // The .env settings form — read, test Presidio, and save only the groups that changed.
+  "/js/dashboard-env-settings.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.
