@@ -899,6 +899,30 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Second LLM opinion (#116). Two sources: the section, and the button + panel handler that
+    // dashboard-search-scope.js had been carrying since an earlier extraction swept them in. The
+    // capability flags cross as a setter (the /health poller writes them) and a predicate.
+    file: "dashboard-second-opinion.js",
+    initializer: "initSecondOpinion",
+    publish: [
+      "initSecondOpinion",
+      "setSecondOpinionCapabilities",
+      "isFpAiConfigured",
+      "loadSecondOpinion",
+      "renderSecondOpinion",
+      "runSecondOpinion",
+      "applySecondOpinionDelta",
+      "applyAllSecondOpinion",
+    ],
+    private: [
+      "soCollapsed",
+      "SO_COLLAPSE_KEY",
+      "lastSecondOpinionRec",
+      "secondOpinionEnabled",
+      "fpAiConfigured",
+    ],
+  },
+  {
     // Screenshot OCR full-text search. All-initializer: it was a self-calling IIFE, so it only ever
     // ran at load. Publishes nothing else — nothing outside it calls in.
     file: "dashboard-ocr-search.js",

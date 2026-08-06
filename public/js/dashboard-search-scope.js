@@ -301,37 +301,10 @@
               "synthesis error: " + e.message),
         );
     };
-    document.getElementById("secondOpinion").onclick = runSecondOpinion;
-    // Delegated accept/reject clicks on the second-opinion panel.
-    document
-      .getElementById("secondOpinionPanel")
-      .addEventListener("click", (e) => {
-        const t = e.target.closest("button");
-        if (!t) return;
-        if (t.dataset.soToggle !== undefined) {
-          soCollapsed = !soCollapsed;
-          try {
-            localStorage.setItem(SO_COLLAPSE_KEY, soCollapsed ? "1" : "0");
-          } catch {}
-          renderSecondOpinion(lastSecondOpinionRec);
-          return;
-        }
-        const caseId = document.getElementById("caseId").value.trim();
-        if (!caseId) return;
-        if (t.dataset.soAccept)
-          applySecondOpinionDelta(caseId, t.dataset.soAccept, true);
-        else if (t.dataset.soReject)
-          applySecondOpinionDelta(caseId, t.dataset.soReject, false);
-        else if (t.dataset.soAll === "accept") {
-          if (
-            confirm(
-              "Accept ALL pending second-opinion deltas? This adds/edits the case findings, severities and ATT&CK techniques to match model B.",
-            )
-          )
-            applyAllSecondOpinion(caseId, true);
-        } else if (t.dataset.soAll === "reject")
-          applyAllSecondOpinion(caseId, false);
-      });
+    // The #secondOpinion button and the #secondOpinionPanel handler moved to their own feature
+    // (js/dashboard-second-opinion.js, #415). They were never search-scope's — an earlier
+    // extraction swept them in, and three of that feature's bindings stayed in the page to be
+    // read from here by bare name.
     document.getElementById("anonToggle").onclick = openAnonModal;
     document.getElementById("anonSave").onclick = saveAnon;
     document.getElementById("anonCancel").onclick = () =>

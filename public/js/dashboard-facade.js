@@ -317,6 +317,15 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Second LLM opinion. `initSecondOpinion` is the sentinel. The two capability answers are
+    // stubbed on purpose: falsy hides an AI button, which beats leaving a dead one on screen.
+    "setSecondOpinionCapabilities",
+    "isFpAiConfigured",
+    "loadSecondOpinion",
+    "renderSecondOpinion",
+    "runSecondOpinion",
+    "applySecondOpinionDelta",
+    "applyAllSecondOpinion",
     // Evidence Chain graph. `initEvidenceGraph` is the sentinel. hasEvidenceGraph is stubbed so the
     // refresh fan-out reads "no graph loaded" and skips it, rather than throwing mid-fan-out.
     "loadEvidenceGraph",
