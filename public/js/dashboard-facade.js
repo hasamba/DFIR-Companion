@@ -92,6 +92,20 @@
     "pbJumpFinding",
     "doSuggestPlaybookHunts",
     "resetPlaybookHuntSuggest",
+    // Health / Diagnostics (#118). `initDiagnostics` is absent on purpose — it is this module's
+    // sentinel, and stubbing it would swallow the "Health / Diagnostics" chip. The rest are work
+    // functions the Settings tab-switch calls.
+    "loadDiagnostics",
+    "renderPreflightStatus",
+    "loadPreflightStatus",
+    "loadCaseStats",
+    "loadClockSkew",
+    "clockSkewMutate",
+    "diagAiTest",
+    "diagComputeSizes",
+    "diagCopy",
+    "diagDownloadSupport",
+    "diagPreviewSupport",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

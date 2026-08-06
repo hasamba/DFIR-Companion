@@ -270,6 +270,28 @@ export const FEATURES: Feature[] = [
     private: ["playbookTasks", "pbOpenOnly", "pbDepsOpen", "pbHuntFlat", "pbHuntCollapsed"],
   },
   {
+    // Health / Diagnostics (#118). Its five controls were wired from the page's Settings block,
+    // which meant five bare references to this file evaluated at load; initDiagnostics() owns that
+    // binding now so the page guards one name instead of five.
+    file: "dashboard-diagnostics.js",
+    initializer: "initDiagnostics",
+    publish: [
+      "initDiagnostics",
+      "loadDiagnostics",
+      "renderPreflightStatus",
+      "loadPreflightStatus",
+      "loadCaseStats",
+      "loadClockSkew",
+      "clockSkewMutate",
+      "diagAiTest",
+      "diagComputeSizes",
+      "diagCopy",
+      "diagDownloadSupport",
+      "diagPreviewSupport",
+    ],
+    private: ["diagCopyText", "diagSupportText", "diagSupportFilename"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

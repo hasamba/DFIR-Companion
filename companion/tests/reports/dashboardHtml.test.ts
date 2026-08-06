@@ -538,8 +538,12 @@ describe("dashboard.html", () => {
     // Empty caseId must not attempt a fetch to a malformed URL — costFetch resolves to null instead.
     expect(html).toMatch(/const costFetch = caseId\s*\n\s*\? fetch/);
     // The card renders directly after "AI connectivity & config", not at the end of the panel.
+    // Whitespace-tolerant around the `+`: this concatenation lived on one line while it was in the
+    // inline block and prettier broke it across seven once the block moved to public/js. What the
+    // assertion is about is ORDER — the cost card between aiCard and importers — and that survived
+    // the move untouched, so pinning the one-line spelling would have failed for no reason.
     expect(html).toMatch(
-      /function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ window\.DfirDiagnostics\.renderAiCostCard\(cost\) \+ importers/,
+      /function renderDiagnostics\(report, cost\)[\s\S]*aiCard\s*\+\s*window\.DfirDiagnostics\.renderAiCostCard\(cost\)\s*\+\s*importers/,
     );
   });
 
