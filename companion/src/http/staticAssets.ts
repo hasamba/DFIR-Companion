@@ -162,6 +162,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-wizard-ai-step.js": "application/javascript; charset=utf-8",
   // Disk-space warning (#1) — the banner when the case volume is running out of room.
   "/js/dashboard-disk-warning.js": "application/javascript; charset=utf-8",
+  // IOC block-list export — the case's indicators as a firewall or proxy block list.
+  "/js/dashboard-ioc-blocklist.js": "application/javascript; charset=utf-8",
+  // Per-case report-template picker — which global template this case renders with.
+  "/js/dashboard-case-template-picker.js": "application/javascript; charset=utf-8",
+  // IOC Whitelist (Phase 2 of #66) — patterns marked never-interesting.
+  "/js/dashboard-ioc-whitelist.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

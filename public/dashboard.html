@@ -225,6 +225,12 @@
   <script src="/js/dashboard-wizard-ai-step.js"></script>
   <!-- Disk-space warning (#1). initDiskWarning() captures and wires the dismiss button. -->
   <script src="/js/dashboard-disk-warning.js"></script>
+  <!-- IOC block-list export. initIocBlocklist() binds its controls. -->
+  <script src="/js/dashboard-ioc-blocklist.js"></script>
+  <!-- Per-case report-template picker. initCaseTemplatePicker() binds its select. -->
+  <script src="/js/dashboard-case-template-picker.js"></script>
+  <!-- IOC Whitelist. initWhitelist() binds five of its six controls. -->
+  <script src="/js/dashboard-ioc-whitelist.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -11426,29 +11432,7 @@
       }
     }
     // Save as Template moved to js/dashboard-save-template.js (#415 tier 3).
-    // ── IOC block-list export (#87) ──────────────────────────────────────────
-    function openIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.add("open"); }
-    function closeIocBlocklist() { document.getElementById("iocBlocklistOverlay").classList.remove("open"); }
-    function downloadIocBlocklist(format) {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const c = encodeURIComponent(caseId);
-      const minSev = document.getElementById("blMinSev").value;
-      const types = [];
-      if (document.getElementById("blTypeIp").checked) types.push("ip");
-      if (document.getElementById("blTypeDomain").checked) types.push("domain");
-      if (document.getElementById("blTypeUrl").checked) types.push("url");
-      if (document.getElementById("blTypeHash").checked) types.push("hash");
-      if (document.getElementById("blTypeEmail").checked) types.push("email");
-      const verdictOnly = document.getElementById("blVerdictOnly").checked;
-      const params = new URLSearchParams({ format, minSeverity: minSev, types: types.join(",") });
-      if (verdictOnly) params.set("verdictOnly", "true");
-      window.location.href = `/cases/${c}/export/ioc-blocklist?${params}`;
-      closeIocBlocklist();
-    }
-
-    // Redacted case export (#54) moved to js/dashboard-redacted-export.js (#415 tier 3).
-    // ZIP case archive moved to js/dashboard-zip-archive.js (#415 tier 3).
+    // IOC block-list export moved to js/dashboard-ioc-blocklist.js (#415 tier 3).
     // ── Delete case (optionally archive first) ────────────────────────────────
     function openDeleteCase() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -12169,11 +12153,8 @@
       document.getElementById(id).addEventListener("keydown", (e) => { if (e.key === "Enter") createNewCase(); }));
     if (typeof initSaveTemplate !== "undefined") initSaveTemplate();
     else dfirFeatureUnavailable("Save as Template");
-    document.getElementById("blDlTxt").onclick = () => downloadIocBlocklist("txt");
-    document.getElementById("blDlCsv").onclick = () => downloadIocBlocklist("csv");
-    document.getElementById("blDlStix").onclick = () => downloadIocBlocklist("stix");
-    document.getElementById("blCancel").onclick = closeIocBlocklist;
-    document.getElementById("iocBlocklistOverlay").addEventListener("click", (e) => { if (e.target.id === "iocBlocklistOverlay") closeIocBlocklist(); });
+    if (typeof initIocBlocklist !== "undefined") initIocBlocklist();
+    else dfirFeatureUnavailable("IOC block-list export");
     if (typeof initRedactedExport !== "undefined") initRedactedExport();
     else dfirFeatureUnavailable("Redacted case export");
     // Report versions (#77) binds its own three controls in initReportVersions() — see
@@ -13899,17 +13880,15 @@
     else dfirFeatureUnavailable("Report templates");
     document.getElementById("rtAccentPick").addEventListener("input", e => { document.getElementById("rtAccent").value = e.target.value; });
     document.getElementById("rtAccent").addEventListener("change", e => { try { document.getElementById("rtAccentPick").value = e.target.value.trim(); } catch (err) {} });
-    document.getElementById("rm-reportTemplate").addEventListener("change", saveCaseTemplate);
+    if (typeof initCaseTemplatePicker !== "undefined") initCaseTemplatePicker();
+    else dfirFeatureUnavailable("Report template picker");
 
     // Dashboard Views editor wiring (#142)
     if (typeof initDashboardViewsEditor !== "undefined") initDashboardViewsEditor();
     else dfirFeatureUnavailable("Dashboard Views editor");
 
-    document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
-    document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
-    document.getElementById("wlImportBtn").addEventListener("click", wlImport);
-    document.getElementById("wlExportCsvBtn").addEventListener("click", () => wlExport("csv"));
-    document.getElementById("wlExportJsonBtn").addEventListener("click", () => wlExport("json"));
+    if (typeof initWhitelist !== "undefined") initWhitelist();
+    else dfirFeatureUnavailable("IOC whitelist");
     document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
     // NSRL known-good hashes (#63)
     if (typeof initNsrl !== "undefined") initNsrl();
@@ -14060,80 +14039,8 @@
 
     // Dashboard Views editor (#142) moved to js/dashboard-views-editor.js (#415 tier 3). Its four
     // controls are bound by initDashboardViewsEditor(), called from the Settings block above.
-    // --- Per-case report-template picker (in Case Details) -------------------------------
-    function refreshCaseTemplatePicker() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (caseId) loadCaseTemplatePicker(caseId);
-    }
-    function loadCaseTemplatePicker(caseId) {
-      const sel = document.getElementById("rm-reportTemplate");
-      if (!sel) return;
-      Promise.all([
-        fetch("/report-templates").then(r => r.ok ? r.json() : []).catch(() => []),
-        fetch(`/cases/${encodeURIComponent(caseId)}/report-template`).then(r => r.ok ? r.json() : { templateId: "standard" }).catch(() => ({ templateId: "standard" })),
-      ]).then(([list, ctrl]) => {
-        const templates = Array.isArray(list) ? list : [];
-        sel.innerHTML = templates.map(t => `<option value="${escAttr(t.id)}">${esc(t.name || t.id)}</option>`).join("");
-        // If the saved selection was since deleted, show the default (the report already falls back to it).
-        const want = ctrl.templateId || "standard";
-        sel.value = templates.some(t => t.id === want) ? want : "standard";
-      });
-    }
-    function saveCaseTemplate() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const templateId = document.getElementById("rm-reportTemplate").value;
-      fetch(`/cases/${encodeURIComponent(caseId)}/report-template`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId }) })
-        .catch(() => {});
-    }
-
-    // --- IOC Whitelist (Phase 2 of #35) — global known-good patterns, Settings → IOC Whitelist ----
-    function renderWhitelist(rules) {
-      const el = document.getElementById("wlList");
-      const cnt = document.getElementById("wlCount");
-      if (cnt) cnt.textContent = rules.length ? `(${rules.length})` : "";
-      if (!el) return;
-      if (!rules.length) { el.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px;padding:4px'>No rules yet — add one above or import.</div>"; return; }
-      el.innerHTML = rules.map(r => {
-        const type = r.iocType ? `<span data-safe-style="color:var(--text-muted)">${esc(r.iocType)}</span> ` : "";
-        const note = r.note ? ` <span data-safe-style="color:var(--text-dim)">— ${esc(r.note)}</span>` : "";
-        return `<div data-safe-style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border-subtle);font-size:12px">`
-          + `<span data-safe-style="color:var(--accent);flex:0 0 46px">${esc(r.match)}</span>`
-          + `<span data-safe-style="flex:1;font-family:monospace;word-break:break-all">${esc(r.pattern)}</span>`
-          + `<span data-safe-style="flex:0 0 auto">${type}${note}</span>`
-          + `<button class="wl-del" data-id="${escAttr(r.id)}" title="Delete rule" data-safe-style="background:transparent;border:1px solid var(--danger-border);color:var(--tag-red-text);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
-          + `</div>`;
-      }).join("");
-    }
-    function loadWhitelist() {
-      fetch("/ioc-whitelist").then(r => r.json()).then(renderWhitelist).catch(() => {});
-    }
-    function wlAddRule() {
-      const match = document.getElementById("wlMatch").value;
-      const pattern = document.getElementById("wlPattern").value.trim();
-      const iocType = document.getElementById("wlType").value;
-      const note = document.getElementById("wlNote").value.trim();
-      const msg = document.getElementById("wlMsg");
-      if (!pattern) { msg.textContent = "pattern is required"; return; }
-      msg.textContent = "adding…";
-      fetch("/ioc-whitelist", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ match, pattern, iocType, note }) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(() => { document.getElementById("wlPattern").value = ""; document.getElementById("wlNote").value = ""; msg.textContent = ""; loadWhitelist(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function wlImport() {
-      const text = document.getElementById("wlImportText").value;
-      const msg = document.getElementById("wlMsg");
-      if (!text.trim()) { msg.textContent = "paste CSV or JSON first"; return; }
-      msg.textContent = "importing…";
-      fetch("/ioc-whitelist/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => { msg.textContent = `imported ${j.added} new rule${j.added !== 1 ? "s" : ""} (${j.parsed} parsed)`; document.getElementById("wlImportText").value = ""; loadWhitelist(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function wlExport(format) { window.open(`/ioc-whitelist/export?format=${format}`, "_blank"); }
-
+    // Per-case report-template picker moved to js/dashboard-case-template-picker.js (#415).
+    // IOC Whitelist moved to js/dashboard-ioc-whitelist.js (#415 tier 3).
     // --- Custom importers (declarative external plugin layer) — global, Settings → Importers -------
     function renderImporters(d) {
       const list = document.getElementById("impList");

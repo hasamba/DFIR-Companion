@@ -557,6 +557,31 @@ export const FEATURES: Feature[] = [
     private: ["diskWarnDismissed"],
   },
   {
+    file: "dashboard-ioc-blocklist.js",
+    initializer: "initIocBlocklist",
+    publish: ["initIocBlocklist", "openIocBlocklist", "closeIocBlocklist", "downloadIocBlocklist"],
+    private: [],
+  },
+  {
+    // Its one control passes saveCaseTemplate as a value.
+    file: "dashboard-case-template-picker.js",
+    initializer: "initCaseTemplatePicker",
+    publish: [
+      "initCaseTemplatePicker",
+      "loadCaseTemplatePicker",
+      "refreshCaseTemplatePicker",
+      "saveCaseTemplate",
+    ],
+    private: [],
+  },
+  {
+    // Five of six bindings moved: wlApplyBtn calls wlApplyToCase, declared below the block.
+    file: "dashboard-ioc-whitelist.js",
+    initializer: "initWhitelist",
+    publish: ["initWhitelist", "loadWhitelist", "wlAddRule", "wlImport", "wlExport"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
