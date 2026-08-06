@@ -389,6 +389,31 @@ export const FEATURES: Feature[] = [
     private: ["hostRankingData", "hostRankingTimer", "hostRankingExpanded"],
   },
   {
+    // NSRL known-good hashes (#63). Six of its nine bindings pass the function as a value, so the
+    // page could not have kept calling them by name once they moved.
+    file: "dashboard-nsrl.js",
+    initializer: "initNsrl",
+    publish: [
+      "initNsrl",
+      "loadNsrl",
+      "nsrlImport",
+      "nsrlImportFile",
+      "nsrlClear",
+      "nsrlApplyToCase",
+      "nsrlDbConnect",
+      "nsrlDbDisconnect",
+    ],
+    private: [],
+  },
+  {
+    // Dashboard Views EDITOR (#142) — not "Dashboard view presets (#142)", a separate and larger
+    // block that applies a view to the page. They share an issue number, not a boundary.
+    file: "dashboard-views-editor.js",
+    initializer: "initDashboardViewsEditor",
+    publish: ["initDashboardViewsEditor", "loadDashboardViewsEditor", "dvFillEditor", "dvSave", "dvDelete"],
+    private: ["dvViews", "dvCurrentId", "dvEditSections"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

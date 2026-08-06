@@ -37,6 +37,7 @@ const run = (): {
     needsInitializer: boolean;
     clusters: number[];
     looksLikeTwoFeatures: boolean;
+    foreignStanzas: string[];
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
 
@@ -306,6 +307,72 @@ describe("dashboard extraction inventory", () => {
       );
       expect(r.sections[0].clusters).toEqual([4]);
       expect(r.sections[0].looksLikeTwoFeatures).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags the guard stanza an earlier extraction left inside this section's range", () => {
+    // When a feature moves out, a three-line guard replaces it, and those lines land between two
+    // banner comments — so the inventory files them under whichever section encloses them. They
+    // belong to the feature that already left. The NSRL block's range ended with six such lines
+    // from the Settings → Tools extraction, and copying the range wholesale put a call to the
+    // page's dfirFeatureUnavailable inside a module, where it does not exist.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"));
+    writeFileSync(
+      join(dir, "js", "dashboard-gone.js"),
+      "function initGone() {}\nwindow.initGone = initGone;\n",
+    );
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- A feature that is still here ----",
+        "  function stillHere() {}",
+        '  if (typeof initGone !== "undefined") initGone();',
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      expect(r.sections[0].foreignStanzas).toEqual(["5 initGone"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not flag a typeof guard for a name no module publishes", () => {
+    // The page guards plenty of its own optional things. Only a guard for a name an extracted
+    // module publishes is someone else's stanza; without this the flag would fire on those too.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"));
+    writeFileSync(join(dir, "js", "dashboard-gone.js"), "window.initGone = function () {};\n");
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- A feature that is still here ----",
+        "  function stillHere() {}",
+        '  if (typeof someBrowserThing !== "undefined") stillHere();',
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      expect(r.sections[0].foreignStanzas).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

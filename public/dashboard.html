@@ -183,6 +183,10 @@
   <script src="/js/dashboard-narrative.js"></script>
   <!-- Host & Account Ranking (#202). initHostRanking() binds its delegated row listener. -->
   <script src="/js/dashboard-host-ranking.js"></script>
+  <!-- NSRL known-good hashes (#63). initNsrl() binds its nine controls. -->
+  <script src="/js/dashboard-nsrl.js"></script>
+  <!-- Dashboard Views editor (#142). initDashboardViewsEditor() binds its four. -->
+  <script src="/js/dashboard-views-editor.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -14890,10 +14894,8 @@
     document.getElementById("rm-reportTemplate").addEventListener("change", saveCaseTemplate);
 
     // Dashboard Views editor wiring (#142)
-    document.getElementById("dvPicker").addEventListener("change", e => dvFillEditor(e.target.value));
-    document.getElementById("dvNewBtn").addEventListener("click", () => { document.getElementById("dvPicker").value = ""; dvFillEditor(""); document.getElementById("dvName").focus(); });
-    document.getElementById("dvSaveBtn").addEventListener("click", dvSave);
-    document.getElementById("dvDeleteBtn").addEventListener("click", dvDelete);
+    if (typeof initDashboardViewsEditor !== "undefined") initDashboardViewsEditor();
+    else dfirFeatureUnavailable("Dashboard Views editor");
 
     document.getElementById("wlAddBtn").addEventListener("click", wlAddRule);
     document.getElementById("wlPattern").addEventListener("keydown", e => { if (e.key === "Enter") wlAddRule(); });
@@ -14902,15 +14904,8 @@
     document.getElementById("wlExportJsonBtn").addEventListener("click", () => wlExport("json"));
     document.getElementById("wlApplyBtn").addEventListener("click", wlApplyToCase);
     // NSRL known-good hashes (#63)
-    document.getElementById("nsrlImportBtn").addEventListener("click", nsrlImport);
-    document.getElementById("nsrlFileBtn").addEventListener("click", nsrlImportFile);
-    document.getElementById("nsrlFilePath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlImportFile(); });
-    document.getElementById("nsrlExportBtn").addEventListener("click", () => window.open("/nsrl/export", "_blank"));
-    document.getElementById("nsrlClearBtn").addEventListener("click", nsrlClear);
-    document.getElementById("nsrlApplyBtn").addEventListener("click", nsrlApplyToCase);
-    document.getElementById("nsrlDbConnectBtn").addEventListener("click", nsrlDbConnect);
-    document.getElementById("nsrlDbDisconnectBtn").addEventListener("click", nsrlDbDisconnect);
-    document.getElementById("nsrlDbPath").addEventListener("keydown", e => { if (e.key === "Enter") nsrlDbConnect(); });
+    if (typeof initNsrl !== "undefined") initNsrl();
+    else dfirFeatureUnavailable("NSRL known-good hashes");
     // Custom importers (declarative external plugin layer)
     document.getElementById("impAddBtn").addEventListener("click", impAdd);
     document.getElementById("impReloadBtn").addEventListener("click", impReload);
@@ -15062,115 +15057,8 @@
     // controls are bound by initReportTemplates(), called from the Settings block above, which is
     // also where a missing file is reported.
 
-    // --- Dashboard Views (#142) — global panel-layout presets, Settings → Dashboard Views ----------
-    let dvViews = [];          // last fetched list of views (with builtIn/customized flags)
-    let dvCurrentId = "";      // id of the view being edited ("" = new/unsaved)
-    let dvEditSections = [];   // [{ id, enabled }] over all sections, ordered (enabled = visible in this view)
-
-    function loadDashboardViewsEditor(selectId) {
-      // Populate the report-template choices FIRST (so dvFillEditor's value sticks), then the views.
-      return fetch("/report-templates").then(r => r.ok ? r.json() : []).then(list => {
-        const sel = document.getElementById("dvReportTemplate");
-        if (sel) sel.innerHTML = `<option value="">(none)</option>` +
-          (Array.isArray(list) ? list : []).map(t => `<option value="${escAttr(t.id)}">${esc(t.name || t.id)}</option>`).join("");
-      }).catch(() => {}).then(() => fetch("/dashboard-views").then(r => r.ok ? r.json() : { views: [] })).then(j => {
-        dvViews = Array.isArray(j.views) ? j.views : [];
-        const picker = document.getElementById("dvPicker");
-        picker.innerHTML = dvViews.map(v =>
-          `<option value="${escAttr(v.id)}">${esc(v.name || v.id)}${v.builtIn ? (v.customized ? " (built-in, edited)" : " (built-in)") : ""}</option>`
-        ).join("") + `<option value="">✚ New custom view…</option>`;
-        const pick = selectId !== undefined ? selectId : (dvViews.some(v => v.id === dvCurrentId) ? dvCurrentId : (dvViews[0] ? dvViews[0].id : ""));
-        picker.value = pick;
-        dvFillEditor(pick);
-      }).catch(() => {});
-    }
-
-    function dvFindView(id) { return dvViews.find(v => v.id === id); }
-    function dvSectionLabel(id) { const d = SECTION_DEFS.find(s => s.id === id); return d ? d.label : id; }
-
-    function dvFillEditor(id) {
-      const v = dvFindView(id);
-      dvCurrentId = v ? v.id : "";
-      const set = (elId, val) => { const el = document.getElementById(elId); if (el) el.value = val == null ? "" : val; };
-      set("dvName", v ? v.name : "");
-      set("dvDescription", v ? v.description : "");
-      set("dvMinSeverity", (v && v.filters && v.filters.minSeverity) || "");
-      set("dvTopN", (v && v.filters && v.filters.topN) || "");
-      set("dvReportTemplate", (v && v.reportTemplateId) || "");
-      // Sections: the view's visible ids first (enabled, in order), then the rest (disabled) in canonical order.
-      const visible = (v && Array.isArray(v.sections)) ? v.sections.filter(sid => SECTION_DEFS.some(d => d.id === sid)) : [];
-      const visibleSet = new Set(visible);
-      dvEditSections = visible.map(sid => ({ id: sid, enabled: true }));
-      for (const d of SECTION_DEFS) if (!visibleSet.has(d.id)) dvEditSections.push({ id: d.id, enabled: false });
-      const del = document.getElementById("dvDeleteBtn");
-      del.textContent = v && v.builtIn ? "Reset to default" : "Delete";
-      del.style.display = v ? "" : "none";
-      document.getElementById("dvSaveBtn").textContent = v && v.builtIn ? "Save (override built-in)" : "Save view";
-      document.getElementById("dvMsg").textContent = "";
-      dvRenderSections();
-    }
-
-    function dvRenderSections() {
-      const el = document.getElementById("dvSections");
-      el.innerHTML = dvEditSections.map((s, i) =>
-        `<div data-safe-style="display:flex;align-items:center;gap:8px;padding:3px 4px;border-bottom:1px solid #1a1f28;font-size:12px">`
-        + `<input type="checkbox" class="dv-sec-en" data-i="${i}" ${s.enabled ? "checked" : ""} data-safe-style="width:auto;margin:0" />`
-        + `<span data-safe-style="flex:1;${s.enabled ? "" : "color:#7e8aa0"}">${esc(dvSectionLabel(s.id))}</span>`
-        + `<button type="button" class="dv-sec-up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""} data-safe-style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▲</button>`
-        + `<button type="button" class="dv-sec-down" data-i="${i}" title="Move down" ${i === dvEditSections.length - 1 ? "disabled" : ""} data-safe-style="background:#2a2f3a;border:none;color:#cbd3df;border-radius:4px;padding:0 7px;cursor:pointer">▼</button>`
-        + `</div>`
-      ).join("");
-      el.querySelectorAll(".dv-sec-en").forEach(cb => cb.addEventListener("change", e => {
-        dvEditSections[+e.target.dataset.i].enabled = e.target.checked; dvRenderSections();
-      }));
-      el.querySelectorAll(".dv-sec-up").forEach(b => b.addEventListener("click", e => dvMoveSection(+e.currentTarget.dataset.i, -1)));
-      el.querySelectorAll(".dv-sec-down").forEach(b => b.addEventListener("click", e => dvMoveSection(+e.currentTarget.dataset.i, 1)));
-    }
-
-    function dvMoveSection(i, dir) {
-      const j = i + dir;
-      if (j < 0 || j >= dvEditSections.length) return;
-      const tmp = dvEditSections[i]; dvEditSections[i] = dvEditSections[j]; dvEditSections[j] = tmp;
-      dvRenderSections();
-    }
-
-    function dvSave() {
-      const name = document.getElementById("dvName").value.trim();
-      const msg = document.getElementById("dvMsg");
-      if (!name) { msg.textContent = "name is required"; return; }
-      const sections = dvEditSections.filter(s => s.enabled).map(s => s.id);
-      if (!sections.length) { msg.textContent = "select at least one section to show"; return; }
-      const minSeverity = document.getElementById("dvMinSeverity").value || undefined;
-      const topNraw = parseInt(document.getElementById("dvTopN").value, 10);
-      const topN = (Number.isFinite(topNraw) && topNraw > 0) ? topNraw : undefined;
-      const reportTemplateId = document.getElementById("dvReportTemplate").value || undefined;
-      const body = {
-        id: dvCurrentId || undefined,
-        name,
-        description: document.getElementById("dvDescription").value.trim(),
-        sections,
-        filters: { minSeverity, topN },
-        reportTemplateId,
-      };
-      msg.textContent = "saving…";
-      fetch("/dashboard-views", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(saved => { msg.textContent = "saved ✓"; setTimeout(() => msg.textContent = "", 2000); loadDashboardViewsEditor(saved.id); loadDashboardViews(); })
-        .catch(e => msg.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
-    }
-
-    function dvDelete() {
-      if (!dvCurrentId) return;
-      const v = dvFindView(dvCurrentId);
-      const msg = document.getElementById("dvMsg");
-      const verb = v && v.builtIn ? "Reset this built-in view to its shipped default?" : "Delete this view?";
-      if (!confirm(verb)) return;
-      msg.textContent = "…";
-      fetch("/dashboard-views/" + encodeURIComponent(dvCurrentId), { method: "DELETE" })
-        .then(r => { if (!r.ok && r.status !== 204) throw new Error("HTTP " + r.status); dvCurrentId = ""; loadDashboardViewsEditor(); loadDashboardViews(); msg.textContent = ""; })
-        .catch(e => msg.textContent = "failed: " + e.message);
-    }
-
+    // Dashboard Views editor (#142) moved to js/dashboard-views-editor.js (#415 tier 3). Its four
+    // controls are bound by initDashboardViewsEditor(), called from the Settings block above.
     // --- Per-case report-template picker (in Case Details) -------------------------------
     function refreshCaseTemplatePicker() {
       const caseId = document.getElementById("caseId").value.trim();
@@ -15342,104 +15230,8 @@
         .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
     }
 
-    // --- NSRL known-good hashes (#63) — global hash set, Settings → NSRL ---------------------------
-    function loadNsrl() {
-      const status = document.getElementById("nsrlStatus");
-      const cnt = document.getElementById("nsrlCount");
-      fetch("/nsrl").then(r => r.json()).then(j => {
-        const n = j.count || 0;
-        if (cnt) cnt.textContent = n ? `(${n.toLocaleString()})` : "";
-        if (status) status.textContent = n
-          ? `${n.toLocaleString()} known-good hash${n !== 1 ? "es" : ""} loaded — matches auto-marked as a false positive on import.`
-          : "No hashes loaded yet — import an NSRL set below to start filtering known-good files.";
-        renderNsrlDb(j);
-      }).catch(() => { if (status) status.textContent = "could not load — restart the server if this persists."; });
-    }
-    function renderNsrlDb(j) {
-      const st = document.getElementById("nsrlDbStatus");
-      const badge = document.getElementById("nsrlDbBadge");
-      const controls = document.getElementById("nsrlDbControls");
-      const disc = document.getElementById("nsrlDbDisconnectBtn");
-      const db = (j && j.db) || { connected: false };
-      if (db.connected) {
-        if (badge) badge.textContent = "● connected";
-        if (badge) badge.style.color = "#7ee787";
-        if (st) st.innerHTML = `Querying <code>${esc(db.path || "")}</code> — table <strong>${esc(db.table || "?")}</strong>, columns ${esc((db.columns || []).join(", ") || "?")}.`;
-      } else {
-        if (badge) { badge.textContent = ""; }
-        if (st) st.textContent = "Not connected — for the full RDS, connect the SQLite .db below.";
-      }
-      // Env-managed: the path comes from DFIR_NSRL_DB; hide the runtime connect controls.
-      const envManaged = j && j.dbEnvManaged;
-      if (controls) controls.style.display = envManaged ? "none" : "flex";
-      if (envManaged && st) st.innerHTML += ` <span data-safe-style="color:#7e8aa0">(path set by <code>DFIR_NSRL_DB</code>)</span>`;
-      if (disc) disc.style.display = db.connected ? "" : "none";
-    }
-    function nsrlDbConnect() {
-      const path = document.getElementById("nsrlDbPath").value.trim();
-      const msg = document.getElementById("nsrlDbMsg");
-      if (!path) { msg.textContent = "enter the RDS .db file path"; return; }
-      msg.textContent = "connecting…";
-      fetch("/nsrl/db", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
-        .then(j => { msg.textContent = `connected (table ${j.table}, ${(j.columns || []).join("/")})`; document.getElementById("nsrlDbPath").value = ""; loadNsrl(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function nsrlDbDisconnect() {
-      const msg = document.getElementById("nsrlDbMsg");
-      msg.textContent = "disconnecting…";
-      fetch("/nsrl/db", { method: "DELETE" })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
-        .then(() => { msg.textContent = "disconnected"; loadNsrl(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function nsrlImport() {
-      const text = document.getElementById("nsrlImportText").value;
-      const msg = document.getElementById("nsrlMsg");
-      if (!text.trim()) { msg.textContent = "paste an NSRL file or hash list first"; return; }
-      msg.textContent = "importing…";
-      fetch("/nsrl/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => { msg.textContent = `imported ${j.added.toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${j.parsed.toLocaleString()} parsed, ${j.total.toLocaleString()} total)`; document.getElementById("nsrlImportText").value = ""; loadNsrl(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function nsrlImportFile() {
-      const path = document.getElementById("nsrlFilePath").value.trim();
-      const msg = document.getElementById("nsrlFileMsg");
-      if (!path) { msg.textContent = "enter a file path on the server"; return; }
-      msg.textContent = "loading…";
-      fetch("/nsrl/import-file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }) })
-        .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "HTTP " + r.status); return j; })
-        .then(j => {
-          const errs = (j.files || []).filter(f => f.error);
-          msg.textContent = `loaded ${(j.added || 0).toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${(j.total || 0).toLocaleString()} total)` + (errs.length ? ` · ${errs.length} file(s) failed: ${esc(errs.map(f => f.error).join("; "))}` : "");
-          if (!errs.length) document.getElementById("nsrlFilePath").value = "";
-          loadNsrl();
-        })
-        .catch(e => { msg.textContent = e.message + " — restart the server if the endpoint 404s."; });
-    }
-    function nsrlClear() {
-      if (!confirm("Clear the entire NSRL known-good hash set? This is global (affects all cases).")) return;
-      const msg = document.getElementById("nsrlMsg");
-      msg.textContent = "clearing…";
-      fetch("/nsrl/clear", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(() => { msg.textContent = "cleared"; loadNsrl(); })
-        .catch(e => { msg.textContent = e.message; });
-    }
-    function nsrlApplyToCase() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const msg = document.getElementById("nsrlApplyMsg");
-      if (!caseId) { msg.textContent = "load a case first"; return; }
-      msg.textContent = "applying…";
-      fetch(`/cases/${caseId}/nsrl/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-        .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status); return r.json(); })
-        .then(j => {
-          msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked false positive`;
-          if (j.legitimate) renderFalsePositives(j.legitimate);
-        })
-        .catch(e => { msg.textContent = "failed: " + e.message + " — restart the server if the endpoint 404s."; });
-    }
+    // NSRL known-good hashes (#63) moved to js/dashboard-nsrl.js (#415 tier 3). Its nine controls
+    // are bound by initNsrl(), called from the Settings block above.
 
     // Settings → Tools, MCP servers and the update check (#127) moved to
     // js/dashboard-settings-tools.js (#415 tier 3). Three panels, one Settings screen; the banner

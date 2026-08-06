@@ -145,6 +145,18 @@
     "loadHostRanking",
     "scheduleHostRankingReload",
     "applyHostRankingScope",
+    // NSRL (#63) and the Dashboard Views editor (#142). Their initializers are the sentinels.
+    "loadNsrl",
+    "nsrlImport",
+    "nsrlImportFile",
+    "nsrlClear",
+    "nsrlApplyToCase",
+    "nsrlDbConnect",
+    "nsrlDbDisconnect",
+    "loadDashboardViewsEditor",
+    "dvFillEditor",
+    "dvSave",
+    "dvDelete",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

@@ -175,6 +175,41 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
   }
 }
 
+// Guard stanzas left behind by EARLIER extractions. When a feature moves out, three or four lines
+// replace it — `if (typeof initX !== "undefined") initX(); else dfirFeatureUnavailable("…")` — and
+// those lines sit between two banner comments, so the inventory files them under whichever section
+// happens to enclose them. They are not part of that feature and must not travel with it.
+//
+// This is not hypothetical: the NSRL block's range ended with six lines belonging to the Settings →
+// Tools extraction, and copying the range wholesale put a call to the page's dfirFeatureUnavailable
+// inside a module, where it is not defined. The module suite caught it, but only after the fact.
+//
+// Detected structurally rather than by text: an `if` whose condition is `typeof NAME !== "undefined"`
+// for a NAME that one of the extracted modules publishes.
+const publishedByModules = new Set();
+for (const [name] of siblingRefs) publishedByModules.add(name);
+{
+  const JS_DIR = new URL("./js/", HTML_PATH);
+  let files = [];
+  try {
+    files = readdirSync(JS_DIR).filter((f) => f.endsWith(".js"));
+  } catch {
+    files = [];
+  }
+  for (const f of files) {
+    for (const m of readFileSync(new URL(f, JS_DIR), "utf8").matchAll(/window\.(\w+)\s*=/g)) {
+      publishedByModules.add(m[1]);
+    }
+  }
+}
+const foreignStanzaLines = new Map(); // first line -> the guarded name
+for (const st of sf.statements) {
+  if (!ts.isIfStatement(st)) continue;
+  const cond = st.expression.getText(sf);
+  const m = /typeof\s+(\w+)\s*!==?\s*["']undefined["']/.exec(cond);
+  if (m && publishedByModules.has(m[1])) foreignStanzaLines.set(lineOf(st.getStart(sf)), m[1]);
+}
+
 // Statements that touch the DOM outside any function — the wiring that needs an initializer.
 const domByLine = new Map();
 for (const st of sf.statements) {
@@ -272,6 +307,11 @@ const rows = sections.map((sec) => {
     maxFanout: fanout,
     sharedMachinery: shared,
     moduleScopeDom: dom,
+    // Lines in this range that belong to an already-extracted feature, not to this one. Subtract
+    // them before copying the range out.
+    foreignStanzas: [...foreignStanzaLines]
+      .filter(([line]) => inSection(line))
+      .map(([line, name]) => `${line} ${name}`),
     boundElsewhere: [...boundElsewhere].sort(),
     needsInitializer: dom > 0 || boundElsewhere.size > 0,
     clusters,
