@@ -623,6 +623,26 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // data-act dispatch. ACTIONS stays a fixed literal — it is deliberately not a window[name]
+    // lookup, because the name comes from a DOM attribute.
+    file: "dashboard-data-act.js",
+    initializer: "initDataAct",
+    publish: ["initDataAct"],
+    private: [],
+  },
+  {
+    file: "dashboard-tooltip.js",
+    initializer: "initTooltip",
+    publish: ["initTooltip"],
+    private: [],
+  },
+  {
+    file: "dashboard-presentation-mode.js",
+    initializer: "initPresentationMode",
+    publish: ["initPresentationMode"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],

@@ -180,6 +180,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-merge-picker.js": "application/javascript; charset=utf-8",
   // Startup pre-flight banner — the warning strip when the server's own checks fail.
   "/js/dashboard-preflight-banner.js": "application/javascript; charset=utf-8",
+  // data-act dispatch — the delegated handler that lets the server send script-src 'self'.
+  "/js/dashboard-data-act.js": "application/javascript; charset=utf-8",
+  // Custom tooltip — the hover card shown instead of the browser's own title text.
+  "/js/dashboard-tooltip.js": "application/javascript; charset=utf-8",
+  // Presentation mode (#17) — the stripped-down view for a projector.
+  "/js/dashboard-presentation-mode.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

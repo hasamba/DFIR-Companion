@@ -61,9 +61,14 @@ describe("the tagger feature is still reachable", () => {
   // leave the file without editing a single ACTIONS entry, and it is the property the next feature
   // extraction depends on.
   it("keeps every ACTIONS entry resolving to a function the module publishes", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const block = html.split("const ACTIONS = {")[1].split("\n    };")[0];
-    const routed = [...block.matchAll(/^\s{6}(\w+):\s*\(el\)\s*=>\s*(\w+)\(/gm)].filter(([, , target]) =>
+    // ACTIONS moved to js/dashboard-data-act.js (#415 tier 3) with the rest of the dispatch layer.
+    // Read from there, and do not pin the indentation: it was six spaces in the inline block and is
+    // four inside the module's IIFE. An entry-matching regex that finds nothing would make the
+    // whole check vacuous, which is what the "no tagger action is dispatched at all" assertion
+    // below exists to catch — but a looser regex is better than relying on it.
+    const src = await readFile(new URL("../../../public/js/dashboard-data-act.js", import.meta.url), "utf8");
+    const block = src.split("const ACTIONS = {")[1].split(/\n\s*\};/)[0];
+    const routed = [...block.matchAll(/^\s+(\w+):\s*\(el\)\s*=>\s*(\w+)\(/gm)].filter(([, , target]) =>
       TAGGER.includes(target),
     );
     expect(routed.length, "no tagger action is dispatched at all — the check is vacuous").toBeGreaterThan(0);

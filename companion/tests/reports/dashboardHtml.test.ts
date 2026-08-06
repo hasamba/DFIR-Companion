@@ -389,7 +389,16 @@ describe("dashboard.html", () => {
     expect(html).toContain("pm-missing");
     // Click a matched step → the event that evidences it; an unobserved step → Evidence Gaps.
     expect(html).toContain('data-act="playbookJumpToEvent"');
-    expect(html).toContain("playbookJumpToEvent:        (el) => jumpToEvent(el.dataset.id)");
+    // The ACTIONS entry is in js/dashboard-data-act.js now, and prettier collapsed the column
+    // alignment the inline block used. Whitespace-collapsed so the assertion stays about WHERE the
+    // action routes rather than how it was aligned.
+    const dispatchSrc = await readFile(
+      new URL("../../../public/js/dashboard-data-act.js", import.meta.url),
+      "utf8",
+    );
+    expect(dispatchSrc.replace(/\s+/g, " ")).toContain(
+      "playbookJumpToEvent: (el) => jumpToEvent(el.dataset.id)",
+    );
     expect(html).toContain('data-act="playbookJumpToGaps"');
     // The non-attribution caveat renders WITH the match, not as a tooltip.
     expect(html).toContain("not attribution");
@@ -941,8 +950,20 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
     const used = new Set(
       [...dashboardClientSource().matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]),
     );
-    const block = html.split("const ACTIONS = {")[1].split("\n    };")[0];
-    const defined = new Set([...block.matchAll(/^\s{6}([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
+    // ACTIONS moved to js/dashboard-data-act.js (#415 tier 3). The "used" side already reads
+    // dashboardClientSource(), which spans the page and every dashboard-*.js it tags, so only the
+    // "defined" side needed re-pointing. Indentation is not pinned: six spaces in the inline block,
+    // four inside the module's IIFE.
+    const dispatch = await readFile(
+      new URL("../../../public/js/dashboard-data-act.js", import.meta.url),
+      "utf8",
+    );
+    const block = dispatch.split("const ACTIONS = {")[1].split(/\n\s*\};/)[0];
+    const defined = new Set([...block.matchAll(/^\s+([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
+    expect(
+      defined.size,
+      "the ACTIONS table did not parse — every comparison below is vacuous",
+    ).toBeGreaterThan(50);
 
     expect(used.size).toBeGreaterThan(50); // the conversion really happened
     expect([...used].filter((a) => !defined.has(a))).toEqual([]); // no control routes nowhere
