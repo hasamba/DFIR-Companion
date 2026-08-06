@@ -30,6 +30,8 @@ const run = (): {
     size: number;
     stateEscapes: string[];
     publish: string[];
+    maxFanout: number;
+    sharedMachinery: string[];
     moduleScopeDom: number;
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
@@ -68,9 +70,37 @@ describe("dashboard extraction inventory", () => {
     }
   });
 
-  it("reports the ready count as the sections with no state escapes", () => {
-    const ready = report.sections.filter((s) => s.stateEscapes.length === 0).length;
-    expect(report.ready).toBe(ready);
+  it("counts a section ready only when its state stays put AND it holds no shared machinery", () => {
+    // Both halves matter. `render()` sits inside the "Now investigator cockpit" banner with 22 call
+    // sites elsewhere on the page: by state escapes alone that section reads as 437 ready lines,
+    // when extracting it as written would move the page's central render function into a feature
+    // module. Dropping the shared-machinery half takes the headline from 61 sections to 65 — the
+    // four it lets through are the ones most likely to break the page.
+    const ready = report.sections.filter(
+      (s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0,
+    );
+    expect(report.ready).toBe(ready.length);
+    expect(report.ready).toBeLessThan(report.sections.filter((s) => s.stateEscapes.length === 0).length);
+  });
+
+  it("flags the cockpit section as holding shared machinery", () => {
+    // The concrete case the signal exists for. If `render` ever stops being reported here, either it
+    // moved (fine — update this) or the fan-out measurement broke (not fine).
+    const cockpit = report.sections.find((s) => s.label.includes("cockpit"));
+    expect(cockpit, "the cockpit banner is gone — re-point this test").toBeDefined();
+    expect(cockpit!.sharedMachinery).toContain("render");
+    expect(cockpit!.maxFanout).toBeGreaterThanOrEqual(10);
+  });
+
+  it("never reports a fan-out below the shared-machinery threshold it flagged", () => {
+    for (const s of report.sections) {
+      if (s.sharedMachinery.length) {
+        expect(
+          s.maxFanout,
+          `"${s.label}" flags shared machinery but reports fanout ${s.maxFanout}`,
+        ).toBeGreaterThanOrEqual(10);
+      }
+    }
   });
 
   it("exits non-zero when code sits outside every section", () => {

@@ -5,8 +5,8 @@
     "lines": 14541
   },
   "covered": 14541,
-  "ready": 65,
-  "readyLines": 8452,
+  "ready": 61,
+  "readyLines": 7404,
   "sections": [
     {
       "label": "Theme (issue #53)",
@@ -17,6 +17,8 @@
       "stateBindings": 4,
       "publish": ["applyTheme", "currentTheme", "setTheme", "storedTheme", "systemTheme"],
       "stateEscapes": ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -75,6 +77,8 @@
         "tlPageSize",
         "ws"
       ],
+      "maxFanout": 7,
+      "sharedMachinery": [],
       "moduleScopeDom": 12
     },
     {
@@ -92,6 +96,8 @@
         "scheduleAssetGraphReload"
       ],
       "stateEscapes": ["DESC_TITLE_LIMIT", "assetGraphData", "assetOverridesData", "assetTypesEnabled"],
+      "maxFanout": 12,
+      "sharedMachinery": ["loadAssetGraph", "loadAssetOverrides"],
       "moduleScopeDom": 0
     },
     {
@@ -110,6 +116,8 @@
         "scheduleLoginGraphReload"
       ],
       "stateEscapes": ["assetGV", "lgGV"],
+      "maxFanout": 12,
+      "sharedMachinery": ["lgEl"],
       "moduleScopeDom": 1
     },
     {
@@ -135,6 +143,8 @@
         "evPathsShowDismissed",
         "evTypesEnabled"
       ],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -164,6 +174,8 @@
         "investigatorName",
         "targetKey"
       ],
+      "maxFanout": 5,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -184,6 +196,8 @@
         "tagPills"
       ],
       "stateEscapes": ["tagTarget", "tagsByTarget"],
+      "maxFanout": 6,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -195,6 +209,8 @@
       "stateBindings": 3,
       "publish": ["loadPins", "pinBtn"],
       "stateEscapes": ["pinLimit", "pinnedList", "pinnedSet"],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -213,6 +229,8 @@
         "togglePin"
       ],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -224,6 +242,8 @@
       "stateBindings": 1,
       "publish": ["closeFalsePositiveModal", "openFalsePositiveModal", "renderFpCandidates"],
       "stateEscapes": ["fpTarget"],
+      "maxFanout": 5,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -235,6 +255,8 @@
       "stateBindings": 2,
       "publish": ["loadNbAiToggle", "loadNotebook", "nbDelete", "nbStartEdit"],
       "stateEscapes": ["notebookEntries"],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 8
     },
     {
@@ -254,6 +276,8 @@
         "promoteToHypothesis"
       ],
       "stateEscapes": ["pendingHuntHypothesis"],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 16
     },
     {
@@ -265,6 +289,8 @@
       "stateBindings": 1,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -276,6 +302,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -293,6 +321,8 @@
         "showSignalIocsOnly",
         "starredTagIds"
       ],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -312,6 +342,8 @@
         "updateIocBulkBar"
       ],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -323,6 +355,8 @@
       "stateBindings": 0,
       "publish": ["bulkEnrichIocs", "bulkMarkIocsFalsePositive", "bulkTagIocs"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -358,6 +392,8 @@
         "pushUniq",
         "veloEnabled"
       ],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -375,6 +411,8 @@
         "sigmaExportChip"
       ],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -404,6 +442,8 @@
         "veloEditingId",
         "veloSelected"
       ],
+      "maxFanout": 9,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -421,6 +461,8 @@
         "veloMonSyncAllClients"
       ],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -440,6 +482,8 @@
         "veloResetBuiltin"
       ],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 16
     },
     {
@@ -451,6 +495,8 @@
       "stateBindings": 0,
       "publish": ["genExecSummary"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -462,6 +508,8 @@
       "stateBindings": 0,
       "publish": ["loadSynthMeta"],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 17
     },
     {
@@ -473,6 +521,8 @@
       "stateBindings": 1,
       "publish": ["loadCorrProfile"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 3
     },
     {
@@ -496,6 +546,8 @@
         "secondOpinionEnabled",
         "soCollapsed"
       ],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -513,6 +565,8 @@
         "propagateFalsePositive"
       ],
       "stateEscapes": ["evKey", "newEventKeys", "newIocKeys"],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -524,6 +578,8 @@
       "stateBindings": 0,
       "publish": ["doAsk", "doImportUndoRedo", "loadUndoStack"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -535,6 +591,8 @@
       "stateBindings": 0,
       "publish": ["openExplainPanel"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -546,6 +604,8 @@
       "stateBindings": 2,
       "publish": ["applyScope", "doTranslateQuery", "loadAiToggle", "renderNlqPlatforms", "toggleAi"],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -557,6 +617,8 @@
       "stateBindings": 3,
       "publish": ["loadEnrichToggle", "openEnrichModal", "saveEnrich"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -575,6 +637,8 @@
         "anonCustom",
         "anonSuppressed"
       ],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -593,6 +657,8 @@
         "setAi"
       ],
       "stateEscapes": ["presidioPending"],
+      "maxFanout": 8,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -612,6 +678,8 @@
         "showImportProgressIndeterminate"
       ],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -623,6 +691,8 @@
       "stateBindings": 9,
       "publish": ["esc", "escAttr", "loadJobs", "pollCount", "scheduleJobUiRefresh"],
       "stateEscapes": [],
+      "maxFanout": 602,
+      "sharedMachinery": ["esc", "escAttr"],
       "moduleScopeDom": 10
     },
     {
@@ -634,6 +704,8 @@
       "stateBindings": 6,
       "publish": ["qaAudit", "qaLinkify", "qaResolveIocId"],
       "stateEscapes": ["QA_AUDIT_MARK"],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -645,6 +717,8 @@
       "stateBindings": 9,
       "publish": ["fpBtn", "kcSelect", "kcTacticForEvent", "renderKcDetail"],
       "stateEscapes": ["KC_CHAIN_ORDER", "KC_SEV_COLOR", "KC_SEV_ORDER", "kcByTactic", "kcSelectedTac"],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 5
     },
     {
@@ -684,6 +758,8 @@
         "riskIocsFilter",
         "sessionsCollapsed"
       ],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -695,6 +771,8 @@
       "stateBindings": 2,
       "publish": ["loadTimelineGaps", "scheduleTimelineGapsReload"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -706,6 +784,8 @@
       "stateBindings": 2,
       "publish": ["doHypothesizeGaps", "resetGapHypotheses"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -717,6 +797,8 @@
       "stateBindings": 2,
       "publish": ["doMemNextSteps", "resetMemNextSteps", "toggleMemNextSteps"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -728,6 +810,8 @@
       "stateBindings": 3,
       "publish": ["applyHostRankingScope", "loadHostRanking", "scheduleHostRankingReload"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -739,6 +823,8 @@
       "stateBindings": 2,
       "publish": ["huntForTechnique", "loadAdversaryHints", "scheduleAdversaryHintsReload"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -750,6 +836,8 @@
       "stateBindings": 4,
       "publish": [],
       "stateEscapes": ["VHS_SEV_COLOR", "VHS_SEV_RANK", "vhsFlat", "vhsSource"],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -798,6 +886,8 @@
         "sourceFacets"
       ],
       "stateEscapes": ["NO_HOST_FACET", "NO_SOURCE_FACET"],
+      "maxFanout": 16,
+      "sharedMachinery": ["dfirFeatureUnavailable", "renderIocs"],
       "moduleScopeDom": 9
     },
     {
@@ -809,6 +899,8 @@
       "stateBindings": 3,
       "publish": ["prevalenceChip", "renderTimelineEvents", "zoomToTimeWindow"],
       "stateEscapes": [],
+      "maxFanout": 23,
+      "sharedMachinery": ["renderTimelineEvents"],
       "moduleScopeDom": 0
     },
     {
@@ -820,6 +912,8 @@
       "stateBindings": 5,
       "publish": ["kbdOpenHelp", "kbdShortcutsEnabled", "setKbdShortcutsEnabled"],
       "stateEscapes": ["CP_LABELS"],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 37
     },
     {
@@ -838,6 +932,8 @@
         "render"
       ],
       "stateEscapes": [],
+      "maxFanout": 22,
+      "sharedMachinery": ["render"],
       "moduleScopeDom": 2
     },
     {
@@ -849,6 +945,8 @@
       "stateBindings": 11,
       "publish": ["connect", "proceedConnect"],
       "stateEscapes": ["activeCaseId", "activeUnlockRemembered", "activeUnlockedCaseId"],
+      "maxFanout": 6,
+      "sharedMachinery": [],
       "moduleScopeDom": 3
     },
     {
@@ -860,6 +958,8 @@
       "stateBindings": 2,
       "publish": ["onTemplateSelectChange", "populateTemplateSelect", "selectedNewCasePlaybook"],
       "stateEscapes": ["_cachedTemplates"],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -871,6 +971,8 @@
       "stateBindings": 0,
       "publish": ["closeSaveTemplate", "openSaveTemplate", "saveAsTemplate"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -882,6 +984,8 @@
       "stateBindings": 0,
       "publish": ["closeIocBlocklist", "downloadIocBlocklist", "openIocBlocklist"],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -893,6 +997,8 @@
       "stateBindings": 0,
       "publish": ["closeRedactedExport", "doRedactedExport", "openRedactedExport"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -904,6 +1010,8 @@
       "stateBindings": 3,
       "publish": ["closeReportVersions", "doReportVersionsDiff", "openReportVersions"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -915,6 +1023,8 @@
       "stateBindings": 0,
       "publish": ["closeAnalysisRuns", "compareAnalysisRuns", "openAnalysisRuns"],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -926,6 +1036,8 @@
       "stateBindings": 0,
       "publish": ["closeZipArchive", "doZipArchive", "openZipArchive"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -937,6 +1049,8 @@
       "stateBindings": 0,
       "publish": ["closeEncryptedExport", "doEncryptedExport", "openEncryptedExport"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -948,6 +1062,8 @@
       "stateBindings": 0,
       "publish": ["closeDeleteCase", "doDeleteCase", "openDeleteCase"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 3
     },
     {
@@ -959,6 +1075,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 123
     },
     {
@@ -970,6 +1088,8 @@
       "stateBindings": 2,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 24
     },
     {
@@ -981,6 +1101,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 49
     },
     {
@@ -992,6 +1114,8 @@
       "stateBindings": 2,
       "publish": ["askMinSeverity", "setImportSevPref", "syncImportSevDefaultSelect"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1003,6 +1127,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 8
     },
     {
@@ -1014,6 +1140,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 12
     },
     {
@@ -1025,6 +1153,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 3
     },
     {
@@ -1036,6 +1166,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 25
     },
     {
@@ -1047,6 +1179,8 @@
       "stateBindings": 1,
       "publish": ["openMergeModal"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 7
     },
     {
@@ -1058,6 +1192,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 19
     },
     {
@@ -1069,6 +1205,8 @@
       "stateBindings": 5,
       "publish": ["setupCollapsible", "setupReorder"],
       "stateEscapes": ["sections"],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 2
     },
     {
@@ -1080,6 +1218,8 @@
       "stateBindings": 1,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 4
     },
     {
@@ -1091,6 +1231,8 @@
       "stateBindings": 3,
       "publish": ["isSectionVisible", "loadSectionsVis"],
       "stateEscapes": ["SECTIONS_ORDER_KEY", "SECTIONS_VIS_KEY", "SECTION_DEFS"],
+      "maxFanout": 6,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1102,6 +1244,8 @@
       "stateBindings": 1,
       "publish": ["applySectionsVis", "renderSecChecks", "revealSection", "saveSectionsOrder"],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1113,6 +1257,8 @@
       "stateBindings": 2,
       "publish": ["applyTlDisplayFromChecks", "loadTlDisplay", "renderTlChecks", "tlShow"],
       "stateEscapes": [],
+      "maxFanout": 9,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1133,6 +1279,8 @@
         "viewTopN"
       ],
       "stateEscapes": [],
+      "maxFanout": 7,
+      "sharedMachinery": [],
       "moduleScopeDom": 4
     },
     {
@@ -1144,6 +1292,8 @@
       "stateBindings": 1,
       "publish": ["closeSettingsModal", "openSettingsTab"],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 5
     },
     {
@@ -1163,6 +1313,8 @@
         "wizCurrent",
         "wizStatus"
       ],
+      "maxFanout": 64,
+      "sharedMachinery": ["wizEl"],
       "moduleScopeDom": 0
     },
     {
@@ -1174,6 +1326,8 @@
       "stateBindings": 0,
       "publish": ["wizResetAiStep"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1185,6 +1339,8 @@
       "stateBindings": 2,
       "publish": ["fetchLogLevel", "wizRefreshStatus"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 86
     },
     {
@@ -1196,6 +1352,8 @@
       "stateBindings": 6,
       "publish": ["loadReportTemplates", "rtDelete", "rtFillEditor", "rtSave"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1207,6 +1365,8 @@
       "stateBindings": 3,
       "publish": ["dvDelete", "dvFillEditor", "dvSave", "loadDashboardViewsEditor"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1218,6 +1378,8 @@
       "stateBindings": 0,
       "publish": ["loadCaseTemplatePicker", "refreshCaseTemplatePicker", "saveCaseTemplate"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1229,6 +1391,8 @@
       "stateBindings": 0,
       "publish": ["loadWhitelist", "wlAddRule", "wlExport", "wlImport"],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1247,6 +1411,8 @@
         "wlApplyToCase"
       ],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1266,6 +1432,8 @@
         "nsrlImportFile"
       ],
       "stateEscapes": [],
+      "maxFanout": 2,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1277,6 +1445,8 @@
       "stateBindings": 1,
       "publish": ["loadTools", "loadUpdateCheck"],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 10
     },
     {
@@ -1300,6 +1470,8 @@
         "renderPreflightStatus"
       ],
       "stateEscapes": [],
+      "maxFanout": 3,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1318,6 +1490,8 @@
         "ntfTypeChanged"
       ],
       "stateEscapes": [],
+      "maxFanout": 13,
+      "sharedMachinery": ["loadCaseList"],
       "moduleScopeDom": 1
     },
     {
@@ -1329,6 +1503,8 @@
       "stateBindings": 2,
       "publish": ["loadDiskStats"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 1
     },
     {
@@ -1340,6 +1516,8 @@
       "stateBindings": 1,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1351,6 +1529,8 @@
       "stateBindings": 0,
       "publish": ["loadCaseLifecycle"],
       "stateEscapes": [],
+      "maxFanout": 4,
+      "sharedMachinery": [],
       "moduleScopeDom": 12
     },
     {
@@ -1362,6 +1542,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 6
     },
     {
@@ -1373,6 +1555,8 @@
       "stateBindings": 0,
       "publish": ["promptCaseUnlock"],
       "stateEscapes": [],
+      "maxFanout": 1,
+      "sharedMachinery": [],
       "moduleScopeDom": 5
     },
     {
@@ -1384,6 +1568,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 0
     },
     {
@@ -1395,6 +1581,8 @@
       "stateBindings": 0,
       "publish": [],
       "stateEscapes": [],
+      "maxFanout": 0,
+      "sharedMachinery": [],
       "moduleScopeDom": 2
     }
   ]

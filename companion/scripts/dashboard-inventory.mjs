@@ -135,12 +135,22 @@ const rows = sections.map((sec) => {
   const own = [...decls.entries()].filter(([, d]) => inSection(d.line));
   const ownNames = new Set(own.map(([n]) => n));
 
-  const escaped = new Set();
+  const escaped = new Map(); // name -> how many reference sites outside this section
   for (const r of refs) {
-    if (ownNames.has(r.name) && !inSection(r.line)) escaped.add(r.name);
+    if (ownNames.has(r.name) && !inSection(r.line)) escaped.set(r.name, (escaped.get(r.name) ?? 0) + 1);
   }
-  const publish = [...escaped].filter((n) => decls.get(n).kind === "fn");
-  const stateEscapes = [...escaped].filter((n) => decls.get(n).kind === "var");
+  const publish = [...escaped.keys()].filter((n) => decls.get(n).kind === "fn");
+  const stateEscapes = [...escaped.keys()].filter((n) => decls.get(n).kind === "var");
+
+  // How hard the most-called published function is pulled on from outside. A feature's own entry
+  // points have a handful of external callers; shared machinery has dozens. This is the check on
+  // the boundaries themselves: banner comments are the author's grouping, not a guarantee that
+  // everything under one banner belongs to that feature. `render()` is declared inside the "Now
+  // investigator cockpit" banner and has 22 call sites across the page — extracting that section as
+  // written would move the page's central render function into a feature module. A high number here
+  // means read the block before believing its size.
+  const fanout = Math.max(0, ...publish.map((n) => escaped.get(n)));
+  const shared = publish.filter((n) => escaped.get(n) >= 10).sort();
 
   let dom = 0;
   for (const [line, hits] of domByLine) if (inSection(line)) dom += hits;
@@ -154,6 +164,8 @@ const rows = sections.map((sec) => {
     stateBindings: own.filter(([, d]) => d.kind === "var").length,
     publish: publish.sort(),
     stateEscapes: stateEscapes.sort(),
+    maxFanout: fanout,
+    sharedMachinery: shared,
     moduleScopeDom: dom,
   };
 });
@@ -165,8 +177,12 @@ const report = {
   // file is that it cannot drift from the code the way a hand-kept list of features would.
   inlineScript: { start: START + 2, end: END, lines: inlineSize },
   covered,
-  ready: rows.filter((r) => r.stateEscapes.length === 0).length,
-  readyLines: rows.filter((r) => r.stateEscapes.length === 0).reduce((n, r) => n + r.size, 0),
+  // Ready means both: the state travels with the feature, AND the block is not holding a function
+  // the rest of the page leans on. Either one alone overstates it.
+  ready: rows.filter((r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0).length,
+  readyLines: rows
+    .filter((r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0)
+    .reduce((n, r) => n + r.size, 0),
   sections: rows,
 };
 
@@ -192,18 +208,20 @@ if (process.argv.includes("--update")) {
       `[inventory] ready to extract (no state escapes): ${report.ready} sections, ` +
       `${report.readyLines} lines\n`,
   );
-  console.log(" size  fns   st  esc  dom  range           feature");
+  console.log(" size  fns   st  esc  dom  fan  range           feature");
   for (const r of [...rows].sort((a, b) => b.size - a.size)) {
     console.log(
       `${pad(r.size, 5)} ${pad(r.functions, 4)} ${pad(r.stateBindings, 4)} ` +
-        `${pad(r.stateEscapes.length, 4)} ${pad(r.moduleScopeDom, 4)}  ` +
+        `${pad(r.stateEscapes.length, 4)} ${pad(r.moduleScopeDom, 4)} ${pad(r.maxFanout, 4)}  ` +
         `${`${r.start}-${r.end}`.padEnd(14)}  ${r.label.slice(0, 56)}`,
     );
   }
   console.log(
     "\nesc = state bindings read from outside the block (the blocker). Functions called from " +
       "outside\nare not counted: an extracted module publishes those onto `window`.\n" +
-      "dom = DOM access at module scope, so the block needs its wiring wrapped in an initializer.",
+      "dom = DOM access at module scope, so the block needs its wiring wrapped in an initializer.\n" +
+      "fan = external call sites of its most-used function. Dozens means the block is holding " +
+      "shared\nmachinery that a banner comment happened to enclose — read it before trusting its size.",
   );
 }
 
