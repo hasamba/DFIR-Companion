@@ -187,6 +187,8 @@
   <script src="/js/dashboard-nsrl.js"></script>
   <!-- Dashboard Views editor (#142). initDashboardViewsEditor() binds its four. -->
   <script src="/js/dashboard-views-editor.js"></script>
+  <!-- Import undo / redo (#76). initImportUndoRedo() binds its two toolbar buttons. -->
+  <script src="/js/dashboard-import-undo.js"></script>
   <!-- LAST OF THE FEATURE SCRIPTS, AND IT MUST STAY LAST: it stubs the names a missing feature would
        otherwise leave undefined, and it can only tell missing from present after they have all run.
        Not deferred, for the same reason the features are not — the inline script below calls these
@@ -6820,8 +6822,10 @@
     // is six hundred lines below and belongs to the import feature, not this one.
     if (typeof initNarrativeTimeline !== "undefined") initNarrativeTimeline();
     else dfirFeatureUnavailable("Narrative Timeline");
-    document.getElementById("importUndoBtn").addEventListener("click", () => doImportUndoRedo("undo"));
-    document.getElementById("importRedoBtn").addEventListener("click", () => doImportUndoRedo("redo"));
+    // The two import undo/redo buttons went with their own feature — see
+    // js/dashboard-import-undo.js. They were only ever here by proximity to the narrative controls.
+    if (typeof initImportUndoRedo !== "undefined") initImportUndoRedo();
+    else dfirFeatureUnavailable("Import undo / redo");
     // --- Correlation profile (per-case cross-source event merge window) -------------------------
     const CORR_PROFILE_WINDOWS = { strict: 0, moderate: 2, aggressive: 300 };
     function loadCorrProfile(caseId) {
@@ -7299,58 +7303,8 @@
       el.innerHTML = `<div class="sm-line"><span>📥 Last import <strong>${esc(relTime(m.lastImportedAt))}</strong></span><span>${summary}</span></div>${detail}`;
     }
 
-    // --- Import undo / redo (#76) -------------------------------------------------------------
-    // Imports can flood the dashboard; this rolls the WHOLE case (findings, IOCs, timeline, MITRE,
-    // attacker path) back to exactly before the latest import (and redo). The Undo/Redo buttons live
-    // in the top toolbar next to Import; they enable/label from the undo-stack summary.
-    function loadUndoStack(caseId) {
-      fetch(`/cases/${caseId}/import/undo-stack`).then(r => r.ok ? r.json() : null).then(renderUndoStack).catch(() => {});
-    }
-    function renderUndoStack(s) {
-      const undoBtn = document.getElementById("importUndoBtn");
-      const redoBtn = document.getElementById("importRedoBtn");
-      if (!undoBtn || !redoBtn) return;
-      // Hide the buttons only when the endpoint is unavailable (older server / not restarted yet).
-      // Once it responds they're ALWAYS shown so the capability is discoverable, disabled (with a
-      // hint) until there's something to undo/redo.
-      if (!s) { undoBtn.style.display = "none"; redoBtn.style.display = "none"; return; }
-      const canUndo = !!s.canUndo, canRedo = !!s.canRedo;
-      undoBtn.style.display = "";
-      redoBtn.style.display = "";
-      undoBtn.disabled = !canUndo;
-      redoBtn.disabled = !canRedo;
-      // Keep the LABELS short + fixed — the import name can be long, and a long toolbar label makes
-      // fitToolbar() wrap the row and collapse everything to icons (even on a wide screen). The
-      // specific import + counts go in the hover tooltip instead.
-      undoBtn.textContent = "Undo import";
-      redoBtn.textContent = "Redo";
-      const undoTip = canUndo && s.nextUndo
-        ? `Undo the last import — roll the whole case back to before "${s.nextUndo.label}" (restores ${s.nextUndo.events} events, ${s.nextUndo.iocs} IOCs, ${s.nextUndo.findings} findings)`
-        : "Nothing to undo yet — run an import first";
-      const redoTip = canRedo && s.nextRedo ? `Redo — re-apply "${s.nextRedo.label}"` : "Nothing to redo";
-      undoBtn.title = undoTip; undoBtn.dataset.tip = undoTip;
-      redoBtn.title = redoTip; redoBtn.dataset.tip = redoTip;
-    }
-    function doImportUndoRedo(which) {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const undoBtn = document.getElementById("importUndoBtn");
-      const redoBtn = document.getElementById("importRedoBtn");
-      undoBtn.disabled = true; redoBtn.disabled = true;
-      const active = which === "undo" ? undoBtn : redoBtn;
-      const prev = active.textContent;
-      active.textContent = which === "undo" ? "undoing…" : "redoing…";
-      fetch(`/cases/${caseId}/import/${which}`, { method: "POST" })
-        .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j.error || ("HTTP " + r.status)); }); return r.json(); })
-        .then(s => {
-          // The restore is instant + verbatim (no AI). Pull fresh state so findings/IOCs/timeline
-          // all update at once; the server also broadcasts it over the WS.
-          fetch(`/cases/${caseId}/state`).then(r => r.json()).then(render).catch(() => {});
-          loadImportMeta(caseId);
-          renderUndoStack(s);
-        })
-        .catch(e => { active.textContent = prev; alert(`${which} failed: ${e.message}\n(restart the companion server if this 404s)`); loadUndoStack(caseId); });
-    }
+    // Import undo / redo (#76) moved to js/dashboard-import-undo.js (#415 tier 3). doAsk, which
+    // sat under the same banner, is the AI Ask box and stayed — it follows immediately below.
 
     function doAsk() {
       const caseId = document.getElementById("caseId").value.trim();

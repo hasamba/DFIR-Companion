@@ -124,6 +124,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-nsrl.js": "application/javascript; charset=utf-8",
   // Dashboard Views editor (#142) — the panel-layout presets and which sections each shows.
   "/js/dashboard-views-editor.js": "application/javascript; charset=utf-8",
+  // Import undo / redo (#76) — roll the whole case back to before the latest import, and forward.
+  "/js/dashboard-import-undo.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

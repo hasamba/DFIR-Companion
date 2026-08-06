@@ -414,6 +414,15 @@ export const FEATURES: Feature[] = [
     private: ["dvViews", "dvCurrentId", "dvEditSections"],
   },
   {
+    // Import undo / redo (#76). Its two toolbar buttons were bound beside the Narrative Timeline's
+    // controls purely by proximity; that extraction left them behind and this one collects them.
+    // doAsk sits under the same banner and is the AI Ask box — it stayed.
+    file: "dashboard-import-undo.js",
+    initializer: "initImportUndoRedo",
+    publish: ["initImportUndoRedo", "loadUndoStack", "doImportUndoRedo"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
