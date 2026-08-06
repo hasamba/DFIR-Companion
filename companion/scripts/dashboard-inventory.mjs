@@ -27,7 +27,7 @@
 // non-zero `dom` count needs its wiring wrapped in an init function the page calls behind a guard.
 import ts from "typescript";
 import prettier from "prettier";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 // `--html <path>` exists so the coverage guard below can be tested against a deliberately broken
 // dashboard. A guard nobody has watched fail is not a guard.
@@ -121,6 +121,41 @@ const refs = [];
   node.forEachChild(walk);
 })(sf);
 
+// References from the ALREADY-EXTRACTED modules back into the inline script. Without these the
+// inventory is blind in the one direction that breaks a live page: a sibling module calling a page
+// function by bare name is not an identifier anywhere in the inline AST, so the name reads as
+// block-local and the extraction would not publish it — and nothing in the unit suite would notice,
+// because the call only happens in a browser. Eleven of the extracted modules already do this.
+const siblingRefs = new Map(); // name -> count of references from public/js/*.js
+{
+  // Relative to the HTML file, not to this script: the modules live in js/ beside dashboard.html,
+  // and resolving from the script's own path lands outside the repo whenever --html is used. The
+  // first version did exactly that, found nothing anywhere, and looked correct because the headline
+  // count did not move.
+  const JS_DIR = new URL("./js/", HTML_PATH);
+  let files = [];
+  try {
+    files = readdirSync(JS_DIR).filter((f) => f.endsWith(".js"));
+  } catch {
+    files = []; // --html pointed somewhere without a sibling js/ dir; only the tests do that
+  }
+  for (const f of files) {
+    const src = readFileSync(new URL(f, JS_DIR), "utf8");
+    const mod = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    (function walkMod(node) {
+      if (ts.isIdentifier(node)) {
+        const par = node.parent;
+        const isMember = ts.isPropertyAccessExpression(par) && par.name === node;
+        const isKey = (ts.isPropertyAssignment(par) || ts.isMethodDeclaration(par)) && par.name === node;
+        if (!isMember && !isKey && decls.has(node.text)) {
+          siblingRefs.set(node.text, (siblingRefs.get(node.text) ?? 0) + 1);
+        }
+      }
+      node.forEachChild(walkMod);
+    })(mod);
+  }
+}
+
 // Statements that touch the DOM outside any function — the wiring that needs an initializer.
 const domByLine = new Map();
 for (const st of sf.statements) {
@@ -138,6 +173,11 @@ const rows = sections.map((sec) => {
   const escaped = new Map(); // name -> how many reference sites outside this section
   for (const r of refs) {
     if (ownNames.has(r.name) && !inSection(r.line)) escaped.set(r.name, (escaped.get(r.name) ?? 0) + 1);
+  }
+  // A sibling module referencing one of this block's names counts exactly like an inline reference
+  // from outside the block: the name has to be published, or the state does not travel.
+  for (const [name, count] of siblingRefs) {
+    if (ownNames.has(name)) escaped.set(name, (escaped.get(name) ?? 0) + count);
   }
   const publish = [...escaped.keys()].filter((n) => decls.get(n).kind === "fn");
   const stateEscapes = [...escaped.keys()].filter((n) => decls.get(n).kind === "var");

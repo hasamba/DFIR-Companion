@@ -13,7 +13,7 @@
 // anything. The JSON is a planning snapshot; the invariant is what is enforced.
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -100,6 +100,74 @@ describe("dashboard extraction inventory", () => {
           `"${s.label}" flags shared machinery but reports fanout ${s.maxFanout}`,
         ).toBeGreaterThanOrEqual(10);
       }
+    }
+  });
+
+  it("counts a bare call from a sibling module as a reason to publish", () => {
+    // The one direction the inventory was blind in, and the blindness is silent: a module in
+    // public/js calling a page function by bare name is not an identifier anywhere in the inline
+    // AST, so the name reads as block-local, the extraction does not publish it, and nothing fails
+    // until someone loads the page. I very nearly shipped this scan as a no-op — it looked correct
+    // and the headline count did not move — so it is pinned here rather than assumed.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Lonely feature ----",
+        "  function calledOnlyBySibling() { return 1; }",
+        "  function calledByNobody() { return 2; }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    writeFileSync(join(dir, "js", "sibling.js"), "calledOnlyBySibling();\n");
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const only = r.sections.find((s: { label: string }) => s.label === "Lonely feature");
+      expect(only.publish).toContain("calledOnlyBySibling");
+      // The complement: a function nothing calls must NOT be published, or "publish" degenerates
+      // into "every function", and the measurement stops distinguishing anything.
+      expect(only.publish).not.toContain("calledByNobody");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores a sibling's mention of a name inside a comment", () => {
+    // Why the sibling scan parses instead of grepping. `render(` appears 23 times across public/js
+    // by grep and adds nothing by AST, because those are prose in comments. A grep-based version of
+    // this scan would inflate every fan-out with commentary.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"));
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Lonely feature ----",
+        "  function mentionedInProse() { return 1; }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    writeFileSync(join(dir, "js", "sibling.js"), "// mentionedInProse() is documented here.\n");
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const only = r.sections.find((s: { label: string }) => s.label === "Lonely feature");
+      expect(only.publish).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

@@ -5,8 +5,8 @@
     "lines": 14541
   },
   "covered": 14541,
-  "ready": 61,
-  "readyLines": 7404,
+  "ready": 60,
+  "readyLines": 7350,
   "sections": [
     {
       "label": "Theme (issue #53)",
@@ -15,10 +15,10 @@
       "size": 94,
       "functions": 8,
       "stateBindings": 4,
-      "publish": ["applyTheme", "currentTheme", "setTheme", "storedTheme", "systemTheme"],
+      "publish": ["applyTheme", "currentTheme", "setTheme", "storedTheme", "systemTheme", "themeColor"],
       "stateEscapes": ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
-      "maxFanout": 2,
-      "sharedMachinery": [],
+      "maxFanout": 17,
+      "sharedMachinery": ["themeColor"],
       "moduleScopeDom": 0
     },
     {
@@ -90,6 +90,7 @@
       "stateBindings": 5,
       "publish": [
         "_graphTimeQuery",
+        "descHtml",
         "eventDetailsBlock",
         "loadAssetGraph",
         "loadAssetOverrides",
@@ -168,13 +169,14 @@
         "ICON_PIN",
         "ICON_STAR",
         "ICON_TAG",
+        "ICON_TARGET",
         "ICON_USER",
         "ICON_WARN",
         "commentsByTarget",
         "investigatorName",
         "targetKey"
       ],
-      "maxFanout": 5,
+      "maxFanout": 6,
       "sharedMachinery": [],
       "moduleScopeDom": 0
     },
@@ -196,8 +198,8 @@
         "tagPills"
       ],
       "stateEscapes": ["tagTarget", "tagsByTarget"],
-      "maxFanout": 6,
-      "sharedMachinery": [],
+      "maxFanout": 10,
+      "sharedMachinery": ["loadTags"],
       "moduleScopeDom": 0
     },
     {
@@ -287,9 +289,9 @@
       "size": 54,
       "functions": 1,
       "stateBindings": 1,
-      "publish": [],
-      "stateEscapes": [],
-      "maxFanout": 0,
+      "publish": ["collectHostInto"],
+      "stateEscapes": ["ST_PAGE"],
+      "maxFanout": 1,
       "sharedMachinery": [],
       "moduleScopeDom": 1
     },
@@ -334,6 +336,7 @@
       "stateBindings": 0,
       "publish": [
         "bulkMarkFalsePositive",
+        "bulkStarIds",
         "bulkToggleStar",
         "clearIocSelection",
         "clearSelection",
@@ -408,10 +411,11 @@
         "exportFindingSigma",
         "launchHuntInto",
         "openHuntModal",
+        "showToast",
         "sigmaExportChip"
       ],
       "stateEscapes": [],
-      "maxFanout": 3,
+      "maxFanout": 7,
       "sharedMachinery": [],
       "moduleScopeDom": 0
     },
@@ -508,7 +512,7 @@
       "stateBindings": 0,
       "publish": ["loadSynthMeta"],
       "stateEscapes": [],
-      "maxFanout": 4,
+      "maxFanout": 5,
       "sharedMachinery": [],
       "moduleScopeDom": 17
     },
@@ -604,7 +608,7 @@
       "stateBindings": 2,
       "publish": ["applyScope", "doTranslateQuery", "loadAiToggle", "renderNlqPlatforms", "toggleAi"],
       "stateEscapes": [],
-      "maxFanout": 3,
+      "maxFanout": 4,
       "sharedMachinery": [],
       "moduleScopeDom": 0
     },
@@ -689,9 +693,17 @@
       "size": 215,
       "functions": 14,
       "stateBindings": 9,
-      "publish": ["esc", "escAttr", "loadJobs", "pollCount", "scheduleJobUiRefresh"],
-      "stateEscapes": [],
-      "maxFanout": 602,
+      "publish": [
+        "applyHeavyAiJobLock",
+        "cancelJob",
+        "esc",
+        "escAttr",
+        "loadJobs",
+        "pollCount",
+        "scheduleJobUiRefresh"
+      ],
+      "stateEscapes": ["_jobsCache"],
+      "maxFanout": 883,
       "sharedMachinery": ["esc", "escAttr"],
       "moduleScopeDom": 10
     },
@@ -899,7 +911,7 @@
       "stateBindings": 3,
       "publish": ["prevalenceChip", "renderTimelineEvents", "zoomToTimeWindow"],
       "stateEscapes": [],
-      "maxFanout": 23,
+      "maxFanout": 24,
       "sharedMachinery": ["renderTimelineEvents"],
       "moduleScopeDom": 0
     },
@@ -911,7 +923,7 @@
       "functions": 13,
       "stateBindings": 5,
       "publish": ["kbdOpenHelp", "kbdShortcutsEnabled", "setKbdShortcutsEnabled"],
-      "stateEscapes": ["CP_LABELS"],
+      "stateEscapes": ["CP_LABELS", "CP_MARK"],
       "maxFanout": 1,
       "sharedMachinery": [],
       "moduleScopeDom": 37
@@ -932,7 +944,7 @@
         "render"
       ],
       "stateEscapes": [],
-      "maxFanout": 22,
+      "maxFanout": 30,
       "sharedMachinery": ["render"],
       "moduleScopeDom": 2
     },
@@ -1244,7 +1256,7 @@
       "stateBindings": 1,
       "publish": ["applySectionsVis", "renderSecChecks", "revealSection", "saveSectionsOrder"],
       "stateEscapes": [],
-      "maxFanout": 4,
+      "maxFanout": 7,
       "sharedMachinery": [],
       "moduleScopeDom": 0
     },
