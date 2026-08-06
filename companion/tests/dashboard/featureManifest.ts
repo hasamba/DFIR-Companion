@@ -338,6 +338,14 @@ export const FEATURES: Feature[] = [
     private: ["_pushTokenInfo"],
   },
   {
+    // Reproducible analysis runs (#377). No state of its own — the modal reads what it needs on
+    // open — so there is no `private` list to declare.
+    file: "dashboard-analysis-runs.js",
+    initializer: "initAnalysisRuns",
+    publish: ["initAnalysisRuns", "openAnalysisRuns", "closeAnalysisRuns", "compareAnalysisRuns"],
+    private: [],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
