@@ -316,6 +316,10 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Keyboard navigation. `initKeyboardNav` is the sentinel, so not here.
+    "kbdShortcutsEnabled",
+    "setKbdShortcutsEnabled",
+    "kbdOpenHelp",
     "loadVeloTriage",
     "loadVeloBundles",
     "loadVeloClients",

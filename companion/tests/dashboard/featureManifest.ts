@@ -898,6 +898,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Vim-style keyboard navigation. Four of the fifteen load-time statements under its banner were
+    // its own — including #miValue's Escape handler, which reads as part of the manual-IOC form
+    // until you notice it clears the one-shot recording whether the keyboard opened that form.
+    file: "dashboard-keyboard-nav.js",
+    initializer: "initKeyboardNav",
+    publish: ["initKeyboardNav", "kbdShortcutsEnabled", "setKbdShortcutsEnabled", "kbdOpenHelp"],
+    private: ["KBD_SHORTCUTS_KEY", "focusedEventId", "_kbdIocFormAutoOpened"],
+  },
+  {
     // CP_MARK moved here from the inline block: declared under a keyboard-navigation banner and
     // read only here.
     file: "dashboard-collection-plan.js",
