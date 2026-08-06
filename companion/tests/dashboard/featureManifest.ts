@@ -898,6 +898,24 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Last-import change tracking. All three escapes were READS from the page's two renderers, so
+    // what crosses the boundary is a question — isNewEvent / isNewIoc — not the key sets. No
+    // initializer: nothing here runs at load, and loadImportMeta() is already in the refresh fan-out.
+    file: "dashboard-import-changes.js",
+    publish: [
+      "loadImportMeta",
+      "loadDropStatus",
+      "fetchRawToolExts",
+      "askRunToolsOnImport",
+      "propagateFalsePositive",
+      "paintIocImportMeta",
+      "doAsk",
+      "isNewEvent",
+      "isNewIoc",
+    ],
+    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm"],
+  },
+  {
     // Presidio approval panel. Its escape was written from three places outside the section, each
     // open-coding the same assign-then-render pair. setPresidioPending() is that pair, owned here,
     // so a caller can no longer update the findings and forget the badge.

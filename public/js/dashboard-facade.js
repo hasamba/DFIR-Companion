@@ -316,6 +316,17 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Last-import change tracking. isNewEvent / isNewIoc are stubbed deliberately: falsy means the
+    // NEW badge does not appear, which drops a decoration rather than an event.
+    "loadImportMeta",
+    "loadDropStatus",
+    "fetchRawToolExts",
+    "askRunToolsOnImport",
+    "propagateFalsePositive",
+    "paintIocImportMeta",
+    "doAsk",
+    "isNewEvent",
+    "isNewIoc",
     // Presidio approval panel. `initPresidio` is the sentinel.
     "loadPresidioPending",
     "renderPresidioPending",
