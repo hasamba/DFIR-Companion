@@ -316,6 +316,17 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Hypotheses. `initHypotheses` is the sentinel. consumePendingHuntHypothesis is stubbed
+    // because dashboard-sigma-hunt.js calls it on every launch: undefined just means "no hypothesis
+    // to attach", which is the right answer when the module is gone.
+    "loadHypotheses",
+    "hypPatch",
+    "linkNextHuntToHypothesis",
+    "consumePendingHuntHypothesis",
+    "clearPendingHuntHypothesis",
+    "hypDelete",
+    "hypApplyReview",
+    "promoteToHypothesis",
     // Inline IOC quick-actions. `initIocQuickActions` is the sentinel, and QA_AUDIT_MARK is
     // deliberately absent: it is evidence vocabulary, and a stubbed function in its place would make
     // render()'s indexOf test never match, silently emptying the Investigation Log.

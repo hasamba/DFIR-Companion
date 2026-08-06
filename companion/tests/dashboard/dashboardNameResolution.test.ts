@@ -168,9 +168,17 @@ describe("every name the page calls resolves to something", () => {
 
   it("harvests the three sources it resolves against", () => {
     // A closed-world check whose world is empty passes for the wrong reason.
-    expect(declared.size, "no top-level bindings found in the inline scripts").toBeGreaterThan(500);
+    //
+    // The inline floor is deliberately low. It exists to catch "the parse produced nothing", and
+    // #415 drives this number DOWN on purpose — a floor set near the current count is a treadmill
+    // that has to be edited every extraction, and one edited that often stops being read.
+    expect(declared.size, "no top-level bindings found in the inline scripts").toBeGreaterThan(100);
     expect(published.size, "no module publications found").toBeGreaterThan(100);
     expect(inline.length, "no inline scripts found").toBeGreaterThan(0);
+    // The invariant that DOES hold across extraction: the world is conserved. Every name that
+    // leaves the inline script arrives in a module's publish list, so the sum only grows. If it
+    // collapses, a harvester broke — which is exactly the failure the floors above are guarding.
+    expect(declared.size + published.size, "the resolvable world collapsed").toBeGreaterThan(600);
   });
 
   it("leaves no identifier unaccounted for", () => {

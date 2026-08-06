@@ -73,7 +73,8 @@
     linkNextHunt: (el) =>
       linkNextHuntToHypothesis(el.dataset.id, el.getAttribute("data-t")),
     clearPendingHunt: (el, e) => {
-      pendingHuntHypothesis = null;
+      if (typeof clearPendingHuntHypothesis === "function")
+        clearPendingHuntHypothesis();
       el.parentElement.textContent = "";
       e.preventDefault();
     },

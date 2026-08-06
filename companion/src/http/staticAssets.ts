@@ -235,6 +235,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // Velociraptor triage — bundles, clients, hunt jobs and the collection they drive.
   "/js/dashboard-velo-triage.js": "application/javascript; charset=utf-8",
   // Vim-style keyboard navigation for the Forensic Timeline.
+  "/js/dashboard-hypotheses.js": "application/javascript; charset=utf-8",
   "/js/dashboard-ioc-quick-actions.js": "application/javascript; charset=utf-8",
   "/js/dashboard-keyboard-nav.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like

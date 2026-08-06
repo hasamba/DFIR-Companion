@@ -898,6 +898,25 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Hypotheses (#140). Its one escape was a WRITE from dashboard-data-act.js, which assigned
+    // pendingHuntHypothesis = null directly. The owner exports clearPendingHuntHypothesis() and the
+    // caller asks for it, so the binding can stay private here.
+    file: "dashboard-hypotheses.js",
+    initializer: "initHypotheses",
+    publish: [
+      "initHypotheses",
+      "loadHypotheses",
+      "hypPatch",
+      "linkNextHuntToHypothesis",
+      "consumePendingHuntHypothesis",
+      "clearPendingHuntHypothesis",
+      "hypDelete",
+      "hypApplyReview",
+      "promoteToHypothesis",
+    ],
+    private: ["pendingHuntHypothesis"],
+  },
+  {
     // Inline IOC quick-actions. The audit mark is published, not private: it is the protocol between
     // this module (which writes it at the head of every audit comment) and render() in the page
     // (which reads it to pull those comments into the Investigation Log). It is published as an
