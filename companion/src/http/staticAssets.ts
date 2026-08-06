@@ -112,6 +112,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-analysis-runs.js": "application/javascript; charset=utf-8",
   // Report Templates (#60) — the global branded report layouts and their section lists.
   "/js/dashboard-report-templates.js": "application/javascript; charset=utf-8",
+  // Adversary Hints (#46) — whose tradecraft the case resembles, and the hunt for a technique.
+  "/js/dashboard-adversary-hints.js": "application/javascript; charset=utf-8",
+  // Gap Hypotheses (#96) — what the evidence does not show, and what would settle it.
+  "/js/dashboard-gap-hypotheses.js": "application/javascript; charset=utf-8",
   // The no-op facade for every feature name dashboard.html calls bare at load. Registered here like
   // any other module, but note the asymmetry: a 404 on THIS file is not survivable the way a 404 on
   // a feature is, because it is the thing that makes those survivable. Tier-1, same as /js/safe-dom.js.

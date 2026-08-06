@@ -130,6 +130,14 @@
     "rtFillEditor",
     "rtSave",
     "rtDelete",
+    // Adversary Hints (#46) and Gap Hypotheses (#96). Neither has an initializer, so every name
+    // they publish is a work function and belongs here — the facade's `filled` list is the only
+    // way either can report that its file is missing.
+    "loadAdversaryHints",
+    "scheduleAdversaryHintsReload",
+    "huntForTechnique",
+    "doHypothesizeGaps",
+    "resetGapHypotheses",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

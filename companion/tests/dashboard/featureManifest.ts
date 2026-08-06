@@ -359,6 +359,20 @@ export const FEATURES: Feature[] = [
     private: ["rtTemplates", "rtCurrentId", "rtEditSections", "rtRequiredSections"],
   },
   {
+    // Adversary Hints (#46). No initializer: measured, not assumed — nothing in the block runs at
+    // load and nothing outside binds its functions while the page parses.
+    file: "dashboard-adversary-hints.js",
+    publish: ["loadAdversaryHints", "scheduleAdversaryHintsReload", "huntForTechnique"],
+    private: ["adversaryHintsData", "adversaryHintsTimer"],
+  },
+  {
+    // Gap Hypotheses (#96). Same shape, and GH_SEV_COLOR is why the IIFE matters: unwrapped it
+    // would be a page-wide global named after one panel.
+    file: "dashboard-gap-hypotheses.js",
+    publish: ["doHypothesizeGaps", "resetGapHypotheses"],
+    private: ["GH_SEV_COLOR", "ghArtMeta"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
