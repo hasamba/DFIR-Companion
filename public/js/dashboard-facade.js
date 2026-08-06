@@ -162,6 +162,10 @@
     "doImportUndoRedo",
     // Case lifecycle (#119). `initCaseLifecycle` is the sentinel, so not here.
     "loadCaseLifecycle",
+    // Threat-intel enrichment. `initEnrichment` is the sentinel, so not here.
+    "loadEnrichToggle",
+    "openEnrichModal",
+    "saveEnrich",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.

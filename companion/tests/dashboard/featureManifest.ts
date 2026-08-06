@@ -431,6 +431,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Threat-intel enrichment. `enrichProviders` is also an element id in the markup, which is why
+    // a global named after a panel is a bad idea and the IIFE is not ceremony.
+    file: "dashboard-enrichment.js",
+    initializer: "initEnrichment",
+    publish: ["initEnrichment", "loadEnrichToggle", "openEnrichModal", "saveEnrich"],
+    private: ["enrichProviders", "enrichAvailable", "enrichOnCount"],
+  },
+  {
     file: "dashboard-collection-plan.js",
     publish: ["fetchCollectionResults", "renderCollectionPlan"],
     private: [],
