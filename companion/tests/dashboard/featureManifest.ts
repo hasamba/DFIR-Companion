@@ -899,6 +899,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Screenshot OCR full-text search. All-initializer: it was a self-calling IIFE, so it only ever
+    // ran at load. Publishes nothing else — nothing outside it calls in.
+    file: "dashboard-ocr-search.js",
+    initializer: "initOcrSearch",
+    publish: ["initOcrSearch"],
+    private: [],
+  },
+  {
     // Evidence Chain graph. Two ranges: the feature, and the six load-time statements that were its
     // own controls sitting 4,000 lines away in the page's wiring block. The boundary is exact — the
     // next statement belongs to report metadata.
