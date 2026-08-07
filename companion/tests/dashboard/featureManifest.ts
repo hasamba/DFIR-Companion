@@ -908,6 +908,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Kill chain tactic phase view. Split out of the 1,145-line "Activity Log" banner, which held
+    // ten features and two spine functions — it read as core machinery only because of what else
+    // shared its banner.
+    file: "dashboard-kill-chain.js",
+    publish: ["kcSelect", "renderKcDetail", "renderKillChain"],
+    private: ["KC_TECHNIQUE_TACTIC", "KC_KEYWORD_TACTIC", "KC_CONTEXT_REFINEMENT"],
+  },
+  {
     // Background jobs (#225) — the last banner holding feature code. Its one escape, _jobsCache, is
     // read by dashboard-deep-pass.js, which asks runningJob(kind) rather than taking the array:
     // nothing outside should be able to mutate the cache the badge renders from.

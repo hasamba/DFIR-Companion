@@ -319,6 +319,10 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Kill chain tactic phase view.
+    "kcSelect",
+    "renderKcDetail",
+    "renderKillChain",
     // Background jobs. `initJobs` is the sentinel. runningJob stubs to undefined, which
     // deepPassBusy() already reads as "no deep pass running".
     "runningJob",
