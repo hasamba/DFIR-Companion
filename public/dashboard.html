@@ -3738,6 +3738,15 @@
     // Enable the colour transition only after the first paint, so the initial theme doesn't animate.
     requestAnimationFrame(() => document.documentElement.classList.add("theme-anim"));
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
+    // HTML escaping — page vocabulary (101 call sites), moved out of the "Background jobs" banner.
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute
+    // value is decoded before whatever consumes it runs, so an unescaped apostrophe in a
+    // single-quoted context lets attacker-controlled evidence close the string and keep going.
+    function escAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
     // The colour half of the same vocabulary, moved here from under the "Screenshot OCR" banner
     // (#415). Three extracted modules read it by bare name — anomalies, timeline-gaps and
     // derived-panels — plus the page in three more places. It belongs beside SEV, not inside a
@@ -4722,15 +4731,6 @@
       countUpdate();
       startCount();
     }
-
-    function esc(s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-    // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute
-    // value is decoded before whatever consumes it runs, so an unescaped apostrophe in a
-    // single-quoted context lets attacker-controlled evidence close the string and keep going.
-    function escAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 
     // Inline IOC quick-actions (#221) live in public/js/dashboard-ioc-quick-actions.js.
     if (typeof initIocQuickActions === "function") initIocQuickActions();
