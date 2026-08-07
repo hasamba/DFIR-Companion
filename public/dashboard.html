@@ -3798,7 +3798,7 @@
       // does no needless fetch — and the swimlane brush / search dates / dwell-windows all reach here.
       const caseId = (document.getElementById("caseId") || {}).value?.trim();
       if (caseId) {
-        if (assetGraphData) loadAssetGraph(caseId);
+        if (typeof hasAssetGraph === "function" && hasAssetGraph()) loadAssetGraph(caseId);
         if (typeof hasEvidenceGraph === "function" && hasEvidenceGraph()) loadEvidenceGraph(caseId);
       }
     }
@@ -3955,10 +3955,6 @@
         .catch(e => st.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
     }
 
-    // --- Compromised assets + asset↔IoC graph -------------------------------------
-    let assetGraphData = null;                              // { assets, iocs, edges }
-    let assetOverridesData = null;                          // { renames, added, removed, addedLinks, removedLinks }
-    let assetGraphTimer = null;
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
     // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,
@@ -4025,35 +4021,6 @@
       };
     }
 
-    // The active time-window query string for the graph reads (#83). Mirrors the global timeline
-    // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
-    // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
-    function _graphTimeQuery() {
-      const p = new URLSearchParams();
-      if (DfirTimelineView.from()) p.set("from", DfirTimelineView.from());
-      if (DfirTimelineView.to()) p.set("until", DfirTimelineView.to());
-      const q = p.toString();
-      return q ? `?${q}` : "";
-    }
-    function loadAssetGraph(caseId) {
-      const gv = assetEnsureGV();
-      if (gv) gv.loadView();   // restore this case's persisted view state (layout/dim/edge-style/positions)
-      fetch(`/cases/${caseId}/asset-graph${_graphTimeQuery()}`).then(r => r.json()).then(g => {
-        assetGraphData = g; renderAssetGraph();
-      }).catch(() => {});
-    }
-    function loadAssetOverrides(caseId) {
-      fetch(`/cases/${caseId}/asset-overrides`).then(r => r.ok ? r.json() : null).then(ov => {
-        assetOverridesData = ov; renderAssetList();
-      }).catch(() => {});
-    }
-    // State changes (imports / synthesis) re-derive the graph — debounced.
-    function scheduleAssetGraphReload() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      clearTimeout(assetGraphTimer);
-      assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
-    }
 
     // Login Graph (cytoscape) lives in public/js/dashboard-login-graph.js.
     // Asset↔IoC graph lives in public/js/dashboard-asset-graph.js.

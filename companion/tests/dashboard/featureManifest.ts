@@ -970,8 +970,25 @@ export const FEATURES: Feature[] = [
     // section's state and only call in here afterwards.
     file: "dashboard-asset-graph.js",
     initializer: "initAssetGraph",
-    publish: ["initAssetGraph", "assetEnsureGV", "renderAssetGraph", "renderAssetList"],
-    private: ["assetGV", "ASSET_STYLE", "assetTypesEnabled"],
+    publish: [
+      "initAssetGraph",
+      "assetEnsureGV",
+      "renderAssetGraph",
+      "renderAssetList",
+      "hasAssetGraph",
+      "assetGraphAssets",
+      "loadAssetGraph",
+      "loadAssetOverrides",
+      "scheduleAssetGraphReload",
+    ],
+    private: [
+      "assetGV",
+      "ASSET_STYLE",
+      "assetTypesEnabled",
+      "assetGraphData",
+      "assetOverridesData",
+      "assetGraphTimer",
+    ],
   },
   {
     // Login Graph. The banner it shared with the asset↔IoC graph was split first — that graph's

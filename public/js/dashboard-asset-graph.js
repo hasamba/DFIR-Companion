@@ -15,6 +15,51 @@
 (function () {
   "use strict";
 
+  // Moved here from dashboard.html (#415). The graph's own payload, its overrides, the two loaders
+  // that fill them and the debounce that drives both. The page held all of it while this module did
+  // every read — the fifth time in this PR an extraction stopped at the code and left the state.
+  // --- Compromised assets + asset↔IoC graph -------------------------------------
+  let assetGraphData = null; // { assets, iocs, edges }
+  let assetOverridesData = null; // { renames, added, removed, addedLinks, removedLinks }
+  let assetGraphTimer = null;
+  // The active time-window query string for the graph reads (#83). Mirrors the global timeline
+  // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
+  // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
+  function _graphTimeQuery() {
+    const p = new URLSearchParams();
+    if (DfirTimelineView.from()) p.set("from", DfirTimelineView.from());
+    if (DfirTimelineView.to()) p.set("until", DfirTimelineView.to());
+    const q = p.toString();
+    return q ? `?${q}` : "";
+  }
+  function loadAssetGraph(caseId) {
+    const gv = assetEnsureGV();
+    if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style/positions)
+    fetch(`/cases/${caseId}/asset-graph${_graphTimeQuery()}`)
+      .then((r) => r.json())
+      .then((g) => {
+        assetGraphData = g;
+        renderAssetGraph();
+      })
+      .catch(() => {});
+  }
+  function loadAssetOverrides(caseId) {
+    fetch(`/cases/${caseId}/asset-overrides`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((ov) => {
+        assetOverridesData = ov;
+        renderAssetList();
+      })
+      .catch(() => {});
+  }
+  // State changes (imports / synthesis) re-derive the graph — debounced.
+  function scheduleAssetGraphReload() {
+    const caseId = document.getElementById("caseId").value.trim();
+    if (!caseId) return;
+    clearTimeout(assetGraphTimer);
+    assetGraphTimer = setTimeout(() => loadAssetGraph(caseId), 800);
+  }
+
   // The layer filter this graph renders through.
   const assetTypesEnabled = new Set(["host", "account", "service"]);
 
@@ -291,6 +336,20 @@
     });
   }
 
+  // The refresh fan-out's question: is there a graph to reload?
+  function hasAssetGraph() {
+    return !!assetGraphData;
+  }
+  // js/dashboard-asset-overrides.js reads the asset list to match rename candidates against.
+  function assetGraphAssets() {
+    return (assetGraphData && assetGraphData.assets) || [];
+  }
+
+  window.hasAssetGraph = hasAssetGraph;
+  window.assetGraphAssets = assetGraphAssets;
+  window.loadAssetGraph = loadAssetGraph;
+  window.loadAssetOverrides = loadAssetOverrides;
+  window.scheduleAssetGraphReload = scheduleAssetGraphReload;
   window.initAssetGraph = initAssetGraph;
   window.assetEnsureGV = assetEnsureGV;
   window.renderAssetGraph = renderAssetGraph;

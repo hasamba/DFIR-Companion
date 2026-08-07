@@ -349,6 +349,11 @@
     "wizardStepById",
     // Asset↔IoC graph. `initAssetGraph` is the sentinel.
     "assetEnsureGV",
+    "hasAssetGraph",
+    "assetGraphAssets",
+    "loadAssetGraph",
+    "loadAssetOverrides",
+    "scheduleAssetGraphReload",
     "renderAssetGraph",
     "renderAssetList",
     // Login Graph. `initLoginGraph` is the sentinel.

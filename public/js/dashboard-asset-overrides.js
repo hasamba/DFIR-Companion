@@ -135,7 +135,10 @@
         const id = mergeBtn.dataset.assetid;
         const cur = mergeBtn.dataset.name;
         const type = mergeBtn.dataset.assettype;
-        const candidates = (assetGraphData?.assets || [])
+        // Asked of the graph rather than reaching into its payload (#415).
+        const candidates = (
+          typeof assetGraphAssets === "function" ? assetGraphAssets() : []
+        )
           .filter((a) => a.id !== id && a.type === type)
           .map((a) => ({ id: a.id, label: a.name }));
         openMergeModal(
