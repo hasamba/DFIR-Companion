@@ -6257,7 +6257,7 @@
     // Deferred render for a section that was collapsed at data-arrival time (zero-size container).
     // The login graph's own expand handler moved with it to js/dashboard-login-graph.js.
     if (typeof initLoginGraph === "function") initLoginGraph();
-
+    // ── Page wiring: report metadata and the delegated action blocks ───────────────────
     // Evidence Chain graph controls moved with the feature to js/dashboard-evidence-graph.js.
     if (typeof initEvidenceGraph === "function") initEvidenceGraph();
     document.getElementById("saveReportMeta").onclick = saveReportMeta;

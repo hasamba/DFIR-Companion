@@ -41,6 +41,7 @@ const run = (): {
     isCoreMachinery: boolean;
     isStateHub: boolean;
     vocabulary: string[];
+    isDispatchBlock: boolean;
     foreignStanzas: string[];
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
@@ -465,7 +466,7 @@ describe("dashboard extraction inventory", () => {
     const byLabel = Object.fromEntries(flagged.map((s) => [s.label.slice(0, 20), s.coreMachinery]));
     expect(byLabel["Cross-case capture w"], "the block that taught this lesson").toContain("connect");
     for (const s of report.sections) {
-      expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0 || s.isStateHub);
+      expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0 || s.isStateHub || s.isDispatchBlock);
     }
   });
 
@@ -502,6 +503,44 @@ describe("dashboard extraction inventory", () => {
       // would silently under-publish, and the page would ReferenceError only in a browser.
       expect(sec.publish, "a real sibling call must still be published").toContain("shared");
       expect(sec.publish, "a module's own local must not count as a reference").not.toContain("mine");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags a block that declares nothing and only dispatches as core, not as a trivial feature", () => {
+    // The third shape of spine. A section holding the delegated `main` click listeners declares no
+    // functions, no variables, publishes nothing and reports zero escapes — every signal reads
+    // "trivial, safe to move". It is the routing that reaches every feature on the page.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"), { recursive: true });
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Dispatch ----",
+        '  document.querySelector("main").addEventListener("click", (e) => { handle(e); });',
+        "  // ---- A real feature ----",
+        "  function handle(e) { return e; }",
+        "  let count = 0;",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const disp = r.sections.find((s: { label: string }) => s.label === "Dispatch");
+      expect(disp.isDispatchBlock, "declares nothing, only listens").toBe(true);
+      expect(disp.isCoreMachinery).toBe(true);
+      // The complement: a section that DOES declare things is not a dispatch block, or the rule
+      // would swallow every feature that happens to bind a listener.
+      const feat = r.sections.find((s: { label: string }) => s.label === "A real feature");
+      expect(feat.isDispatchBlock, "declares a function and a binding").toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

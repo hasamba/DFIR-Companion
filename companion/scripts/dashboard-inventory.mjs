@@ -358,6 +358,17 @@ const rows = sections.map((sec) => {
   // declaration was in the wrong file) all assume a handful. Past roughly a dozen, "escape" is the
   // wrong word — nothing escaped, the section simply IS the page's state, and the work to do is to
   // find each binding's real owner, not to lift the block.
+  // A section can be the page's spine by declaring NOTHING at all. The block holding the two
+  // delegated `main` click dispatchers declares no functions and no variables, publishes nothing,
+  // and reports zero escapes — so every signal here reads "trivial feature, safe to move". It is
+  // the click routing that reaches every feature on the page: extract it and a missing module means
+  // nothing on the page responds to a click.
+  //
+  // Third shape of spine this file has had to learn, after named functions (connect, render) and
+  // state hubs. This one is dispatch: no declarations, only load-time listeners and the guard
+  // stanzas earlier extractions left behind.
+  const isDispatchBlock = own.length === 0 && publish.length === 0 && dom > 0;
+
   const STATE_HUB_ESCAPES = 12;
   const isStateHub = stateEscapes.length >= STATE_HUB_ESCAPES;
   const idx = new Map(ownArr.map((n, i) => [n, i]));
@@ -423,7 +434,8 @@ const rows = sections.map((sec) => {
     vocabulary,
     coreMachinery,
     isStateHub,
-    isCoreMachinery: coreMachinery.length > 0 || isStateHub,
+    isDispatchBlock,
+    isCoreMachinery: coreMachinery.length > 0 || isStateHub || isDispatchBlock,
     boundElsewhere: [...boundElsewhere].sort(),
     needsInitializer: dom > 0 || boundElsewhere.size > 0,
     clusters,
