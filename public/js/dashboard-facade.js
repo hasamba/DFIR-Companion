@@ -319,6 +319,14 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Background jobs. `initJobs` is the sentinel. runningJob stubs to undefined, which
+    // deepPassBusy() already reads as "no deep pass running".
+    "runningJob",
+    "applyHeavyAiJobLock",
+    "cancelJob",
+    "loadJobs",
+    "pollCount",
+    "scheduleJobUiRefresh",
     // Analyst triage tags. No sentinel — no initializer.
     "addTag",
     "closeTagModal",

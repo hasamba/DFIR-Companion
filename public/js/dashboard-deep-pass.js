@@ -149,7 +149,8 @@
   // True while THIS case has a running deep pass — either the POST is still in flight (before the
   // job shows up) or the registry lists one.
   function deepPassJob() {
-    return _jobsCache.find(j => j.kind === "deep-pass" && (j.status === "running" || j.status === "queued")) || null;
+    // Asked of the jobs feature rather than reaching into its cache (#415).
+    return typeof runningJob === "function" ? runningJob("deep-pass") : undefined;
   }
   function deepPassBusy() { return deepPassPosting || !!deepPassJob(); }
 

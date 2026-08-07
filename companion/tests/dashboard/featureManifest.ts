@@ -908,6 +908,24 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Background jobs (#225) — the last banner holding feature code. Its one escape, _jobsCache, is
+    // read by dashboard-deep-pass.js, which asks runningJob(kind) rather than taking the array:
+    // nothing outside should be able to mutate the cache the badge renders from.
+    file: "dashboard-jobs.js",
+    initializer: "initJobs",
+    publish: [
+      "initJobs",
+      "runningJob",
+      "applyHeavyAiJobLock",
+      "cancelJob",
+      "loadJobs",
+      "pollCount",
+      "scheduleJobUiRefresh",
+    ],
+    // countTimer is NOT here: it lives in the page's state block with the other shared bindings.
+    private: ["_jobsCache", "_jobsMenuShape"],
+  },
+  {
     // Analyst triage tags. Two escapes crossing in opposite directions: bulk-select WROTE tagTarget
     // (so it gets an operation), and two modules READ tagsByTarget in two different ways (so they
     // get the two questions they ask, not the Map).
