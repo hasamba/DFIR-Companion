@@ -3959,7 +3959,6 @@
     let assetGraphData = null;                              // { assets, iocs, edges }
     let assetOverridesData = null;                          // { renames, added, removed, addedLinks, removedLinks }
     let assetGraphTimer = null;
-    const assetTypesEnabled = new Set(["host", "account", "service"]);
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
     // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,
@@ -6720,11 +6719,6 @@
     // functions and eight wiring lines went; the 595 lines of shared wiring under this banner,
     // and the nineteen guard stanzas threaded through them, stay.
 
-    // Asset-type toggles mutate the enabled Set, then rebuild through the module.
-    document.querySelectorAll(".asset-type-toggle").forEach((cb) => cb.addEventListener("change", () => {
-      if (cb.checked) assetTypesEnabled.add(cb.value); else assetTypesEnabled.delete(cb.value);
-      renderAssetGraph();
-    }));
     // The asset graph's expand handler moved with it to js/dashboard-asset-graph.js.
     if (typeof initAssetGraph === "function") initAssetGraph();
 

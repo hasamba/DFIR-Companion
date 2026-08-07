@@ -971,7 +971,7 @@ export const FEATURES: Feature[] = [
     file: "dashboard-asset-graph.js",
     initializer: "initAssetGraph",
     publish: ["initAssetGraph", "assetEnsureGV", "renderAssetGraph", "renderAssetList"],
-    private: ["assetGV", "ASSET_STYLE"],
+    private: ["assetGV", "ASSET_STYLE", "assetTypesEnabled"],
   },
   {
     // Login Graph. The banner it shared with the asset↔IoC graph was split first — that graph's

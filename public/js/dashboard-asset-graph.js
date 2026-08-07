@@ -7,12 +7,16 @@
 // a relayout for a graph drawn into a collapsed, zero-size container. Its own control, so it is
 // the initializer.
 //
-// The .asset-type-toggle handlers sitting right beside it in that block did NOT come along: they
-// mutate assetTypesEnabled, which belongs to the "Compromised assets" section, and only call into
-// here afterwards. Two adjacent statements, two different owners — taking both because they look
-// related is exactly the mistake this PR has made and caught repeatedly.
+// The .asset-type-toggle handlers were left behind on the first pass, on the reading that they
+// mutate the "Compromised assets" section's state. Wrong: assetTypesEnabled is the layer filter
+// THIS graph renders through, read in two places here and nowhere else. The handler and the Set
+// have come home together, which is the point — a control and the state it touches belong in one
+// place, and splitting them is what left this feature reading a page global for two commits.
 (function () {
   "use strict";
+
+  // The layer filter this graph renders through.
+  const assetTypesEnabled = new Set(["host", "account", "service"]);
 
   // "Known compromised assets" — with rename/remove controls when overrides are available.
   function renderAssetList() {
@@ -262,6 +266,15 @@
   // Evidence Chain graph lives in public/js/dashboard-evidence-graph.js.
 
   function initAssetGraph() {
+    // Asset-type toggles mutate the enabled Set, then rebuild through the module.
+    document.querySelectorAll(".asset-type-toggle").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        if (cb.checked) assetTypesEnabled.add(cb.value);
+        else assetTypesEnabled.delete(cb.value);
+        renderAssetGraph();
+      }),
+    );
+
     // Paint the legend glyph into each Show-toggle (doubles as the graph's icon key). This ran at
     // MODULE scope in the inline script, where the markup already existed. In a <head> module it
     // would match nothing and the legend would come up blank, with no error — the same trap the
