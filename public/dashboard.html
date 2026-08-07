@@ -5170,7 +5170,7 @@
     document.querySelector('.sev-legend').addEventListener('change', function(e) {
       if (e.target.classList.contains('sev-filter')) renderTimelineEvents(DfirState.lastFt());
     });
-
+    // ── Forensic timeline controls (load-time wiring) ──────────────────────────────────
     // Source/tool filter dropdown (#131 follow-up). The button + menu are persistent in the DOM;
     // the menu's checkbox list is rebuilt by renderSourceFilter, so all handlers are delegated.
     (function () {
