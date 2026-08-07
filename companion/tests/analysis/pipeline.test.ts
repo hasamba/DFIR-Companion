@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -18,17 +18,36 @@ let stateStore: StateStore;
 
 function capture(seq: number): CaptureMetadata {
   return {
-    caseId: "c1", sequenceNumber: seq, timestamp: `2026-05-28T10:0${seq}:00.000Z`,
-    url: "https://velociraptor.local", tabTitle: "VR", triggerType: "timer",
-    contentHash: "0000000000000000", isDuplicate: false, screenshotFile: `00000${seq}_t.webp`,
+    caseId: "c1",
+    sequenceNumber: seq,
+    timestamp: `2026-05-28T10:0${seq}:00.000Z`,
+    url: "https://velociraptor.local",
+    tabTitle: "VR",
+    triggerType: "timer",
+    contentHash: "0000000000000000",
+    isDuplicate: false,
+    screenshotFile: `00000${seq}_t.webp`,
   };
 }
 
 const validDelta = JSON.stringify({
-  findings: [{ id: "f1", severity: "High", title: "PS abuse", description: "encoded cmd",
-    relatedIocs: [], mitreTechniques: ["T1059"], status: "open" }],
-  iocs: [], mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
-  threadsOpened: [], threadsClosed: [], timelineNote: "reviewed processes", summary: "found PS abuse",
+  findings: [
+    {
+      id: "f1",
+      severity: "High",
+      title: "PS abuse",
+      description: "encoded cmd",
+      relatedIocs: [],
+      mitreTechniques: ["T1059"],
+      status: "open",
+    },
+  ],
+  iocs: [],
+  mitreTechniques: [{ id: "T1059", name: "Command Interpreter" }],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "reviewed processes",
+  summary: "found PS abuse",
 });
 
 beforeEach(async () => {
@@ -86,7 +105,9 @@ describe("AnalysisPipeline", () => {
       provider: new MockProvider("mock", validDelta),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
-      onState: (s) => { received = s.caseId; },
+      onState: (s) => {
+        received = s.caseId;
+      },
     });
     await pipeline.analyzeWindow("c1", [capture(1)]);
     expect(received).toBe("c1");
@@ -102,21 +123,48 @@ describe("AnalysisPipeline", () => {
     // Seed a forensic timeline (as per-window extraction would build) but no findings.
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
-      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "defender disabled", severity: "Critical",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s2.webp"] },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T09:00:00Z",
+        description: "phish opened",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: ["s1.webp"],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-20T15:00:00Z",
+        description: "defender disabled",
+        severity: "Critical",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: ["s2.webp"],
+      },
     );
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
-      findings: [{ id: "f1", severity: "Critical", title: "Defender disabled to evade detection",
-        description: "AV turned off before payload", relatedIocs: [], mitreTechniques: ["T1562.001"], status: "confirmed",
-        relatedEventIds: ["e1", "e2"] }],
-      iocs: [], mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses" }],
+      findings: [
+        {
+          id: "f1",
+          severity: "Critical",
+          title: "Defender disabled to evade detection",
+          description: "AV turned off before payload",
+          relatedIocs: [],
+          mitreTechniques: ["T1562.001"],
+          status: "confirmed",
+          relatedEventIds: ["e1", "e2"],
+        },
+      ],
+      iocs: [],
+      mitreTechniques: [{ id: "T1562.001", name: "Impair Defenses" }],
       attackerPath: "Phishing at 09:00, then Defender disabled at 15:00 to enable execution.",
       summary: "Phishing-led intrusion with defense evasion.",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", synthDelta),
@@ -135,15 +183,27 @@ describe("AnalysisPipeline", () => {
 
   it("records the synthesis call in the vision/synthesis/other cost buckets correctly", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
-    );
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish opened",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], attackerPath: "",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
     });
     const aiCostStore = new AiCostStore(caseStore);
     const pipeline = new AnalysisPipeline({
@@ -164,10 +224,15 @@ describe("AnalysisPipeline", () => {
 
   it("records the synthesis call in the cost buckets when anonymization is enabled (the default production path)", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
-    );
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish opened",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     // Explicitly seed the per-case anon control as enabled — exercises analyzeRestored's
@@ -176,13 +241,32 @@ describe("AnalysisPipeline", () => {
     const anonStore = new AnonControlStore(caseStore);
     await anonStore.save("c1", {
       enabled: true,
-      categories: { IP: true, EMAIL: true, USER: true, HOST: true, DOMAIN: true, PATH: true, CMD: true, REG: true, CARD: true, PHONE: true, NATID: true },
+      categories: {
+        IP: true,
+        EMAIL: true,
+        USER: true,
+        HOST: true,
+        DOMAIN: true,
+        PATH: true,
+        CMD: true,
+        REG: true,
+        CARD: true,
+        PHONE: true,
+        NATID: true,
+      },
       redactSecrets: true,
     });
 
     const synthDelta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], attackerPath: "",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "", summary: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
     });
     const aiCostStore = new AiCostStore(caseStore);
     const pipeline = new AnalysisPipeline({
@@ -204,31 +288,56 @@ describe("AnalysisPipeline", () => {
 
   it("skips the AI call when nothing changed since the last synthesis (and re-runs on change or force)", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish opened",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish opened",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], attackerPath: "x", summary: "s",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "x",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const provider = new MockProvider("mock", synthDelta);
     const analyze = vi.spyOn(provider, "analyze");
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     await pipeline.synthesize("c1");
-    expect(analyze).toHaveBeenCalledTimes(1);   // first run
+    expect(analyze).toHaveBeenCalledTimes(1); // first run
 
     await pipeline.synthesize("c1");
-    expect(analyze).toHaveBeenCalledTimes(1);   // unchanged inputs → skipped
+    expect(analyze).toHaveBeenCalledTimes(1); // unchanged inputs → skipped
 
     await pipeline.synthesize("c1", { force: true });
-    expect(analyze).toHaveBeenCalledTimes(2);   // force always runs
+    expect(analyze).toHaveBeenCalledTimes(2); // force always runs
 
     // A real change to the timeline re-runs synthesis.
     const next = await stateStore.load("c1");
-    next.forensicTimeline.push({ id: "e2", timestamp: "2026-05-20T10:00:00Z", description: "new event",
-      severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    next.forensicTimeline.push({
+      id: "e2",
+      timestamp: "2026-05-20T10:00:00Z",
+      description: "new event",
+      severity: "Critical",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(next);
     await pipeline.synthesize("c1");
     expect(analyze).toHaveBeenCalledTimes(3);
@@ -236,13 +345,29 @@ describe("AnalysisPipeline", () => {
 
   it("ask answers a free-form question from the case evidence (and returns a collection pointer when unknown)", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "USBSTOR device connected",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "USBSTOR device connected",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
     await stateStore.save(seeded);
 
     const answered = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({ answer: "Yes, a USB device was connected.", status: "answered", pointer: "", relatedEventIds: ["e1"] })),
-      stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          answer: "Yes, a USB device was connected.",
+          status: "answered",
+          pointer: "",
+          relatedEventIds: ["e1"],
+        }),
+      ),
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
     const a = await answered.ask("c1", "Was a USB connected?");
     expect(a.status).toBe("answered");
@@ -250,8 +375,17 @@ describe("AnalysisPipeline", () => {
     expect(a.relatedEventIds).toContain("e1");
 
     const unknown = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({ answer: "No evidence in the case.", status: "unknown", pointer: "Check proxy/firewall egress logs and netflow.", relatedEventIds: [] })),
-      stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          answer: "No evidence in the case.",
+          status: "unknown",
+          pointer: "Check proxy/firewall egress logs and netflow.",
+          relatedEventIds: [],
+        }),
+      ),
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
     const b = await unknown.ask("c1", "Was data exfiltrated?");
     expect(b.status).toBe("unknown");
@@ -260,9 +394,24 @@ describe("AnalysisPipeline", () => {
 
   it("suggestHunts proposes fleet-hunts from findings and pivots on the case's real indicators", async () => {
     const seeded = emptyState("c1");
-    seeded.findings.push({ id: "f1", severity: "Critical", title: "Webshell on WEB01", description: "ASPX webshell in web root",
-      relatedIocs: ["i1"], mitreTechniques: ["T1505.003"], sourceScreenshots: [], firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T09:00:00Z", status: "open" });
-    seeded.iocs.push({ id: "i1", type: "file", value: "C:\\inetpub\\wwwroot\\shell.aspx", firstSeen: "2026-05-20T09:00:00Z" });
+    seeded.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Webshell on WEB01",
+      description: "ASPX webshell in web root",
+      relatedIocs: ["i1"],
+      mitreTechniques: ["T1505.003"],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
+    });
+    seeded.iocs.push({
+      id: "i1",
+      type: "file",
+      value: "C:\\inetpub\\wwwroot\\shell.aspx",
+      firstSeen: "2026-05-20T09:00:00Z",
+    });
     await stateStore.save(seeded);
 
     let sentPrompt = "";
@@ -271,29 +420,70 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({ suggestions: [
-          { title: "Hunt ASPX webshells fleet-wide", rationale: "spread check", vql: "SELECT FullPath FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx')", severity: "High", mitreTechniques: ["T1505.003"], relatedFindingIds: ["f1"] },
-          { title: "", rationale: "no title", vql: "SELECT 1 FROM scope()", severity: "Low", mitreTechniques: [], relatedFindingIds: [] }, // dropped by sanitizer
-        ] }) };
+        return {
+          rawText: JSON.stringify({
+            suggestions: [
+              {
+                title: "Hunt ASPX webshells fleet-wide",
+                rationale: "spread check",
+                vql: "SELECT FullPath FROM glob(globs='C:/inetpub/wwwroot/**/*.aspx')",
+                severity: "High",
+                mitreTechniques: ["T1505.003"],
+                relatedFindingIds: ["f1"],
+              },
+              {
+                title: "",
+                rationale: "no title",
+                vql: "SELECT 1 FROM scope()",
+                severity: "Low",
+                mitreTechniques: [],
+                relatedFindingIds: [],
+              }, // dropped by sanitizer
+            ],
+          }),
+        };
       },
     };
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     const hunts = await pipeline.suggestHunts("c1");
-    expect(hunts).toHaveLength(1);                              // the title-less one is dropped
+    expect(hunts).toHaveLength(1); // the title-less one is dropped
     expect(hunts[0].vql).toContain("glob");
     expect(hunts[0].relatedFindingIds).toContain("f1");
-    expect(sentPrompt).toContain("Webshell on WEB01");          // finding fed to the model
-    expect(sentPrompt).toContain("shell.aspx");                 // pivotable IOC fed to the model
+    expect(sentPrompt).toContain("Webshell on WEB01"); // finding fed to the model
+    expect(sentPrompt).toContain("shell.aspx"); // pivotable IOC fed to the model
   });
 
   it("suggestHunts feeds the causal evidence graph (process spawn chains) into the prompt", async () => {
     const seeded = emptyState("c1");
-    seeded.findings.push({ id: "f1", severity: "Critical", title: "Malicious macro on ALCLIENT07", description: "Office macro spawned PowerShell",
-      relatedIocs: [], mitreTechniques: ["T1059.001"], sourceScreenshots: [], firstSeen: "2026-05-20T09:00:00Z", lastUpdated: "2026-05-20T09:00:00Z", status: "open" });
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "winword.exe spawned powershell.exe",
-      severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: ["f1"], sourceScreenshots: [],
-      asset: "ALCLIENT07", parentName: "winword.exe", processName: "powershell.exe" });
+    seeded.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "Malicious macro on ALCLIENT07",
+      description: "Office macro spawned PowerShell",
+      relatedIocs: [],
+      mitreTechniques: ["T1059.001"],
+      sourceScreenshots: [],
+      firstSeen: "2026-05-20T09:00:00Z",
+      lastUpdated: "2026-05-20T09:00:00Z",
+      status: "open",
+    });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "winword.exe spawned powershell.exe",
+      severity: "High",
+      mitreTechniques: ["T1059.001"],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "ALCLIENT07",
+      parentName: "winword.exe",
+      processName: "powershell.exe",
+    });
     await stateStore.save(seeded);
 
     let sentPrompt = "";
@@ -302,49 +492,102 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async (req: { userPrompt: string; systemPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({ suggestions: [
-          { title: "Hunt Office→PowerShell spawns fleet-wide", rationale: "macro execution chain", vql: "SELECT Name, CommandLine FROM pslist() WHERE Name =~ 'powershell'", severity: "High", mitreTechniques: ["T1059.001"], relatedFindingIds: ["f1"] },
-        ] }) };
+        return {
+          rawText: JSON.stringify({
+            suggestions: [
+              {
+                title: "Hunt Office→PowerShell spawns fleet-wide",
+                rationale: "macro execution chain",
+                vql: "SELECT Name, CommandLine FROM pslist() WHERE Name =~ 'powershell'",
+                severity: "High",
+                mitreTechniques: ["T1059.001"],
+                relatedFindingIds: ["f1"],
+              },
+            ],
+          }),
+        };
       },
     };
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     const hunts = await pipeline.suggestHunts("c1");
     expect(hunts).toHaveLength(1);
-    expect(sentPrompt).toContain("ATTACK GRAPH");                   // causal evidence graph block present
+    expect(sentPrompt).toContain("ATTACK GRAPH"); // causal evidence graph block present
     expect(sentPrompt).toContain("winword.exe → powershell.exe"); // the spawn-chain edge fed to the model
   });
 
   it("suggestHunts returns [] without an AI call on an empty case", async () => {
     await stateStore.save(emptyState("c1"));
     let called = false;
-    const provider = { name: "spy", model: "mock-model", analyze: async () => { called = true; return { rawText: "{}" }; } };
-    const pipeline = new AnalysisPipeline({ provider, stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const provider = {
+      name: "spy",
+      model: "mock-model",
+      analyze: async () => {
+        called = true;
+        return { rawText: "{}" };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     const hunts = await pipeline.suggestHunts("c1");
     expect(hunts).toEqual([]);
-    expect(called).toBe(false);                                // no findings/events → no spend
+    expect(called).toBe(false); // no findings/events → no spend
   });
 
   it("synthesis preserves analyst-pinned questions even when the model omits them", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "x", severity: "High",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
-    seeded.keyQuestions.push({ id: "aq1", question: "Was a USB connected?", status: "unknown", answer: "", pointer: "check USBSTOR", pinned: true });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "x",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    seeded.keyQuestions.push({
+      id: "aq1",
+      question: "Was a USB connected?",
+      status: "unknown",
+      answer: "",
+      pointer: "check USBSTOR",
+      pinned: true,
+    });
     await stateStore.save(seeded);
 
     // Delta whose keyQuestions do NOT include aq1 — it must survive anyway.
     const delta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [],
-      keyQuestions: [{ id: "q1", question: "Initial access vector?", status: "unknown", answer: "", pointer: "" }],
-      attackerPath: "x", summary: "s", forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      keyQuestions: [
+        { id: "q1", question: "Initial access vector?", status: "unknown", answer: "", pointer: "" },
+      ],
+      attackerPath: "x",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
-    const pipeline = new AnalysisPipeline({ provider: new MockProvider("mock", delta), stateStore, imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }) });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", delta),
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
 
     const state = await pipeline.synthesize("c1", { force: true });
     const aq = state.keyQuestions.find((q) => q.id === "aq1");
     expect(aq).toBeTruthy();
-    expect(aq!.pinned).toBe(true);                       // kept even though the model dropped it
+    expect(aq!.pinned).toBe(true); // kept even though the model dropped it
     expect(state.keyQuestions.some((q) => q.id === "q1")).toBe(true); // model's own questions still there
   });
 
@@ -353,19 +596,46 @@ describe("AnalysisPipeline", () => {
     const seeded = emptyState("c1");
     // Same downloaded file reported by two tools (shared hash, same created time).
     seeded.forensicTimeline.push(
-      { id: "m1e1", timestamp: "2026-05-26T08:35:23Z", description: `Velociraptor: downloaded evil.exe, sha256 ${HASH}`,
-        severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["0001_velo.csv"], sources: ["CSV import"] },
-      { id: "t2e5", timestamp: "2026-05-26T08:35:23Z", description: "THOR Alert [Filescan]: Malware file found — C:\\Tools\\evil.exe",
-        severity: "Critical", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["0002_thor.json"], sources: ["THOR"], sha256: HASH },
+      {
+        id: "m1e1",
+        timestamp: "2026-05-26T08:35:23Z",
+        description: `Velociraptor: downloaded evil.exe, sha256 ${HASH}`,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: ["0001_velo.csv"],
+        sources: ["CSV import"],
+      },
+      {
+        id: "t2e5",
+        timestamp: "2026-05-26T08:35:23Z",
+        description: "THOR Alert [Filescan]: Malware file found — C:\\Tools\\evil.exe",
+        severity: "Critical",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: ["0002_thor.json"],
+        sources: ["THOR"],
+        sha256: HASH,
+      },
     );
     await stateStore.save(seeded);
 
     // Model returns NO findings → the backfill creates exactly ONE (for the merged event).
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          attackerPath: "",
+          summary: "",
+          forensicEvents: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "",
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
@@ -373,25 +643,39 @@ describe("AnalysisPipeline", () => {
     const state = await pipeline.synthesize("c1");
     // Two source events collapsed into one corroborated timeline event…
     expect(state.forensicTimeline).toHaveLength(1);
-    expect(state.forensicTimeline[0].severity).toBe("Critical");           // most severe wins
+    expect(state.forensicTimeline[0].severity).toBe("Critical"); // most severe wins
     expect(state.forensicTimeline[0].sources).toEqual(expect.arrayContaining(["CSV import", "THOR"]));
-    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_velo.csv", "0002_thor.json"]));
+    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(
+      expect.arrayContaining(["0001_velo.csv", "0002_thor.json"]),
+    );
     // …and exactly ONE finding (not two) backs both tools' evidence.
     expect(state.findings).toHaveLength(1);
   });
 
   it("synthesize backfills a finding for a Critical event the model left uncovered", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-26T12:25:36Z", description: "Microsoft Defender flagged Rubeus.exe (Severe)",
-        severity: "Critical", mitreTechniques: ["T1003"], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] },
-    );
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-26T12:25:36Z",
+      description: "Microsoft Defender flagged Rubeus.exe (Severe)",
+      severity: "Critical",
+      mitreTechniques: ["T1003"],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     // The synthesis model returns NO findings (the failure the user reported).
     const emptyDelta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      summary: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", emptyDelta),
@@ -410,20 +694,58 @@ describe("AnalysisPipeline", () => {
   it("synthesize back-links forensic events to the correct findings via relatedEventIds", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran", severity: "High",
-        mitreTechniques: [], relatedFindingIds: ["f99"], sourceScreenshots: [] }, // stale wrong guess
-      { id: "e2", timestamp: "2026-05-20T15:00:00Z", description: "Mimikatz ran", severity: "Critical",
-        mitreTechniques: [], relatedFindingIds: ["f99"], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T09:00:00Z",
+        description: "SharpHound ran",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: ["f99"],
+        sourceScreenshots: [],
+      }, // stale wrong guess
+      {
+        id: "e2",
+        timestamp: "2026-05-20T15:00:00Z",
+        description: "Mimikatz ran",
+        severity: "Critical",
+        mitreTechniques: [],
+        relatedFindingIds: ["f99"],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
       findings: [
-        { id: "f1", severity: "High", title: "AD recon", description: "x", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] },
-        { id: "f2", severity: "Critical", title: "Credential dumping", description: "y", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e2"] },
+        {
+          id: "f1",
+          severity: "High",
+          title: "AD recon",
+          description: "x",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+          relatedEventIds: ["e1"],
+        },
+        {
+          id: "f2",
+          severity: "Critical",
+          title: "Credential dumping",
+          description: "y",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+          relatedEventIds: ["e2"],
+        },
       ],
-      iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "p",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", synthDelta),
@@ -440,17 +762,34 @@ describe("AnalysisPipeline", () => {
 
   it("synthesize opens new threads and closes existing ones by id", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
-    seeded.openThreads.push({ id: "t0", description: "how did they get in?", status: "open",
-      openedAt: "2026-05-20T08:00:00Z", closedAt: null });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
+    seeded.openThreads.push({
+      id: "t0",
+      description: "how did they get in?",
+      status: "open",
+      openedAt: "2026-05-20T08:00:00Z",
+      closedAt: null,
+    });
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-      forensicEvents: [], timelineNote: "",
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "p",
+      summary: "s",
+      forensicEvents: [],
+      timelineNote: "",
       threadsOpened: [{ id: "t1", description: "identify the C2 domain" }], // new lead
-      threadsClosed: ["t0"],                                               // resolved by evidence
+      threadsClosed: ["t0"], // resolved by evidence
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", synthDelta),
@@ -469,15 +808,38 @@ describe("AnalysisPipeline", () => {
 
   it("synthesize uses synthesisProvider (stronger model) when provided", async () => {
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phish",
-      severity: "High", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "phish",
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     const synthDelta = JSON.stringify({
-      findings: [{ id: "f1", severity: "High", title: "from synth model", description: "d",
-        relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["e1"] }],
-      iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      findings: [
+        {
+          id: "f1",
+          severity: "High",
+          title: "from synth model",
+          description: "d",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+          relatedEventIds: ["e1"],
+        },
+      ],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "p",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("cheap", "EXTRACTION MODEL SHOULD NOT BE CALLED FOR SYNTHESIS"),
@@ -496,25 +858,72 @@ describe("AnalysisPipeline", () => {
     const seeded = emptyState("c1");
     // Medium severity: this test is about finding/IOC legit-filtering, not the
     // high-severity backfill (which would auto-add a finding for an uncovered High event).
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: ["s1.webp"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "SharpHound ran",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
     await stateStore.save(seeded);
 
     const falsePositiveStore = new FalsePositiveStore(caseStore);
     await falsePositiveStore.save("c1", [
-      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
-      { id: "ioc:sharphound.exe", kind: "ioc", ref: "SharpHound.exe", reason: "authorized-test", note: "", markedAt: "", markedBy: "anonymous" },
+      {
+        id: "finding:sharphound ad recon",
+        kind: "finding",
+        ref: "SharpHound AD recon",
+        reason: "authorized-test",
+        note: "authorized",
+        markedAt: "",
+        markedBy: "anonymous",
+      },
+      {
+        id: "ioc:sharphound.exe",
+        kind: "ioc",
+        ref: "SharpHound.exe",
+        reason: "authorized-test",
+        note: "",
+        markedAt: "",
+        markedBy: "anonymous",
+      },
     ]);
 
     // Model still (wrongly) returns the legitimate finding + IOC.
     const synthDelta = JSON.stringify({
       findings: [
-        { id: "f1", severity: "High", title: "SharpHound AD recon", description: "x", relatedIocs: [], mitreTechniques: [], status: "open" },
-        { id: "f2", severity: "Critical", title: "Mimikatz credential dumping", description: "y", relatedIocs: [], mitreTechniques: [], status: "open" },
+        {
+          id: "f1",
+          severity: "High",
+          title: "SharpHound AD recon",
+          description: "x",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+        },
+        {
+          id: "f2",
+          severity: "Critical",
+          title: "Mimikatz credential dumping",
+          description: "y",
+          relatedIocs: [],
+          mitreTechniques: [],
+          status: "open",
+        },
       ],
-      iocs: [{ id: "i1", type: "process", value: "SharpHound.exe" }, { id: "i2", type: "ip", value: "10.0.0.5" }],
-      mitreTechniques: [], attackerPath: "p", summary: "s",
-      forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+      iocs: [
+        { id: "i1", type: "process", value: "SharpHound.exe" },
+        { id: "i2", type: "ip", value: "10.0.0.5" },
+      ],
+      mitreTechniques: [],
+      attackerPath: "p",
+      summary: "s",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
     });
     const pipeline = new AnalysisPipeline({
       provider: new MockProvider("mock", synthDelta),
@@ -531,17 +940,48 @@ describe("AnalysisPipeline", () => {
   it("synthesize asks the model to re-answer a key question whose supporting finding was just marked false-positive", async () => {
     const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
-    seeded.findings.push({ id: "f1", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
-      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
-    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
-      status: "answered", answer: "AD recon via SharpHound", pointer: "finding f1", relatedFindingIds: ["f1"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "SharpHound ran",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    seeded.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "SharpHound AD recon",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
+    seeded.keyQuestions.push({
+      id: "q_initial_access",
+      question: "What was the initial access vector?",
+      status: "answered",
+      answer: "AD recon via SharpHound",
+      pointer: "finding f1",
+      relatedFindingIds: ["f1"],
+    });
     await stateStore.save(seeded);
 
     const falsePositiveStore = new FalsePositiveStore(caseStore);
     await falsePositiveStore.save("c1", [
-      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+      {
+        id: "finding:sharphound ad recon",
+        kind: "finding",
+        ref: "SharpHound AD recon",
+        reason: "authorized-test",
+        note: "authorized",
+        markedAt: "",
+        markedBy: "anonymous",
+      },
     ]);
 
     let sentPrompt = "";
@@ -551,16 +991,35 @@ describe("AnalysisPipeline", () => {
       // The model complies and re-answers, but omits relatedFindingIds/keyQuestions details we don't assert on here.
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({
-          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-          keyQuestions: [{ id: "q_initial_access", question: "What was the initial access vector?",
-            status: "unknown", answer: "", pointer: "collect email gateway logs", relatedFindingIds: [] }],
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+            keyQuestions: [
+              {
+                id: "q_initial_access",
+                question: "What was the initial access vector?",
+                status: "unknown",
+                answer: "",
+                pointer: "collect email gateway logs",
+                relatedFindingIds: [],
+              },
+            ],
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, falsePositiveStore, stateStore,
+      provider,
+      falsePositiveStore,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
@@ -573,33 +1032,75 @@ describe("AnalysisPipeline", () => {
   it("synthesize resets a key question to unknown when its only supporting finding is dropped, even if the model still echoes the stale answer", async () => {
     const { FalsePositiveStore } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");
-    seeded.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "SharpHound ran",
-      severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] });
-    seeded.findings.push({ id: "f1", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
-      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
-    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
-      status: "answered", answer: "AD recon via SharpHound", pointer: "finding f1", relatedFindingIds: ["f1"] });
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "SharpHound ran",
+      severity: "Medium",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    seeded.findings.push({
+      id: "f1",
+      severity: "High",
+      title: "SharpHound AD recon",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
+    seeded.keyQuestions.push({
+      id: "q_initial_access",
+      question: "What was the initial access vector?",
+      status: "answered",
+      answer: "AD recon via SharpHound",
+      pointer: "finding f1",
+      relatedFindingIds: ["f1"],
+    });
     await stateStore.save(seeded);
 
     const falsePositiveStore = new FalsePositiveStore(caseStore);
     await falsePositiveStore.save("c1", [
-      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+      {
+        id: "finding:sharphound ad recon",
+        kind: "finding",
+        ref: "SharpHound AD recon",
+        reason: "authorized-test",
+        note: "authorized",
+        markedAt: "",
+        markedBy: "anonymous",
+      },
     ]);
 
     // A non-compliant model that ignores the instruction and returns no keyQuestions at all —
     // stateMerge falls back to the OLD (stale) keyQuestions array, still citing the dropped finding.
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-      })),
-      falsePositiveStore, stateStore,
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          attackerPath: "",
+          summary: "s",
+          forensicEvents: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "",
+        }),
+      ),
+      falsePositiveStore,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     const state = await pipeline.synthesize("c1");
     const q = state.keyQuestions.find((k) => k.id === "q_initial_access");
-    expect(q!.status).toBe("unknown");           // forced back, not left "answered" on a dead finding
+    expect(q!.status).toBe("unknown"); // forced back, not left "answered" on a dead finding
     expect(q!.answer).toBe("");
     expect(q!.relatedFindingIds).toEqual([]);
   });
@@ -610,25 +1111,72 @@ describe("AnalysisPipeline", () => {
     // Both Medium severity: this test is about the keyQuestions text-mention fallback, not the
     // Critical/High-severity auto-finding backfill (see backfillHighSeverityFindings).
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "phishing email opened",
-        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-20T09:05:00Z", description: "SharpHound ran",
-        severity: "Medium", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-20T09:00:00Z",
+        description: "phishing email opened",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-20T09:05:00Z",
+        description: "SharpHound ran",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     seeded.findings.push(
-      { id: "f1", severity: "Critical", title: "Initial Access via Phishing", description: "", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
-      { id: "f2", severity: "High", title: "SharpHound AD recon", description: "", relatedIocs: [],
-        mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" },
+      {
+        id: "f1",
+        severity: "Critical",
+        title: "Initial Access via Phishing",
+        description: "",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
+      {
+        id: "f2",
+        severity: "High",
+        title: "SharpHound AD recon",
+        description: "",
+        relatedIocs: [],
+        mitreTechniques: [],
+        sourceScreenshots: [],
+        firstSeen: "",
+        lastUpdated: "",
+        status: "open",
+      },
     );
     // No relatedFindingIds — this question predates that field, only its prose names the findings.
-    seeded.keyQuestions.push({ id: "q_initial_access", question: "What was the initial access vector?",
-      status: "answered", answer: "Two vectors: phishing (f1) and AD recon (f2).", pointer: "Findings f1 and f2" });
+    seeded.keyQuestions.push({
+      id: "q_initial_access",
+      question: "What was the initial access vector?",
+      status: "answered",
+      answer: "Two vectors: phishing (f1) and AD recon (f2).",
+      pointer: "Findings f1 and f2",
+    });
     await stateStore.save(seeded);
 
     const falsePositiveStore = new FalsePositiveStore(caseStore);
     await falsePositiveStore.save("c1", [
-      { id: "finding:sharphound ad recon", kind: "finding", ref: "SharpHound AD recon", reason: "authorized-test", note: "authorized", markedAt: "", markedBy: "anonymous" },
+      {
+        id: "finding:sharphound ad recon",
+        kind: "finding",
+        ref: "SharpHound AD recon",
+        reason: "authorized-test",
+        note: "authorized",
+        markedAt: "",
+        markedBy: "anonymous",
+      },
     ]);
 
     let sentPrompt = "";
@@ -638,18 +1186,44 @@ describe("AnalysisPipeline", () => {
       // Non-compliant model: echoes findings/keyQuestions back unchanged, ignoring the reanswer instruction.
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({
-          findings: [{ id: "f1", severity: "Critical", title: "Initial Access via Phishing", description: "",
-            relatedIocs: [], mitreTechniques: [], status: "open" }],
-          iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-          keyQuestions: [{ id: "q_initial_access", question: "What was the initial access vector?",
-            status: "answered", answer: "Two vectors: phishing (f1) and AD recon (f2).", pointer: "Findings f1 and f2" }],
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "Critical",
+                title: "Initial Access via Phishing",
+                description: "",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+            keyQuestions: [
+              {
+                id: "q_initial_access",
+                question: "What was the initial access vector?",
+                status: "answered",
+                answer: "Two vectors: phishing (f1) and AD recon (f2).",
+                pointer: "Findings f1 and f2",
+              },
+            ],
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, falsePositiveStore, stateStore,
+      provider,
+      falsePositiveStore,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
@@ -659,7 +1233,7 @@ describe("AnalysisPipeline", () => {
     const state = await stateStore.load("c1");
     expect(state.findings.map((f) => f.title)).toEqual(["Initial Access via Phishing"]); // f2 dropped, f1 survives
     const q = state.keyQuestions.find((k) => k.id === "q_initial_access");
-    expect(q!.status).toBe("unknown");   // forced back even though f1 (mentioned in the same answer) still exists
+    expect(q!.status).toBe("unknown"); // forced back even though f1 (mentioned in the same answer) still exists
     expect(q!.answer).toBe("");
   });
 
@@ -667,14 +1241,38 @@ describe("AnalysisPipeline", () => {
     const { ScopeStore } = await import("../../src/analysis/scope.js");
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "old", timestamp: "2024-06-01T00:00:00Z", description: "ancient event", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "in", timestamp: "2026-01-15T00:00:00Z", description: "in-scope event", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "old",
+        timestamp: "2024-06-01T00:00:00Z",
+        description: "ancient event",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "in",
+        timestamp: "2026-01-15T00:00:00Z",
+        description: "in-scope event",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     // A stale finding from a previous (unscoped) run that must be dropped on re-synthesis.
-    seeded.findings.push({ id: "fold", severity: "Critical", title: "stale", description: "", relatedIocs: [],
-      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "open" });
+    seeded.findings.push({
+      id: "fold",
+      severity: "Critical",
+      title: "stale",
+      description: "",
+      relatedIocs: [],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "open",
+    });
     await stateStore.save(seeded);
 
     const scopeStore = new ScopeStore(caseStore);
@@ -686,23 +1284,44 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({
-          findings: [{ id: "f1", severity: "High", title: "scoped finding", description: "x", relatedIocs: [], mitreTechniques: [], status: "open", relatedEventIds: ["in"] }],
-          iocs: [], mitreTechniques: [], attackerPath: "p", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [
+              {
+                id: "f1",
+                severity: "High",
+                title: "scoped finding",
+                description: "x",
+                relatedIocs: [],
+                mitreTechniques: [],
+                status: "open",
+                relatedEventIds: ["in"],
+              },
+            ],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "p",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, scopeStore, stateStore,
+      provider,
+      scopeStore,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     const state = await pipeline.synthesize("c1");
     expect(sentPrompt).toContain("in-scope event");
-    expect(sentPrompt).not.toContain("ancient event");        // out-of-scope not sent
+    expect(sentPrompt).not.toContain("ancient event"); // out-of-scope not sent
     expect(state.findings.map((f) => f.title)).toEqual(["scoped finding"]); // stale "fold" replaced
-    expect(state.forensicTimeline).toHaveLength(2);            // raw events preserved
+    expect(state.forensicTimeline).toHaveLength(2); // raw events preserved
   });
 
   it("analyzeCsv extracts forensic events from rows and keeps event ids unique across batches", async () => {
@@ -716,28 +1335,46 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async () => {
         call += 1;
-        return { rawText: JSON.stringify({
-          findings: [], iocs: [{ id: "i1", type: "process", value: "mimikatz.exe" }], mitreTechniques: [],
-          threadsOpened: [], threadsClosed: [], timelineNote: "read rows", attackerPath: "", summary: "",
-          forensicEvents: [{ id: "e1", timestamp: `2026-05-20T09:0${call}:00Z`, description: `row event ${call}`,
-            severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [],
+            iocs: [{ id: "i1", type: "process", value: "mimikatz.exe" }],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "read rows",
+            attackerPath: "",
+            summary: "",
+            forensicEvents: [
+              {
+                id: "e1",
+                timestamp: `2026-05-20T09:0${call}:00Z`,
+                description: `row event ${call}`,
+                severity: "High",
+                mitreTechniques: [],
+                relatedFindingIds: [],
+              },
+            ],
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, stateStore,
+      provider,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     const csv = "Time,Process\n09:00,a.exe\n09:01,b.exe\n09:02,c.exe\n"; // 3 rows
     const durableProgress: number[] = [];
     const state = await pipeline.analyzeCsv("c1", csv, {
-      label: "0001_results.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z", rowsPerBatch: 2,
+      label: "0001_results.csv",
+      idPrefix: "m1",
+      importedAt: "2026-06-01T00:00:00Z",
+      rowsPerBatch: 2,
       onProgress: async (done) => {
         const committed = await stateStore.load("c1");
-        durableProgress.push(
-          lastCommittedImportBatch(committed.timeline, "0001_results.csv"),
-        );
+        durableProgress.push(lastCommittedImportBatch(committed.timeline, "0001_results.csv"));
         expect(durableProgress.at(-1)).toBe(done);
       },
     });
@@ -749,39 +1386,139 @@ describe("AnalysisPipeline", () => {
     expect(durableProgress).toEqual([1, 2]);
   });
 
+  it("analyzeCsv re-reads DFIR_AI_CSV_PROMPT_FILE for every batch, not once per import", async () => {
+    // DFIR_AI_*_PROMPT_FILE is documented as "re-read on each AI call". A multi-batch import makes
+    // one call per batch, so an operator who corrects the prompt file while a long import is
+    // running must see the fix take effect on the next batch. Resolving the prompt once up front
+    // (the #453 refactor briefly did) pins the whole import to whatever the file said at the start.
+    const dir = await mkdtemp(join(tmpdir(), "dfir-csv-prompt-"));
+    const promptFile = join(dir, "csv.txt");
+    await writeFile(promptFile, "PROMPT VERSION ONE", "utf8");
+    process.env.DFIR_AI_CSV_PROMPT_FILE = promptFile;
+
+    const seen: string[] = [];
+    const provider: AIProvider = {
+      name: "spy",
+      model: "mock-model",
+      analyze: async (req) => {
+        seen.push(req.systemPrompt);
+        if (seen.length === 1) await writeFile(promptFile, "PROMPT VERSION TWO", "utf8");
+        return {
+          rawText: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "read rows",
+            attackerPath: "",
+            summary: "",
+            forensicEvents: [],
+          }),
+        };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    try {
+      await pipeline.analyzeCsv("c1", "Time,Process\n09:00,a.exe\n09:01,b.exe\n", {
+        label: "prompt.csv",
+        idPrefix: "p1",
+        importedAt: "2026-06-01T00:00:00Z",
+        rowsPerBatch: 1,
+      });
+      expect(seen).toEqual(["PROMPT VERSION ONE", "PROMPT VERSION TWO"]);
+    } finally {
+      delete process.env.DFIR_AI_CSV_PROMPT_FILE;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("analyzeCsv deduplicates an identical event re-imported (e.g. the same file twice)", async () => {
     // The SAME extracted event across two imports must NOT double the timeline.
     const sameEvent = JSON.stringify({
-      findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-      timelineNote: "read rows", attackerPath: "", summary: "",
-      forensicEvents: [{ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "mimikatz.exe dropped",
-        severity: "High", mitreTechniques: [], relatedFindingIds: [] }],
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "read rows",
+      attackerPath: "",
+      summary: "",
+      forensicEvents: [
+        {
+          id: "e1",
+          timestamp: "2026-05-20T09:00:00Z",
+          description: "mimikatz.exe dropped",
+          severity: "High",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+        },
+      ],
     });
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", sameEvent), stateStore,
+      provider: new MockProvider("mock", sameEvent),
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const csv = "Time,Process\n09:00,mimikatz.exe\n";
-    await pipeline.analyzeCsv("c1", csv, { label: "0001_a.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z" });
-    const state = await pipeline.analyzeCsv("c1", csv, { label: "0002_a.csv", idPrefix: "m2", importedAt: "2026-06-01T00:01:00Z" });
-    expect(state.forensicTimeline).toHaveLength(1);            // collapsed, not doubled
-    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(expect.arrayContaining(["0001_a.csv", "0002_a.csv"]));
+    await pipeline.analyzeCsv("c1", csv, {
+      label: "0001_a.csv",
+      idPrefix: "m1",
+      importedAt: "2026-06-01T00:00:00Z",
+    });
+    const state = await pipeline.analyzeCsv("c1", csv, {
+      label: "0002_a.csv",
+      idPrefix: "m2",
+      importedAt: "2026-06-01T00:01:00Z",
+    });
+    expect(state.forensicTimeline).toHaveLength(1); // collapsed, not doubled
+    expect(state.forensicTimeline[0].sourceScreenshots).toEqual(
+      expect.arrayContaining(["0001_a.csv", "0002_a.csv"]),
+    );
   });
 
   it("synthesize hides client-confirmed legitimate events from the model but preserves them in state", async () => {
     const { FalsePositiveStore, markerId } = await import("../../src/analysis/falsePositive.js");
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      { id: "e1", timestamp: "2026-05-28T09:00:00Z", description: "attacker process create", severity: "High",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
-      { id: "e2", timestamp: "2026-05-28T09:05:00Z", description: "client admin maintenance task", severity: "Medium",
-        mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00Z",
+        description: "attacker process create",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:05:00Z",
+        description: "client admin maintenance task",
+        severity: "Medium",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
     );
     await stateStore.save(seeded);
 
     const falsePositiveStore = new FalsePositiveStore(caseStore);
     await falsePositiveStore.save("c1", [
-      { id: markerId("event", "e2"), kind: "event", ref: "e2", reason: "known-good-tool", note: "client's own admin", markedAt: "2026-05-28T10:00:00Z", markedBy: "anonymous", label: "client admin maintenance task" },
+      {
+        id: markerId("event", "e2"),
+        kind: "event",
+        ref: "e2",
+        reason: "known-good-tool",
+        note: "client's own admin",
+        markedAt: "2026-05-28T10:00:00Z",
+        markedBy: "anonymous",
+        label: "client admin maintenance task",
+      },
     ]);
 
     let sentPrompt = "";
@@ -790,19 +1527,30 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({
-          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-          forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "",
+            summary: "s",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "",
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, falsePositiveStore, stateStore,
+      provider,
+      falsePositiveStore,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     const state = await pipeline.synthesize("c1");
-    expect(sentPrompt).toContain("attacker process create");        // legit-untouched event still sent
+    expect(sentPrompt).toContain("attacker process create"); // legit-untouched event still sent
     expect(sentPrompt).not.toContain("client admin maintenance task"); // legit event excluded from input
     expect(state.forensicTimeline.map((e) => e.id)).toEqual(["e1", "e2"]); // both preserved (reversible)
   });
@@ -817,28 +1565,51 @@ describe("AnalysisPipeline", () => {
       model: "mock-model",
       analyze: async (req: { userPrompt: string }) => {
         sentPrompt = req.userPrompt;
-        return { rawText: JSON.stringify({
-          findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "",
-          threadsOpened: [], threadsClosed: [], timelineNote: "sshd auth.log",
-          forensicEvents: [{ id: "e1", timestamp: "2026-05-28T09:00:00Z", endTimestamp: "2026-05-28T09:00:19Z",
-            count: 20, description: "20 failed SSH logins for root from 10.0.0.5", severity: "High",
-            mitreTechniques: ["T1110"], relatedFindingIds: [] }],
-        }) };
+        return {
+          rawText: JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "",
+            summary: "",
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "sshd auth.log",
+            forensicEvents: [
+              {
+                id: "e1",
+                timestamp: "2026-05-28T09:00:00Z",
+                endTimestamp: "2026-05-28T09:00:19Z",
+                count: 20,
+                description: "20 failed SSH logins for root from 10.0.0.5",
+                severity: "High",
+                mitreTechniques: ["T1110"],
+                relatedFindingIds: [],
+              },
+            ],
+          }),
+        };
       },
     };
     const pipeline = new AnalysisPipeline({
-      provider, stateStore,
+      provider,
+      stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
-    const log = Array.from({ length: 20 }, (_, i) =>
-      `May 28 09:00:${String(i).padStart(2, "0")} host sshd[${1000 + i}]: Failed password for root from 10.0.0.5`,
-    ).join("\n") + "\n";
+    const log =
+      Array.from(
+        { length: 20 },
+        (_, i) =>
+          `May 28 09:00:${String(i).padStart(2, "0")} host sshd[${1000 + i}]: Failed password for root from 10.0.0.5`,
+      ).join("\n") + "\n";
     const state = await pipeline.analyzeLog("c1", log, {
-      label: "0001_auth.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z",
+      label: "0001_auth.log",
+      idPrefix: "l1",
+      importedAt: "2026-06-01T00:00:00Z",
     });
 
-    expect(sentPrompt).toContain("×20");                       // pattern collapsed with its count
+    expect(sentPrompt).toContain("×20"); // pattern collapsed with its count
     expect(sentPrompt).toContain("20 raw line(s) → 1 pattern(s)");
     // One aggregated event, carrying the count + span, sourced from the log.
     expect(state.forensicTimeline).toHaveLength(1);
@@ -850,18 +1621,33 @@ describe("AnalysisPipeline", () => {
   it("analyzeLog lets the model skip routine noise (empty forensicEvents ⇒ nothing added)", async () => {
     // A pure VPN-rekeying log: the model returns NO events; the timeline stays empty.
     const pipeline = new AnalysisPipeline({
-      provider: new MockProvider("mock", JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
-        timelineNote: "strongSwan IKE log", attackerPath: "", summary: "", forensicEvents: [],
-      })),
+      provider: new MockProvider(
+        "mock",
+        JSON.stringify({
+          findings: [],
+          iocs: [],
+          mitreTechniques: [],
+          threadsOpened: [],
+          threadsClosed: [],
+          timelineNote: "strongSwan IKE log",
+          attackerPath: "",
+          summary: "",
+          forensicEvents: [],
+        }),
+      ),
       stateStore,
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
-    const log = Array.from({ length: 50 }, (_, i) =>
-      `2026-05-19T00:00:${String(i % 60).padStart(2, "0")}Z starting keying attempt ${i} for 'S_REF_Ips2office_0'.`,
-    ).join("\n") + "\n";
+    const log =
+      Array.from(
+        { length: 50 },
+        (_, i) =>
+          `2026-05-19T00:00:${String(i % 60).padStart(2, "0")}Z starting keying attempt ${i} for 'S_REF_Ips2office_0'.`,
+      ).join("\n") + "\n";
     const state = await pipeline.analyzeLog("c1", log, {
-      label: "0002_ipsec.log", idPrefix: "l2", importedAt: "2026-06-01T00:00:00Z",
+      label: "0002_ipsec.log",
+      idPrefix: "l2",
+      importedAt: "2026-06-01T00:00:00Z",
     });
     expect(state.forensicTimeline).toHaveLength(0); // noise skipped, timeline not polluted
   });
@@ -873,7 +1659,9 @@ describe("AnalysisPipeline", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const state = await pipeline.analyzeLog("c1", "\n\n   \n", {
-      label: "x.log", idPrefix: "l1", importedAt: "2026-06-01T00:00:00Z",
+      label: "x.log",
+      idPrefix: "l1",
+      importedAt: "2026-06-01T00:00:00Z",
     });
     expect(state.forensicTimeline).toHaveLength(0);
   });
@@ -885,7 +1673,9 @@ describe("AnalysisPipeline", () => {
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
     const state = await pipeline.analyzeCsv("c1", "Time,Process\n", {
-      label: "x.csv", idPrefix: "m1", importedAt: "2026-06-01T00:00:00Z",
+      label: "x.csv",
+      idPrefix: "m1",
+      importedAt: "2026-06-01T00:00:00Z",
     });
     expect(state.forensicTimeline).toHaveLength(0);
   });
@@ -918,17 +1708,24 @@ describe("pipeline import — IOC extractedFrom", () => {
     // event carrying a SHA256 hash IOC.
     const sysmonProc = {
       "@timestamp": "2026-07-06T09:46:58.001Z",
-      log_name: "Microsoft-Windows-Sysmon/Operational", computer_name: "WKSTN-1.corp.local",
-      event_id: 1, level: "Information",
+      log_name: "Microsoft-Windows-Sysmon/Operational",
+      computer_name: "WKSTN-1.corp.local",
+      event_id: 1,
+      level: "Information",
       event_data: {
-        UtcTime: "2026-07-06 09:46:58.000", Image: "C:\\Windows\\System32\\taskeng.exe",
-        CommandLine: "taskeng.exe {GUID}", ParentImage: "C:\\Windows\\System32\\svchost.exe",
-        ParentCommandLine: "svchost.exe -k netsvcs", User: "NT AUTHORITY\\SYSTEM",
+        UtcTime: "2026-07-06 09:46:58.000",
+        Image: "C:\\Windows\\System32\\taskeng.exe",
+        CommandLine: "taskeng.exe {GUID}",
+        ParentImage: "C:\\Windows\\System32\\svchost.exe",
+        ParentCommandLine: "svchost.exe -k netsvcs",
+        User: "NT AUTHORITY\\SYSTEM",
         Hashes: "SHA256=425A1A21A4DBC212C3C3DB5F8FECDD6235E7E7FE2FCFCE3AFFE3F9F80AA24A92",
       },
     };
     const state = await pipeline.importSiem("c1", JSON.stringify([sysmonProc]), {
-      label: "evtx.json", idPrefix: "s1", importedAt: "2026-07-06T00:00:00Z",
+      label: "evtx.json",
+      idPrefix: "s1",
+      importedAt: "2026-07-06T00:00:00Z",
     });
 
     const hashIoc = state.iocs.find((i) => i.type === "hash");
@@ -942,13 +1739,18 @@ describe("pipeline import — IOC extractedFrom", () => {
       imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     });
     const row = {
-      "@timestamp": "2026-07-06T00:00:00Z", "rule.name": "DNS to known-bad domain",
+      "@timestamp": "2026-07-06T00:00:00Z",
+      "rule.name": "DNS to known-bad domain",
       "event.severity_label": "high",
-      "dns.query": "evil.example.com", "source.ip": "10.0.0.5", "destination.ip": "10.0.0.1",
+      "dns.query": "evil.example.com",
+      "source.ip": "10.0.0.5",
+      "destination.ip": "10.0.0.1",
       "host.name": "WKSTN-1",
     };
     const state = await pipeline.importSecurityOnion("c1", JSON.stringify([row]), {
-      label: "so.json", idPrefix: "so1", importedAt: "2026-07-06T00:00:00Z",
+      label: "so.json",
+      idPrefix: "so1",
+      importedAt: "2026-07-06T00:00:00Z",
     });
 
     const domainIoc = state.iocs.find((i) => i.value === "evil.example.com");
@@ -970,15 +1772,27 @@ class RecordingProvider implements AIProvider {
 }
 
 const EMPTY_DELTA = JSON.stringify({
-  findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-  forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+  findings: [],
+  iocs: [],
+  mitreTechniques: [],
+  attackerPath: "",
+  summary: "s",
+  forensicEvents: [],
+  threadsOpened: [],
+  threadsClosed: [],
+  timelineNote: "",
 });
 
 async function seedOneEvent(): Promise<void> {
   const seeded = emptyState("c1");
   seeded.forensicTimeline.push({
-    id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "suspicious thing", severity: "High",
-    mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+    id: "e1",
+    timestamp: "2026-05-20T09:00:00Z",
+    description: "suspicious thing",
+    severity: "High",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
   });
   await stateStore.save(seeded);
 }
@@ -988,7 +1802,9 @@ describe("synthesize — deep-pass observations block", () => {
     await seedOneEvent();
     const provider = new RecordingProvider(EMPTY_DELTA);
     const pipeline = new AnalysisPipeline({
-      provider, stateStore, imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     await pipeline.synthesize("c1", {
@@ -996,8 +1812,9 @@ describe("synthesize — deep-pass observations block", () => {
       observationsBlock: "DEEP-PASS OBSERVATIONS (test marker):\n- something happened [events: e1]\n\n",
     });
 
-    expect(provider.requests.map((r) => r.userPrompt).join("\n"))
-      .toContain("DEEP-PASS OBSERVATIONS (test marker)");
+    expect(provider.requests.map((r) => r.userPrompt).join("\n")).toContain(
+      "DEEP-PASS OBSERVATIONS (test marker)",
+    );
   });
 
   it("re-synthesizes rather than skipping when only the observations block changed", async () => {
@@ -1006,7 +1823,9 @@ describe("synthesize — deep-pass observations block", () => {
     await seedOneEvent();
     const provider = new RecordingProvider(EMPTY_DELTA);
     const pipeline = new AnalysisPipeline({
-      provider, stateStore, imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
 
     await pipeline.synthesize("c1", { observationsBlock: "" });
@@ -1032,17 +1851,21 @@ describe("pipeline import — empty imports are recorded, not silently dropped",
     const ntp = [
       { ts: 1715713200, uid: "N1", "id.orig_h": "10.0.0.5", "id.resp_h": "10.0.0.1", version: 4, stratum: 3 },
       { ts: 1715713260, uid: "N2", "id.orig_h": "10.0.0.6", "id.resp_h": "10.0.0.1", version: 4, stratum: 3 },
-    ].map((o) => JSON.stringify(o)).join("\n");
+    ]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
 
     const state = await pipeline.importNetwork("c1", ntp, {
-      label: "0007_ntp.json", idPrefix: "n1", importedAt: "2026-05-28T10:00:00.000Z",
+      label: "0007_ntp.json",
+      idPrefix: "n1",
+      importedAt: "2026-05-28T10:00:00.000Z",
     });
 
     expect(state.forensicTimeline).toHaveLength(0);
     const note = state.timeline.at(-1);
     expect(note, "an empty import must still leave a timeline note").toBeDefined();
     expect(note?.description).toMatch(/no events/i);
-    expect(note?.description).toMatch(/2 record/);          // says how much was parsed
+    expect(note?.description).toMatch(/2 record/); // says how much was parsed
     expect(note?.sourceScreenshots).toContain("0007_ntp.json");
   });
 
@@ -1052,7 +1875,9 @@ describe("pipeline import — empty imports are recorded, not silently dropped",
       imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
     });
     const state = await pipeline.importBashHistory("c1", "", {
-      label: "0008_empty.bash_history", idPrefix: "b1", importedAt: "2026-05-28T10:00:00.000Z",
+      label: "0008_empty.bash_history",
+      idPrefix: "b1",
+      importedAt: "2026-05-28T10:00:00.000Z",
     });
     expect(state.timeline.at(-1)?.description).toMatch(/no events/i);
   });

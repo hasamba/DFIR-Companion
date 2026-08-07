@@ -21,10 +21,10 @@ import {
   getRemediationPrompt,
 } from "./prompts/index.js";
 import {
+  callAiJson,
   fitTimelineText,
   loadScopedEvents,
   promptOverhead,
-  retryPolicy,
   type AiCallContext,
 } from "./aiContext.js";
 
@@ -94,22 +94,15 @@ export async function generateNarrative(
     `Write the narrative timeline as JSON.`;
 
   const narrativeSchema = z.object({ narrativeTimeline: z.string().catch("") });
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const result = await ctx.withRetry(
+  const result = await callAiJson(
+    ctx,
     caseId,
+    loaded,
+    provider,
     "narrative",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: narrativePrompt, userPrompt, images: [] },
-        "narrative",
-      );
-      return narrativeSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+    narrativePrompt,
+    userPrompt,
+    (raw) => narrativeSchema.parse(raw),
   );
 
   // Re-read state before saving so imports/edits that arrived during the AI call aren't clobbered.
@@ -141,22 +134,8 @@ export async function executiveSummary(ctx: AiCallContext, caseId: string): Prom
     `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
     `Write the executive summary as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    "exec-summary",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getExecSummaryPrompt(), userPrompt, images: [] },
-        "exec-summary",
-      );
-      return execSummarySchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, "exec-summary", getExecSummaryPrompt, userPrompt, (raw) =>
+    execSummarySchema.parse(raw),
   );
 }
 
@@ -178,24 +157,7 @@ export async function remediationPlan(ctx: AiCallContext, caseId: string): Promi
       )
       .join("\n") || "(none)";
 
-  // The deterministic ATT&CK mitigations for this case's techniques — the grounding facts.
-  const mit = buildMitigationsResult(filtered, loadMitigationsDataset());
-  const mitigationsText =
-    mit.byMitigation
-      .slice(0, 30)
-      .map((m) => `- ${m.id} ${m.name} (covers ${m.techniques.join(", ")}): ${m.description}`)
-      .join("\n") || "(no mapped ATT&CK mitigations)";
-
-  // The deterministic D3FEND countermeasures (defensive techniques/sensors) for the same
-  // techniques — so the plan can also cite the relevant D3FEND control alongside the M-code.
-  const d3f = buildD3fendResult(filtered, loadD3fendDataset(), d3fendEnvOptions());
-  const d3fendText =
-    d3f.byTactic
-      .flatMap((g) =>
-        g.countermeasures.map((c) => `- ${c.name} [${c.tactic}] (covers ${c.techniques.join(", ")})`),
-      )
-      .slice(0, 40)
-      .join("\n") || "(no mapped D3FEND countermeasures)";
+  const { mitigationsText, d3fendText } = renderControlGrounding(filtered);
 
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
 
@@ -207,22 +169,8 @@ export async function remediationPlan(ctx: AiCallContext, caseId: string): Promi
     `RELEVANT D3FEND COUNTERMEASURES (the defensive technique/sensor for each — cite alongside the ATT&CK mitigation where it fits):\n${d3fendText}\n\n` +
     `Write the incident-specific remediation plan as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    "remediation",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getRemediationPrompt(), userPrompt, images: [] },
-        "remediation",
-      );
-      return remediationPlanSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, "remediation", getRemediationPrompt, userPrompt, (raw) =>
+    remediationPlanSchema.parse(raw),
   );
 }
 
@@ -248,23 +196,74 @@ export async function hypothesisReview(
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   const validEventIds = new Set(scoped.map((e) => e.id));
 
+  const userPrompt = await buildHypothesisReviewPrompt(ctx, loaded, scoped, open);
+
+  const knownHypotheses = new Map(open.map((h) => [h.id, h.title] as const));
+  return callAiJson(
+    ctx,
+    caseId,
+    loaded,
+    provider,
+    "hypothesis-review",
+    getHypothesisReviewPrompt,
+    userPrompt,
+    (raw) => ({
+      reviews: sanitizeHypothesisReviews(
+        hypothesisReviewSchema.parse(raw).reviews,
+        knownHypotheses,
+        validEventIds,
+      ),
+    }),
+  );
+}
+
+/**
+ * The deterministic control grounding for a remediation plan: the ATT&CK mitigations mapped to this
+ * case's techniques, and the D3FEND countermeasures (defensive techniques/sensors) for the same set,
+ * so the plan can cite the relevant D3FEND control alongside each M-code. These are the facts the
+ * model builds steps FROM — it does not get to invent a mitigation.
+ */
+function renderControlGrounding(filtered: InvestigationState): {
+  mitigationsText: string;
+  d3fendText: string;
+} {
+  const mit = buildMitigationsResult(filtered, loadMitigationsDataset());
+  const d3f = buildD3fendResult(filtered, loadD3fendDataset(), d3fendEnvOptions());
+  return {
+    mitigationsText:
+      mit.byMitigation
+        .slice(0, 30)
+        .map((m) => `- ${m.id} ${m.name} (covers ${m.techniques.join(", ")}): ${m.description}`)
+        .join("\n") || "(no mapped ATT&CK mitigations)",
+    d3fendText:
+      d3f.byTactic
+        .flatMap((g) =>
+          g.countermeasures.map((c) => `- ${c.name} [${c.tactic}] (covers ${c.techniques.join(", ")})`),
+        )
+        .slice(0, 40)
+        .join("\n") || "(no mapped D3FEND countermeasures)",
+  };
+}
+
+/** Just the fields the review prompt renders — not the full stored hypothesis. */
+interface OpenHypothesis {
+  id: string;
+  title: string;
+  expectedOutcome?: string;
+  relatedEventIds: string[];
+  contradictingEventIds: string[];
+}
+
+/** The review prompt: case grounding, then the timeline trimmed to whatever budget is left. */
+async function buildHypothesisReviewPrompt(
+  ctx: CaseReportContext,
+  loaded: InvestigationState,
+  scoped: ForensicEvent[],
+  open: OpenHypothesis[],
+): Promise<string> {
   const findingsText = findingsWithIds(loaded);
   const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
-
-  // Render the open hypotheses with the evidence already linked to them, so the model reviews the
-  // analyst's/synthesis's current picture rather than starting cold.
-  const hypothesesText = open
-    .map((h) => {
-      const parts = [`[${h.id}] ${h.title}`];
-      if (h.expectedOutcome) parts.push(`    decided by: ${h.expectedOutcome}`);
-      if (h.relatedEventIds.length)
-        parts.push(`    currently-supporting events: ${h.relatedEventIds.join(", ")}`);
-      if (h.contradictingEventIds.length)
-        parts.push(`    known contradicting events: ${h.contradictingEventIds.join(", ")}`);
-      return parts.join("\n");
-    })
-    .join("\n");
-
+  const hypothesesText = renderOpenHypotheses(open);
   const timelineText = fitTimelineText(
     scoped,
     renderIdentifiedEvent,
@@ -276,32 +275,30 @@ export async function hypothesisReview(
       hypothesesText,
     ),
   );
-
-  const userPrompt =
+  return (
     contextBlock +
     `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
     `FINDINGS:\n${findingsText}\n\n` +
     `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
     `OPEN HYPOTHESES TO REVIEW:\n${hypothesesText}\n\n` +
-    `Review each open hypothesis for supporting AND refuting evidence, and return the JSON.`;
-
-  const knownHypotheses = new Map(open.map((h) => [h.id, h.title] as const));
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    "hypothesis-review",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getHypothesisReviewPrompt(), userPrompt, images: [] },
-        "hypothesis-review",
-      );
-      const result = hypothesisReviewSchema.parse(parsed);
-      return { reviews: sanitizeHypothesisReviews(result.reviews, knownHypotheses, validEventIds) };
-    },
-    retries,
-    backoffMs,
+    `Review each open hypothesis for supporting AND refuting evidence, and return the JSON.`
   );
+}
+
+/**
+ * The open hypotheses with the evidence already linked to them, so the model reviews the
+ * analyst's/synthesis's current picture rather than starting cold.
+ */
+function renderOpenHypotheses(open: OpenHypothesis[]): string {
+  return open
+    .map((h) => {
+      const parts = [`[${h.id}] ${h.title}`];
+      if (h.expectedOutcome) parts.push(`    decided by: ${h.expectedOutcome}`);
+      if (h.relatedEventIds.length)
+        parts.push(`    currently-supporting events: ${h.relatedEventIds.join(", ")}`);
+      if (h.contradictingEventIds.length)
+        parts.push(`    known contradicting events: ${h.contradictingEventIds.join(", ")}`);
+      return parts.join("\n");
+    })
+    .join("\n");
 }

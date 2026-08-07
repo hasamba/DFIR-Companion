@@ -72,18 +72,7 @@ export async function analyzeWindow(
   return ctx.withStateLock(caseId, async () => {
     const state = await ctx.opts.stateStore.load(caseId);
     const images = await Promise.all(analyzable.map((c) => ctx.opts.imageLoader(caseId, c.screenshotFile)));
-    // Note: we deliberately do NOT put the capture time on these lines — the model
-    // would otherwise copy it into forensicEvents instead of reading the artifact's
-    // own timestamp column shown in the image.
-    const contextLines = analyzable
-      .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url})`)
-      .join("\n");
-    const userPrompt =
-      `${buildStateSummary(state)}\n\nNEW SCREENSHOTS (read each artifact's OWN timestamp column ` +
-      `for event times — do not use any capture/current time):\n${contextLines}\n\nReturn the JSON delta.`;
-
-    const retries = ctx.opts.retries ?? 3;
-    const backoffMs = ctx.opts.backoffMs ?? 500;
+    const userPrompt = buildScreenshotPrompt(state, analyzable);
 
     const delta = await ctx.withRetry(
       caseId,
@@ -98,24 +87,14 @@ export async function analyzeWindow(
         );
         return stripAiExtractedFrom(deltaSchema.parse(parsed));
       },
-      retries,
-      backoffMs,
+      ctx.opts.retries ?? 3,
+      ctx.opts.backoffMs ?? 500,
     );
 
-    const windowSequence = analyzable[analyzable.length - 1].sequenceNumber;
-    // Tag each event's source for correlation/corroboration: detect the real tool from the
-    // captured tab titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else generic "screenshot".
-    const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
-    const tagged = {
-      ...delta,
-      forensicEvents: (delta.forensicEvents ?? []).map((e) => ({
-        ...e,
-        sources: e.sources?.length ? e.sources : [winSource],
-      })),
-    };
-    const next = await ctx.mergeWithAliases(state, tagged, {
-      windowSequence,
-      timestamp: analyzable[analyzable.length - 1].timestamp,
+    const last = analyzable[analyzable.length - 1];
+    const next = await ctx.mergeWithAliases(state, tagScreenshotSources(delta, analyzable), {
+      windowSequence: last.sequenceNumber,
+      timestamp: last.timestamp,
       sourceScreenshots: analyzable.map((c) => c.screenshotFile),
     });
     await ctx.opts.stateStore.save(next);
@@ -124,10 +103,187 @@ export async function analyzeWindow(
   });
 }
 
-// Import an uploaded CSV (e.g. a Velociraptor result export) as evidence: extract
-// dated forensic events + IOCs from the rows, batch by batch, into the timeline —
-// the same delta the screenshot path produces. Findings/TTPs/attacker-path come
-// afterwards from synthesize() (call it after this resolves), exactly like capture.
+/**
+ * The screenshot batch, as prompt text.
+ *
+ * The capture time is deliberately NOT put on these lines — the model would otherwise copy it into
+ * forensicEvents instead of reading the artifact's own timestamp column shown in the image.
+ */
+function buildScreenshotPrompt(state: InvestigationState, analyzable: CaptureMetadata[]): string {
+  const contextLines = analyzable
+    .map((c) => `Screenshot ${c.screenshotFile} — ${c.tabTitle} (${c.url})`)
+    .join("\n");
+  return (
+    `${buildStateSummary(state)}\n\nNEW SCREENSHOTS (read each artifact's OWN timestamp column ` +
+    `for event times — do not use any capture/current time):\n${contextLines}\n\nReturn the JSON delta.`
+  );
+}
+
+/**
+ * Tag each event's source for correlation/corroboration: detect the real tool from the captured tab
+ * titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else the generic "screenshot".
+ */
+function tagScreenshotSources<D extends { forensicEvents?: { sources?: string[] }[] }>(
+  delta: D,
+  analyzable: CaptureMetadata[],
+): D {
+  const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
+  return {
+    ...delta,
+    forensicEvents: (delta.forensicEvents ?? []).map((e) => ({
+      ...e,
+      sources: e.sources?.length ? e.sources : [winSource],
+    })),
+  };
+}
+
+/**
+ * What differs between the CSV and log imports (#453). Everything NOT here is shared, and lives in
+ * `runBatchedImport` below.
+ *
+ * The two used to be 100+ lines each and ~85% identical, which is how they drifted: the log path
+ * reserves 96 tokens of prompt overhead and the CSV path 64 plus a header row, for no reason anyone
+ * recorded. Making the difference a parameter means the next divergence has to be typed out here,
+ * where it is visible, rather than appearing as a diff between two long functions nobody diffs.
+ */
+interface ImportExtractionSpec<T> {
+  /** The retry/telemetry kind AND the analyzeRestored call kind — always the same string. */
+  kind: "csv" | "log";
+  /**
+   * A RESOLVER, not a string. `DFIR_AI_{CSV,LOG}_PROMPT_FILE` is documented as "re-read on each AI
+   * call", and this loop makes one call per batch per attempt — so resolving once up front would
+   * pin a whole multi-batch import to whatever the file said when it started.
+   */
+  resolveSystemPrompt: () => string;
+  /** Fallback event source when `detectTool(label)` finds nothing. */
+  defaultSource: string;
+  /** The raw payload, pre-scanned once alongside the state summary. */
+  payloadText: string;
+  /** Split the items into batches. Takes the loaded state because the summary is prompt overhead. */
+  planBatches(state: InvestigationState): T[][];
+  buildPrompt(state: InvestigationState, batch: T[], index: number, total: number): string;
+}
+
+/**
+ * Scan the WHOLE import once, up front, instead of letting the per-batch loop hit presidioGate
+ * repeatedly (which would stall-approve-restart on a large CSV with names scattered through it).
+ * One approval round trip per import, not one per batch.
+ *
+ * The scan covers the STATE SUMMARY as well as the payload, because every batch prompt is
+ * `buildStateSummary(state) + chunk` and every batch passes skipPresidioGate=true. Scanning the
+ * payload alone left the summary — finding titles and descriptions, open threads, the last 12
+ * forensic events and every known IOC value, all RESTORED to real values — reaching the provider
+ * having never been seen by Presidio: a fail-OPEN in a layer whose contract is fail-closed.
+ */
+async function preScanWholeImport(
+  ctx: ExtractionContext,
+  caseId: string,
+  state: InvestigationState,
+  payloadText: string,
+): Promise<void> {
+  if (!ctx.opts.presidio) return;
+  const importAnonCtx = await buildImportAnonContext(ctx, caseId, state);
+  if (!importAnonCtx) return;
+  await presidioPreScan(
+    ctx,
+    caseId,
+    `${buildStateSummary(state)}\n${payloadText}`,
+    importAnonCtx.known,
+    importAnonCtx.anon,
+  );
+}
+
+/**
+ * One batch's model call. `skipPresidioGate=true` because `preScanWholeImport` already covered this
+ * whole payload — that flag and the pre-scan are a pair, and neither is safe without the other.
+ */
+async function extractBatch<T>(
+  ctx: ExtractionContext,
+  caseId: string,
+  state: InvestigationState,
+  provider: AIProvider,
+  opts: ImportExtractionOptions,
+  spec: ImportExtractionSpec<T>,
+  userPrompt: string,
+): Promise<ReturnType<typeof stripAiExtractedFrom>> {
+  const parsed = await ctx.analyzeRestored(
+    caseId,
+    state,
+    provider,
+    {
+      systemPrompt: spec.resolveSystemPrompt(),
+      userPrompt,
+      images: [],
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    },
+    spec.kind,
+    true,
+  );
+  return stripAiExtractedFrom(deltaSchema.parse(parsed));
+}
+
+/**
+ * The shared import shape: hold the state lock across the whole batch loop, pre-scan once, then for
+ * each batch call the model, renumber the events it returned, merge and persist.
+ *
+ * The lock spans every batch deliberately — a concurrent import merging into the same case between
+ * two batches would renumber against a timeline this loop has already read.
+ */
+async function runBatchedImport<T>(
+  ctx: ExtractionContext,
+  caseId: string,
+  provider: AIProvider,
+  opts: ImportExtractionOptions,
+  spec: ImportExtractionSpec<T>,
+): Promise<InvestigationState> {
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
+    await preScanWholeImport(ctx, caseId, state, spec.payloadText);
+    const batches = spec.planBatches(state);
+
+    for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
+      if (opts.signal?.aborted) break; // #225: cancelled — stop before the next batch, keep prior batches
+      const userPrompt = spec.buildPrompt(state, batches[b], b, batches.length);
+
+      const delta = await ctx.withRetry(
+        caseId,
+        spec.kind,
+        () => extractBatch(ctx, caseId, state, provider, opts, spec, userPrompt),
+        ctx.opts.retries ?? 3,
+        ctx.opts.backoffMs ?? 500,
+      );
+
+      // Renumber event ids so chunked imports don't overwrite each other (merge dedupes forensic
+      // events by id, and each batch independently emits e1, e2…).
+      const renumbered = {
+        ...delta,
+        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({
+          ...e,
+          id: `${opts.idPrefix}e${++evSeq}`,
+          sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? spec.defaultSource],
+        })),
+      };
+
+      state = await ctx.mergeWithAliases(state, renumbered, {
+        windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label], // evidence traceability: the uploaded file
+      });
+      await ctx.opts.stateStore.save(state);
+      ctx.opts.onState?.(state);
+      await opts.onProgress?.(b + 1, batches.length);
+    }
+    return state;
+  });
+}
+
+/**
+ * Import an uploaded CSV (e.g. a Velociraptor result export) as evidence: extract dated forensic
+ * events + IOCs from the rows, batch by batch, into the timeline — the same delta the screenshot
+ * path produces. Findings/TTPs/attacker-path come afterwards from synthesize() (call it after this
+ * resolves), exactly like capture.
+ */
 export async function analyzeCsv(
   ctx: ExtractionContext,
   caseId: string,
@@ -139,99 +295,27 @@ export async function analyzeCsv(
   const { headers, rows } = parseCsv(csvText);
   if (rows.length === 0) return ctx.opts.stateStore.load(caseId);
 
-  const retries = ctx.opts.retries ?? 3;
-  const backoffMs = ctx.opts.backoffMs ?? 500;
-
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
-
-    // Scan the WHOLE import once, up front, instead of letting the per-chunk batches below hit
-    // presidioGate repeatedly (which would stall-approve-restart on a large CSV with names
-    // scattered through it). One approval round trip per import, not one per chunk.
-    //
-    // The scan covers the STATE SUMMARY as well as the payload, because every batch prompt
-    // below is `buildStateSummary(state) + csvChunk`, and every batch passes
-    // skipPresidioGate=true. Scanning csvText alone left the summary — finding titles and
-    // descriptions, open threads, the last 12 forensic events and every known IOC value, all
-    // RESTORED to real values — reaching the provider having never been seen by Presidio: a
-    // fail-OPEN in a layer whose contract is fail-closed.
-    if (ctx.opts.presidio) {
-      const importAnonCtx = await buildImportAnonContext(ctx, caseId, state);
-      if (importAnonCtx)
-        await presidioPreScan(
-          ctx,
-          caseId,
-          `${buildStateSummary(state)}\n${csvText}`,
-          importAnonCtx.known,
-          importAnonCtx.anon,
-        );
-    }
-
-    // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines)
-    // could otherwise pack 50 rows into a prompt that overflows the model context. Reserve
-    // room for the system prompt + the state-summary that's prepended to every batch.
-    const csvOverhead =
-      estimateTokens(getCsvPrompt()) +
-      estimateTokens(buildStateSummary(state)) +
-      estimateTokens(chunkToCsvText(headers, [])) +
-      64;
-    const rowBudget = Math.max(0, inputTokenBudget() - csvOverhead);
-    const batches = batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), rowBudget);
-
-    for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
-      if (opts.signal?.aborted) break; // #225: cancelled — stop before the next batch, keep prior batches
-      const csvChunk = chunkToCsvText(headers, batches[b]);
-      const userPrompt =
-        `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${b + 1}/${batches.length}). ` +
-        `Read each row's OWN time column for event times — do not use the current time:\n\n${csvChunk}\n\n` +
-        `Return the JSON delta.`;
-
-      const delta = await ctx.withRetry(
-        caseId,
-        "csv",
-        async () => {
-          // skipPresidioGate=true: the pre-scan above already covered this whole import.
-          const parsed = await ctx.analyzeRestored(
-            caseId,
-            state,
-            provider,
-            {
-              systemPrompt: getCsvPrompt(),
-              userPrompt,
-              images: [],
-              ...(opts.signal ? { signal: opts.signal } : {}),
-            },
-            "csv",
-            true,
-          );
-          return stripAiExtractedFrom(deltaSchema.parse(parsed));
-        },
-        retries,
-        backoffMs,
-      );
-
-      // Renumber event ids so chunked imports don't overwrite each other (merge
-      // dedupes forensic events by id, and each batch independently emits e1, e2…).
-      const renumbered = {
-        ...delta,
-        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({
-          ...e,
-          id: `${opts.idPrefix}e${++evSeq}`,
-          sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "CSV import"],
-        })),
-      };
-
-      state = await ctx.mergeWithAliases(state, renumbered, {
-        windowSequence: -(b + 1), // negative: distinguishes import batches from capture windows
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label], // evidence traceability: the CSV file
-      });
-      await ctx.opts.stateStore.save(state);
-      ctx.opts.onState?.(state);
-      await opts.onProgress?.(b + 1, batches.length);
-    }
-    return state;
+  return runBatchedImport(ctx, caseId, provider, opts, {
+    kind: "csv",
+    resolveSystemPrompt: getCsvPrompt,
+    defaultSource: "CSV import",
+    payloadText: csvText,
+    // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines) could
+    // otherwise pack 50 rows into a prompt that overflows the model context. Reserve room for the
+    // system prompt, the state summary prepended to every batch, and the repeated header row.
+    planBatches: (state) => {
+      const overhead =
+        estimateTokens(getCsvPrompt()) +
+        estimateTokens(buildStateSummary(state)) +
+        estimateTokens(chunkToCsvText(headers, [])) +
+        64;
+      const budget = Math.max(0, inputTokenBudget() - overhead);
+      return batchByBudget(rows, opts.rowsPerBatch ?? 50, (r) => r.join(","), budget);
+    },
+    buildPrompt: (state, batch, index, total) =>
+      `${buildStateSummary(state)}\n\nCSV ARTIFACT ROWS (source: ${opts.label}; batch ${index + 1}/${total}). ` +
+      `Read each row's OWN time column for event times — do not use the current time:\n\n` +
+      `${chunkToCsvText(headers, batch)}\n\nReturn the JSON delta.`,
   });
 }
 
@@ -260,96 +344,38 @@ export async function analyzeLog(
   const maxTemplates = Number(process.env.DFIR_LOG_MAX_TEMPLATES) || undefined; // else the built-in default
   const templates = aggregateLogLines(lines, { maxTemplates }, aggStats);
   ctx.recordImportTruncation(caseId, aggStats.distinctTemplates > aggStats.keptTemplates ? aggStats : null);
-  const retries = ctx.opts.retries ?? 3;
-  const backoffMs = ctx.opts.backoffMs ?? 500;
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    let evSeq = lastImportEventSequence(state.forensicTimeline, opts.idPrefix);
-
-    // Scan the WHOLE import once, up front — see analyzeCsv for why this must precede the
-    // per-pattern batch loop below rather than living inside it, and why the state summary is
-    // scanned alongside the payload (every batch prompt below prepends it and skips the gate).
-    if (ctx.opts.presidio) {
-      const importAnonCtx = await buildImportAnonContext(ctx, caseId, state);
-      if (importAnonCtx)
-        await presidioPreScan(
-          ctx,
-          caseId,
-          `${buildStateSummary(state)}\n${logText}`,
-          importAnonCtx.known,
-          importAnonCtx.anon,
-        );
-    }
-
-    // Batch by BOTH the pattern cap and a token budget — a few patterns with very long
-    // examples shouldn't form a prompt that overflows the model context.
-    const renderPattern = (t: (typeof templates)[number]) =>
-      `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
-    const logOverhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
-    const patternBudget = Math.max(0, inputTokenBudget() - logOverhead);
-    const batches = batchByBudget(templates, opts.patternsPerBatch ?? 120, renderPattern, patternBudget);
-
-    for (let b = opts.startBatch ?? 0; b < batches.length; b++) {
-      if (opts.signal?.aborted) break; // #225: cancelled — stop before the next batch, keep prior batches
-      // Present each pattern with its occurrence count, time span, and an example.
-      const patternText = batches[b]
-        .map(
-          (t, i) =>
-            `[p${i + 1}] ×${t.count}` +
-            (t.firstTimestamp ? ` first=${t.firstTimestamp}` : "") +
-            (t.lastTimestamp && t.lastTimestamp !== t.firstTimestamp ? ` last=${t.lastTimestamp}` : "") +
-            `\n     e.g. ${t.example}`,
-        )
-        .join("\n");
-      const userPrompt =
-        `${buildStateSummary(state)}\n\nDEDUPLICATED LOG PATTERNS (source: ${opts.label}; ` +
-        `batch ${b + 1}/${batches.length}; ${lines.length} raw line(s) → ${templates.length} pattern(s)). ` +
-        `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n${patternText}\n\n` +
-        `Return the JSON delta.`;
-
-      const delta = await ctx.withRetry(
-        caseId,
-        "log",
-        async () => {
-          // skipPresidioGate=true: the pre-scan above already covered this whole import.
-          const parsed = await ctx.analyzeRestored(
-            caseId,
-            state,
-            provider,
-            {
-              systemPrompt: getLogPrompt(),
-              userPrompt,
-              images: [],
-              ...(opts.signal ? { signal: opts.signal } : {}),
-            },
-            "log",
-            true,
-          );
-          return stripAiExtractedFrom(deltaSchema.parse(parsed));
-        },
-        retries,
-        backoffMs,
-      );
-
-      const renumbered = {
-        ...delta,
-        forensicEvents: applySeverityFloor(delta.forensicEvents ?? [], opts.minSeverity).map((e) => ({
-          ...e,
-          id: `${opts.idPrefix}e${++evSeq}`,
-          sources: e.sources?.length ? e.sources : [detectTool(opts.label) ?? "Log import"],
-        })),
-      };
-
-      state = await ctx.mergeWithAliases(state, renumbered, {
-        windowSequence: -(b + 1),
-        timestamp: opts.importedAt,
-        sourceScreenshots: [opts.label],
-      });
-      await ctx.opts.stateStore.save(state);
-      ctx.opts.onState?.(state);
-      await opts.onProgress?.(b + 1, batches.length);
-    }
-    return state;
+  return runBatchedImport(ctx, caseId, provider, opts, {
+    kind: "log",
+    resolveSystemPrompt: getLogPrompt,
+    defaultSource: "Log import",
+    payloadText: logText,
+    // Batch by BOTH the pattern cap and a token budget — a few patterns with very long examples
+    // shouldn't form a prompt that overflows the model context.
+    planBatches: (state) => {
+      const render = (t: (typeof templates)[number]) =>
+        `×${t.count} ${t.firstTimestamp ?? ""} ${t.lastTimestamp ?? ""} ${t.example}`;
+      const overhead = estimateTokens(getLogPrompt()) + estimateTokens(buildStateSummary(state)) + 96;
+      const budget = Math.max(0, inputTokenBudget() - overhead);
+      return batchByBudget(templates, opts.patternsPerBatch ?? 120, render, budget);
+    },
+    buildPrompt: (state, batch, index, total) =>
+      `${buildStateSummary(state)}\n\nDEDUPLICATED LOG PATTERNS (source: ${opts.label}; ` +
+      `batch ${index + 1}/${total}; ${lines.length} raw line(s) → ${templates.length} pattern(s)). ` +
+      `Emit an aggregated event ONLY for security-relevant patterns; skip routine noise:\n\n` +
+      `${renderPatternBatch(batch)}\n\nReturn the JSON delta.`,
   });
+}
+
+/** Present each pattern with its occurrence count, time span, and an example. */
+function renderPatternBatch(batch: ReturnType<typeof aggregateLogLines>): string {
+  return batch
+    .map(
+      (t, i) =>
+        `[p${i + 1}] ×${t.count}` +
+        (t.firstTimestamp ? ` first=${t.firstTimestamp}` : "") +
+        (t.lastTimestamp && t.lastTimestamp !== t.firstTimestamp ? ` last=${t.lastTimestamp}` : "") +
+        `\n     e.g. ${t.example}`,
+    )
+    .join("\n");
 }

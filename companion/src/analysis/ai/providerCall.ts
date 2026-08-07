@@ -259,6 +259,42 @@ async function presidioGate(
   throw new PresidioApprovalRequired(fresh);
 }
 
+/**
+ * Cap what gets scanned, and SAY SO when the cap bites.
+ *
+ * A silent partial scan is worse than no scan: an analyst who sees "import scanned, no PII found"
+ * must be able to trust that claim. Naming the unscanned character count is what stops a truncated
+ * scan being mistaken for a complete one.
+ */
+function capScanLength(ctx: ProviderCallContext, caseId: string, masked: string, maxChars: number): string {
+  if (masked.length <= maxChars) return masked;
+  ctx.log.warn(
+    `[presidio] import pre-scan truncated — ${masked.length - maxChars} character(s) of this ` +
+      `import were NOT scanned for PII (cap is ${maxChars} characters)`,
+    { caseId },
+  );
+  return masked.slice(0, maxChars);
+}
+
+/**
+ * Split on line boundaries so an entity is never cut in half across two /analyze requests — a
+ * half an email address on each side of a chunk edge is two values Presidio recognises as neither.
+ */
+function splitOnLineBoundaries(text: string, chunkChars: number): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + chunkChars, text.length);
+    if (end < text.length) {
+      const nl = text.lastIndexOf("\n", end);
+      if (nl > start) end = nl + 1;
+    }
+    chunks.push(text.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
+
 /** Scan one complete masked import up front so batched CSV/log analysis needs one approval round. */
 export async function presidioPreScan(
   ctx: ProviderCallContext,
@@ -277,34 +313,10 @@ export async function presidioPreScan(
   const maxChars = ctx.opts.presidioScanCapsOverride?.maxChars ?? PRESIDIO_SCAN_MAX_CHARS;
 
   // Mask FIRST, same as analyzeRestored — Presidio only ever sees already-scrubbed text.
-  const masked = anon.apply(text);
-  const scanned = masked.length > maxChars ? masked.slice(0, maxChars) : masked;
-  if (masked.length > maxChars) {
-    // A silent partial scan is worse than no scan: an analyst who sees "import scanned, no PII
-    // found" must be able to trust that claim. Name the unscanned character count so a
-    // truncated scan is never mistaken for a complete one.
-    ctx.log.warn(
-      `[presidio] import pre-scan truncated — ${masked.length - maxChars} character(s) of this ` +
-        `import were NOT scanned for PII (cap is ${maxChars} characters)`,
-      { caseId },
-    );
-  }
-
-  // Split on line boundaries so an entity is never cut in half across two /analyze requests.
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < scanned.length) {
-    let end = Math.min(start + chunkChars, scanned.length);
-    if (end < scanned.length) {
-      const nl = scanned.lastIndexOf("\n", end);
-      if (nl > start) end = nl + 1;
-    }
-    chunks.push(scanned.slice(start, end));
-    start = end;
-  }
+  const scanned = capScanLength(ctx, caseId, anon.apply(text), maxChars);
 
   const all: PresidioFinding[] = [];
-  for (const chunk of chunks) {
+  for (const chunk of splitOnLineBoundaries(scanned, chunkChars)) {
     try {
       all.push(...(await presidio.client.analyze(chunk)));
     } catch (err) {
@@ -353,69 +365,118 @@ async function redactImages(
   known: KnownEntities,
   runner: OcrRunner,
 ): Promise<AnalyzeRequest["images"]> {
+  const tally: RedactionTally = { totalRedactions: 0, redactedImages: 0, publicIpsBoxed: 0 };
   // OCR-discovered entities to persist into the case's auto-discovery list after this pass.
-  const discoveredFromOcr: CustomEntity[] = [];
-  // DFIR_OCR_DEBUG forces the per-image detail to INFO (always shown); otherwise it is a
-  // DEBUG line, surfaced when DFIR_LOG_LEVEL=debug or the dashboard's Logging toggle is on.
-  const forceInfo = !!process.env.DFIR_OCR_DEBUG;
-  const dumpDir = process.env.DFIR_OCR_DEBUG_DIR; // write the redacted copy for inspection
-  const count = images.length;
-  let totalRedactions = 0;
-  let redactedImages = 0;
-  let publicIpsBoxed = 0;
+  const discovered: CustomEntity[] = [];
   const out = await Promise.all(
-    images.map(async (img, i) => {
-      try {
-        const buf = Buffer.from(img.base64, "base64");
-        const res = await ocrRedactImage(buf, policy, known, runner);
-        if (res.discovered.length) discoveredFromOcr.push(...res.discovered);
-        if (res.changed) {
-          redactedImages++;
-          totalRedactions += res.redactions.length;
-          publicIpsBoxed += res.redactions.filter(
-            (w) => isMaskableIpv4(w.text.trim()) && !isInternalIp(w.text.trim()),
-          ).length;
-          if (dumpDir) await dumpRedactedImage(dumpDir, caseId, i, img.mimeType, res.buffer);
-        }
-        const matched = res.redactions.map((w) => w.text).join(", ");
-        const line =
-          `[OCR] image ${i + 1}/${count}: read ${res.wordCount} word(s), ` +
-          `redacted ${res.redactions.length}${matched ? ` [${matched}]` : ""}`;
-        if (forceInfo) ctx.log.info(line, { caseId });
-        else ctx.log.debug(line, { caseId });
-        return res.changed ? { ...img, base64: res.buffer.toString("base64") } : img;
-      } catch (err) {
-        // OCR failure is non-fatal — log and forward the original image.
-        ctx.log.warn(`[OCR redact] ${(err as Error).message}`, { caseId });
-        return img;
-      }
-    }),
+    images.map((img, i) =>
+      redactOneImage(ctx, caseId, img, i, images.length, { policy, known, runner, tally, discovered }),
+    ),
   );
-  // Always-on confirmation that the OCR pre-pass ran (vs. images going to the model
-  // unredacted because anon is off or the provider is local). One line per analyze call.
+  logRedactionTally(ctx, caseId, images.length, tally);
+  await persistOcrDiscoveries(ctx, caseId, discovered);
+  return out;
+}
+
+/** Mutable counters accumulated across the per-image passes, reported once at the end. */
+interface RedactionTally {
+  totalRedactions: number;
+  redactedImages: number;
+  publicIpsBoxed: number;
+}
+
+interface RedactOneOptions {
+  policy: ReturnType<typeof toAnonPolicy>;
+  known: KnownEntities;
+  runner: OcrRunner;
+  tally: RedactionTally;
+  discovered: CustomEntity[];
+}
+
+/**
+ * OCR-redact one screenshot. OCR failure is deliberately NON-FATAL: the original image is forwarded
+ * and the analysis continues, because a Tesseract crash must not block an investigation.
+ *
+ * Note what that means — a failure here forwards the UNREDACTED image. That is the accepted
+ * trade-off for this layer (the text path's Presidio gate is the fail-closed one); the warning line
+ * is what makes it visible rather than silent.
+ */
+async function redactOneImage(
+  ctx: ProviderCallContext,
+  caseId: string,
+  img: NonNullable<AnalyzeRequest["images"]>[number],
+  index: number,
+  count: number,
+  o: RedactOneOptions,
+): Promise<NonNullable<AnalyzeRequest["images"]>[number]> {
+  // DFIR_OCR_DEBUG forces the per-image detail to INFO (always shown); otherwise it is a DEBUG
+  // line, surfaced when DFIR_LOG_LEVEL=debug or the dashboard's Logging toggle is on.
+  const forceInfo = !!process.env.DFIR_OCR_DEBUG;
+  try {
+    const res = await ocrRedactImage(Buffer.from(img.base64, "base64"), o.policy, o.known, o.runner);
+    if (res.discovered.length) o.discovered.push(...res.discovered);
+    if (res.changed) {
+      o.tally.redactedImages++;
+      o.tally.totalRedactions += res.redactions.length;
+      o.tally.publicIpsBoxed += res.redactions.filter(
+        (w) => isMaskableIpv4(w.text.trim()) && !isInternalIp(w.text.trim()),
+      ).length;
+      const dumpDir = process.env.DFIR_OCR_DEBUG_DIR; // write the redacted copy for inspection
+      if (dumpDir) await dumpRedactedImage(dumpDir, caseId, index, img.mimeType, res.buffer);
+    }
+    const matched = res.redactions.map((w) => w.text).join(", ");
+    const line =
+      `[OCR] image ${index + 1}/${count}: read ${res.wordCount} word(s), ` +
+      `redacted ${res.redactions.length}${matched ? ` [${matched}]` : ""}`;
+    if (forceInfo) ctx.log.info(line, { caseId });
+    else ctx.log.debug(line, { caseId });
+    return res.changed ? { ...img, base64: res.buffer.toString("base64") } : img;
+  } catch (err) {
+    ctx.log.warn(`[OCR redact] ${(err as Error).message}`, { caseId });
+    return img;
+  }
+}
+
+/**
+ * Always-on confirmation that the OCR pre-pass ran — as opposed to images going to the model
+ * unredacted because anon is off or the provider is local. One line per analyze call.
+ */
+function logRedactionTally(
+  ctx: ProviderCallContext,
+  caseId: string,
+  count: number,
+  tally: RedactionTally,
+): void {
   ctx.log.info(
     `[OCR] redaction ran on ${count} screenshot(s) — scrubbed ` +
-      `${totalRedactions} word(s) across ${redactedImages} image(s) before sending to the model`,
+      `${tally.totalRedactions} word(s) across ${tally.redactedImages} image(s) before sending to the model`,
     { caseId },
   );
-  if (publicIpsBoxed > 0) {
+  if (tally.publicIpsBoxed > 0) {
     ctx.log.warn(
-      `[OCR] ${publicIpsBoxed} public IP(s) were blacked out of the screenshot(s). Image ` +
+      `[OCR] ${tally.publicIpsBoxed} public IP(s) were blacked out of the screenshot(s). Image ` +
         `redaction is one-way, so these will NOT be extracted as IOCs from this capture.`,
       { caseId },
     );
   }
-  // Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled
-  // by the store). Best-effort — a write failure must not fail the analysis.
-  if (ctx.opts.discoveredStore && discoveredFromOcr.length > 0) {
-    try {
-      const added = await ctx.opts.discoveredStore.addDiscovered(caseId, discoveredFromOcr);
-      ctx.log.debug(`[OCR] auto-discovery now holds ${added.discovered.length} entit(y/ies)`, { caseId });
-    } catch (err) {
-      ctx.log.warn(`[OCR] could not persist discovered entities: ${(err as Error).message}`, { caseId });
-    }
+}
+
+/**
+ * Feed what OCR tokenized back into the case's auto-discovery list (dedupe/suppress handled by the
+ * store). Best-effort — a write failure must not fail the analysis.
+ */
+async function persistOcrDiscoveries(
+  ctx: ProviderCallContext,
+  caseId: string,
+  discovered: CustomEntity[],
+): Promise<void> {
+  if (!ctx.opts.discoveredStore || discovered.length === 0) return;
+  try {
+    const added = await ctx.opts.discoveredStore.addDiscovered(caseId, discovered);
+    ctx.log.debug(`[OCR] auto-discovery now holds ${added.discovered.length} entit(y/ies)`, { caseId });
+  } catch (err) {
+    ctx.log.warn(`[OCR] could not persist discovered entities: ${(err as Error).message}`, { caseId });
   }
-  return out;
 }
 
 // Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema

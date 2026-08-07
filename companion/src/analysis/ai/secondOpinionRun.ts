@@ -12,6 +12,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { SynthThinkingInput } from "../synthThinking.js";
 import { getReconcilePrompt } from "./prompts/index.js";
 import type { AIProvider } from "../../providers/provider.js";
+import { callAiJson } from "./aiContext.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
 /**
@@ -74,38 +75,58 @@ export async function secondOpinion(
   const modelB = ctx.opts.secondOpinionModelLabel ?? provider.name;
   let record = buildSecondOpinion({ a, b, modelA, modelB, now: () => new Date().toISOString() });
 
-  // Pass 2 — reconcile: annotate each disagreement with a rationale + recommendation. Best-effort:
-  // if the reconcile call fails, keep the deterministic deltas (no rationale) rather than failing.
-  if (record.deltas.length > 0) {
-    const userPrompt = buildReconcilePrompt(a, b, record.deltas);
-    const retries = ctx.opts.retries ?? 3;
-    const backoffMs = ctx.opts.backoffMs ?? 500;
-    try {
-      const parsed = await ctx.withRetry(
-        caseId,
-        "second-opinion-reconcile",
-        async () => {
-          const raw = await ctx.analyzeRestored(
-            caseId,
-            a,
-            provider,
-            { systemPrompt: getReconcilePrompt(), userPrompt, images: [] },
-            "second-opinion-reconcile",
-          );
-          return reconcileResponseSchema.parse(raw);
-        },
-        retries,
-        backoffMs,
-      );
-      record = mergeReconcileVerdicts(record, parsed);
-    } catch (err) {
-      ctx.log.warn(`[second-opinion] reconcile pass failed: ${(err as Error).message}`, { caseId });
-    }
-  }
+  record = await reconcileDeltas(ctx, caseId, provider, { a, b, record });
 
   await ctx.opts.secondOpinionStore.save(caseId, record);
-  // Per-model quality telemetry (#74): stamp the agreement rate onto synth-meta so modelA vs modelB
-  // can be compared empirically across runs, not just eyeballed on this one second-opinion panel.
+  await recordAgreementRate(ctx, caseId, record, modelA, modelB);
+  return record;
+}
+
+/**
+ * Pass 2 — annotate each disagreement with a rationale and a recommendation.
+ *
+ * BEST-EFFORT by design: if the reconcile call fails, the deterministic deltas are kept without
+ * rationales rather than failing the whole second opinion. A comparison with no explanations is
+ * still useful; no comparison at all is not.
+ */
+async function reconcileDeltas(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  provider: AIProvider,
+  input: { a: InvestigationState; b: InvestigationState; record: SecondOpinion },
+): Promise<SecondOpinion> {
+  const { a, b, record } = input;
+  if (record.deltas.length === 0) return record;
+  const userPrompt = buildReconcilePrompt(a, b, record.deltas);
+  try {
+    const parsed = await callAiJson(
+      ctx,
+      caseId,
+      a,
+      provider,
+      "second-opinion-reconcile",
+      getReconcilePrompt,
+      userPrompt,
+      (raw) => reconcileResponseSchema.parse(raw),
+    );
+    return mergeReconcileVerdicts(record, parsed);
+  } catch (err) {
+    ctx.log.warn(`[second-opinion] reconcile pass failed: ${(err as Error).message}`, { caseId });
+    return record;
+  }
+}
+
+/**
+ * Per-model quality telemetry (#74): stamp the agreement rate onto synth-meta so modelA vs modelB
+ * can be compared empirically across runs, not just eyeballed on this one second-opinion panel.
+ */
+async function recordAgreementRate(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  record: SecondOpinion,
+  modelA: string,
+  modelB: string,
+): Promise<void> {
   const deltaCount = record.deltas.length;
   const denom = record.agreementCount + deltaCount;
   await ctx.opts.synthMetaStore?.recordSecondOpinionPerf(caseId, {
@@ -116,7 +137,6 @@ export async function secondOpinion(
     agreementRate: denom > 0 ? record.agreementCount / denom : 0,
     at: record.generatedAt,
   });
-  return record;
 }
 
 export async function applySecondOpinion(

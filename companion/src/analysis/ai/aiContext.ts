@@ -72,6 +72,59 @@ export function retryPolicy(ctx: AiCallContext): { retries: number; backoffMs: n
 }
 
 /**
+ * The tail EVERY read-only AI call in this directory shares (#453): retry the restore-wrapped
+ * provider call, then hand the raw JSON to the caller's own schema parse and sanitizer.
+ *
+ * It lives here rather than being re-derived per family because getting it wrong is silent. The
+ * `kind` string must be the SAME value in both places it appears — `withRetry` uses it for the
+ * per-attempt log line and `analyzeRestored` for anonymisation telemetry — and a mismatch produces
+ * a working call whose telemetry quietly attributes itself to the wrong feature. One parameter now
+ * feeds both.
+ *
+ * Parsing stays the caller's business: every call site has its own zod schema, and most have a
+ * sanitizer that needs case state (valid event ids, known hypothesis ids) to reject what the model
+ * invented. Those checks are the actual safety property and they do not generalise.
+ *
+ * Callers that MUTATE state (extraction's batch loop, synthesis) deliberately do not use this —
+ * they hold the state lock across the call and need the surrounding structure.
+ */
+export async function callAiJson<T>(
+  ctx: AiCallContext,
+  caseId: string,
+  loaded: InvestigationState,
+  provider: AIProvider,
+  kind: string,
+  systemPrompt: string | (() => string),
+  userPrompt: string,
+  parse: (raw: unknown) => T,
+): Promise<T> {
+  const { retries, backoffMs } = retryPolicy(ctx);
+  return ctx.withRetry(
+    caseId,
+    kind,
+    async () => {
+      const parsed = await ctx.analyzeRestored(
+        caseId,
+        loaded,
+        provider,
+        // Resolved per ATTEMPT when a resolver is passed. DFIR_AI_*_PROMPT_FILE is documented as
+        // "re-read on each AI call", so an operator fixing a broken prompt file mid-retry must see
+        // it take effect on the next attempt. Callers whose original resolved once pass a string.
+        {
+          systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt,
+          userPrompt,
+          images: [],
+        },
+        kind,
+      );
+      return parse(parsed);
+    },
+    retries,
+    backoffMs,
+  );
+}
+
+/**
  * The two-stage event filter every case-wide AI call runs before building its prompt.
  *
  * Kept as one function because the two stages are not interchangeable and the order matters:

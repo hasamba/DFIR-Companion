@@ -1,3 +1,4 @@
+import type { AIProvider } from "../../providers/provider.js";
 import { z } from "zod";
 import { sortByEventTime } from "../forensicSort.js";
 import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
@@ -8,7 +9,7 @@ import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { maxPromptEvents } from "../synthGroup.js";
 import { selectSynthesisEvents } from "../synthSelect.js";
 import { getSessionSummaryPrompt, getStarredReportPrompt, getViewSummaryPrompt } from "./prompts/index.js";
-import { retryPolicy, type AiCallContext } from "./aiContext.js";
+import { callAiJson, type AiCallContext } from "./aiContext.js";
 
 /**
  * The three view-scoped AI summaries (#418).
@@ -80,6 +81,71 @@ function fitViewEvents(
   return { events: sortByEventTime(events), render };
 }
 
+/**
+ * The tail all three view reports share (#453): one retried, restore-wrapped model call returning
+ * the markdown envelope. Every one of them is EPHEMERAL — the result is returned, never persisted.
+ */
+async function callViewReport(
+  ctx: AiCallContext,
+  caseId: string,
+  loaded: InvestigationState,
+  provider: AIProvider,
+  kind: "starred-report" | "session-summary" | "view-summary",
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  return callAiJson(
+    ctx,
+    caseId,
+    loaded,
+    provider,
+    kind,
+    systemPrompt,
+    userPrompt,
+    (raw) => markdownSchema.parse(raw).markdown,
+  );
+}
+
+/**
+ * Resolve the starred ids to forensic events, promoting any that live only in the raw record.
+ *
+ * FORENSIC copies win: imports dual-write the same event ids to both stores, but all later
+ * severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy only —
+ * the super copy is frozen at import time, so it must not shadow the re-graded one.
+ *
+ * Anything starred that lives ONLY in the raw record is PROMOTED before the model sees it, so the
+ * report is still built from the forensic timeline alone. Starring an event is the analyst saying it
+ * matters; promotion is that judgement written down. Fetched by id rather than with `.all(caseId)`,
+ * which materialised the ENTIRE super-timeline — tens of thousands of rows — to resolve a handful.
+ */
+async function resolveStarredEvents(
+  ctx: ViewReportContext,
+  caseId: string,
+  loaded: InvestigationState,
+  starredIds: string[],
+): Promise<{ loaded: InvestigationState; all: ForensicEvent[] }> {
+  const wanted = new Set(starredIds);
+  const byId = new Map<string, ForensicEvent>();
+  for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+
+  let state = loaded;
+  if (ctx.opts.superTimelineStore) {
+    const promotable: ForensicEvent[] = [];
+    for (const id of starredIds.filter((id) => !byId.has(id))) {
+      const raw = await ctx.opts.superTimelineStore.get(caseId, id);
+      if (raw) promotable.push(raw);
+    }
+    if (promotable.length) {
+      state = await ctx.promoteSuperTimeline(caseId, promotable, {
+        importedAt: new Date().toISOString(),
+        note: `Promoted ${promotable.length} starred raw event(s) for the starred report`,
+      });
+      for (const e of state.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
+    }
+  }
+  return { loaded: state, all: sortByEventTime([...byId.values()]) };
+}
+
 // TimeSketch-style Starred Events Report: ONE text-only AI call over ONLY the analyst-starred
 // events (ids resolved by the route from the reserved "starred" tags — the pipeline has no tags
 // store). Events resolve from the super-timeline store UNIONed with the forensic timeline
@@ -91,36 +157,12 @@ export async function starredReport(
   starredIds: string[],
 ): Promise<StarredSummaryResult> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("starred report");
-  let loaded = await ctx.opts.stateStore.load(caseId);
-  const wanted = new Set(starredIds);
-  // FORENSIC copies win: imports dual-write the same event ids to both stores, but all later
-  // severity/MITRE re-grades (content tagger, synthesis mergeDelta) land on the forensic copy
-  // only — the super copy is frozen at import time, so it must not shadow the re-graded one.
-  const byId = new Map<string, ForensicEvent>();
-  for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
-
-  // Anything the analyst starred that lives only in the raw record is PROMOTED before the model
-  // sees it, so the report is still built from the forensic timeline alone. Starring an event is
-  // the analyst saying it matters; promotion is that judgement written down.
-  //
-  // Fetched by id rather than with `.all(caseId)`, which materialised the ENTIRE super-timeline —
-  // tens of thousands of rows — to resolve a handful of starred ones.
-  if (ctx.opts.superTimelineStore) {
-    const missing = starredIds.filter((id) => !byId.has(id));
-    const promotable: ForensicEvent[] = [];
-    for (const id of missing) {
-      const raw = await ctx.opts.superTimelineStore.get(caseId, id);
-      if (raw) promotable.push(raw);
-    }
-    if (promotable.length) {
-      loaded = await ctx.promoteSuperTimeline(caseId, promotable, {
-        importedAt: new Date().toISOString(),
-        note: `Promoted ${promotable.length} starred raw event(s) for the starred report`,
-      });
-      for (const e of loaded.forensicTimeline) if (wanted.has(e.id)) byId.set(e.id, e);
-    }
-  }
-  const all = sortByEventTime([...byId.values()]);
+  const { loaded, all } = await resolveStarredEvents(
+    ctx,
+    caseId,
+    await ctx.opts.stateStore.load(caseId),
+    starredIds,
+  );
   if (!all.length) throw new Error("no starred events");
 
   // The provenance line is computed HERE (the model copies it verbatim, it never counts events
@@ -143,26 +185,10 @@ export async function starredReport(
     events.map(render).join("\n") +
     `\n\nWrite the starred events report as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const result = await ctx.withRetry(
-    caseId,
-    "starred-report",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: prompt, userPrompt, images: [] },
-        "starred-report",
-      );
-      return markdownSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
-  );
+  const markdown = await callViewReport(ctx, caseId, loaded, provider, "starred-report", prompt, userPrompt);
 
   return {
-    markdown: result.markdown,
+    markdown,
     eventCount: all.length,
     usedEvents: events.length,
     truncated: events.length < all.length,
@@ -204,26 +230,10 @@ export async function sessionSummary(
     events.map(render).join("\n") +
     `\n\nWrite the session account as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const result = await ctx.withRetry(
-    caseId,
-    "session-summary",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: prompt, userPrompt, images: [] },
-        "session-summary",
-      );
-      return markdownSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
-  );
+  const markdown = await callViewReport(ctx, caseId, loaded, provider, "session-summary", prompt, userPrompt);
 
   return {
-    markdown: result.markdown,
+    markdown,
     sessionId: session.id,
     label: session.label,
     eventCount: all.length,
@@ -278,23 +288,7 @@ export async function viewSummary(
     events.map(render).join("\n") +
     `\n\nWrite the overview as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const result = await ctx.withRetry(
-    caseId,
-    "view-summary",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: prompt, userPrompt, images: [] },
-        "view-summary",
-      );
-      return markdownSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
-  );
+  const markdown = await callViewReport(ctx, caseId, loaded, provider, "view-summary", prompt, userPrompt);
 
   // `eventCount` is what MATCHED the filters, NOT what the row cap let through — the analyst is
   // told the true denominator or the disclosure is worthless. Reporting `matched.length` here made
@@ -308,7 +302,7 @@ export async function viewSummary(
   // summarized") instead of naming a cause it cannot know — it used to say "(AI input budget)",
   // which is the wrong reason whenever the row cap was what dropped them.
   return {
-    markdown: result.markdown,
+    markdown,
     eventCount: total,
     usedEvents: events.length,
     truncated: events.length < total,
