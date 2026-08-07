@@ -18,6 +18,11 @@
 // js/dashboard-timeline-view.js calls nine page functions — and all of them run from handlers or
 // from a render, never at load, so this file still loads cleanly on its own.
 (function () {
+  // Moved here from dashboard.html (#415). The page never used it; this module reads it in five
+  // places. It sat under the Super-Timeline banner in the page purely because that is where the
+  // feature was typed before it moved out.
+  const ST_PAGE = 100;
+
 
   let superOffset = 0;            // pagination cursor
   let superTotal = 0;

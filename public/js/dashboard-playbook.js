@@ -9,6 +9,75 @@
 // picker) were wired at the bottom of the inline block. This file is a <head> script, so doing that
 // here would query #sec-playbook before it exists and wire nothing, silently.
 (function () {
+  // Moved here from dashboard.html (#415). It was filed under the "Super-Timeline" banner, which
+  // it has nothing to do with — that banner now holds only a stale comment and other features'
+  // guard stanzas. This module is its ONLY caller, in the playbook step that runs a single-endpoint
+  // collection.
+  // Launch a single-endpoint COLLECTION (the collection-mode deploy). Mirrors launchHuntInto():
+  // shows the flow + GUI deep link AND pulls the results back into the dashboard with a Refresh
+  // button + auto-poll (results arrive as the endpoint checks in), rendered as a table like a hunt.
+  function collectHostInto(hostname, vql, description, res, btn, ctx) {
+    if (!res) return;
+    res.innerHTML = `<div data-safe-style='color:var(--text-muted);font-size:12px'>launching collection on ${esc(hostname)}…</div>`;
+    if (btn) btn.disabled = true;
+    // Like launchHuntInto: a recorded SUGGESTION deploy (ctx with a caseId) routes through the
+    // case-scoped /deploy-hunt in collection mode so the deploy is logged in the feedback loop (#157);
+    // a bare collection uses the global /velociraptor/collect-host.
+    const recorded = ctx && ctx.caseId;
+    const url = recorded
+      ? `/cases/${encodeURIComponent(ctx.caseId)}/velociraptor/deploy-hunt`
+      : "/velociraptor/collect-host";
+    const body = recorded
+      ? {
+          mode: "collection",
+          hostname,
+          vql,
+          title: ctx.title || description || "DFIR collection",
+          description: description || "DFIR collection",
+          source: ctx.source || "playbook",
+          mitreTechniques: ctx.mitre || [],
+        }
+      : { hostname, vql, description: description || "DFIR collection" };
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!ok || j.error) {
+          res.innerHTML = `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc(j.error || "collection failed")}</div>`;
+          return;
+        }
+        const link = j.guiUrl
+          ? ` · <a href="${escAttr(j.guiUrl)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent)">open in Velociraptor ↗</a>`
+          : "";
+        res.innerHTML =
+          `<div data-safe-style="font-size:12px;margin-bottom:6px">🎯 Collection <strong>${esc(j.flowId)}</strong> on ${esc(j.hostname)} (${esc(j.clientId)})${link} ` +
+          `<button class="collect-refresh" data-cid="${escAttr(j.clientId)}" data-fid="${escAttr(j.flowId)}" data-art="${escAttr(j.artifact)}" data-src="${escAttr((j.sources || []).join(","))}">↻ Refresh results</button></div>` +
+          `<div class="collect-results-rows" data-safe-style="color:var(--text-muted);font-size:12px">waiting for the endpoint to respond…</div>`;
+        const rb = res.querySelector(".collect-refresh");
+        const target = res.querySelector(".collect-results-rows");
+        rb.onclick = () => fetchCollectionResults(rb, target);
+        // Auto-poll a few times — a collection's results land as the endpoint next checks in.
+        let tries = 0;
+        const poll = () => {
+          tries++;
+          fetchCollectionResults(rb, target).then((n) => {
+            if (!n && tries < 6) setTimeout(poll, 5000);
+          });
+        };
+        setTimeout(poll, 3000);
+      })
+      .catch(
+        (e) =>
+          (res.innerHTML = `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`),
+      )
+      .finally(() => {
+        if (btn) btn.disabled = false;
+      });
+  }
+
   let playbookTasks = [];
   let pbOpenOnly = false;
   let pbDepsOpen = {}; // task id -> is its "depends on" editor panel expanded?
