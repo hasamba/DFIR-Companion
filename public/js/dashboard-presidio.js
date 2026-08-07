@@ -7,7 +7,176 @@
 // splitting it across four files means the day someone assigns without rendering, the badge goes
 // quietly stale. setPresidioPending() is that operation, owned here.
 (function () {
-  "use strict";
+  // Moved here from dashboard.html (#415). All six of the anonymization block's bindings —
+  // ANON_CATEGORIES, ANON_ENTITY_CATEGORIES, anonAuto, anonControl, anonCustom, anonSuppressed —
+  // were read by THIS module and nothing else, while the page held the declarations and the four
+  // loaders. Same shape as the pinned-findings repair: the panel moved out, its state did not.
+  const ANON_CATEGORIES = [
+    ["IP", "IP addresses"],
+    ["USER", "Usernames"],
+    ["HOST", "Hostnames"],
+    ["DOMAIN", "Internal domains"],
+    ["EMAIL", "Emails"],
+    ["PATH", "User paths"],
+    ["CMD", "Encoded commands"],
+    ["REG", "SIDs"],
+    ["CARD", "Credit cards"],
+    ["PHONE", "Phone numbers"],
+    ["NATID", "ID numbers"],
+  ];
+  const ANON_ENTITY_CATEGORIES = [
+    "HOST",
+    "USER",
+    "DOMAIN",
+    "IP",
+    "EXTIP",
+    "EMAIL",
+    "PATH",
+    "CMD",
+    "REG",
+    "CARD",
+    "PHONE",
+    "NATID",
+    "PERSON",
+    "OTHER",
+  ];
+  let anonControl = null; // { enabled, categories, redactSecrets, screenshotWarning }
+  let anonAuto = {
+    hosts: [],
+    accounts: [],
+    internalDomains: [],
+    ips: [],
+    extIps: [],
+    emails: [],
+    paths: [],
+    other: [],
+  };
+  let anonCustom = []; // working copy: [{ value, category }]
+  let anonSuppressed = []; // values removed from auto-discovery (server-persisted)
+
+  function renderAnonToggle() {
+    const b = document.getElementById("anonToggle");
+    if (!anonControl) {
+      b.textContent = "Anon: …";
+      b.classList.remove("on", "na");
+      return;
+    }
+    b.textContent = anonControl.enabled ? "Anon: on" : "Anon: off";
+    b.classList.remove("na");
+    b.classList.toggle("on", anonControl.enabled);
+  }
+  function anonUnavailable() {
+    const b = document.getElementById("anonToggle");
+    b.textContent = "Anon: ?";
+    b.classList.remove("on");
+    b.classList.add("na");
+    b.setAttribute("data-tip", "Anon control endpoint missing");
+    document.getElementById("status").textContent =
+      "Anon control endpoint missing — restart the companion server (stop it, then `npm run dev`) to load the latest endpoints.";
+  }
+  function loadAnonToggle(caseId) {
+    fetch(`/cases/${caseId}/anon-control`)
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((c) => {
+        anonControl = c;
+        renderAnonToggle();
+      })
+      .catch(() => anonUnavailable());
+  }
+  function loadAnonEntities(caseId) {
+    return fetch(`/cases/${caseId}/anon-entities`)
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((d) => {
+        anonAuto = d.auto || {};
+        anonCustom = (d.custom || []).map((e) => ({ ...e }));
+        anonSuppressed = d.suppressed || [];
+      });
+  }
+  function renderAutoEntities() {
+    const caseId = document.getElementById("caseId").value.trim();
+    const a = anonAuto || {};
+    // Groups (incl. entities discovered from screenshots), only those with entries.
+    const groups = [
+      ["Hosts", a.hosts],
+      ["Accounts", a.accounts],
+      ["Internal domains", a.internalDomains],
+      ["IPs", a.ips],
+      ["External IPs", a.extIps],
+      ["Emails", a.emails],
+      ["Paths", a.paths],
+      ["Other", a.other],
+    ].filter(([, arr]) => (arr || []).length);
+    const chip = (v) =>
+      `<span class="anon-chip">${esc(v)} <button class="anon-auto-rm" data-value="${escAttr(v)}" title="Remove — stop anonymizing this value">✕</button></span>`;
+    const grp = (label, arr) =>
+      `<div class="anon-auto-grp"><div class="asset-subhead">${esc(label)} (${arr.length})</div><div>${arr.map(chip).join(" ")}</div></div>`;
+    let html = groups.length
+      ? groups.map(([l, arr]) => grp(l, arr)).join("")
+      : "<em data-safe-style='color:var(--text-muted)'>none yet</em>";
+    const sup = anonSuppressed || [];
+    if (sup.length) {
+      const supChip = (v) =>
+        `<span class="anon-chip anon-chip-sup">${esc(v)} <button class="anon-auto-restore" data-value="${escAttr(v)}" title="Restore — anonymize this again">↺</button></span>`;
+      html += `<div class="anon-auto-grp"><div class="asset-subhead">Removed (${sup.length}) — not anonymized</div><div>${sup.map(supChip).join(" ")}</div></div>`;
+    }
+    const el = document.getElementById("anonAuto");
+    el.innerHTML = html;
+    el.querySelectorAll(".anon-auto-rm").forEach(
+      (b) =>
+        (b.onclick = () =>
+          suppressAutoEntity(caseId, b.getAttribute("data-value"))),
+    );
+    el.querySelectorAll(".anon-auto-restore").forEach(
+      (b) =>
+        (b.onclick = () =>
+          unsuppressAutoEntity(caseId, b.getAttribute("data-value"))),
+    );
+  }
+  // Remove a wrong auto-discovered entity → server suppresses it (stops anonymizing it), then refresh.
+  function suppressAutoEntity(caseId, value) {
+    if (!caseId || !value) return;
+    fetch(`/cases/${caseId}/anon-entities/suppress`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(() => loadAnonEntities(caseId))
+      .then(() => renderAutoEntities())
+      .catch(() => {
+        document.getElementById("anonMsg").textContent =
+          "could not remove entity — restart the server if this persists";
+      });
+  }
+  function unsuppressAutoEntity(caseId, value) {
+    if (!caseId || !value) return;
+    fetch(`/cases/${caseId}/anon-entities/unsuppress`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(() => loadAnonEntities(caseId))
+      .then(() => renderAutoEntities())
+      .catch(() => {
+        document.getElementById("anonMsg").textContent =
+          "could not restore entity — restart the server if this persists";
+      });
+  }
+
+  ("use strict");
 
   // The gate is the PERSISTED store, not the 409 — an import runs fire-and-forget (202 + a
   // background pipeline job) so there is no synchronous response to carry a 409 when the gate
@@ -278,5 +447,9 @@
   window.openAnonModal = openAnonModal;
   window.saveAnon = saveAnon;
   window.setAi = setAi;
+  window.loadAnonEntities = loadAnonEntities;
+  window.loadAnonToggle = loadAnonToggle;
+  window.renderAnonToggle = renderAnonToggle;
+  window.renderAutoEntities = renderAutoEntities;
   window.initPresidio = initPresidio;
 })();

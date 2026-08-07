@@ -1088,6 +1088,8 @@ export const FEATURES: Feature[] = [
     // Presidio approval panel. Its escape was written from three places outside the section, each
     // open-coding the same assign-then-render pair. setPresidioPending() is that pair, owned here,
     // so a caller can no longer update the findings and forget the badge.
+    // The anonymization block's six bindings and four loaders came home in #415: they were read
+    // only here while the page held the declarations.
     file: "dashboard-presidio.js",
     initializer: "initPresidio",
     publish: [
@@ -1099,8 +1101,20 @@ export const FEATURES: Feature[] = [
       "openAnonModal",
       "saveAnon",
       "setAi",
+      "loadAnonEntities",
+      "loadAnonToggle",
+      "renderAnonToggle",
+      "renderAutoEntities",
     ],
-    private: ["presidioPending"],
+    private: [
+      "presidioPending",
+      "ANON_CATEGORIES",
+      "ANON_ENTITY_CATEGORIES",
+      "anonAuto",
+      "anonControl",
+      "anonCustom",
+      "anonSuppressed",
+    ],
   },
   {
     // Hypotheses (#140). Its one escape was a WRITE from dashboard-data-act.js, which assigned

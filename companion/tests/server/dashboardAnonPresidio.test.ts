@@ -59,10 +59,15 @@ describe("anonymizer modal — Presidio availability notice", () => {
     // Cards, phones and national IDs have local detectors (Luhn + issuer prefix, E.164/IL/NANP,
     // checksummed ID) that run with Presidio off. Greying them would tell the analyst those values
     // reach the model unmasked when they do not.
-    const list = html.slice(
-      html.indexOf("const ANON_CATEGORIES = ["),
-      html.indexOf("const ANON_ENTITY_CATEGORIES"),
+    // Reads the MODULE: ANON_CATEGORIES moved there with the rest of the anonymization state
+    // (#415). This is the second slice in this file to go vacuous rather than red when code moved,
+    // so it gets the same non-empty guard the modal slice has — an empty string satisfies every
+    // toContain below and satisfies not.toContain too, which is the failure that hides itself.
+    const list = js.slice(
+      js.indexOf("const ANON_CATEGORIES = ["),
+      js.indexOf("const ANON_ENTITY_CATEGORIES"),
     );
+    expect(list.length, "ANON_CATEGORIES..ANON_ENTITY_CATEGORIES slice is empty").toBeGreaterThan(50);
     for (const cat of ["CARD", "PHONE", "NATID", "EMAIL"]) expect(list).toContain(`"${cat}"`);
     expect(list).not.toContain("PERSON");
   });
