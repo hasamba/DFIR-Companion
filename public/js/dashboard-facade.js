@@ -581,15 +581,24 @@
   // sees no findings and no reason, which is what "a stub may replace work, never evidence" rules
   // out. So it is detected here, at load, before any of its 40-odd call sites runs, and reported
   // once and loudly rather than failing 24 times in the console.
-  var renderMissing = typeof window.render !== "function";
+  // connect() and proceedConnect() join render() in the not-stubbed set, for the same reason: a
+  // stubbed connect means the Connect button does nothing, silently, and the analyst concludes the
+  // case is broken rather than the install.
+  var coreMissing = ["render", "connect", "proceedConnect"].filter(
+    function (n) {
+      return typeof window[n] !== "function";
+    },
+  );
+  var renderMissing = coreMissing.length > 0;
   if (renderMissing) {
     try {
       var bar = document.createElement("div");
       bar.id = "dfirRenderMissing";
       bar.setAttribute("role", "alert");
       bar.textContent =
-        "Dashboard rendering is unavailable \u2014 js/dashboard-render.js did not load. Nothing on " +
-        "this page is being drawn from case data. Reload; if it persists, the install is incomplete.";
+        "The dashboard is not fully loaded \u2014 missing: " +
+        coreMissing.join(", ") +
+        ". Case data is not being drawn or loaded. Reload; if it persists, the install is incomplete.";
       bar.setAttribute(
         "data-safe-style",
         "position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 14px;" +

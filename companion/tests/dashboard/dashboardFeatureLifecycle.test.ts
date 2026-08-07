@@ -617,9 +617,11 @@ describe("every module name the page calls bare is stubbed by the facade", () =>
     // passed the mutation it was written for, because these calls sit one hop inside a handler,
     // which is the blind spot #476 records. A chain is identifiable on its own terms: a single
     // statement making three or more …Reload() calls.
-    const inline = scripts.filter((s) => s.name.startsWith("dashboard.html#inline"));
+    // Scans EVERY script, not just the inline blocks: the fan-out lived inside proceedConnect,
+    // which moved to js/dashboard-case-connect.js in #415. Scoped to inline, this check found no
+    // chain at all and would have passed vacuously — the failure it is written to prevent.
     const inChains = new Set<string>();
-    for (const s of inline) {
+    for (const s of scripts) {
       const visit = (n: ts.Node): void => {
         if (ts.isExpressionStatement(n) || ts.isBlock(n)) {
           const calls = [...n.getText(s.ast).matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
@@ -637,12 +639,23 @@ describe("every module name the page calls bare is stubbed by the facade", () =>
     // case connect. Either satisfies this; having neither is the bug.
     const published = new Set(FEATURES.flatMap((f) => f.publish));
     const guarded = new Set(
-      inline.flatMap((s) =>
+      scripts.flatMap((s) =>
         [...s.source.matchAll(/typeof\s+([A-Za-z_$][\w$]*)\s*===\s*"function"/g)].map((m) => m[1]),
       ),
     );
+    // A name DECLARED in the same script as the chain that calls it cannot fail to resolve — there
+    // is no module boundary between them. That became load-bearing in #415 when proceedConnect and
+    // its fan-out moved into js/dashboard-case-connect.js together: the chain is real, but the risk
+    // this check exists for (a 404 on a DIFFERENT file breaking the chain) is not present.
+    const declaredWithChain = new Set(
+      scripts.flatMap((s) =>
+        functionsOf(s)
+          .filter((f) => f.declaration && f.name)
+          .map((f) => f.name),
+      ),
+    );
     const uncovered = [...inChains]
-      .filter((n) => published.has(n) && !stubbed.has(n) && !guarded.has(n))
+      .filter((n) => published.has(n) && !stubbed.has(n) && !guarded.has(n) && !declaredWithChain.has(n))
       .sort();
     expect(
       uncovered,

@@ -908,6 +908,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // The case-load path. Second non-feature extraction, same contract as dashboard-render.js:
+    // connect and proceedConnect are NOT stubbed. A stubbed connect() means the Connect button
+    // does nothing with no error, and the analyst concludes the case is broken.
+    file: "dashboard-case-connect.js",
+    initializer: "initCaseConnect",
+    publish: ["initCaseConnect", "connect", "proceedConnect"],
+    private: [],
+  },
+  {
     // render(). The one module js/dashboard-facade.js must NOT stub: a stub returns quietly and
     // leaves the analyst on an empty dashboard, which is the exact failure the facade exists to
     // prevent. It is detected and reported AT LOAD instead. See the module header.

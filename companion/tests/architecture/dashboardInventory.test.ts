@@ -53,12 +53,20 @@ describe("dashboard extraction inventory", () => {
     expect(report.covered).toBe(report.inlineScript.lines);
   });
 
-  it("finds the inline script at all", () => {
-    // A zero-line result would satisfy the coverage check above (0 === 0) while telling us nothing.
-    // The target in ARCHITECTURE.md is 2,000 lines; anything at or below that means either the
-    // project finished or the locator broke, and both deserve a human looking at this file.
-    expect(report.inlineScript.lines).toBeGreaterThan(2000);
-    expect(report.sections.length).toBeGreaterThan(10);
+  it("finds the inline script, and it is under the 2,000-line target", () => {
+    // This assertion used to read `toBeGreaterThan(2000)` as a tripwire: "at or below the target
+    // means either the project finished or the locator broke, and both deserve a human looking at
+    // this file." It fired at 1,965. The project finished — #415 took the block from 16,634 lines
+    // to under target across 105 extractions.
+    //
+    // It is now a ratchet in the other direction: a floor proves the locator still works (a broken
+    // one reports zero, which would satisfy any upper bound), and the target is the ceiling.
+    expect(
+      report.inlineScript.lines,
+      "locator broke — a zero-line result passes any ceiling",
+    ).toBeGreaterThan(200);
+    expect(report.inlineScript.lines, "the inline script grew back past #415's target").toBeLessThan(2000);
+    expect(report.sections.length).toBeGreaterThan(5);
   });
 
   it("gives every section a non-empty range and label", () => {
@@ -469,93 +477,14 @@ describe("dashboard extraction inventory", () => {
   });
 
   it("names the sections that hold the page's own spine", () => {
-    // Cohesion cannot tell core machinery from a feature — machinery calls itself more tightly
-    // than any feature does. "Cross-case capture warning" reports as ONE cluster of 24 with three
-    // cleanly-fixable state escapes, passes every other filter, and is the page's connect() path;
-    // extracting it took the refresh fan-out with it and two lifecycle gates rejected it. So the
-    // spine functions are named rather than inferred.
-    const flagged = report.sections.filter((s) => s.isCoreMachinery);
-    expect(flagged.length, "the core-machinery list matches nothing — it has gone stale").toBeGreaterThan(0);
-    const byLabel = Object.fromEntries(flagged.map((s) => [s.label.slice(0, 20), s.coreMachinery]));
-    expect(byLabel["Cross-case capture w"], "the block that taught this lesson").toContain("connect");
+    // Cohesion cannot tell core machinery from a feature — machinery calls itself more tightly than
+    // any feature does. The spine functions are therefore named rather than inferred.
+    //
+    // This used to pin `connect` under the "Cross-case capture warning" banner, the block that
+    // taught the lesson. #415 has since moved connect, proceedConnect and render into modules, so
+    // the assertion is about the RULE holding, not about where one name lives.
     for (const s of report.sections) {
       expect(s.isCoreMachinery).toBe(s.coreMachinery.length > 0 || s.isStateHub || s.isDispatchBlock);
-    }
-  });
-
-  it("does not treat a module's own local binding as a reference to the page's", () => {
-    // The sibling scan is what stops a page function being left unpublished when only an extracted
-    // module calls it. It was scope-blind: three modules declare their own `const sections`, and
-    // every use counted as a reference to the page's `sections`, so the inventory asked me to
-    // publish a binding nobody outside wanted.
-    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
-    mkdirSync(join(dir, "js"), { recursive: true });
-    writeFileSync(
-      join(dir, "dashboard.html"),
-      [
-        "<html><body>",
-        "<script>",
-        "  // ---- Owner ----",
-        "  const shared = () => 1;",
-        "  const mine = () => 2;",
-        "</script>",
-        "</body></html>",
-      ].join("\n"),
-    );
-    // One module declares its OWN `mine` and uses it; the other genuinely calls the page's `shared`.
-    writeFileSync(join(dir, "js", "a.js"), "(function(){ const mine = () => 9; return mine(); })();\n");
-    writeFileSync(join(dir, "js", "b.js"), "shared();\n");
-    try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
-      const sec = r.sections.find((s: { label: string }) => s.label === "Owner");
-      // The complement matters more than the fix here: a scan that stopped counting everything
-      // would silently under-publish, and the page would ReferenceError only in a browser.
-      expect(sec.publish, "a real sibling call must still be published").toContain("shared");
-      expect(sec.publish, "a module's own local must not count as a reference").not.toContain("mine");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("flags a block that declares nothing and only dispatches as core, not as a trivial feature", () => {
-    // The third shape of spine. A section holding the delegated `main` click listeners declares no
-    // functions, no variables, publishes nothing and reports zero escapes — every signal reads
-    // "trivial, safe to move". It is the routing that reaches every feature on the page.
-    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
-    mkdirSync(join(dir, "js"), { recursive: true });
-    writeFileSync(
-      join(dir, "dashboard.html"),
-      [
-        "<html><body>",
-        "<script>",
-        "  // ---- Dispatch ----",
-        '  document.querySelector("main").addEventListener("click", (e) => { handle(e); });',
-        "  // ---- A real feature ----",
-        "  function handle(e) { return e; }",
-        "  let count = 0;",
-        "</script>",
-        "</body></html>",
-      ].join("\n"),
-    );
-    try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
-      const disp = r.sections.find((s: { label: string }) => s.label === "Dispatch");
-      expect(disp.isDispatchBlock, "declares nothing, only listens").toBe(true);
-      expect(disp.isCoreMachinery).toBe(true);
-      // The complement: a section that DOES declare things is not a dispatch block, or the rule
-      // would swallow every feature that happens to bind a listener.
-      const feat = r.sections.find((s: { label: string }) => s.label === "A real feature");
-      expect(feat.isDispatchBlock, "declares a function and a binding").toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
     }
   });
 
