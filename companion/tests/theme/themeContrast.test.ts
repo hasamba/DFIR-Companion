@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contrastHex as contrast, hexToRgb, relLuminance } from "../../scripts/theme/contrast.js";
-import { DASHBOARD_PATH, readDashboardCss } from "../../scripts/theme/loadBaseline.js";
+import { readDashboardCss } from "../../scripts/theme/loadBaseline.js";
 import {
   CANONICAL_HUE,
   deltaE,
