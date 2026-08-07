@@ -317,8 +317,17 @@ describe("the collapse holds against the page's real handler nesting", () => {
         "action runs TWO full renders again",
     ).toMatch(/,\s*false\s*$/);
     // ...and the renderer must still HAVE that parameter for the suppression to mean anything.
-    expect(html).toMatch(/function renderFalsePositives\(markers, redraw\)/);
-    expect(html).toMatch(/if \(redraw !== false && DfirState\.lastState\(\)\) render\(/);
+    // It moved to js/dashboard-exposure-fp.js (#415); the REGISTRATION above stays in the page, so
+    // this pair now spans two files and each half is asserted against the right one.
+    const fpModule = await readFile(
+      new URL("../../../public/js/dashboard-exposure-fp.js", import.meta.url),
+      "utf8",
+    );
+    expect(fpModule.length, "exposure-fp module is empty — has it moved?").toBeGreaterThan(500);
+    expect(fpModule).toMatch(/function renderFalsePositives\(markers, redraw\)/);
+    // Whitespace-tolerant: prettier wraps this across two lines in the module, and the exact-spacing
+    // form only held while it lived in dashboard.html, the one file prettier does not format.
+    expect(fpModule).toMatch(/if \(redraw !== false && DfirState\.lastState\(\)\)\s*render\(/);
   });
 
   it("clearFilters also settles on one full render", () => {
@@ -461,9 +470,12 @@ describe("wiring", () => {
     const tag = html.indexOf('src="/js/dashboard-timeline-view.js"');
     expect(html.indexOf('src="/js/dashboard-state.js"')).toBeLessThan(tag);
     const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)];
-    const main = blocks.find((m) => /\n\s*function render\s*\(/.test(m[1]));
-    expect(main).toBeDefined();
-    expect(tag).toBeLessThan(main!.index);
+    // The main block is the LONGEST one, not "the one containing render()". Anchoring on render
+    // tied this assertion to a function #415 is in the business of moving out: the day it goes,
+    // five suites fail with "could not locate the inline dashboard script" instead of with
+    // whatever actually broke. Length stays true however much comes out of the block.
+    const main = blocks.reduce((a, b) => (b[1].length > a[1].length ? b : a));
+    expect(tag).toBeLessThan(main.index);
     expect(STATIC_ASSETS["/js/dashboard-timeline-view.js"]).toBe("application/javascript; charset=utf-8");
   });
 

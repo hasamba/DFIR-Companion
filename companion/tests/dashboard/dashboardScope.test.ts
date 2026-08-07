@@ -430,9 +430,12 @@ describe("wiring", () => {
     // bootstrap block in <head> and runs past its </script> to find render() in a later one, which
     // is how the first version of this assertion pointed at offset 652 instead of the real script.
     const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)];
-    const main = blocks.find((m) => /\n\s*function render\s*\(/.test(m[1]));
-    expect(main, "could not locate the inline dashboard script").toBeDefined();
-    expect(tag).toBeLessThan(main!.index);
+    // The main block is the LONGEST one, not "the one containing render()". Anchoring on render
+    // tied this assertion to a function #415 is in the business of moving out: the day it goes,
+    // five suites fail with "could not locate the inline dashboard script" instead of with
+    // whatever actually broke. Length stays true however much comes out of the block.
+    const main = blocks.reduce((a, b) => (b[1].length > a[1].length ? b : a));
+    expect(tag).toBeLessThan(main.index);
     expect(STATIC_ASSETS["/js/dashboard-scope.js"]).toBe("application/javascript; charset=utf-8");
   });
 

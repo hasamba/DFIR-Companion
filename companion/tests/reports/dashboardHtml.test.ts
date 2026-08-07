@@ -20,8 +20,13 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/function loadLateralPaths\(caseId\)[\s\S]{0,400}includeDismissed=1/);
     // Dismissing POSTs the route's hostIds (the durable anchor), not the positional path id.
     expect(html).toMatch(/lateral-path-dismissals`[\s\S]{0,300}hostIds: path\.hostIds/);
-    // Restoring DELETEs by the normalized host-sequence key.
-    expect(html).toMatch(/lateral-path-dismissals\/\$\{encodeURIComponent\(key\)\}`, \{ method: "DELETE" \}/);
+    // Restoring DELETEs by the normalized host-sequence key. Whitespace-tolerant on purpose: the
+    // literal `, { method: "DELETE" }` only held while this lived in dashboard.html, which prettier
+    // does not format. In a module prettier wraps the call, and an exact-spacing regex would fail
+    // for a reformat rather than for a behaviour change.
+    expect(html).toMatch(
+      /lateral-path-dismissals\/\$\{encodeURIComponent\(key\)\}`,\s*\{\s*method: "DELETE"\s*\}/,
+    );
     // A dismissed row is visibly struck through and carries the analyst's reason.
     expect(html).toContain("line-through");
     expect(html).toContain("dismissalNote");
@@ -275,23 +280,35 @@ describe("dashboard.html", () => {
   });
 
   it("marks the layout Custom on a manual drag reorder, so a page refresh doesn't re-apply the active dashboard-view preset over it", async () => {
-    const html = dashboardClientSource();
-    // applySavedViewForCase() runs on every case connect (including the auto-reconnect on page
-    // refresh) and, for any case without an explicit view choice, re-applies a preset's canned
-    // section order — clobbering a manual drag unless the drag itself records a Custom choice.
-    // Both drag-reorder call sites (the in-page grip, and the Settings section-list drag) must
-    // call applyDashboardView(null, ...) right after saveSectionsOrder(...) to persist that choice.
+    // The two drag-reorder sites live in DIFFERENT files — the section grip, now in
+    // js/dashboard-collapsible.js, and the Settings section-list in js/dashboard-section-order.js —
+    // so an offset measured across the concatenation is meaningless. Each is checked inside its own
+    // source, whitespace-collapsed because prettier wrapped the guard across two lines.
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const page = flat(
+      await readFile(new URL("../../../public/js/dashboard-collapsible.js", import.meta.url), "utf8"),
+    );
+    const order = flat(
+      await readFile(new URL("../../../public/js/dashboard-section-order.js", import.meta.url), "utf8"),
+    );
     const markCustom =
       'if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });';
-    expect(html.split(markCustom).length - 1).toBe(2); // exactly the two drag-reorder sites
-    const gripDrop = html.indexOf('saveSectionsOrder([...main.querySelectorAll(":scope > section[id]")]');
-    const gripMark = html.indexOf(markCustom, gripDrop);
-    expect(gripMark).toBeGreaterThan(gripDrop);
-    expect(gripMark - gripDrop).toBeLessThan(600); // the very next thing the handler does
-    const settingsDrop = html.indexOf('saveSectionsOrder([...container.querySelectorAll(".sec-check")]');
-    const settingsMark = html.indexOf(markCustom, settingsDrop);
-    expect(settingsMark).toBeGreaterThan(settingsDrop);
-    expect(settingsMark - settingsDrop).toBeLessThan(400);
+    // Exactly one site in each file, and nowhere else.
+    expect(page.split(markCustom).length - 1, "the section-grip site").toBe(1);
+    expect(order.split(markCustom).length - 1, "the Settings section-list site").toBe(1);
+
+    const near = (hay: string, dropNeedle: string, limit: number, what: string) => {
+      const drop = hay.indexOf(dropNeedle);
+      expect(drop, `${what}: the reorder call itself is missing`).toBeGreaterThan(-1);
+      const mark = hay.indexOf(markCustom, drop);
+      expect(mark, `${what}: nothing marks the layout Custom after the reorder`).toBeGreaterThan(drop);
+      expect(mark - drop, `${what}: not the very next thing the handler does`).toBeLessThan(limit);
+    };
+    // Whitespace-collapsed needle: prettier wraps this call across three lines in the module, and
+    // the previous exact-spacing form only held while it lived in dashboard.html, the one file
+    // prettier does not format.
+    near(page, 'saveSectionsOrder( [...main.querySelectorAll(":scope > section[id]")]', 600, "grip");
+    near(order, 'saveSectionsOrder( [...container.querySelectorAll(".sec-check")]', 400, "settings");
   });
 
   it("offers a unified multi-file import (images → /captures, data → /import)", async () => {
@@ -389,7 +406,16 @@ describe("dashboard.html", () => {
     expect(html).toContain("pm-missing");
     // Click a matched step → the event that evidences it; an unobserved step → Evidence Gaps.
     expect(html).toContain('data-act="playbookJumpToEvent"');
-    expect(html).toContain("playbookJumpToEvent:        (el) => jumpToEvent(el.dataset.id)");
+    // The ACTIONS entry is in js/dashboard-data-act.js now, and prettier collapsed the column
+    // alignment the inline block used. Whitespace-collapsed so the assertion stays about WHERE the
+    // action routes rather than how it was aligned.
+    const dispatchSrc = await readFile(
+      new URL("../../../public/js/dashboard-data-act.js", import.meta.url),
+      "utf8",
+    );
+    expect(dispatchSrc.replace(/\s+/g, " ")).toContain(
+      "playbookJumpToEvent: (el) => jumpToEvent(el.dataset.id)",
+    );
     expect(html).toContain('data-act="playbookJumpToGaps"');
     // The non-attribution caveat renders WITH the match, not as a tooltip.
     expect(html).toContain("not attribution");
@@ -461,7 +487,11 @@ describe("dashboard.html", () => {
     // A persistent caption explains what the bars mean (not just a hover-only tooltip), and toggles
     // with the heatmap itself.
     expect(html).toContain('id="timelineHeatmapCaption"');
-    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
+    // Window widened from 60 to 200: prettier wraps this guard across five lines now that it lives
+    // in js/dashboard-heatmap.js, and the tight window only held while it was in dashboard.html —
+    // the one file prettier does not format. Still asserts the caption hides in the SAME branch
+    // that hides the heatmap, which is the behaviour that matters.
+    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,200}caption\.hidden = true/);
     expect(html).toMatch(/caption\.hidden = false/);
   });
 
@@ -497,8 +527,12 @@ describe("dashboard.html", () => {
     // derived from the enclosing task's own (singular) relatedFindingId via playbookTasks.find(...).
     // Scoped to renderTaskHunts specifically — the sibling fleet-hunt panel legitimately DOES call
     // citeFindings(s.relatedFindingIds) (see the next test), so a file-wide assertion would be wrong.
+    // The arrow's parens are optional here because prettier formats extracted modules and does not
+    // format the inline block: the same code reads `t =>` in dashboard.html and `(t) =>` once it
+    // moves to public/js. The assertion is about which collection the task is looked up in, so it
+    // must not also pin whichever side of that move the code currently sits on.
     expect(html).toMatch(
-      /function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(t => t\.id === taskId\)/,
+      /function renderTaskHunts[\s\S]{0,3000}playbookTasks\.find\(\(?t\)? => t\.id === taskId\)/,
     );
     expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}_pbhTask\.relatedFindingId/);
     expect(html).toMatch(/function renderTaskHunts[\s\S]{0,3000}citeFindings\(_pbhFindingIds\)/);
@@ -534,8 +568,12 @@ describe("dashboard.html", () => {
     // Empty caseId must not attempt a fetch to a malformed URL — costFetch resolves to null instead.
     expect(html).toMatch(/const costFetch = caseId\s*\n\s*\? fetch/);
     // The card renders directly after "AI connectivity & config", not at the end of the panel.
+    // Whitespace-tolerant around the `+`: this concatenation lived on one line while it was in the
+    // inline block and prettier broke it across seven once the block moved to public/js. What the
+    // assertion is about is ORDER — the cost card between aiCard and importers — and that survived
+    // the move untouched, so pinning the one-line spelling would have failed for no reason.
     expect(html).toMatch(
-      /function renderDiagnostics\(report, cost\)[\s\S]*aiCard \+ window\.DfirDiagnostics\.renderAiCostCard\(cost\) \+ importers/,
+      /function renderDiagnostics\(report, cost\)[\s\S]*aiCard\s*\+\s*window\.DfirDiagnostics\.renderAiCostCard\(cost\)\s*\+\s*importers/,
     );
   });
 
@@ -601,12 +639,15 @@ describe("dashboard.html", () => {
   });
 
   it("guards the time-scope preview against out-of-order responses from rapid scope changes", async () => {
-    const html = dashboardClientSource();
+    // Whitespace-collapsed: this code moved to js/dashboard-velo-triage.js (#415 tier 3) and
+    // prettier rewrapped both branches. The invariant is that BOTH the success and the error path
+    // bail out when a newer request has superseded them — a stale response must not overwrite a
+    // fresh preview — and that is independent of how the arrows are laid out.
+    const html = dashboardClientSource().replace(/\s+/g, " ");
     expect(html).toContain("let veloTsPreviewSeq = 0;");
     expect(html).toMatch(/function veloTimeScopePreview[\s\S]{0,900}const mySeq = \+\+veloTsPreviewSeq;/);
-    // Both the success and error branches must bail out if a newer request has since superseded them.
-    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{\s*\n\s*if \(mySeq !== veloTsPreviewSeq\) return;/);
-    expect(html).toMatch(/\.catch\(e => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+    expect(html).toMatch(/\.catch\(\(?e\)? => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
   });
 
   it("renders the hunt job card's degraded time-scope coverage as explicitly unverified, not as zero", async () => {
@@ -929,12 +970,23 @@ describe("dashboard.html — CSP: no inline event handlers", () => {
   // really about is that the two sides match, so the "used" side has to see everything that emits
   // a control, wherever it now lives.
   it("routes every control through data-act, with a matching ACTIONS entry for each", async () => {
-    const html = await load();
     const used = new Set(
       [...dashboardClientSource().matchAll(/data-act="([A-Za-z0-9_]+)"/g)].map((m) => m[1]),
     );
-    const block = html.split("const ACTIONS = {")[1].split("\n    };")[0];
-    const defined = new Set([...block.matchAll(/^\s{6}([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
+    // ACTIONS moved to js/dashboard-data-act.js (#415 tier 3). The "used" side already reads
+    // dashboardClientSource(), which spans the page and every dashboard-*.js it tags, so only the
+    // "defined" side needed re-pointing. Indentation is not pinned: six spaces in the inline block,
+    // four inside the module's IIFE.
+    const dispatch = await readFile(
+      new URL("../../../public/js/dashboard-data-act.js", import.meta.url),
+      "utf8",
+    );
+    const block = dispatch.split("const ACTIONS = {")[1].split(/\n\s*\};/)[0];
+    const defined = new Set([...block.matchAll(/^\s+([A-Za-z0-9_]+):/gm)].map((m) => m[1]));
+    expect(
+      defined.size,
+      "the ACTIONS table did not parse — every comparison below is vacuous",
+    ).toBeGreaterThan(50);
 
     expect(used.size).toBeGreaterThan(50); // the conversion really happened
     expect([...used].filter((a) => !defined.has(a))).toEqual([]); // no control routes nowhere
@@ -1047,7 +1099,10 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toMatch(/clpStage\("lifecycle"\)/);
     // The body is read by hand rather than via r.json(): that is what yields a true download %.
     expect(html).toContain("readBodyWithProgress");
-    expect(html).not.toMatch(/\/state`, \{ signal: loadSignal \}\)\.then\(r => r\.json\(\)\)/);
+    // Arrow parens optional: this is the assertion that the r.json() shortcut has NOT come back, and
+    // a negative pinned to one spelling stops catching it the moment the block moves to public/js
+    // and prettier writes `(r) =>`.
+    expect(html).not.toMatch(/\/state`, \{ signal: loadSignal \}\)\.then\(\(?r\)? => r\.json\(\)\)/);
   });
 
   it("paints the stage label before the phases that block the main thread", async () => {
@@ -1055,7 +1110,10 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     // JSON.parse and render() freeze repaint for as long as they run. Without a forced paint
     // first, their labels never appear until after the work finishes and the bar reads as hung.
     expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*const state = JSON\.parse\(body\)/);
-    expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*render\(state\)/);
+    // render() moved to a module (#415), so the call is guarded. The ORDER is what this pins.
+    expect(html).toMatch(
+      /await clpAfterPaint\(\);\s*\n\s*(?:typeof render === "function" && )?render\(state\)/,
+    );
   });
 
   it("fires the loading failsafe on a stall rather than on a fixed deadline", async () => {

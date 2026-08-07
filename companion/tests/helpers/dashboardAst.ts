@@ -39,6 +39,25 @@ export interface DashboardScript {
  * Read from the markup rather than hard-coded, so a script added tomorrow is covered the day it is
  * added — the hard-coded list is exactly what left seven modules unscanned before.
  */
+/**
+ * The page's MAIN inline block — the big one features used to be written into.
+ *
+ * Five test files located it with `blocks.find(m => /\n\s*function render\s*\(/.test(m[1]))`,
+ * which ties "which block is the main one" to one function still living in it. #415 is in the
+ * business of moving functions out of that block, so that anchor is a tripwire: move render and
+ * five suites stop being able to find the script they assert about, with a message about a missing
+ * script rather than about what changed.
+ *
+ * Length is the stable property. The main block is an order of magnitude larger than the four
+ * bootstrap blocks around it, and stays so however much comes out of it — it is how
+ * scripts/dashboard-inventory.mjs has always located it.
+ */
+export function mainInlineScript(): DashboardScript {
+  const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline-"));
+  if (!inline.length) throw new Error("no inline dashboard scripts found");
+  return inline.reduce((a, b) => (b.source.length > a.source.length ? b : a));
+}
+
 export function dashboardScripts(): DashboardScript[] {
   const html = readFileSync(new URL("dashboard.html", PUBLIC), "utf8");
   const out: DashboardScript[] = [];
@@ -346,6 +365,61 @@ export function setterRefs(scripts: DashboardScript[], member: string, namespace
  * through, and any of them re-opens the second source of truth the migration existed to close.
  * A declaration is an AST fact, so ask the AST.
  */
+/**
+ * Bare-identifier assignments to a name this script declares NOWHERE — `veloArtifactCache = []`
+ * with no `let` behind it.
+ *
+ * topLevelBindings() counts these as bindings, and for the page's non-strict inline script that is
+ * the right answer: the assignment really does create a global. But it creates it only WHEN IT
+ * RUNS. Inside an extracted module IIFE that makes the name an ordering hazard — one function
+ * creates it, another reads it, and if the read happens first it is a ReferenceError, not
+ * undefined. A module has no reason to want one: to share, it publishes on `window`; to keep
+ * state, it declares it. So for modules the honest answer is "there should be none", which is
+ * what this exists to check.
+ */
+export function implicitGlobals(script: DashboardScript): Array<{ name: string; line: number }> {
+  const declaredAnywhere = new Set<string>();
+  const at = (n: ts.Node): number =>
+    script.ast.getLineAndCharacterOfPosition(n.getStart(script.ast)).line + 1;
+  const declWalk = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n)) collectInto(n.name, declaredAnywhere);
+    if (isFunctionLike(n)) {
+      const fn = n as ts.FunctionLikeDeclaration;
+      if (fn.name && ts.isIdentifier(fn.name)) declaredAnywhere.add(fn.name.text);
+      for (const p of fn.parameters) collectInto(p.name, declaredAnywhere);
+    }
+    if (ts.isCatchClause(n) && n.variableDeclaration)
+      collectInto(n.variableDeclaration.name, declaredAnywhere);
+    if (ts.isClassDeclaration(n) && n.name) declaredAnywhere.add(n.name.text);
+    ts.forEachChild(n, declWalk);
+  };
+  ts.forEachChild(script.ast, declWalk);
+
+  const OPS = new Set([
+    ts.SyntaxKind.EqualsToken,
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ]);
+  const seen = new Set<string>();
+  const out: Array<{ name: string; line: number }> = [];
+  const walk = (n: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(n) &&
+      OPS.has(n.operatorToken.kind) &&
+      ts.isIdentifier(n.left) &&
+      !declaredAnywhere.has(n.left.text) &&
+      !seen.has(n.left.text)
+    ) {
+      seen.add(n.left.text);
+      out.push({ name: n.left.text, line: at(n.left) });
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(script.ast, walk);
+  return out;
+}
+
 export function topLevelBindings(script: DashboardScript): Array<{ name: string; line: number }> {
   const out: Array<{ name: string; line: number }> = [];
   const at = (n: ts.Node): number =>
