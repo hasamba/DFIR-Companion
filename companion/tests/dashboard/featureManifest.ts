@@ -908,6 +908,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Forensic timeline controls. All-initializer: every statement runs at load, so there is no
+    // module body. My dispatch rule flagged this as core; the previous commit argues why that flag
+    // is over-broad, and this is that argument acted on.
+    file: "dashboard-timeline-controls.js",
+    initializer: "initTimelineControls",
+    publish: ["initTimelineControls"],
+    private: [],
+  },
+  {
     // "Now" investigator cockpit. Its 440-line banner read as core only because render() sat at the
     // end of it; the cockpit itself is 187 lines with zero escapes.
     file: "dashboard-cockpit.js",
