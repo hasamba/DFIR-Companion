@@ -908,6 +908,24 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // AI-suggested hunts + the cross-panel jump helpers. Fourth block out of the 1,145-line
+    // "Activity Log" banner, which was never 1,145 lines of Activity Log.
+    file: "dashboard-hunts-jumps.js",
+    publish: [
+      "clearEvIdFilter",
+      "doSuggestHunts",
+      "filterTimelineToEventIds",
+      "jumpToEvent",
+      "jumpToEventFromHash",
+      "jumpToFinding",
+      "jumpToHypothesis",
+      "jumpToQuestion",
+      "renderEvIdFilterChip",
+      "renderVeloHuntSuggest",
+    ],
+    private: [],
+  },
+  {
     // Forensic timeline controls. All-initializer: every statement runs at load, so there is no
     // module body. My dispatch rule flagged this as core; the previous commit argues why that flag
     // is over-broad, and this is that argument acted on.

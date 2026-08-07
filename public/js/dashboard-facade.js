@@ -319,6 +319,17 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Suggested hunts + jump helpers.
+    "clearEvIdFilter",
+    "doSuggestHunts",
+    "filterTimelineToEventIds",
+    "jumpToEvent",
+    "jumpToEventFromHash",
+    "jumpToFinding",
+    "jumpToHypothesis",
+    "jumpToQuestion",
+    "renderEvIdFilterChip",
+    "renderVeloHuntSuggest",
     // "Now" investigator cockpit. `initCockpit` is the sentinel.
     "cockpitAction",
     "cockpitJumpEvent",
