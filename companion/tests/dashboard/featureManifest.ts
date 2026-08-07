@@ -901,6 +901,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Login Graph. The banner it shared with the asset↔IoC graph was split first — that graph's
+    // helpers are used by the "Compromised assets" section next door. lgEl is published for the
+    // same reason: a shared DOM helper, not state.
+    file: "dashboard-login-graph.js",
+    initializer: "initLoginGraph",
+    publish: ["initLoginGraph", "loadLoginGraph", "scheduleLoginGraphReload", "renderLoginGraph", "lgEl"],
+    private: ["lgData", "lgTimer", "lgGV", "LG_STYLE"],
+  },
+  {
     // Notifications (#58). No initializer. Zero state escapes — it sat off the queue only because
     // the queue was filtered on sharedMachinery, which is an argument about what to publish rather
     // than a blocker. loadCaseList, the one entry, is page machinery below this block and stays.

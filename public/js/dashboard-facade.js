@@ -319,6 +319,11 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Login Graph. `initLoginGraph` is the sentinel.
+    "loadLoginGraph",
+    "scheduleLoginGraphReload",
+    "renderLoginGraph",
+    "lgEl",
     // Notifications. No sentinel — the block has no initializer.
     "loadNotifications",
     "ntfAddChannel",
