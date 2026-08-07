@@ -302,12 +302,33 @@ the issue that owns the work, so no number is a blocker without an assignee:
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
-| `public/dashboard.html` inline JS | 2,000 | 16,634 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline JS | 2,000 | 2,155 (2,137 net — see below) | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/css/dashboard-*.css` (8 parts) | 800 | **489 max — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
 | Boundary ledger | 10 | 47 | shrinks as the above land |
+
+**What "inline JS" counts, and the one thing it does not.** `check:size` sums every `<script>` in
+`dashboard.html` that has no `src` — currently five blocks totalling **2,155** lines. That total is
+the ratchet, and it stays the ratchet: it can only shrink.
+
+The 2,000 target is measured against the same total **minus the pre-paint theme bootstrap**
+(`dashboard.html:357`, 18 lines) — **2,137** today. That block is the only one on the page that
+cannot become an external script: it reads the stored theme and sets the attribute before first
+paint, and any `src=` turns it into a network round-trip that shows the wrong theme first. Excluding
+it is a statement about what is *possible*, not a discount on what is left to do.
+
+Nothing else is excluded, deliberately. The other three non-main blocks — the team-mode `fetch`
+wrapper (`:15`, 82 lines) and the two AI-provider status cards (`:1343` and `:1450`, 88 lines) — are
+ordinary code that happens to sit inline. The wrapper only needs to run first, which an external
+script in `<head>` does equally well. Counting the main block alone would have read **1,967 — met**,
+and that number is why this paragraph exists: it reaches the target by exempting 170 lines of
+extractable feature code, which is a different thing from meeting it.
+
+**Still 137 lines over.** Extracting the wrapper and the two status cards leaves the main block plus
+the bootstrap: the net measure becomes **1,967** and the ratchet total **1,985**, so both land under
+2,000 and #415 closes honestly. That is the remaining work, not a rounding argument.
 
 **The ratchets hold every one of these flat in the meantime.** `check:size` freezes each file at its
 recorded length, `check:imports` at one known cycle, `check:boundaries` at the recorded violations.
