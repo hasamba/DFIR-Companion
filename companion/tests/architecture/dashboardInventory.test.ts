@@ -40,6 +40,7 @@ const run = (): {
     coreMachinery: string[];
     isCoreMachinery: boolean;
     isStateHub: boolean;
+    vocabulary: string[];
     foreignStanzas: string[];
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
@@ -501,6 +502,43 @@ describe("dashboard extraction inventory", () => {
       // would silently under-publish, and the page would ReferenceError only in a browser.
       expect(sec.publish, "a real sibling call must still be published").toContain("shared");
       expect(sec.publish, "a module's own local must not count as a reference").not.toContain("mine");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags a heavily-called name as page vocabulary, not as the section's own", () => {
+    // esc() sat under the "Background jobs" banner with 101 call sites across the page. Nothing in
+    // this file flagged it: the banner was wrong, and the escape count says nothing because it
+    // counts readers of mutable STATE and esc is a function. Extracting that block would have made
+    // every escaped string on the page depend on the jobs module loading. Call count is the signal.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"), { recursive: true });
+    const heavy = Array.from({ length: 30 }, (_, i) => `  function use${i}() { return shout("x"); }`);
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Owner ----",
+        "  const shout = (s) => String(s).toUpperCase();",
+        "  const quiet = (s) => String(s).toLowerCase();",
+        ...heavy,
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const sec = r.sections.find((s: { label: string }) => s.label === "Owner");
+      expect(sec.vocabulary.join(" "), "30 call sites is vocabulary").toContain("shout");
+      // The complement: a name called once must NOT be flagged, or every declaration reads as
+      // vocabulary and the signal means nothing.
+      expect(sec.vocabulary.join(" "), "a one-use helper is not vocabulary").not.toContain("quiet");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

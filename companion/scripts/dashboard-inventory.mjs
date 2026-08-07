@@ -116,6 +116,7 @@ for (const st of sf.statements) {
 // object-literal key. Without those three exclusions `foo` in `{ foo: 1 }` and in `bar.foo` both
 // read as references to a top-level `foo`, and nearly every block looks entangled.
 const refs = [];
+const refCount = new Map(); // name -> how many times the inline script references it
 (function walk(node, inFn) {
   if (ts.isIdentifier(node)) {
     const p = node.parent;
@@ -134,6 +135,7 @@ const refs = [];
       // does not. That distinction is the whole point of the flag, so the arrow counts as a
       // function even though it is not a declaration.
       refs.push({ name: node.text, line: lineOf(node.getStart(sf)), loadTime: !inFn });
+      refCount.set(node.text, (refCount.get(node.text) ?? 0) + 1);
     }
   }
   const opens =
@@ -326,6 +328,23 @@ const rows = sections.map((sec) => {
   // genuinely standalone helper — but a block reporting three components deserves a look before its
   // line range is trusted.
   const ownArr = own.map(([n]) => n);
+  // VOCABULARY: a name this section declares that the rest of the page leans on heavily.
+  //
+  // esc() was declared under the "Background jobs" banner. It has 101 call sites in this page and
+  // every extracted module that renders anything uses it. Nothing here flagged that: the banner was
+  // wrong, the escape count said nothing (it counts distinct READERS of mutable state, and esc is a
+  // function), and the block reported as an ordinary 218-line feature. Extracting it would have made
+  // every escaped string on the page depend on the jobs module loading.
+  //
+  // Call COUNT is the missing signal, and it is cheap — the reference walk already collected it.
+  // This does not block an extraction; it says "this name is the page's, not this feature's, so
+  // move the declaration out before you move the block".
+  const VOCABULARY_CALLS = 25;
+  const vocabulary = ownArr
+    .filter((nm) => (refCount.get(nm) ?? 0) >= VOCABULARY_CALLS)
+    .map((nm) => `${nm} (${refCount.get(nm)})`)
+    .sort();
+
   const coreMachinery = ownArr.filter((n) => CORE_MACHINERY.has(n)).sort();
 
   // A section can be core machinery without declaring any of those NAMES. The 397-line block under
@@ -401,6 +420,7 @@ const rows = sections.map((sec) => {
     foreignStanzas: [...foreignStanzaLines]
       .filter(([line]) => inSection(line))
       .map(([line, name]) => `${line} ${name}`),
+    vocabulary,
     coreMachinery,
     isStateHub,
     isCoreMachinery: coreMachinery.length > 0 || isStateHub,
