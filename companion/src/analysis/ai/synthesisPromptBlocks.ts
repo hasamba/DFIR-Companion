@@ -94,6 +94,11 @@ export async function buildSynthesisBlocks(
   input: BlockInput,
 ): Promise<SynthesisBlocks> {
   const { caseId, state, scope, markers, scopedEvents, preloaded } = input;
+  // Loaded FIRST, before getKevCatalog() and knownUnknownsBlock(), because that is where the
+  // original read it. A dismissal recorded during those awaits would otherwise land in this block
+  // while the rest of the run reflects the earlier snapshot — and a load failure would now surface
+  // after the KEV work rather than instead of it.
+  const learnedPatternsBlock = await buildLearnedPatterns(ctx, caseId);
   const satisfied = buildSatisfiedBlock(state, scopedEvents);
   return {
     ...preloaded,
@@ -126,7 +131,7 @@ export async function buildSynthesisBlocks(
     // Rabbit-hole detection (#13): authorized-test / known-good-tool markers are RETAINED as shaping
     // context (a sanctioned pentest during the window is signal, not just noise), not merely erased.
     authorizedContextBlock: buildAuthorizedContextBlock(markers),
-    learnedPatternsBlock: await buildLearnedPatterns(ctx, caseId),
+    learnedPatternsBlock,
   };
 }
 

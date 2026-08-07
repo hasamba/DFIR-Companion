@@ -141,7 +141,7 @@ export async function executiveSummary(ctx: AiCallContext, caseId: string): Prom
     loaded,
     provider,
     "exec-summary",
-    getExecSummaryPrompt(),
+    getExecSummaryPrompt,
     userPrompt,
     (raw) => execSummarySchema.parse(raw),
   );
@@ -183,7 +183,7 @@ export async function remediationPlan(ctx: AiCallContext, caseId: string): Promi
     loaded,
     provider,
     "remediation",
-    getRemediationPrompt(),
+    getRemediationPrompt,
     userPrompt,
     (raw) => remediationPlanSchema.parse(raw),
   );
@@ -220,7 +220,7 @@ export async function hypothesisReview(
     loaded,
     provider,
     "hypothesis-review",
-    getHypothesisReviewPrompt(),
+    getHypothesisReviewPrompt,
     userPrompt,
     (raw) => ({
       reviews: sanitizeHypothesisReviews(

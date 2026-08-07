@@ -85,7 +85,7 @@ export async function ask(ctx: AiCallContext, caseId: string, question: string):
     `CURRENT QUESTIONS:\n${questionsText}\n\n` +
     `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
-  return callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt(), userPrompt, (raw) =>
+  return callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt, userPrompt, (raw) =>
     askSchema.parse(raw),
   );
 }
@@ -186,7 +186,7 @@ export async function explainEvent(
     (contextEvents.map((e) => renderEv(e)).join("\n") || "(no context events)") +
     `\n\nExplain the focal event as JSON.`;
 
-  return callAiJson(ctx, caseId, loaded, provider, "explain-event", getExplainEventPrompt(), userPrompt, (raw) =>
+  return callAiJson(ctx, caseId, loaded, provider, "explain-event", getExplainEventPrompt, userPrompt, (raw) =>
     explainEventSchema.parse(raw),
   );
 }
@@ -215,7 +215,7 @@ export async function suggestFalsePositiveSimilarAi(
     loaded,
     provider,
     "fp-similarity",
-    getFpSimilarityPrompt(),
+    getFpSimilarityPrompt,
     userPrompt,
     (raw) => fpSimilaritySchema.parse(raw).candidateIds.filter((id) => valid.has(id)),
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -747,6 +747,45 @@ describe("AnalysisPipeline", () => {
     expect(new Set(state.forensicTimeline.map((e) => e.id)).size).toBe(2);
     expect(state.forensicTimeline.every((e) => e.sourceScreenshots.includes("0001_results.csv"))).toBe(true);
     expect(durableProgress).toEqual([1, 2]);
+  });
+
+  it("analyzeCsv re-reads DFIR_AI_CSV_PROMPT_FILE for every batch, not once per import", async () => {
+    // DFIR_AI_*_PROMPT_FILE is documented as "re-read on each AI call". A multi-batch import makes
+    // one call per batch, so an operator who corrects the prompt file while a long import is
+    // running must see the fix take effect on the next batch. Resolving the prompt once up front
+    // (the #453 refactor briefly did) pins the whole import to whatever the file said at the start.
+    const dir = await mkdtemp(join(tmpdir(), "dfir-csv-prompt-"));
+    const promptFile = join(dir, "csv.txt");
+    await writeFile(promptFile, "PROMPT VERSION ONE", "utf8");
+    process.env.DFIR_AI_CSV_PROMPT_FILE = promptFile;
+
+    const seen: string[] = [];
+    const provider: AIProvider = {
+      name: "spy",
+      model: "mock-model",
+      analyze: async (req) => {
+        seen.push(req.systemPrompt);
+        if (seen.length === 1) await writeFile(promptFile, "PROMPT VERSION TWO", "utf8");
+        return { rawText: JSON.stringify({
+          findings: [], iocs: [], mitreTechniques: [], threadsOpened: [], threadsClosed: [],
+          timelineNote: "read rows", attackerPath: "", summary: "", forensicEvents: [],
+        }) };
+      },
+    };
+    const pipeline = new AnalysisPipeline({
+      provider, stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    try {
+      await pipeline.analyzeCsv("c1", "Time,Process\n09:00,a.exe\n09:01,b.exe\n", {
+        label: "prompt.csv", idPrefix: "p1", importedAt: "2026-06-01T00:00:00Z", rowsPerBatch: 1,
+      });
+      expect(seen).toEqual(["PROMPT VERSION ONE", "PROMPT VERSION TWO"]);
+    } finally {
+      delete process.env.DFIR_AI_CSV_PROMPT_FILE;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("analyzeCsv deduplicates an identical event re-imported (e.g. the same file twice)", async () => {

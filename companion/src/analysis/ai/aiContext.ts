@@ -94,7 +94,7 @@ export async function callAiJson<T>(
   loaded: InvestigationState,
   provider: AIProvider,
   kind: string,
-  systemPrompt: string,
+  systemPrompt: string | (() => string),
   userPrompt: string,
   parse: (raw: unknown) => T,
 ): Promise<T> {
@@ -107,7 +107,10 @@ export async function callAiJson<T>(
         caseId,
         loaded,
         provider,
-        { systemPrompt, userPrompt, images: [] },
+        // Resolved per ATTEMPT when a resolver is passed. DFIR_AI_*_PROMPT_FILE is documented as
+        // "re-read on each AI call", so an operator fixing a broken prompt file mid-retry must see
+        // it take effect on the next attempt. Callers whose original resolved once pass a string.
+        { systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt, userPrompt, images: [] },
         kind,
       );
       return parse(parsed);

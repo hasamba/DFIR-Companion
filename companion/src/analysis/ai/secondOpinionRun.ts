@@ -105,7 +105,7 @@ async function reconcileDeltas(
       a,
       provider,
       "second-opinion-reconcile",
-      getReconcilePrompt(),
+      getReconcilePrompt,
       userPrompt,
       (raw) => reconcileResponseSchema.parse(raw),
     );

@@ -149,7 +149,12 @@ function tagScreenshotSources<D extends { forensicEvents?: { sources?: string[] 
 interface ImportExtractionSpec<T> {
   /** The retry/telemetry kind AND the analyzeRestored call kind — always the same string. */
   kind: "csv" | "log";
-  systemPrompt: string;
+  /**
+   * A RESOLVER, not a string. `DFIR_AI_{CSV,LOG}_PROMPT_FILE` is documented as "re-read on each AI
+   * call", and this loop makes one call per batch per attempt — so resolving once up front would
+   * pin a whole multi-batch import to whatever the file said when it started.
+   */
+  resolveSystemPrompt: () => string;
   /** Fallback event source when `detectTool(label)` finds nothing. */
   defaultSource: string;
   /** The raw payload, pre-scanned once alongside the state summary. */
@@ -206,7 +211,7 @@ async function extractBatch<T>(
     state,
     provider,
     {
-      systemPrompt: spec.systemPrompt,
+      systemPrompt: spec.resolveSystemPrompt(),
       userPrompt,
       images: [],
       ...(opts.signal ? { signal: opts.signal } : {}),
@@ -292,7 +297,7 @@ export async function analyzeCsv(
 
   return runBatchedImport(ctx, caseId, provider, opts, {
     kind: "csv",
-    systemPrompt: getCsvPrompt(),
+    resolveSystemPrompt: getCsvPrompt,
     defaultSource: "CSV import",
     payloadText: csvText,
     // Batch by BOTH the row cap and a token budget: wide rows (long EDR/SIEM command-lines) could
@@ -342,7 +347,7 @@ export async function analyzeLog(
 
   return runBatchedImport(ctx, caseId, provider, opts, {
     kind: "log",
-    systemPrompt: getLogPrompt(),
+    resolveSystemPrompt: getLogPrompt,
     defaultSource: "Log import",
     payloadText: logText,
     // Batch by BOTH the pattern cap and a token budget — a few patterns with very long examples
