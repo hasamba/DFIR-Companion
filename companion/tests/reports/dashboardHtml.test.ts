@@ -487,7 +487,11 @@ describe("dashboard.html", () => {
     // A persistent caption explains what the bars mean (not just a hover-only tooltip), and toggles
     // with the heatmap itself.
     expect(html).toContain('id="timelineHeatmapCaption"');
-    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,60}caption\.hidden = true/);
+    // Window widened from 60 to 200: prettier wraps this guard across five lines now that it lives
+    // in js/dashboard-heatmap.js, and the tight window only held while it was in dashboard.html —
+    // the one file prettier does not format. Still asserts the caption hides in the SAME branch
+    // that hides the heatmap, which is the behaviour that matters.
+    expect(html).toMatch(/buckets\.length < 2\)[\s\S]{0,200}caption\.hidden = true/);
     expect(html).toMatch(/caption\.hidden = false/);
   });
 

@@ -901,6 +901,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Event-density heatmap. No initializer. Reported 470 lines and zero escapes until the banner
+    // it shared with renderTimelineEvents was split — a spine reports no escapes because it
+    // declares everything it touches, which is the opposite of what the number usually means.
+    file: "dashboard-heatmap.js",
+    publish: ["renderTimelineHeatmap", "zoomToTimeWindow"],
+    private: ["HM_SEV_ORDER", "HM_MAX_BUCKETS"],
+  },
+  {
     // Mark-false-positive modal. Two ranges: the feature, and the six controls of its own that sat
     // 3,300 lines away in the page's wiring block, which is where its one escape was read.
     file: "dashboard-false-positive.js",

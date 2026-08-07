@@ -319,6 +319,9 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Event-density heatmap. No sentinel — the block has no initializer.
+    "renderTimelineHeatmap",
+    "zoomToTimeWindow",
     // Mark-false-positive modal. `initFalsePositiveModal` is the sentinel.
     "openFalsePositiveModal",
     "closeFalsePositiveModal",
