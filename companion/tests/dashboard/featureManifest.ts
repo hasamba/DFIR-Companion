@@ -899,6 +899,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Analyst notebook. Its one escape was a cross-module read from dashboard-hypotheses.js, which
+    // reached into notebookEntries to build the notebook→hypothesis bridge from the far side.
+    file: "dashboard-notebook.js",
+    initializer: "initNotebook",
+    publish: ["initNotebook", "loadNotebook", "loadNbAiToggle", "nbDelete", "nbStartEdit", "notebookEntry"],
+    private: ["notebookEntries"],
+  },
+  {
     // Collapsible + reorderable sections. Reported blocked on a `sections` escape for most of #415
     // and never was: it is a const-declared arrow function, and the inventory keyed on the keyword.
     file: "dashboard-collapsible.js",

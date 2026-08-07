@@ -317,6 +317,13 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Analyst notebook. `initNotebook` is the sentinel. notebookEntry stubs to undefined, which
+    // promoteToHypothesis already treats as "no such entry" and bails on.
+    "loadNotebook",
+    "loadNbAiToggle",
+    "nbDelete",
+    "nbStartEdit",
+    "notebookEntry",
     // Collapsible sections. `initCollapsible` is the sentinel.
     "setupCollapsible",
     "setupReorder",

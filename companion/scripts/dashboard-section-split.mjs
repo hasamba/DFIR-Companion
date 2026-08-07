@@ -95,7 +95,11 @@ for (const st of sf.statements) {
 // only because that gate exists. Refuse here instead.
 const foreign = [];
 for (let i = FROM; i <= TO; i++) {
-  const m = /typeof\s+(init[A-Za-z0-9_]*)\s*!==\s*"undefined"/.exec(lines[i - 1] || "");
+  // BOTH guard forms. The page uses `!== "undefined"` and `=== "function"` interchangeably, and a
+  // detector that knows only one is worse than none — it reports clean and you trust it. Matching
+  // only `!== "undefined"` is the exact bug that let a ticket-integrations stanza travel into a
+  // module earlier in #415, and it let initHypotheses through here on the first try.
+  const m = /typeof\s+(init[A-Za-z0-9_]*)\s*(?:!==\s*"undefined"|===\s*"function")/.exec(lines[i - 1] || "");
   if (m) foreign.push(`${i} ${m[1]}`);
 }
 if (foreign.length) {

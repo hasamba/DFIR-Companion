@@ -246,7 +246,9 @@
   // Promote a notebook hypothesis entry into a tracked hypothesis (the notebook→hypothesis bridge).
   function promoteToHypothesis(id) {
     const caseId = document.getElementById("caseId").value.trim();
-    const entry = notebookEntries.find((e) => e.id === id);
+    // Asked of the notebook rather than reached for: notebookEntries is its state, not ours.
+    const entry =
+      typeof notebookEntry === "function" ? notebookEntry(id) : null;
     const msg = document.getElementById("nbMsg");
     if (!caseId || !entry) return;
     if (msg) msg.textContent = "promoting…";

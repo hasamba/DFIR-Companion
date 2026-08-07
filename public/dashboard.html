@@ -291,6 +291,7 @@
   <!-- Velociraptor triage. Owns the bundle/client caches behind accessors. -->
   <script src="/js/dashboard-velo-triage.js"></script>
   <!-- Vim-style keyboard navigation. initKeyboardNav() binds its four controls. -->
+  <script src="/js/dashboard-notebook.js"></script>
   <script src="/js/dashboard-collapsible.js"></script>
   <script src="/js/dashboard-ioc-provenance.js"></script>
   <script src="/js/dashboard-attack-phases.js"></script>
@@ -4757,100 +4758,11 @@
       document.getElementById("fpOverlay").classList.remove("open");
     }
 
-    // --- Analyst notebook ---------------------------------------------------------
-    let notebookEntries = [];
-    let nbEditingId = null;
+    // Analyst notebook lives in public/js/dashboard-notebook.js.
+    if (typeof initNotebook === "function") initNotebook();
 
-    function loadNotebook(caseId) {
-      fetch(`/cases/${caseId}/notebook`).then(r => r.json()).then(list => {
-        notebookEntries = Array.isArray(list) ? list : [];
-        renderNotebook();
-      }).catch(() => {});
-    }
-
-    function loadNbAiToggle(caseId) {
-      fetch(`/cases/${caseId}/ai-control`).then(r => r.json()).then(c => {
-        const el = document.getElementById("nbAiToggle");
-        if (el) el.checked = !!c.includeNotebook;
-      }).catch(() => {});
-    }
-
-    function renderNotebook() {
-      const el = document.getElementById("nbList");
-      if (!el) return;
-      if (!notebookEntries.length) { el.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>No entries yet.</div>"; return; }
-      el.innerHTML = notebookEntries.map(e => {
-        const who = e.author ? `<span data-safe-style="font-size:10px;color:var(--text-primary);font-weight:600">${esc(e.author)}</span>` : "";
-        const ts = e.timestamp ? `<span data-safe-style="margin-left:auto;font-size:10px;color:var(--text-faint)">${esc(e.timestamp.slice(0,16).replace('T',' '))} UTC</span>` : "";
-        const promote = `<button class="nb-action-btn" data-act="promoteToHypothesis" data-id="${escAttr(e.id)}" title="Track this as a status-bearing hypothesis (Hypotheses panel)">→ Hypothesis</button>`;
-        return `<div class="nb-entry ${escAttr(e.type)}" data-id="${escAttr(e.id)}">` +
-          `<div class="nb-entry-header"><span class="nb-type-badge ${escAttr(e.type)}">${esc(e.type)}</span>${who}${ts}</div>` +
-          `<div class="nb-entry-text">${esc(e.text)}</div>` +
-          `<div class="nb-entry-actions">` +
-          promote +
-          `<button class="nb-action-btn" data-act="nbStartEdit" data-id="${escAttr(e.id)}">Edit</button>` +
-          `<button class="nb-action-btn del" data-act="nbDelete" data-id="${escAttr(e.id)}">Delete</button>` +
-          `</div></div>`;
-      }).join("");
-    }
-
-    function nbStartEdit(id) {
-      const entry = notebookEntries.find(e => e.id === id);
-      if (!entry) return;
-      nbEditingId = id;
-      document.getElementById("nbText").value = entry.text;
-      document.getElementById("nbType").value = entry.type;
-      document.getElementById("nbAddBtn").textContent = "Save edit";
-      document.getElementById("nbMsg").textContent = "";
-      document.getElementById("nbText").focus();
-    }
-
-    function nbCancelEdit() {
-      nbEditingId = null;
-      document.getElementById("nbText").value = "";
-      document.getElementById("nbType").value = "note";
-      document.getElementById("nbAddBtn").textContent = "Add entry";
-      document.getElementById("nbMsg").textContent = "";
-    }
-
-    function nbDelete(id) {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      fetch(`/cases/${caseId}/notebook/${id}`, { method: "DELETE" }).then(() => loadNotebook(caseId)).catch(() => {});
-    }
-
-    document.getElementById("nbAddBtn").onclick = function() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const text = document.getElementById("nbText").value.trim();
-      const type = document.getElementById("nbType").value;
-      const msg = document.getElementById("nbMsg");
-      if (!caseId || !text) { msg.textContent = "text required"; return; }
-      msg.textContent = nbEditingId ? "saving…" : "adding…";
-      if (nbEditingId) {
-        fetch(`/cases/${caseId}/notebook/${nbEditingId}`, { method: "PATCH",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type }) })
-          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(() => { nbCancelEdit(); loadNotebook(caseId); })
-          .catch(e => { msg.textContent = "failed: " + e.message; });
-      } else {
-        fetch(`/cases/${caseId}/notebook`, { method: "POST",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ text, type, author: investigatorName() }) })
-          .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-          .then(() => { document.getElementById("nbText").value = ""; msg.textContent = ""; loadNotebook(caseId); })
-          .catch(e => { msg.textContent = "failed: " + e.message; });
-      }
-    };
-
-    document.getElementById("nbAiToggle").addEventListener("change", function() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) { this.checked = !this.checked; return; }
-      fetch(`/cases/${caseId}/ai-control`, { method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled: aiEnabled, includeNotebook: this.checked }) })
-        .catch(() => { this.checked = !this.checked; });
-    });
-
-    // Hypotheses (issue #140) live in public/js/dashboard-hypotheses.js.
+    // Left in place deliberately: a guard stanza from an earlier extraction that happened to
+    // sit inside the notebook's line range. The split script refuses such a range now.
     if (typeof initHypotheses === "function") initHypotheses();
 
     // --- Super-Timeline -----------------------------------------------------------

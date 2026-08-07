@@ -156,6 +156,27 @@ describe("dashboard section split", () => {
     }
   });
 
+  it('catches the === "function" guard form too, not just !== "undefined"', () => {
+    // The page uses both forms interchangeably. A detector that knows only one is worse than none,
+    // because it reports clean and gets trusted — that exact half-match let a ticket-integrations
+    // stanza travel into a module earlier in #415, and let initHypotheses through here on the
+    // first try.
+    const { dir, path } = dashboardWith([
+      "  function mine() {}",
+      '  if (typeof initOther === "function") initOther();',
+    ]);
+    try {
+      execFileSync(process.execPath, [SCRIPT, "3", "4", "--json", "--html", path], { encoding: "utf8" });
+      expect.unreachable('accepted a range containing an === "function" guard');
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string };
+      expect(err.status).toBe(1);
+      expect(err.stderr ?? "").toContain("initOther");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts the same block once the foreign stanza is outside the range", () => {
     // The complement: a rule that refused everything would read as caution and stop the work.
     const { dir, path } = dashboardWith([
