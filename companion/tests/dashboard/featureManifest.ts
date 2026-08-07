@@ -899,6 +899,19 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Mark-false-positive modal. Two ranges: the feature, and the six controls of its own that sat
+    // 3,300 lines away in the page's wiring block, which is where its one escape was read.
+    file: "dashboard-false-positive.js",
+    initializer: "initFalsePositiveModal",
+    publish: [
+      "initFalsePositiveModal",
+      "openFalsePositiveModal",
+      "closeFalsePositiveModal",
+      "renderFpCandidates",
+    ],
+    private: ["fpTarget"],
+  },
+  {
     // Bulk finding operations + hunt-query builders. No initializer: nothing here runs at load.
     // Reported eight escapes for most of #415 and had none — five were const arrow helpers the
     // inventory miscounted, three belonged to other owners.

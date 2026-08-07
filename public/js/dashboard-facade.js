@@ -317,6 +317,10 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Mark-false-positive modal. `initFalsePositiveModal` is the sentinel.
+    "openFalsePositiveModal",
+    "closeFalsePositiveModal",
+    "renderFpCandidates",
     // Bulk finding operations. All work functions; there is no sentinel because the block has no
     // initializer. showToast is stubbed with the rest — a missing toast is a missing decoration.
     "baseName",
