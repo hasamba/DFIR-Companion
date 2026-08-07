@@ -35,8 +35,9 @@ import { IMPORTED_THEMES } from "../../scripts/theme/vendor/themePalettes.js";
 // All eight stylesheet parts, concatenated back into the bytes the single dashboard.css held.
 const dashboard = readDashboardCss();
 
-/** The page: the generated DFIR_THEMES registry the theme picker reads. */
-const dashboardHtml = readFileSync(DASHBOARD_PATH, "utf8");
+/** The generated DFIR_THEMES registry the theme picker reads. It moved out of dashboard.html into
+ *  js/dashboard-theme.js in #415; the registry generator writes to whichever file holds it. */
+const dashboardHtml = readFileSync(new URL("../../../public/js/dashboard-theme.js", import.meta.url), "utf8");
 
 /** Pull one generated `:root[data-theme="x"]` block's declarations out of the file. */
 function themeBlock(name: string): Record<string, string> {
@@ -98,9 +99,7 @@ describe("imported theme contrast", () => {
     // The browser paints scrollbars, form controls and the caret from color-scheme. Getting
     // it backwards puts a dark scrollbar on a white page.
     const isLight = relLuminance(hexToRgb(b["--bg-primary"])) > 0.5;
-    expect(b["color-scheme"], `${name} background is ${b["--bg-primary"]}`).toBe(
-      isLight ? "light" : "dark",
-    );
+    expect(b["color-scheme"], `${name} background is ${b["--bg-primary"]}`).toBe(isLight ? "light" : "dark");
   });
 });
 
@@ -199,6 +198,9 @@ describe("theme registry", () => {
     dashboardHtml.indexOf("const DFIR_THEMES = {"),
     dashboardHtml.indexOf("/* <<< dfir-theme registry */"),
   );
+  // Non-empty guard: if the registry ever moves again this slice goes empty, and an empty registry
+  // makes "lists every theme that has a CSS block, and no others" pass by listing nothing.
+  expect(registry.length, "DFIR_THEMES registry slice is empty — has it moved?").toBeGreaterThan(200);
 
   it("lists every theme that has a CSS block, and no others", () => {
     const inRegistry = [...registry.matchAll(/^\s*"?([\w-]+)"?:\s*\{/gm)].map((m) => m[1]);

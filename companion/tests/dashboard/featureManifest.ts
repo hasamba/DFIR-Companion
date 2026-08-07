@@ -905,6 +905,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Theme (#53). Its three escapes were read by renderThemeMenu and the menu handlers, which sat
+    // on the wrong side of the "Theme picker" banner — that banner is the page's state hub, not a
+    // theme feature. Moving the boundary past the menu left this with no escapes.
+    file: "dashboard-theme.js",
+    initializer: "initTheme",
+    publish: ["initTheme", "applyTheme", "storedTheme", "systemTheme", "themeColor"],
+    private: ["DFIR_THEMES", "THEME_GROUP_LABELS", "THEME_GROUP_ORDER"],
+  },
+  {
     // Setup-wizard step definitions — pure data, split out when moving the wizard's state home put
     // dashboard-setup-wizard.js over the 800-line budget. Accessors, because published names must
     // be callable.

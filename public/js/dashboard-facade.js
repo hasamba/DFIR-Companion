@@ -319,6 +319,11 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Theme. `initTheme` is the sentinel.
+    "applyTheme",
+    "storedTheme",
+    "systemTheme",
+    "themeColor",
     // Setup-wizard step definitions.
     "wizardOrder",
     "wizardStepById",

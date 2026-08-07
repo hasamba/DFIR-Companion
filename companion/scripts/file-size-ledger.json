@@ -5,7 +5,7 @@
   "analysis/siemImport.ts": 1346,
   "analysis/velociraptorImport.ts": 1503,
   "integrations/velociraptor/velociraptorApi.ts": 1086,
-  "public/dashboard.html#inline-js": 4592,
+  "public/dashboard.html#inline-js": 4409,
   "public/js/dashboard-velo-triage.js": 815,
   "reports/markdown.ts": 1461,
   "routes/caseLifecycle.ts": 1204,
