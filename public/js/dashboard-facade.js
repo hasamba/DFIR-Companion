@@ -317,6 +317,34 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // IOC provenance / corroboration / risk. NOTE the inverted direction: these are filters, so a
+    // falsy stub means NO filtering and the analyst sees more rows, not fewer. iocCorroborationCount
+    // is the exception that matters — the page defaults it to 2, never 0, because `0 >= 2` is false
+    // and would filter out every IOC on the page.
+    "iocCorroborationCount",
+    "applyIocProvenanceFilters",
+    "iocProvenanceFiltersActive",
+    "iocChainFor",
+    "setIocProvenanceFilter",
+    "setRiskIocsFilter",
+    "riskIocsFilterValue",
+    "loadIocSources",
+    "scheduleIocSourcesReload",
+    "loadIocProvenance",
+    "scheduleIocProvenanceReload",
+    "loadIocProvenanceChains",
+    "scheduleIocProvenanceChainReload",
+    "loadIocRisk",
+    "scheduleIocRiskReload",
+    "iocProvenanceOf",
+    "iocProvenanceBadge",
+    "iocRiskRankOf",
+    "iocRiskBadge",
+    "iocCorroBadge",
+    "iocChainChip",
+    "openIocChainPanel",
+    "findingEvidenceDetails",
+    "citeEvents",
     // Attack Phases. `initAttackPhases` is the sentinel. hasPhases stubs falsy so the refresh
     // fan-out skips the panel instead of throwing.
     "loadPhases",

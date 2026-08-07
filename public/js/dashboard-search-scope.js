@@ -180,13 +180,13 @@
       // Risk lens (#63) — dedicated handler (accepts tier 2/3/4, which `wire` doesn't).
       const riskSel = document.getElementById("riskIocs");
       if (riskSel) {
-        riskSel.value = String(riskIocsFilter);
-        riskSel.classList.toggle("active", riskIocsFilter > 0);
+        riskSel.value = String(typeof riskIocsFilterValue === "function" ? riskIocsFilterValue() : 0);
+        riskSel.classList.toggle("active", typeof riskIocsFilterValue === "function" && riskIocsFilterValue() > 0);
         riskSel.addEventListener("change", () => {
           const v = parseInt(riskSel.value, 10);
-          riskIocsFilter = v >= 2 && v <= 4 ? v : 0;
-          localStorage.setItem("dfir.risk.iocs", String(riskIocsFilter));
-          riskSel.classList.toggle("active", riskIocsFilter > 0);
+          if (typeof setRiskIocsFilter === "function") setRiskIocsFilter(v);
+          
+          riskSel.classList.toggle("active", typeof riskIocsFilterValue === "function" && riskIocsFilterValue() > 0);
           if (DfirState.lastState())
             renderIocs(DfirState.lastState().iocs || []);
         });

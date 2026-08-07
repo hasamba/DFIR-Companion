@@ -899,6 +899,48 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // IOC provenance, corroboration and risk. No initializer: its controls stayed where they are
+    // (the page's delegated click block, and the risk <select> in dashboard-search-scope.js) and
+    // hand their values over — the plumbing is theirs, the state is this feature's.
+    file: "dashboard-ioc-provenance.js",
+    initializer: "initIocProvenance",
+    publish: [
+      "initIocProvenance",
+      "iocCorroborationCount",
+      "applyIocProvenanceFilters",
+      "iocProvenanceFiltersActive",
+      "iocChainFor",
+      "setIocProvenanceFilter",
+      "setRiskIocsFilter",
+      "riskIocsFilterValue",
+      "loadIocSources",
+      "scheduleIocSourcesReload",
+      "loadIocProvenance",
+      "scheduleIocProvenanceReload",
+      "loadIocProvenanceChains",
+      "scheduleIocProvenanceChainReload",
+      "loadIocRisk",
+      "scheduleIocRiskReload",
+      "iocProvenanceOf",
+      "iocProvenanceBadge",
+      "iocRiskRankOf",
+      "iocRiskBadge",
+      "iocCorroBadge",
+      "iocChainChip",
+      "openIocChainPanel",
+      "findingEvidenceDetails",
+      "citeEvents",
+    ],
+    private: [
+      "iocSourcesById",
+      "iocProvenanceFilter",
+      "riskIocsFilter",
+      "iocProvenanceChains",
+      "iocProvenance",
+      "iocRisk",
+    ],
+  },
+  {
     // Attack Phases. Reunited with its own renderPhases first — 230 lines of IOC provenance code
     // shared its banner and had split the feature in two. That split banner took the block from
     // five state escapes to one, and the one crosses as hasPhases().
