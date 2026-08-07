@@ -44,7 +44,7 @@ import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
 import { getHuntSuggestPrompt, getPlaybookHuntPrompt, getQueryTranslatePrompt } from "./prompts/index.js";
-import { loadScopedEvents, retryPolicy } from "./aiContext.js";
+import { callAiJson, loadScopedEvents, retryPolicy } from "./aiContext.js";
 import { knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
 
 /**
@@ -123,22 +123,8 @@ async function callHuntModel<T extends { vql: string }>(
   outcomes: readonly HuntOutcome[],
   parse: (raw: unknown) => T[],
 ): Promise<T[]> {
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    kind,
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt, userPrompt, images: [] },
-        kind,
-      );
-      return excludeDeployedHunts(parse(parsed), outcomes);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, kind, systemPrompt, userPrompt, (raw) =>
+    excludeDeployedHunts(parse(raw), outcomes),
   );
 }
 

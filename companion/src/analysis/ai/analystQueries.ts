@@ -11,10 +11,10 @@ import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { buildSynthesisContext } from "../synthSelect.js";
 import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
 import {
+  callAiJson,
   fitTimelineText,
   loadScopedEvents,
   promptOverhead,
-  retryPolicy,
   type AiCallContext,
 } from "./aiContext.js";
 
@@ -85,23 +85,59 @@ export async function ask(ctx: AiCallContext, caseId: string, question: string):
     `CURRENT QUESTIONS:\n${questionsText}\n\n` +
     `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    "ask",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getAskPrompt(), userPrompt, images: [] },
-        "ask",
-      );
-      return askSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt(), userPrompt, (raw) =>
+    askSchema.parse(raw),
   );
+}
+
+/**
+ * Resolve the event to explain, promoting it out of the raw record first if that is where it lives.
+ *
+ * TARGETED lookup, not a paged scan (#406): the previous `query(caseId, {})` returned only the first
+ * DEFAULT_SUPER_QUERY_LIMIT (500) rows and searched those, so explaining an event past row 500 threw
+ * "event not found" for an event that plainly existed.
+ *
+ * Promotion happens BEFORE the model sees anything, so the universe stays the forensic timeline —
+ * the invariant that the model reads only the forensic record holds literally here.
+ */
+async function resolveFocalEvent(
+  ctx: AnalystQueryContext,
+  caseId: string,
+  loaded: InvestigationState,
+  eventId: string,
+): Promise<{ loaded: InvestigationState; event: ForensicEvent }> {
+  let state = loaded;
+  let event = state.forensicTimeline.find((e) => e.id === eventId);
+  if (!event && ctx.opts.superTimelineStore) {
+    const raw = await ctx.opts.superTimelineStore.get(caseId, eventId);
+    if (raw) {
+      state = await ctx.promoteSuperTimeline(caseId, [raw], {
+        importedAt: new Date().toISOString(),
+        note: `Promoted 1 raw event for "explain this event"`,
+      });
+      event = state.forensicTimeline.find((e) => e.id === eventId);
+    }
+  }
+  if (!event) throw new Error(`event not found: ${eventId}`);
+  return { loaded: state, event };
+}
+
+/** Events adjacent in time plus events on the same asset, capped at 15 total. */
+function selectContextEvents(universe: ForensicEvent[], focal: ForensicEvent): ForensicEvent[] {
+  const sorted = [...universe].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+  const focalIdx = sorted.findIndex((e) => e.id === focal.id);
+  const nearby = [
+    ...sorted.slice(Math.max(0, focalIdx - 7), focalIdx),
+    ...sorted.slice(focalIdx + 1, focalIdx + 8),
+  ];
+  const sameAsset = focal.asset
+    ? universe.filter((e) => e.id !== focal.id && e.asset === focal.asset).slice(0, 10)
+    : [];
+  const contextIds = new Set([...nearby.map((e) => e.id), ...sameAsset.map((e) => e.id)]);
+  return [...contextIds]
+    .map((id) => universe.find((e) => e.id === id)!)
+    .filter(Boolean)
+    .slice(0, 15);
 }
 
 // Explain a single forensic event in context (issue #141). Single text-only AI call.
@@ -119,39 +155,10 @@ export async function explainEvent(
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("event explanation");
   let loaded = await ctx.opts.stateStore.load(caseId);
 
-  let event = loaded.forensicTimeline.find((e) => e.id === eventId);
-  if (!event && ctx.opts.superTimelineStore) {
-    // TARGETED lookup, not a paged scan (#406). The previous `query(caseId, {})` returned only the
-    // first DEFAULT_SUPER_QUERY_LIMIT (500) rows and searched those, so explaining an event past
-    // row 500 threw "event not found" for an event that plainly existed.
-    const raw = await ctx.opts.superTimelineStore.get(caseId, eventId);
-    if (raw) {
-      loaded = await ctx.promoteSuperTimeline(caseId, [raw], {
-        importedAt: new Date().toISOString(),
-        note: `Promoted 1 raw event for "explain this event"`,
-      });
-      event = loaded.forensicTimeline.find((e) => e.id === eventId);
-    }
-  }
-  if (!event) throw new Error(`event not found: ${eventId}`);
-  // The universe is the forensic timeline, always — including the event just promoted into it.
-  const universe = loaded.forensicTimeline;
-
-  // Context: events adjacent in time + events on the same asset (up to 15 total).
-  const sorted = [...universe].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
-  const focalIdx = sorted.findIndex((e) => e.id === eventId);
-  const nearby = [
-    ...sorted.slice(Math.max(0, focalIdx - 7), focalIdx),
-    ...sorted.slice(focalIdx + 1, focalIdx + 8),
-  ];
-  const sameAsset = event.asset
-    ? universe.filter((e) => e.id !== eventId && e.asset === event.asset).slice(0, 10)
-    : [];
-  const contextIds = new Set([...nearby.map((e) => e.id), ...sameAsset.map((e) => e.id)]);
-  const contextEvents = [...contextIds]
-    .map((id) => universe.find((e) => e.id === id)!)
-    .filter(Boolean)
-    .slice(0, 15);
+  const resolved = await resolveFocalEvent(ctx, caseId, loaded, eventId);
+  loaded = resolved.loaded;
+  const event = resolved.event;
+  const contextEvents = selectContextEvents(loaded.forensicTimeline, event);
 
   const renderEv = (e: ForensicEvent, focal = false): string =>
     `[${e.id}]${focal ? " *** FOCAL EVENT ***" : ""} ${e.timestamp || "(undated)"} [${e.severity}]` +
@@ -179,22 +186,8 @@ export async function explainEvent(
     (contextEvents.map((e) => renderEv(e)).join("\n") || "(no context events)") +
     `\n\nExplain the focal event as JSON.`;
 
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
-    caseId,
-    "explain-event",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getExplainEventPrompt(), userPrompt, images: [] },
-        "explain-event",
-      );
-      return explainEventSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, "explain-event", getExplainEventPrompt(), userPrompt, (raw) =>
+    explainEventSchema.parse(raw),
   );
 }
 
@@ -215,23 +208,15 @@ export async function suggestFalsePositiveSimilarAi(
     `ANCHOR ITEM (just marked false positive): [${anchorId}] ${anchorLabel}\n\n` +
     `OTHER ITEMS IN THIS CASE:\n${list}\n\n` +
     "Which of the other items are likely the same false-positive pattern?";
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
+  const valid = new Set(candidateIds);
+  return callAiJson(
+    ctx,
     caseId,
+    loaded,
+    provider,
     "fp-similarity",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getFpSimilarityPrompt(), userPrompt, images: [] },
-        "fp-similarity",
-      );
-      const result = fpSimilaritySchema.parse(parsed);
-      const valid = new Set(candidateIds);
-      return result.candidateIds.filter((id) => valid.has(id));
-    },
-    retries,
-    backoffMs,
+    getFpSimilarityPrompt(),
+    userPrompt,
+    (raw) => fpSimilaritySchema.parse(raw).candidateIds.filter((id) => valid.has(id)),
   );
 }

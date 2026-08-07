@@ -576,6 +576,40 @@ async function sweepSecondLook(
   }
 }
 
+/**
+ * The explicit scope when the analyst set one, else the span of the dated in-scope events. Bounds
+ * the raw re-query so a huge super-timeline is searched only over the incident window.
+ */
+function activeWindow(
+  scope: ScopeWindow,
+  scopedEvents: ForensicEvent[],
+): { from?: string; to?: string } {
+  return hasScope(scope)
+    ? { from: scope.start ?? undefined, to: scope.end ?? undefined }
+    : deriveWindow(scopedEvents);
+}
+
+/**
+ * The pool the second look searches: the scoped events the sampler OMITTED from the prompt, plus the
+ * super-timeline rows inside the active window, deduped by id.
+ *
+ * A super row that is a copy of a forensic event shares its id, so the caller's `forensicEventIds`
+ * check correctly marks it non-promotable — only genuinely-new raw rows are ever promoted.
+ */
+async function collectSecondLookCandidates(
+  superStore: NonNullable<SynthesisContext["opts"]["superTimelineStore"]>,
+  caseId: string,
+  window: { from?: string; to?: string },
+  input: { scopedEvents: ForensicEvent[]; promptEvents: ForensicEvent[] },
+): Promise<ForensicEvent[]> {
+  const shownIds = new Set(input.promptEvents.map((e) => e.id));
+  const omitted = input.scopedEvents.filter((e) => !shownIds.has(e.id));
+  const superRows = (await superStore.query(caseId, { from: window.from, to: window.to })).events;
+  const byId = new Map<string, ForensicEvent>();
+  for (const e of [...omitted, ...superRows]) if (!byId.has(e.id)) byId.set(e.id, e);
+  return [...byId.values()];
+}
+
 // Second-look sweep (investigation-guidance #11) — the impure orchestration around the pure secondLook
 // module. Mines the case's OPEN questions (open hypotheses, unknown/partial key questions with a
 // collect target, top connective IOCs) plus the model's own evidenceRequests into concrete searches,
@@ -596,36 +630,19 @@ async function runSecondLook(
   const superStore = ctx.opts.superTimelineStore;
   if (!superStore) return null;
 
-  // Active window: the explicit scope when set, else the span of the dated in-scope events. Bounds the
-  // raw re-query so a huge super-timeline is searched only over the incident window.
-  const window = hasScope(input.scope)
-    ? { from: input.scope.start ?? undefined, to: input.scope.end ?? undefined }
-    : deriveWindow(input.scopedEvents);
-
-  const hypotheses = ctx.opts.hypothesisStore ? await ctx.opts.hypothesisStore.load(caseId) : [];
-  const iocValueById = new Map(input.next.iocs.map((i) => [i.id, i.value] as const));
-  const connectiveIocs = rankConnectiveIocs(input.next, input.scopedEvents, { max: 5 });
+  const window = activeWindow(input.scope, input.scopedEvents);
 
   const requests = buildSecondLookRequests({
-    hypotheses,
-    iocValueById,
+    hypotheses: ctx.opts.hypothesisStore ? await ctx.opts.hypothesisStore.load(caseId) : [],
+    iocValueById: new Map(input.next.iocs.map((i) => [i.id, i.value] as const)),
     keyQuestions: input.next.keyQuestions,
-    connectiveIocs,
+    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, { max: 5 }),
     modelRequests: input.evidenceRequests,
     window,
   });
   if (!requests.length) return null;
 
-  // Candidate pool: the scoped events the sampler OMITTED from the prompt + the super-timeline rows in
-  // the window (deduped by id). A super row that is a copy of a forensic event shares its id, so
-  // `forensicEventIds` (below) correctly marks it non-promotable — only genuinely-new raw rows promote.
-  const shownIds = new Set(input.promptEvents.map((e) => e.id));
-  const omitted = input.scopedEvents.filter((e) => !shownIds.has(e.id));
-  const superRows = (await superStore.query(caseId, { from: window.from, to: window.to })).events;
-  const byId = new Map<string, ForensicEvent>();
-  for (const e of [...omitted, ...superRows]) if (!byId.has(e.id)) byId.set(e.id, e);
-  const candidates = [...byId.values()];
-
+  const candidates = await collectSecondLookCandidates(superStore, caseId, window, input);
   const forensicEventIds = new Set(input.next.forensicTimeline.map((e) => e.id));
   const resolutions = resolveSecondLookRequests(requests, candidates, forensicEventIds);
   const plan = buildSecondLookPlan(resolutions);
@@ -638,12 +655,11 @@ async function runSecondLook(
     });
   }
 
-  const matched = resolutions.filter((r) => r.matchedEventIds.length > 0).length;
   return {
     meta: {
       promoted: plan.promotions.length,
       requests: requests.length,
-      matched,
+      matched: resolutions.filter((r) => r.matchedEventIds.length > 0).length,
       leads: plan.leads.map((l) => l.reason).slice(0, 10),
       summary: summarizeSecondLook(plan),
       at: new Date().toISOString(),

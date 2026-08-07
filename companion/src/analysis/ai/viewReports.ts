@@ -9,7 +9,7 @@ import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { maxPromptEvents } from "../synthGroup.js";
 import { selectSynthesisEvents } from "../synthSelect.js";
 import { getSessionSummaryPrompt, getStarredReportPrompt, getViewSummaryPrompt } from "./prompts/index.js";
-import { retryPolicy, type AiCallContext } from "./aiContext.js";
+import { callAiJson, type AiCallContext } from "./aiContext.js";
 
 /**
  * The three view-scoped AI summaries (#418).
@@ -94,24 +94,9 @@ async function callViewReport(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const result = await ctx.withRetry(
-    caseId,
-    kind,
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt, userPrompt, images: [] },
-        kind,
-      );
-      return markdownSchema.parse(parsed);
-    },
-    retries,
-    backoffMs,
+  return callAiJson(ctx, caseId, loaded, provider, kind, systemPrompt, userPrompt, (raw) =>
+    markdownSchema.parse(raw).markdown,
   );
-  return result.markdown;
 }
 
 /**
