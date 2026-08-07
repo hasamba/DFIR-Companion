@@ -15,6 +15,11 @@
 // button and backdrop were bound in the page's shared modal-wiring block, so moving the functions
 // out would leave two bare references to this file evaluated as the page parses.
 (function () {
+  // Moved here from dashboard.html (#415). This module is the only thing that writes it and the
+  // only thing that reads it — it sat under the "Bulk finding operations" banner purely because
+  // that is where it happened to be typed.
+  let huntLabel = "";
+
   // --- Per-finding "Export as Sigma draft" (#89) -----------------------------------
   // Unlike huntSigma() above (a single-indicator skeleton off ONE entity), this seeds a fuller
   // Sigma DRAFT from a whole finding: every related event's + related IOC's structured indicators

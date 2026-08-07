@@ -317,6 +317,28 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Bulk finding operations. All work functions; there is no sentinel because the block has no
+    // initializer. showToast is stubbed with the rest — a missing toast is a missing decoration.
+    "baseName",
+    "bulkCopyIocs",
+    "bulkExcludeIocs",
+    "bulkMarkFindingsFalsePositive",
+    "bulkTagFindings",
+    "cleanWinPath",
+    "clearFindingSelection",
+    "explainChip",
+    "hasAny",
+    "hq",
+    "huntChip",
+    "huntContextFor",
+    "huntKql",
+    "huntSigma",
+    "huntSpl",
+    "huntVql",
+    "huntVqlNotebook",
+    "pushUniq",
+    "showToast",
+    "updateFindingBulkBar",
     // Analyst notebook. `initNotebook` is the sentinel. notebookEntry stubs to undefined, which
     // promoteToHypothesis already treats as "no such entry" and bails on.
     "loadNotebook",

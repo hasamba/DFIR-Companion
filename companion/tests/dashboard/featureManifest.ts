@@ -899,6 +899,35 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Bulk finding operations + hunt-query builders. No initializer: nothing here runs at load.
+    // Reported eight escapes for most of #415 and had none — five were const arrow helpers the
+    // inventory miscounted, three belonged to other owners.
+    file: "dashboard-bulk-findings.js",
+    publish: [
+      "baseName",
+      "bulkCopyIocs",
+      "bulkExcludeIocs",
+      "bulkMarkFindingsFalsePositive",
+      "bulkTagFindings",
+      "cleanWinPath",
+      "clearFindingSelection",
+      "explainChip",
+      "hasAny",
+      "hq",
+      "huntChip",
+      "huntContextFor",
+      "huntKql",
+      "huntSigma",
+      "huntSpl",
+      "huntVql",
+      "huntVqlNotebook",
+      "pushUniq",
+      "showToast",
+      "updateFindingBulkBar",
+    ],
+    private: [],
+  },
+  {
     // Analyst notebook. Its one escape was a cross-module read from dashboard-hypotheses.js, which
     // reached into notebookEntries to build the notebook→hypothesis bridge from the far side.
     file: "dashboard-notebook.js",
