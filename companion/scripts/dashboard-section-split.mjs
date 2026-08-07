@@ -84,6 +84,30 @@ for (const st of sf.statements) {
 // copying those lines out produces JavaScript that does not parse. It happens for a mundane reason:
 // line numbers go stale the moment another feature is extracted, and the inventory is regenerated
 // per extraction. Refuse rather than hand back a range that silently truncates.
+// Guard stanzas belonging to ALREADY-EXTRACTED features. `if (typeof initX !== "undefined") initX();
+// else dfirFeatureUnavailable("…")` is what an extraction leaves behind, and those two lines sit
+// between banner comments, so a section's line range can enclose one that is not its own. Copying
+// the range out then takes another feature's initializer with it — the feature simply stops being
+// initialised, with no error, no failing unit test and nothing on screen to notice.
+//
+// This has happened twice: initHostRanking, swallowed by the IOC-provenance range, and initDataAct
+// by the collapsible range. Both were caught by a lifecycle gate AFTER the module was written, and
+// only because that gate exists. Refuse here instead.
+const foreign = [];
+for (let i = FROM; i <= TO; i++) {
+  const m = /typeof\s+(init[A-Za-z0-9_]*)\s*!==\s*"undefined"/.exec(lines[i - 1] || "");
+  if (m) foreign.push(`${i} ${m[1]}`);
+}
+if (foreign.length) {
+  console.error(
+    `[split] REFUSING: ${foreign.length} guard stanza(s) inside ${FROM}-${TO} initialise OTHER ` +
+      `features (${foreign.join(", ")}). They were left behind by earlier extractions and are not ` +
+      `part of this block. Move them out of the range first, or exclude those lines — taking one ` +
+      `into a module silently stops that feature initialising.`,
+  );
+  process.exit(1);
+}
+
 const straddling = [...declarations, ...runsAtLoad].filter((r) => r[1] > TO);
 if (straddling.length) {
   console.error(

@@ -317,6 +317,9 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Collapsible sections. `initCollapsible` is the sentinel.
+    "setupCollapsible",
+    "setupReorder",
     // IOC provenance / corroboration / risk. NOTE the inverted direction: these are filters, so a
     // falsy stub means NO filtering and the analyst sees more rows, not fewer. iocCorroborationCount
     // is the exception that matters — the page defaults it to 2, never 0, because `0 >= 2` is false

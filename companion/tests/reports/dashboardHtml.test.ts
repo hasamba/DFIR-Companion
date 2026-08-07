@@ -280,19 +280,21 @@ describe("dashboard.html", () => {
   });
 
   it("marks the layout Custom on a manual drag reorder, so a page refresh doesn't re-apply the active dashboard-view preset over it", async () => {
-    // The two drag-reorder sites now live in DIFFERENT files — the in-page grip in dashboard.html,
-    // the Settings section-list in js/dashboard-section-order.js — so an offset measured across the
-    // concatenation is meaningless. Each is checked inside its own source, whitespace-collapsed
-    // because prettier wrapped the guard in the module across two lines.
+    // The two drag-reorder sites live in DIFFERENT files — the section grip, now in
+    // js/dashboard-collapsible.js, and the Settings section-list in js/dashboard-section-order.js —
+    // so an offset measured across the concatenation is meaningless. Each is checked inside its own
+    // source, whitespace-collapsed because prettier wrapped the guard across two lines.
     const flat = (t: string) => t.replace(/\s+/g, " ");
-    const page = flat(dashboardClientSource().split("</html>")[0]);
+    const page = flat(
+      await readFile(new URL("../../../public/js/dashboard-collapsible.js", import.meta.url), "utf8"),
+    );
     const order = flat(
       await readFile(new URL("../../../public/js/dashboard-section-order.js", import.meta.url), "utf8"),
     );
     const markCustom =
       'if (typeof applyDashboardView === "function") applyDashboardView(null, { persist: true, rerender: false });';
     // Exactly one site in each file, and nowhere else.
-    expect(page.split(markCustom).length - 1, "the in-page grip site").toBe(1);
+    expect(page.split(markCustom).length - 1, "the section-grip site").toBe(1);
     expect(order.split(markCustom).length - 1, "the Settings section-list site").toBe(1);
 
     const near = (hay: string, dropNeedle: string, limit: number, what: string) => {
@@ -302,7 +304,10 @@ describe("dashboard.html", () => {
       expect(mark, `${what}: nothing marks the layout Custom after the reorder`).toBeGreaterThan(drop);
       expect(mark - drop, `${what}: not the very next thing the handler does`).toBeLessThan(limit);
     };
-    near(page, 'saveSectionsOrder([...main.querySelectorAll(":scope > section[id]")]', 600, "grip");
+    // Whitespace-collapsed needle: prettier wraps this call across three lines in the module, and
+    // the previous exact-spacing form only held while it lived in dashboard.html, the one file
+    // prettier does not format.
+    near(page, 'saveSectionsOrder( [...main.querySelectorAll(":scope > section[id]")]', 600, "grip");
     near(order, 'saveSectionsOrder( [...container.querySelectorAll(".sec-check")]', 400, "settings");
   });
 

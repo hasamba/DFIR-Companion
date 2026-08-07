@@ -899,6 +899,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Collapsible + reorderable sections. Reported blocked on a `sections` escape for most of #415
+    // and never was: it is a const-declared arrow function, and the inventory keyed on the keyword.
+    file: "dashboard-collapsible.js",
+    initializer: "initCollapsible",
+    publish: ["initCollapsible", "setupCollapsible", "setupReorder"],
+    private: ["COLLAPSE_KEY"],
+  },
+  {
     // IOC provenance, corroboration and risk. No initializer: its controls stayed where they are
     // (the page's delegated click block, and the risk <select> in dashboard-search-scope.js) and
     // hand their values over — the plumbing is theirs, the state is this feature's.

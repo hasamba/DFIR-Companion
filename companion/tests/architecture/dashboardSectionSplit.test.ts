@@ -134,6 +134,42 @@ describe("dashboard section split", () => {
     }
   });
 
+  it("refuses a range that encloses another feature's guard stanza", () => {
+    // What an extraction leaves behind sits between banner comments, so a section's line range can
+    // enclose a stanza that is not its own. Take one into a module and that OTHER feature simply
+    // stops being initialised — no error, no failing unit test, nothing on screen. It happened
+    // twice in #415 (initHostRanking, initDataAct) and both times a lifecycle gate caught it only
+    // after the module had been written.
+    const { dir, path } = dashboardWith([
+      "  function mine() {}",
+      '  if (typeof initSomethingElse !== "undefined") initSomethingElse();',
+    ]);
+    try {
+      execFileSync(process.execPath, [SCRIPT, "3", "4", "--json", "--html", path], { encoding: "utf8" });
+      expect.unreachable("accepted a range containing another feature's initializer");
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string };
+      expect(err.status).toBe(1);
+      expect(err.stderr ?? "").toContain("initSomethingElse");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts the same block once the foreign stanza is outside the range", () => {
+    // The complement: a rule that refused everything would read as caution and stop the work.
+    const { dir, path } = dashboardWith([
+      "  function mine() {}",
+      '  if (typeof initSomethingElse !== "undefined") initSomethingElse();',
+    ]);
+    try {
+      const r = split(path, 3, 3);
+      expect(r.declarations).toEqual([[3, 3]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a nonsense range rather than reporting an empty split", () => {
     // An empty result reads as "this block needs no initializer", which is the one wrong answer
     // that gets acted on without being questioned.

@@ -468,6 +468,87 @@ describe("dashboard extraction inventory", () => {
     }
   });
 
+  it("does not treat a module's own local binding as a reference to the page's", () => {
+    // The sibling scan is what stops a page function being left unpublished when only an extracted
+    // module calls it. It was scope-blind: three modules declare their own `const sections`, and
+    // every use counted as a reference to the page's `sections`, so the inventory asked me to
+    // publish a binding nobody outside wanted.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"), { recursive: true });
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Owner ----",
+        "  const shared = () => 1;",
+        "  const mine = () => 2;",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    // One module declares its OWN `mine` and uses it; the other genuinely calls the page's `shared`.
+    writeFileSync(join(dir, "js", "a.js"), "(function(){ const mine = () => 9; return mine(); })();\n");
+    writeFileSync(join(dir, "js", "b.js"), "shared();\n");
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const sec = r.sections.find((s: { label: string }) => s.label === "Owner");
+      // The complement matters more than the fix here: a scan that stopped counting everything
+      // would silently under-publish, and the page would ReferenceError only in a browser.
+      expect(sec.publish, "a real sibling call must still be published").toContain("shared");
+      expect(sec.publish, "a module's own local must not count as a reference").not.toContain("mine");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a const-declared arrow function as a function, not as state", () => {
+    // The distinction this whole file is built on: a FUNCTION referenced from outside its block is
+    // the ordinary case (publish it), a mutable BINDING is the blocker. Keying that on the
+    // declaration keyword got it wrong for `const hq = (s) => ...`, and reported "Bulk finding
+    // operations" as eight-blocked when three of its escapes are state and five are helpers.
+    const dir = mkdtempSync(join(tmpdir(), "dfir-inv-"));
+    mkdirSync(join(dir, "js"), { recursive: true });
+    writeFileSync(
+      join(dir, "dashboard.html"),
+      [
+        "<html><body>",
+        "<script>",
+        "  // ---- Helpers and state ----",
+        '  const quote = (s) => `"${s}"`;',
+        "  const named = function (s) { return s; };",
+        "  let counter = 0;",
+        "  const table = { a: 1 };",
+        "  // ---- Reader ----",
+        "  function useThem() { return quote(named(String(counter))) + table.a; }",
+        "</script>",
+        "</body></html>",
+      ].join("\n"),
+    );
+    try {
+      const r = JSON.parse(
+        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
+          encoding: "utf8",
+        }),
+      );
+      const sec = r.sections.find((s: { label: string }) => s.label === "Helpers and state");
+      // Both function forms are publishable, neither is a state escape.
+      expect(sec.publish).toContain("quote");
+      expect(sec.publish).toContain("named");
+      expect(sec.stateEscapes).not.toContain("quote");
+      expect(sec.stateEscapes).not.toContain("named");
+      // The complement: real bindings must STILL be counted, or the fix has just blinded the gate.
+      expect(sec.stateEscapes).toContain("counter");
+      expect(sec.stateEscapes).toContain("table");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("flags a section that is core by the state it declares, not by any function it names", () => {
     // The name list above misses a whole shape. The 397-line block under the "Theme picker" banner
     // declares ws, SEV, aiEnabled, lastIocs, tlPage, iocPage, timelineSort and twenty more — the

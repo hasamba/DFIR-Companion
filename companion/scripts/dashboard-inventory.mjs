@@ -98,7 +98,14 @@ for (const st of sf.statements) {
   } else if (ts.isVariableStatement(st)) {
     for (const d of st.declarationList.declarations) {
       if (ts.isIdentifier(d.name)) {
-        decls.set(d.name.text, { line, kind: "var" });
+        // `const hq = (s) => ...` is a FUNCTION, whatever keyword declares it. Keying on the
+        // declaration kind alone counted five arrow-function helpers in "Bulk finding operations"
+        // as state escapes — baseName, cleanWinPath, hasAny, hq, pushUniq — and reported that block
+        // as eight-blocked when it is three-blocked. This file's own header says a function
+        // referenced from outside its block is the ordinary case; the code did not agree.
+        const init = d.initializer;
+        const isFn = init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
+        decls.set(d.name.text, { line, kind: isFn ? "fn" : "var" });
         declEnd.set(d.name.text, end);
       }
     }
@@ -161,12 +168,32 @@ const siblingRefs = new Map(); // name -> count of references from public/js/*.j
   for (const f of files) {
     const src = readFileSync(new URL(f, JS_DIR), "utf8");
     const mod = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    // Names the module declares ITSELF, at any depth. Without this the scan is scope-blind: three
+    // modules declare their own `const sections`, and every use of it counted as a reference to the
+    // page's `sections`, so the inventory told me to publish a binding nobody outside wanted. The
+    // error is conservative — it publishes too much rather than too little — but it pollutes
+    // `window` and inflates the facade, and it made a ready block look entangled.
+    //
+    // Deliberately not real scope analysis: a module that declares a local `sections` in one
+    // function AND reads the page's elsewhere would now be under-counted. That case would fail
+    // loudly at the name-resolution gate rather than silently, which is the right way round.
+    const own = new Set();
+    (function collect(node) {
+      if (
+        (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isParameter(node)) &&
+        node.name &&
+        ts.isIdentifier(node.name)
+      ) {
+        own.add(node.name.text);
+      }
+      node.forEachChild(collect);
+    })(mod);
     (function walkMod(node) {
       if (ts.isIdentifier(node)) {
         const par = node.parent;
         const isMember = ts.isPropertyAccessExpression(par) && par.name === node;
         const isKey = (ts.isPropertyAssignment(par) || ts.isMethodDeclaration(par)) && par.name === node;
-        if (!isMember && !isKey && decls.has(node.text)) {
+        if (!isMember && !isKey && !own.has(node.text) && decls.has(node.text)) {
           siblingRefs.set(node.text, (siblingRefs.get(node.text) ?? 0) + 1);
         }
       }

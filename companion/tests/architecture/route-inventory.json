@@ -568,6 +568,7 @@
     "ROUTE GET /js/dashboard-new-case.js",
     "ROUTE GET /js/dashboard-case-templates.js",
     "ROUTE GET /js/dashboard-velo-triage.js",
+    "ROUTE GET /js/dashboard-collapsible.js",
     "ROUTE GET /js/dashboard-ioc-provenance.js",
     "ROUTE GET /js/dashboard-attack-phases.js",
     "ROUTE GET /js/dashboard-second-opinion.js",
