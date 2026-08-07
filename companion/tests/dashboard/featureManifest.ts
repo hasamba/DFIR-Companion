@@ -901,6 +901,22 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Notifications (#58). No initializer. Zero state escapes — it sat off the queue only because
+    // the queue was filtered on sharedMachinery, which is an argument about what to publish rather
+    // than a blocker. loadCaseList, the one entry, is page machinery below this block and stays.
+    file: "dashboard-notifications.js",
+    initializer: "initNotifications",
+    publish: [
+      "initNotifications",
+      "loadNotifications",
+      "ntfAddChannel",
+      "ntfTest",
+      "ntfToggle",
+      "ntfTypeChanged",
+    ],
+    private: ["ntfChannels", "NTF_TYPE_LABEL", "NTF_WEBHOOK_PLACEHOLDER"],
+  },
+  {
     // Starred events. No initializer. Reported five escapes until the IOC view state that shared
     // its banner — and belongs to renderIocs, not to starring — moved out to the page's shared state.
     file: "dashboard-starred.js",
