@@ -292,6 +292,11 @@ const rows = sections.map((sec) => {
     "proceedConnect",
     "render",
     "renderIocs",
+    // The timeline renderer. Not in the original list because the block it lived in was labelled
+    // "Event-density heatmap", so it never looked like machinery — and with the heatmap's own
+    // escapes counted against it the whole 470-line block reported ZERO escapes, i.e. the largest
+    // ready extraction on the board. Extracting it would have taken render()'s timeline path out.
+    "renderTimelineEvents",
     "setLastState",
     "dfirFeatureUnavailable",
   ]);

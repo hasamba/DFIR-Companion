@@ -6419,7 +6419,7 @@
       if (st.count <= 2) return `<span class="prev-chip prev-rare" title="This pattern is rare in this case — more likely to be signal than noise.">◆ rare (${st.count}×)</span>`;
       return "";
     }
-
+    // ── Forensic timeline rendering and its wiring (core machinery, not a feature) ──────
     function renderTimelineEvents(ft) {
       // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
       // filtered/paged subset, so counts are stable as the analyst filters.
