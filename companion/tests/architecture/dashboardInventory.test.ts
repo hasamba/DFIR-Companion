@@ -93,19 +93,26 @@ describe("dashboard extraction inventory", () => {
     expect(report.ready).toBeLessThan(report.sections.filter((s) => s.stateEscapes.length === 0).length);
   });
 
-  it("flags render()'s own section as holding shared machinery", () => {
-    // The concrete case the signal exists for. This used to look for `render` under the cockpit
-    // banner; render moved to a banner of its own in #415 when the cockpit was extracted out from
-    // around it, which is the "it moved (fine — update this)" branch the original note allowed for.
-    // The other branch — the fan-out measurement breaking — would show as render being reported
-    // nowhere, so the find() is asserted before the contents.
-    const owner = report.sections.find((s) => s.sharedMachinery.includes("render"));
+  it("still reports SOME section's shared machinery, whatever the biggest fan-out is now", () => {
+    // This has been re-pointed twice, and the second time is the reason it is now written this way.
+    // It first named `render` under the cockpit banner; render got its own banner; then #415 moved
+    // render out of dashboard.html entirely. Each time the failure read "the fan-out measurement
+    // broke" when the truth was "the thing moved" — the two cases the original note distinguished,
+    // reported as the wrong one.
+    //
+    // So it no longer names a function. The signal is working if SOMETHING with a real fan-out is
+    // reported, and the complement below is what makes that meaningful.
+    const withShared = report.sections.filter((s) => s.sharedMachinery.length > 0);
     expect(
-      owner,
-      "no section reports render as shared machinery — the fan-out measurement broke",
-    ).toBeDefined();
-    expect(owner!.isCoreMachinery, "render's section must still read as core").toBe(true);
-    expect(owner!.maxFanout).toBeGreaterThanOrEqual(10);
+      withShared.length,
+      "no section reports shared machinery at all — the fan-out measurement broke",
+    ).toBeGreaterThan(0);
+    for (const s of withShared) {
+      expect(
+        s.maxFanout,
+        `"${s.label}" flags shared machinery but reports fanout ${s.maxFanout}`,
+      ).toBeGreaterThanOrEqual(10);
+    }
   });
 
   it("never reports a fan-out below the shared-machinery threshold it flagged", () => {

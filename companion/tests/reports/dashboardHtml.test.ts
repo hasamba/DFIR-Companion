@@ -1110,7 +1110,10 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     // JSON.parse and render() freeze repaint for as long as they run. Without a forced paint
     // first, their labels never appear until after the work finishes and the bar reads as hung.
     expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*const state = JSON\.parse\(body\)/);
-    expect(html).toMatch(/await clpAfterPaint\(\);\s*\n\s*render\(state\)/);
+    // render() moved to a module (#415), so the call is guarded. The ORDER is what this pins.
+    expect(html).toMatch(
+      /await clpAfterPaint\(\);\s*\n\s*(?:typeof render === "function" && )?render\(state\)/,
+    );
   });
 
   it("fires the loading failsafe on a stall rather than on a fixed deadline", async () => {

@@ -39,6 +39,25 @@ export interface DashboardScript {
  * Read from the markup rather than hard-coded, so a script added tomorrow is covered the day it is
  * added — the hard-coded list is exactly what left seven modules unscanned before.
  */
+/**
+ * The page's MAIN inline block — the big one features used to be written into.
+ *
+ * Five test files located it with `blocks.find(m => /\n\s*function render\s*\(/.test(m[1]))`,
+ * which ties "which block is the main one" to one function still living in it. #415 is in the
+ * business of moving functions out of that block, so that anchor is a tripwire: move render and
+ * five suites stop being able to find the script they assert about, with a message about a missing
+ * script rather than about what changed.
+ *
+ * Length is the stable property. The main block is an order of magnitude larger than the four
+ * bootstrap blocks around it, and stays so however much comes out of it — it is how
+ * scripts/dashboard-inventory.mjs has always located it.
+ */
+export function mainInlineScript(): DashboardScript {
+  const inline = dashboardScripts().filter((s) => s.name.startsWith("dashboard.html#inline-"));
+  if (!inline.length) throw new Error("no inline dashboard scripts found");
+  return inline.reduce((a, b) => (b.source.length > a.source.length ? b : a));
+}
+
 export function dashboardScripts(): DashboardScript[] {
   const html = readFileSync(new URL("dashboard.html", PUBLIC), "utf8");
   const out: DashboardScript[] = [];

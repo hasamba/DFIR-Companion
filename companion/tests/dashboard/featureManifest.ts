@@ -908,6 +908,14 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // render(). The one module js/dashboard-facade.js must NOT stub: a stub returns quietly and
+    // leaves the analyst on an empty dashboard, which is the exact failure the facade exists to
+    // prevent. It is detected and reported AT LOAD instead. See the module header.
+    file: "dashboard-render.js",
+    publish: ["render"],
+    private: [],
+  },
+  {
     // Facet filter renderers. The first extraction whose absence degrades a CORE render rather than
     // a feature: renderIocs and the timeline path call these. Every call site is guarded, and the
     // stated failure is "no filter menus, lists still render in full" — more evidence, not less.

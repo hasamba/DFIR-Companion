@@ -576,5 +576,32 @@
       filled.push(name);
     }
   }
-  window.DfirFacade = { stubbed: STUBBED, filled: filled };
+  // render() is the one name this file must NOT stub (#415). Every other stub trades a dead panel
+  // for a live page; a stubbed render trades a LIVE page for a silently empty one — the analyst
+  // sees no findings and no reason, which is what "a stub may replace work, never evidence" rules
+  // out. So it is detected here, at load, before any of its 40-odd call sites runs, and reported
+  // once and loudly rather than failing 24 times in the console.
+  var renderMissing = typeof window.render !== "function";
+  if (renderMissing) {
+    try {
+      var bar = document.createElement("div");
+      bar.id = "dfirRenderMissing";
+      bar.setAttribute("role", "alert");
+      bar.textContent =
+        "Dashboard rendering is unavailable \u2014 js/dashboard-render.js did not load. Nothing on " +
+        "this page is being drawn from case data. Reload; if it persists, the install is incomplete.";
+      bar.setAttribute(
+        "data-safe-style",
+        "position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 14px;" +
+          "background:var(--sev-critical,#b00);color:#fff;font:14px system-ui",
+      );
+      (document.body || document.documentElement).appendChild(bar);
+    } catch (e) {}
+  }
+
+  window.DfirFacade = {
+    stubbed: STUBBED,
+    filled: filled,
+    renderMissing: renderMissing,
+  };
 })();

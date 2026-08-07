@@ -321,8 +321,12 @@ describe("a feature script that fails to load", () => {
   // edit drops puts the page straight back where it was. Asserted as the general rule rather than
   // about one name, because the next call inserted there will have a different one.
   it("writes the case state before render() calls anything at all", () => {
-    const render = inline.flatMap(functionsOf).find((f) => f.declaration && f.name === "render");
-    expect(render, "no render() declaration in the inline script").toBeDefined();
+    // Searches every script, not just the inline blocks: render() moved to js/dashboard-render.js
+    // in #415, and this rule is about render's BODY wherever it lives.
+    const render = dashboardScripts()
+      .flatMap(functionsOf)
+      .find((f) => f.declaration && f.name === "render");
+    expect(render, "no render() declaration in any dashboard script").toBeDefined();
     const calls = callsAfter(render!.node, 0).sort((a, b) => a.pos - b.pos);
     const save = calls.find((c) => c.name === "setLastState");
     expect(save, "render() no longer writes DfirState.setLastState").toBeDefined();
