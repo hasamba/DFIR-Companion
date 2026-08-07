@@ -110,7 +110,11 @@ export async function callAiJson<T>(
         // Resolved per ATTEMPT when a resolver is passed. DFIR_AI_*_PROMPT_FILE is documented as
         // "re-read on each AI call", so an operator fixing a broken prompt file mid-retry must see
         // it take effect on the next attempt. Callers whose original resolved once pass a string.
-        { systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt, userPrompt, images: [] },
+        {
+          systemPrompt: typeof systemPrompt === "function" ? systemPrompt() : systemPrompt,
+          userPrompt,
+          images: [],
+        },
         kind,
       );
       return parse(parsed);

@@ -94,8 +94,15 @@ async function callViewReport(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<string> {
-  return callAiJson(ctx, caseId, loaded, provider, kind, systemPrompt, userPrompt, (raw) =>
-    markdownSchema.parse(raw).markdown,
+  return callAiJson(
+    ctx,
+    caseId,
+    loaded,
+    provider,
+    kind,
+    systemPrompt,
+    userPrompt,
+    (raw) => markdownSchema.parse(raw).markdown,
   );
 }
 

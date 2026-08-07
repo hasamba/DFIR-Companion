@@ -1,4 +1,3 @@
-import type { AIProvider } from "../../providers/provider.js";
 import { z } from "zod";
 import { buildMitigationsResult } from "../attackMitigations.js";
 import { loadMitigationsDataset } from "../attackMitigationsData.js";
@@ -135,15 +134,8 @@ export async function executiveSummary(ctx: AiCallContext, caseId: string): Prom
     `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
     `Write the executive summary as JSON.`;
 
-  return callAiJson(
-    ctx,
-    caseId,
-    loaded,
-    provider,
-    "exec-summary",
-    getExecSummaryPrompt,
-    userPrompt,
-    (raw) => execSummarySchema.parse(raw),
+  return callAiJson(ctx, caseId, loaded, provider, "exec-summary", getExecSummaryPrompt, userPrompt, (raw) =>
+    execSummarySchema.parse(raw),
   );
 }
 
@@ -177,15 +169,8 @@ export async function remediationPlan(ctx: AiCallContext, caseId: string): Promi
     `RELEVANT D3FEND COUNTERMEASURES (the defensive technique/sensor for each — cite alongside the ATT&CK mitigation where it fits):\n${d3fendText}\n\n` +
     `Write the incident-specific remediation plan as JSON.`;
 
-  return callAiJson(
-    ctx,
-    caseId,
-    loaded,
-    provider,
-    "remediation",
-    getRemediationPrompt,
-    userPrompt,
-    (raw) => remediationPlanSchema.parse(raw),
+  return callAiJson(ctx, caseId, loaded, provider, "remediation", getRemediationPrompt, userPrompt, (raw) =>
+    remediationPlanSchema.parse(raw),
   );
 }
 

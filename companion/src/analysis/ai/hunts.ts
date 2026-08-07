@@ -141,8 +141,7 @@ function renderHuntTimeline(
   overheadText: string,
 ): string {
   let events = selectSynthesisEvents(scoped, max);
-  const overhead =
-    estimateTokens(systemPrompt) + estimateTokens(overheadText) + HUNT_OVERHEAD_SLACK_TOKENS;
+  const overhead = estimateTokens(systemPrompt) + estimateTokens(overheadText) + HUNT_OVERHEAD_SLACK_TOKENS;
   const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
   if (fit < events.length) events = selectSynthesisEvents(scoped, fit);
   return events.map(renderEvent).join("\n") || "(no events yet)";

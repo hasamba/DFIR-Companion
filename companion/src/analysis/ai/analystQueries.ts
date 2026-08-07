@@ -186,8 +186,15 @@ export async function explainEvent(
     (contextEvents.map((e) => renderEv(e)).join("\n") || "(no context events)") +
     `\n\nExplain the focal event as JSON.`;
 
-  return callAiJson(ctx, caseId, loaded, provider, "explain-event", getExplainEventPrompt, userPrompt, (raw) =>
-    explainEventSchema.parse(raw),
+  return callAiJson(
+    ctx,
+    caseId,
+    loaded,
+    provider,
+    "explain-event",
+    getExplainEventPrompt,
+    userPrompt,
+    (raw) => explainEventSchema.parse(raw),
   );
 }
 

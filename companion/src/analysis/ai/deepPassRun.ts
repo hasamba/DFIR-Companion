@@ -261,7 +261,8 @@ export async function deepPass(
     batches: plan.batches.length,
     batchesFailed,
     observations: observations.length,
-  };  const runRecord = buildRunRecord(plan, provider, {
+  };
+  const runRecord = buildRunRecord(plan, provider, {
     runId,
     runStartedAt,
     minSeverity: opts.minSeverity,

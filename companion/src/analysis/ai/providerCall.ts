@@ -266,12 +266,7 @@ async function presidioGate(
  * must be able to trust that claim. Naming the unscanned character count is what stops a truncated
  * scan being mistaken for a complete one.
  */
-function capScanLength(
-  ctx: ProviderCallContext,
-  caseId: string,
-  masked: string,
-  maxChars: number,
-): string {
+function capScanLength(ctx: ProviderCallContext, caseId: string, masked: string, maxChars: number): string {
   if (masked.length <= maxChars) return masked;
   ctx.log.warn(
     `[presidio] import pre-scan truncated — ${masked.length - maxChars} character(s) of this ` +

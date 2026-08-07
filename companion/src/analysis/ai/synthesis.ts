@@ -449,7 +449,7 @@ export async function synthesize(
   if (loaded.forensicTimeline.length === 0) return loaded;
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
-  const { state, sourceTrust, windowSeconds, markers, scope, scopedEvents, synthHash } = run;
+  const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
   if (!opts.force && !opts.dryRun && ctx.lastSynthHash.get(caseId) === synthHash) return loaded;
 
   // The prompt, and the coverage audit that describes exactly what it showed the model. Kept whole
@@ -580,10 +580,7 @@ async function sweepSecondLook(
  * The explicit scope when the analyst set one, else the span of the dated in-scope events. Bounds
  * the raw re-query so a huge super-timeline is searched only over the incident window.
  */
-function activeWindow(
-  scope: ScopeWindow,
-  scopedEvents: ForensicEvent[],
-): { from?: string; to?: string } {
+function activeWindow(scope: ScopeWindow, scopedEvents: ForensicEvent[]): { from?: string; to?: string } {
   return hasScope(scope)
     ? { from: scope.start ?? undefined, to: scope.end ?? undefined }
     : deriveWindow(scopedEvents);
