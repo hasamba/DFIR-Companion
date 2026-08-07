@@ -420,6 +420,34 @@ describe("synthesize — skip-when-unchanged", () => {
     expect(analyze).toHaveBeenCalledTimes(2);
   });
 
+  it("re-synthesizes when a new in-scope event lands, even though nothing else changed", async () => {
+    // The skip-hash's PRIMARY job, and the one case the suite did not pin (#453). Every other test
+    // here covers a secondary input — a hunt outcome, an incident type — so the hash could have
+    // dropped the timeline itself and stayed green, which is the one omission that would make
+    // synthesis blind to new evidence: import events, get told "inputs unchanged", never re-run.
+    await seedOneEvent();
+    const provider = new MockProvider("mock", delta());
+    const analyze = vi.spyOn(provider, "analyze");
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+    await pipeline.synthesize("c1");
+    expect(analyze).toHaveBeenCalledTimes(1); // unchanged → skipped
+
+    const withNewEvent: InvestigationState = await stateStore.load("c1");
+    withNewEvent.forensicTimeline.push(
+      event("e2", "2026-01-01T01:00:00.000Z", "a second event imported after the first run"),
+    );
+    await stateStore.save(withNewEvent);
+
+    await pipeline.synthesize("c1");
+    expect(analyze).toHaveBeenCalledTimes(2);
+  });
+
   it("skips on a re-run whose only difference is a finding synthesis itself wrote", async () => {
     // The other half of the hash contract: findings/MITRE/threads/summary are OUTPUTS. Hashing them
     // would make two consecutive runs differ and the skip would never fire at all.
