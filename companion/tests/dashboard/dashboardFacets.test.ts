@@ -234,8 +234,15 @@ describe("no renderer writes a facet", () => {
   // actually consult it, and that is exactly the gap review flagged: the suite was green while two
   // visible regressions sat in the production renderers.
   it("gates every picker's hide-condition on the effective hidden count", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const hides = [...html.matchAll(/if \((\w+)\.length < \d[^)]*\) \{ wrap\.style\.display = "none"/g)];
+    // The four pickers moved to js/dashboard-facet-filters.js (#415); the guard is pinned there now.
+    const html = await readFile(
+      new URL("../../../public/js/dashboard-facet-filters.js", import.meta.url),
+      "utf8",
+    );
+    expect(html.length, "facet-filters module is empty — has it moved?").toBeGreaterThan(500);
+    // Whitespace-tolerant: prettier puts the body on its own line in a module, and the one-line
+    // form only held while this lived in dashboard.html — the one file prettier does not format.
+    const hides = [...html.matchAll(/if \((\w+)\.length < \d[^)]*\)\s*\{\s*wrap\.style\.display = "none"/g)];
     expect(hides.length, "expected the four facet pickers").toBe(4);
     for (const m of hides) {
       expect(m[0], `${m[1]} hides its picker without checking whether a filter is still live on it`).toMatch(
@@ -325,9 +332,12 @@ describe("wiring", () => {
     const tag = html.indexOf('src="/js/dashboard-facets.js"');
     expect(html.indexOf('src="/js/dashboard-state.js"')).toBeLessThan(tag);
     const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)];
-    const main = blocks.find((m) => /\n\s*function render\s*\(/.test(m[1]));
-    expect(main).toBeDefined();
-    expect(tag).toBeLessThan(main!.index);
+    // The main block is the LONGEST one, not "the one containing render()". Anchoring on render
+    // tied this assertion to a function #415 is in the business of moving out: the day it goes,
+    // five suites fail with "could not locate the inline dashboard script" instead of with
+    // whatever actually broke. Length stays true however much comes out of the block.
+    const main = blocks.reduce((a, b) => (b[1].length > a[1].length ? b : a));
+    expect(tag).toBeLessThan(main.index);
     expect(STATIC_ASSETS["/js/dashboard-facets.js"]).toBe("application/javascript; charset=utf-8");
   });
 

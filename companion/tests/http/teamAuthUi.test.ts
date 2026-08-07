@@ -23,7 +23,12 @@ describe("team authentication UI", () => {
   });
 
   it("stops a read-only import before opening the picker or progress bar", async () => {
-    const dashboard = await loadPublic("dashboard.html");
+    // The import handler moved to js/dashboard-unified-import.js (#415 tier 3). The ordering this
+    // asserts — permission check BEFORE the file picker opens and before the progress bar starts —
+    // is the point of the test, and it went with the code, so the test reads the module. Reading
+    // dashboard.html alone would have found nothing and every indexOf would have been -1 together,
+    // which is how an ordering assertion passes vacuously.
+    const dashboard = await loadPublic("js/dashboard-unified-import.js");
     const handlerStart = dashboard.indexOf('document.getElementById("importBtn").onclick');
     const guardAt = dashboard.indexOf("importPermissionMessage(caseId)", handlerStart);
     const pickerAt = dashboard.indexOf('document.getElementById("importFile").click()', handlerStart);
@@ -33,6 +38,14 @@ describe("team authentication UI", () => {
     expect(pickerAt).toBeGreaterThan(guardAt);
     expect(dashboard).toContain("investigator or administrator role");
     expect(dashboard).toContain("cancelImportProgress()");
+    // And the guard is not merely present-and-ordered. importPermissionMessage now lives in
+    // js/dashboard-import-progress.js (#415 tier 3) — it must be declared THERE and nowhere in the
+    // module that calls it, because a local copy would be a stub that always allows the import.
+    const guard = await loadPublic("js/dashboard-import-progress.js");
+    expect(guard).toMatch(/function importPermissionMessage\(/);
+    expect(dashboard, "a local copy would defeat the check it is asked to make").not.toMatch(
+      /function importPermissionMessage\(/,
+    );
   });
 
   it("uses the same six-character minimum and account wording on the HTML pages", async () => {

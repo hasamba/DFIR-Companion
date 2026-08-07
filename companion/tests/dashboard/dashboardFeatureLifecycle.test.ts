@@ -1,3 +1,5 @@
+import ts from "typescript";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -319,8 +321,12 @@ describe("a feature script that fails to load", () => {
   // edit drops puts the page straight back where it was. Asserted as the general rule rather than
   // about one name, because the next call inserted there will have a different one.
   it("writes the case state before render() calls anything at all", () => {
-    const render = inline.flatMap(functionsOf).find((f) => f.declaration && f.name === "render");
-    expect(render, "no render() declaration in the inline script").toBeDefined();
+    // Searches every script, not just the inline blocks: render() moved to js/dashboard-render.js
+    // in #415, and this rule is about render's BODY wherever it lives.
+    const render = dashboardScripts()
+      .flatMap(functionsOf)
+      .find((f) => f.declaration && f.name === "render");
+    expect(render, "no render() declaration in any dashboard script").toBeDefined();
     const calls = callsAfter(render!.node, 0).sort((a, b) => a.pos - b.pos);
     const save = calls.find((c) => c.name === "setLastState");
     expect(save, "render() no longer writes DfirState.setLastState").toBeDefined();
@@ -350,21 +356,25 @@ describe("a feature script that fails to load", () => {
 });
 
 describe("what stayed behind, on purpose", () => {
-  // `sessionsCollapsed` lives inside the sessions block but the timeline header's collapse-all
-  // control reads it, so it is shared state, not this feature's. Taking it would have broken that
-  // control silently — the census that drove this tier did not see the reference, because it counts
-  // calls between top-level functions and that one is a listener.
-  it("leaves sessionsCollapsed in the page, where its other reader is", async () => {
+  // `sessionsCollapsed` used to live in the page, and this test used to assert that it stayed —
+  // on the reasoning that "the collapse-all control reads it, so it is shared state". Re-reading
+  // that control is what overturned it: it toggles .ses-collapsed on #sec-sessions and relabels
+  // its own button, and nothing else touches the flag. It read as shared only because it sits in
+  // the page's delegated-click block, forty features deep. An element's address is not its owner.
+  it("keeps sessionsCollapsed with the feature whose control is its only reader", async () => {
     const html = await readFile(DASHBOARD, "utf8");
-    expect(html).toMatch(/let sessionsCollapsed = false;/);
-    // Asserted against CODE, not the file text: this module's own header explains why
-    // sessionsCollapsed stayed behind, and a raw substring check trips over that explanation —
-    // which is the sixth time in this issue that a mechanical check has caught its own prose.
+    expect(html, "the page still declares it").not.toMatch(/let sessionsCollapsed = false/);
+    expect(html, "the page asks for the operation instead").toContain("toggleSessionsCollapse(e.target)");
+    // Asserted against CODE, not file text: a comment naming the binding would satisfy a raw
+    // substring search, which is the sixth time in this issue a mention has passed for a use.
     const code = (await read("dashboard-sessions.js"))
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    expect(code).not.toContain("sessionsCollapsed");
+    expect(code).toContain("let sessionsCollapsed = false");
+    expect(code, "and it stays private — only the operation is published").not.toContain(
+      "window.sessionsCollapsed",
+    );
   });
 
   // THE PAGE MUST REALLY CALL IT, and the module must really defer its DOM work.
@@ -462,5 +472,196 @@ describe("what stayed behind, on purpose", () => {
         `${feat.initializer} is declared on the ${feat.file} row but that module does not publish it`,
       ).toContain(`js/${feat.file}`);
     }
+  });
+});
+
+// ── RUNNING initMcp() ────────────────────────────────────────────────────────────────────────────
+//
+// Review of the extraction PR found the gap this closes: initMcp() installs thirteen handlers, and
+// the committed checks only proved the function EXISTS and is CALLED once. Deleting the server
+// select, the agent run and the manual run handlers passed all 215 relevant tests — the same
+// failure mode #479 records for the swimlane, one feature later.
+//
+// A threshold would not have caught it either. `listeners.length > 8` cannot tell "all thirteen"
+// from "any nine", and reads a duplicate registration as more evidence of success. So every control
+// is named.
+describe("initMcp", () => {
+  // id -> the property MCP wires it through. Written out rather than derived from the module,
+  // because a list derived from the thing it checks agrees with it by construction.
+  const CONTROLS: Array<[string, string]> = [
+    ["mcpRunServer", "onchange"],
+    ["mcpRunTool", "onchange"],
+    ["mcpRunListToolsBtn", "onclick"],
+    ["mcpRunArgs", "oninput"],
+    ["mcpRunBrowseBtn", "onclick"],
+    ["mcpRunFile", "onchange"],
+    ["mcpRunTarget", "oninput"],
+    ["mcpAgentBtn", "onclick"],
+    ["mcpRunBtn", "onclick"],
+    ["mcpPreviewImportBtn", "onclick"],
+    ["mcpPreviewDiscardBtn", "onclick"],
+    ["mcpRunCancelBtn", "onclick"],
+    ["mcpRunRetryBtn", "onclick"],
+  ];
+
+  function fixture() {
+    const wired: string[] = [];
+    const els = new Map<string, Record<string, unknown>>();
+    const el = (id: string): Record<string, unknown> => {
+      if (!els.has(id)) {
+        const node: Record<string, unknown> = {
+          id,
+          value: "",
+          textContent: "",
+          innerHTML: "",
+          disabled: false,
+          hidden: false,
+          dataset: {},
+          style: {},
+          options: [],
+          files: [],
+          classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+          appendChild() {},
+          querySelector: () => null,
+          querySelectorAll: () => [],
+          addEventListener: (type: string) => wired.push(`${id}:${type}`),
+        };
+        // MCP wires with `el.onclick = …` / `.onchange =` / `.oninput =`, not addEventListener.
+        for (const prop of ["onclick", "onchange", "oninput"]) {
+          Object.defineProperty(node, prop, {
+            set(fn: unknown) {
+              if (typeof fn === "function") wired.push(`${id}:${prop}`);
+            },
+            get: () => undefined,
+            configurable: true,
+          });
+        }
+        els.set(id, node);
+      }
+      return els.get(id) as Record<string, unknown>;
+    };
+    const doc = {
+      getElementById: (id: string) => el(id),
+      createElement: () => el("<created>"),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+    };
+    return { wired, doc };
+  }
+
+  it("wires every control it owns, named one by one", () => {
+    const { wired, doc } = fixture();
+    const api = loadDashboardModule<{ initMcp: () => void }>("dashboard-mcp.js", [], {
+      document: doc,
+      fetch: () => new Promise(() => {}),
+      setTimeout: () => 0,
+    });
+    api.initMcp();
+    for (const [id, prop] of CONTROLS) {
+      expect(
+        wired,
+        `${id} lost its ${prop} handler — the control is dead and nothing else says so`,
+      ).toContain(`${id}:${prop}`);
+    }
+  });
+
+  it("wires nothing before the page calls it", () => {
+    // The module is a <head> script: anything it wired at load would be querying markup that does
+    // not exist yet and binding to nothing, silently.
+    const { wired, doc } = fixture();
+    loadDashboardModule("dashboard-mcp.js", [], {
+      document: doc,
+      fetch: () => new Promise(() => {}),
+      setTimeout: () => 0,
+    });
+    expect(wired, "the module wired controls at load, before #sec-mcp exists").toEqual([]);
+  });
+});
+
+// ── THE TAX EVERY EXTRACTION PAYS, AND NOBODY ENFORCED ───────────────────────────────────────────
+//
+// Moving a feature out creates names the page calls BARE — `scheduleBeaconsReload()` sits in the
+// middle of the load-time refresh chain — and a ReferenceError there takes every later call in the
+// same statement with it. js/dashboard-facade.js exists to stop that, by stubbing those names when
+// their file is absent.
+//
+// Nothing checked that an extraction actually updated it. This was found the only way it could be:
+// blocking the new module in a browser and noticing the page said nothing. Four panels went dark
+// silently, and the refresh chain past them would have died on the next case load.
+//
+// So: every name a feature module publishes and the page then calls WITHOUT a typeof guard must be
+// in the facade's list. Guarded names are exempt — a guard is the other correct answer, and is what
+// the initializers use so they can report.
+describe("every module name the page calls bare is stubbed by the facade", () => {
+  const facadeSrc = readFileSync(new URL("../../../public/js/dashboard-facade.js", import.meta.url), "utf8");
+  const stubbed = new Set([...facadeSrc.matchAll(/^\s*"([A-Za-z_$][\w$]*)",/gm)].map((m) => m[1]));
+
+  it("harvests the facade's list", () => {
+    expect(stubbed.size, "no stubbed names parsed — this check would pass vacuously").toBeGreaterThan(15);
+    expect(stubbed, "the list this check is built on lost a known member").toContain(
+      "scheduleSwimlaneReload",
+    );
+  });
+
+  it("covers every feature name in the load-time refresh fan-out", () => {
+    // THE FAN-OUT IS THE HAZARD, and it is checked directly rather than approximated.
+    //
+    // Two statements in the page call ~20 refreshes in a row — once on case restore, once in the
+    // WebSocket "state" handler. A ReferenceError at any one of them takes every LATER call in the
+    // same statement with it, which is the bug #475 fixed and the reason the facade exists.
+    //
+    // Not "every unguarded reference": a name reached from a click handler throws into that one
+    // interaction and is contained, which is the documented design, and there are eleven such names
+    // today. Not unguardedTopLevelRefs() either — the first version of this check used it and
+    // passed the mutation it was written for, because these calls sit one hop inside a handler,
+    // which is the blind spot #476 records. A chain is identifiable on its own terms: a single
+    // statement making three or more …Reload() calls.
+    // Scans EVERY script, not just the inline blocks: the fan-out lived inside proceedConnect,
+    // which moved to js/dashboard-case-connect.js in #415. Scoped to inline, this check found no
+    // chain at all and would have passed vacuously — the failure it is written to prevent.
+    const inChains = new Set<string>();
+    for (const s of scripts) {
+      const visit = (n: ts.Node): void => {
+        if (ts.isExpressionStatement(n) || ts.isBlock(n)) {
+          const calls = [...n.getText(s.ast).matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+          const reloads = calls.filter((c) => /Reload$/.test(c));
+          if (reloads.length >= 3) for (const c of calls) inChains.add(c);
+        }
+        ts.forEachChild(n, visit);
+      };
+      ts.forEachChild(s.ast, visit);
+    }
+    expect(inChains.size, "no refresh fan-out found — this check would pass vacuously").toBeGreaterThan(10);
+
+    // A STUB IS NOT THE ONLY CORRECT ANSWER. A typeof guard at the call site is the other one, and
+    // is what verifyCustodyOnOpen uses — deliberately, so a missing custody module never blocks a
+    // case connect. Either satisfies this; having neither is the bug.
+    const published = new Set(FEATURES.flatMap((f) => f.publish));
+    const guarded = new Set(
+      scripts.flatMap((s) =>
+        [...s.source.matchAll(/typeof\s+([A-Za-z_$][\w$]*)\s*===\s*"function"/g)].map((m) => m[1]),
+      ),
+    );
+    // A name DECLARED in the same script as the chain that calls it cannot fail to resolve — there
+    // is no module boundary between them. That became load-bearing in #415 when proceedConnect and
+    // its fan-out moved into js/dashboard-case-connect.js together: the chain is real, but the risk
+    // this check exists for (a 404 on a DIFFERENT file breaking the chain) is not present.
+    const declaredWithChain = new Set(
+      scripts.flatMap((s) =>
+        functionsOf(s)
+          .filter((f) => f.declaration && f.name)
+          .map((f) => f.name),
+      ),
+    );
+    const uncovered = [...inChains]
+      .filter((n) => published.has(n) && !stubbed.has(n) && !guarded.has(n) && !declaredWithChain.has(n))
+      .sort();
+    expect(
+      uncovered,
+      "these feature names sit in a load-time refresh chain and the facade does not stub them — one " +
+        "missing module ends the chain, and every refresh after it is silently skipped. Add them to " +
+        "STUBBED in js/dashboard-facade.js",
+    ).toEqual([]);
   });
 });

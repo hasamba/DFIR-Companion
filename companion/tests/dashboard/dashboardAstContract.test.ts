@@ -12,6 +12,7 @@
 // is as useless as one that flags nothing.
 
 import { describe, expect, it } from "vitest";
+import { duplicateBindings } from "./featureManifest.js";
 import {
   buildCallGraph,
   callsByName,
@@ -628,5 +629,34 @@ describe("a typeof guard on an owner is not an escape", () => {
     ["a computed member", `DfirScope["get"]();`],
   ])("still reports %s", (_label, src) => {
     expect(ownerEscapes([scriptFromSource("p.js", src)], "DfirScope").length).toBeGreaterThan(0);
+  });
+});
+
+// ── duplicateBindings: the page side is top-level only ────────────────────────────────────────
+//
+// The gate was loosened after it produced three renames the code did not want — `mcpTick`,
+// `wireToolRules`, `pollHuntResults` — and was about to demand a fourth for a two-character local
+// named `v`. Loosening a gate to make one's own change pass is exactly the move that deserves
+// proof, so these two pin both directions: a genuine leftover still fails, and a nested namesake
+// no longer does.
+describe("duplicateBindings compares the page at its top level", () => {
+  const page = (body: string) => [scriptFromSource("dashboard.html#inline", body)];
+
+  it("still catches a top-level function the extraction forgot to delete", () => {
+    const moduleSrc = "(function () {\n  function loadThing() {}\n  window.loadThing = loadThing;\n})();";
+    const found = duplicateBindings("dashboard-thing.js", moduleSrc, page("function loadThing() {}"));
+    expect(found, "a copy left at the page's top level is the whole point of this check").toHaveLength(1);
+    expect(found[0]).toContain("loadThing");
+  });
+
+  it("ignores a namesake that is a local inside some unrelated page function", () => {
+    // `const v = (elId, val) => …` in the module against three unrelated page functions that each
+    // name a local `v`. Nothing here can shadow anything; there is no leftover.
+    const moduleSrc = "(function () {\n  const v = (elId, val) => elId + val;\n  window.v = v;\n})();";
+    const pageSrc = [
+      "function unrelatedOne() { const v = (id, val) => id; return v; }",
+      "function unrelatedTwo() { const v = () => 1; return v; }",
+    ].join("\n");
+    expect(duplicateBindings("dashboard-thing.js", moduleSrc, page(pageSrc))).toEqual([]);
   });
 });

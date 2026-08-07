@@ -154,6 +154,17 @@
     excludeTerms: () => exclude.get(),
     from: () => from.get(),
     to: () => to.get(),
+    // The active time window as a query string, for callers that scope a fetch to the brush.
+    // It lives here because it derives from nothing but from()/to() — it was previously a helper
+    // private to one graph module while a SECOND graph module called it, which is a ReferenceError
+    // the moment that second one runs.
+    timeQuery: () => {
+      const p = new URLSearchParams();
+      if (from.get()) p.set("from", from.get());
+      if (to.get()) p.set("until", to.get());
+      const q = p.toString();
+      return q ? `?${q}` : "";
+    },
     starredOnly: () => starredOnly.get(),
     /** The id filter, or null. Membership only — the Set never escapes. */
     hasEventId: (id) => {

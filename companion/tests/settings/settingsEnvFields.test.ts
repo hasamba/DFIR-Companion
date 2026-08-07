@@ -16,7 +16,10 @@ import { validateEnvUpdates } from "../../src/settings/envManager.js";
 
 const FIELD_TAG = /<(input|select|textarea)\b[^>]*\bid="env-([A-Za-z0-9_]+)"[^>]*>/g;
 
-interface EnvField { key: string; readOnly: boolean }
+interface EnvField {
+  key: string;
+  readOnly: boolean;
+}
 
 async function envFields(): Promise<EnvField[]> {
   const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
@@ -32,28 +35,38 @@ describe("Settings modal ⇄ POST /settings/env allowlist", () => {
     const fields = await envFields();
     // Sanity: the regex actually matched the modal, so an empty result can't pass the tests below.
     expect(fields.length).toBeGreaterThan(200);
-    expect(fields.map(f => f.key)).toContain("DFIR_TIMESKETCH_URL");
+    expect(fields.map((f) => f.key)).toContain("DFIR_TIMESKETCH_URL");
   });
 
   it("accepts every editable field — no analyst can type into a key the server rejects", async () => {
-    const editable = (await envFields()).filter(f => !f.readOnly);
-    const updates = Object.fromEntries(editable.map(f => [f.key, "x"]));
+    const editable = (await envFields()).filter((f) => !f.readOnly);
+    const updates = Object.fromEntries(editable.map((f) => [f.key, "x"]));
     expect(validateEnvUpdates(updates)).toEqual([]);
   });
 
   it("marks every non-writable field read-only rather than letting Save fail on it", async () => {
-    const readOnly = (await envFields()).filter(f => f.readOnly).map(f => f.key);
+    const readOnly = (await envFields()).filter((f) => f.readOnly).map((f) => f.key);
     // The read-only fields exist precisely BECAUSE the server refuses them (bind host, port, cases
     // root, log dir, anonymize default) — they stay visible so the analyst can read the live value.
-    const stillAccepted = readOnly.filter(k => validateEnvUpdates({ [k]: "x" }).length === 0);
+    const stillAccepted = readOnly.filter((k) => validateEnvUpdates({ [k]: "x" }).length === 0);
     expect(stillAccepted).toEqual([]);
   });
 });
 
 describe("saveSettings()", () => {
   it("posts only the keys the analyst actually changed", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    const fn = html.slice(html.indexOf("async function saveSettings()"), html.indexOf("function openSettingsModal()"));
+    // saveSettings moved to js/dashboard-env-settings.js (#415 tier 3) and openSettingsModal to a
+    // different module again, so the old end marker is not in the same file. Sliced from the
+    // function to the initializer that follows it, both of which are in this module.
+    const html = await readFile(
+      new URL("../../../public/js/dashboard-env-settings.js", import.meta.url),
+      "utf8",
+    );
+    const fn = html.slice(
+      html.indexOf("async function saveSettings()"),
+      html.indexOf("function initEnvSettings()"),
+    );
+    expect(fn, "the saveSettings slice is empty — every assertion below would be vacuous").not.toBe("");
     // The diff against the loaded baseline must happen BEFORE the POST, not after it.
     const diffAt = fn.indexOf("loadedEnvValues[key]");
     const postAt = fn.indexOf('fetch("/settings/env"');
@@ -64,8 +77,18 @@ describe("saveSettings()", () => {
   });
 
   it("keeps a save error on screen instead of clearing it after a few seconds", async () => {
-    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    const fn = html.slice(html.indexOf("async function saveSettings()"), html.indexOf("function openSettingsModal()"));
+    // saveSettings moved to js/dashboard-env-settings.js (#415 tier 3) and openSettingsModal to a
+    // different module again, so the old end marker is not in the same file. Sliced from the
+    // function to the initializer that follows it, both of which are in this module.
+    const html = await readFile(
+      new URL("../../../public/js/dashboard-env-settings.js", import.meta.url),
+      "utf8",
+    );
+    const fn = html.slice(
+      html.indexOf("async function saveSettings()"),
+      html.indexOf("function initEnvSettings()"),
+    );
+    expect(fn, "the saveSettings slice is empty — every assertion below would be vacuous").not.toBe("");
     expect(fn).toMatch(/if \(ok\)\s*setTimeout\(/);
   });
 });

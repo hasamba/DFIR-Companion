@@ -44,7 +44,7 @@ describe("fuzzyScore tiers", () => {
 
   it("returns 0 when the characters are not all present, in order", () => {
     expect(fuzzyScore("zzz", LABEL)).toBe(0);
-    expect(fuzzyScore("sgnidnif", LABEL)).toBe(0);   // right letters, wrong order
+    expect(fuzzyScore("sgnidnif", LABEL)).toBe(0); // right letters, wrong order
   });
 
   it("treats an empty query as a match and an empty target as a miss", () => {
@@ -89,7 +89,10 @@ describe("parseQuery category filter", () => {
 describe("scoreAction", () => {
   it("prefers a label hit over the identical text sitting in a keyword", () => {
     const byLabel = scoreAction("alpha beta", action({ label: "Alpha Beta" }));
-    const byKeyword = scoreAction("alpha beta", action({ label: "Something Else", keywords: ["alpha beta"] }));
+    const byKeyword = scoreAction(
+      "alpha beta",
+      action({ label: "Something Else", keywords: ["alpha beta"] }),
+    );
     expect(byLabel).toBeGreaterThan(byKeyword);
     expect(byKeyword).toBeGreaterThan(0);
   });
@@ -116,30 +119,42 @@ describe("isAvailable", () => {
   });
 
   it("hides an action whose predicate throws instead of taking the palette down", () => {
-    const a = action({ available: () => { throw new Error("boom"); } });
+    const a = action({
+      available: () => {
+        throw new Error("boom");
+      },
+    });
     expect(isAvailable(a, null)).toBe(false);
   });
 });
 
 describe("searchActions", () => {
-  const nav = action({ id: "nav.findings", label: "Go to Findings", category: "Navigation", keywords: ["findings"] });
+  const nav = action({
+    id: "nav.findings",
+    label: "Go to Findings",
+    category: "Navigation",
+    keywords: ["findings"],
+  });
   const exp = action({ id: "exp.stix", label: "STIX 2.1 bundle", category: "Exports", keywords: ["export"] });
   const act = action({ id: "act.merge", label: "Merge IOCs", category: "Actions", keywords: ["dedupe"] });
   const all = [nav, exp, act];
 
   it("filters to one category, including from a partial prefix", () => {
-    expect(searchActions(">exports", all, null, []).map(r => r.action.id)).toEqual(["exp.stix"]);
-    expect(searchActions(">e", all, null, []).map(r => r.action.id)).toEqual(["exp.stix"]);
+    expect(searchActions(">exports", all, null, []).map((r) => r.action.id)).toEqual(["exp.stix"]);
+    expect(searchActions(">e", all, null, []).map((r) => r.action.id)).toEqual(["exp.stix"]);
   });
 
   it("combines a category filter with a search term", () => {
-    expect(searchActions(">nav findings", all, null, []).map(r => r.action.id)).toEqual(["nav.findings"]);
+    expect(searchActions(">nav findings", all, null, []).map((r) => r.action.id)).toEqual(["nav.findings"]);
     expect(searchActions(">nav stix", all, null, [])).toEqual([]);
   });
 
   it("drops actions that are unavailable for the current state", () => {
-    const gated = [nav, action({ id: "gone", label: "Go to Nowhere", category: "Navigation", available: () => false })];
-    expect(searchActions("", gated, null, []).map(r => r.action.id)).toEqual(["nav.findings"]);
+    const gated = [
+      nav,
+      action({ id: "gone", label: "Go to Nowhere", category: "Navigation", available: () => false }),
+    ];
+    expect(searchActions("", gated, null, []).map((r) => r.action.id)).toEqual(["nav.findings"]);
   });
 
   it("drops non-matching actions entirely rather than ranking them last", () => {
@@ -147,14 +162,20 @@ describe("searchActions", () => {
   });
 
   it("lists everything in category order on an empty query", () => {
-    expect(searchActions("", all, null, []).map(r => r.action.category))
-      .toEqual(["Navigation", "Actions", "Exports"]);
+    expect(searchActions("", all, null, []).map((r) => r.action.category)).toEqual([
+      "Navigation",
+      "Actions",
+      "Exports",
+    ]);
   });
 
   it("floats recently-run actions to the top of an unfiltered list", () => {
-    expect(searchActions("", all, null, ["exp.stix"]).map(r => r.action.id)[0]).toBe("exp.stix");
-    expect(searchActions("", all, null, ["act.merge", "exp.stix"]).map(r => r.action.id))
-      .toEqual(["act.merge", "exp.stix", "nav.findings"]);
+    expect(searchActions("", all, null, ["exp.stix"]).map((r) => r.action.id)[0]).toBe("exp.stix");
+    expect(searchActions("", all, null, ["act.merge", "exp.stix"]).map((r) => r.action.id)).toEqual([
+      "act.merge",
+      "exp.stix",
+      "nav.findings",
+    ]);
   });
 
   it("never lets recency outrank a genuine match", () => {
@@ -188,7 +209,22 @@ describe("bumpRecent", () => {
 });
 
 describe("dashboard.html palette wiring", () => {
-  const html = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  // The palette registry and the section order/visibility code moved to their own modules
+  // (#415 tier 3); the page still carries the markup and the <script> tags these tests also assert
+  // on. Reading all three keeps every assertion in this describe working from one source, which is
+  // what it did when the three lived in one file.
+  const html = async () =>
+    (
+      await Promise.all([
+        readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8"),
+        readFile(new URL("../../../public/js/dashboard-palette-registry.js", import.meta.url), "utf8"),
+        readFile(new URL("../../../public/js/dashboard-section-order.js", import.meta.url), "utf8"),
+      ])
+    ).join("\n");
+  // Whitespace-collapsed view of the same source. Everything that moved into a module has been
+  // reformatted by prettier — one-line object literals became four, arrow bodies wrapped — and the
+  // assertions below are about WHAT is wired, not how it is laid out.
+  const flat = async () => (await html()).replace(/\s+/g, " ");
 
   it("loads the module and publishes the registry the module reads", async () => {
     const h = await html();
@@ -199,7 +235,7 @@ describe("dashboard.html palette wiring", () => {
     // The state thunk reads DfirState.lastState() since #415 moved the case snapshot into the
     // store. Still a thunk, so still live: what would break the palette is the arrow disappearing
     // and a value being captured here, which is what the shape below pins.
-    expect(h).toContain(
+    expect((await flat()).replace(/, \}/g, " }")).toContain(
       "window.DfirPaletteConfig = { actions: buildPaletteActions, state: () => DfirState.lastState() };",
     );
   });
@@ -212,16 +248,20 @@ describe("dashboard.html palette wiring", () => {
   });
 
   it("derives Navigation from SECTION_DEFS rather than a hand-copied panel list", async () => {
-    const h = await html();
+    const h = await flat();
     expect(h).toMatch(/const nav = SECTION_DEFS\.map\(/);
-    expect(h).toMatch(/available: \(\) => !!document\.getElementById\(s\.id\) && isSectionVisible\(s\.id, vis\)/);
+    expect(h).toMatch(
+      /available: \(\) => !!document\.getElementById\(s\.id\) && isSectionVisible\(s\.id, vis\)/,
+    );
   });
 
   it("drives the export selects through their own change handler", async () => {
-    const h = await html();
+    const h = await flat();
     expect(h).toMatch(/sel\.value = o\.value; sel\.dispatchEvent\(new Event\("change"\)\)/);
-    expect(h).toContain('paletteSelectActions("exportSelect"');
-    expect(h).toContain('paletteSelectActions("pushSelect"');
+    // prettier broke both calls across lines when the registry became a module, so the select id
+    // no longer sits on the same line as the call. Collapsed, the pairing is still exact.
+    expect(h).toContain('paletteSelectActions( "exportSelect"');
+    expect(h).toContain('paletteSelectActions( "pushSelect"');
   });
 
   it("documents the shortcut in the existing cheat sheet", async () => {
