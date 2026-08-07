@@ -1,26 +1,17 @@
-import { createHash } from "node:crypto";
 import type { AIProvider } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
-import type { AiControlStore } from "../aiControl.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import { alignedEpoch, detectClockSkew, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
-import { filterFalsePositiveEvents } from "../falsePositive.js";
+import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
-import { sortByEventTime } from "../forensicSort.js";
-import { renderPriorHuntsBlock } from "../huntOutcomes.js";
 import { sanitizeHypotheses } from "../hypothesis.js";
-import type { HypothesisStore } from "../hypothesisStore.js";
-import type { IncidentTypeStore } from "../incidentTypeStore.js";
-import { renderIncidentTypeBlock } from "../incidentTypes.js";
 import { rankConnectiveIocs } from "../iocAnchors.js";
-import type { NotebookStore } from "../notebookStore.js";
-import type { PlaybookStore } from "../playbookStore.js";
-import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock } from "../priorWork.js";
+import type { PlaybookTask } from "../playbook.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
 import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import {
@@ -33,19 +24,26 @@ import {
 } from "../secondLook.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
-import { effectiveTrustMap } from "../sourceTrust.js";
+import { effectiveTrustMap, type SourceTrustMap } from "../sourceTrust.js";
 import type { SourceTrustStore } from "../sourceTrustStore.js";
 import type { StateLock } from "../stateLock.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
-import type { ForensicEvent, InvestigationState, TimelineEntry } from "../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { SecondLookMeta, SynthMetaStore } from "../synthMeta.js";
 import { resolveSynthThinkingBudget, type SynthThinkingInput } from "../synthThinking.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
-import { loadHuntOutcomes, type HuntContext } from "./hunts.js";
+import { type HuntContext } from "./hunts.js";
 import { buildSynthesisPrompt, type SynthesisPromptContext } from "./synthesisPrompt.js";
+import {
+  computeSynthHash,
+  loadSynthesisInputs,
+  type SynthesisInputBlocks,
+  type SynthesisInputContext,
+} from "./synthesisInputs.js";
 import { foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
+import { persistSynthesis } from "./synthesisPersist.js";
 
 /**
  * Synthesis: the AI call that turns the case's timeline into its conclusions (#418).
@@ -67,20 +65,22 @@ import { foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
  */
 
 /** What synthesis needs. Wide by nature — see the note above. */
-export interface SynthesisContext extends AiCallContext, HuntContext, SynthesisPromptContext {
+export interface SynthesisContext
+  extends AiCallContext,
+    HuntContext,
+    SynthesisPromptContext,
+    SynthesisInputContext {
   readonly log: Logger;
   readonly opts: AiCallContext["opts"] &
     HuntContext["opts"] &
-    SynthesisPromptContext["opts"] & {
+    SynthesisPromptContext["opts"] &
+    // The notebook / hypothesis / playbook / incident-type stores come from here — they are the
+    // pure-input stores, and synthesisInputs.ts is what reads them.
+    SynthesisInputContext["opts"] & {
       provider?: AIProvider;
       correlationProfileStore?: CorrelationProfileStore;
       sourceTrustStore?: SourceTrustStore;
       clockSkewStore?: ClockSkewStore;
-      notebookStore?: NotebookStore;
-      aiControlStore?: AiControlStore;
-      hypothesisStore?: HypothesisStore;
-      playbookStore?: PlaybookStore;
-      incidentTypeStore?: IncidentTypeStore;
       secondOpinionStore?: SecondOpinionStore;
       superTimelineStore?: SuperTimelineStore;
       synthMetaStore?: SynthMetaStore;
@@ -137,6 +137,304 @@ async function detectSkew(
   return (e: ForensicEvent) => alignedEpoch(e, offsets);
 }
 
+interface PreparedRun {
+  /** The correlated state. NOT the raw snapshot — the lost-update guard needs that separately. */
+  state: InvestigationState;
+  sourceTrust: SourceTrustMap;
+  windowSeconds: number;
+  markers: FalsePositiveMarker[];
+  scope: ScopeWindow;
+  /** After the scope filter only. */
+  inWindowEvents: ForensicEvent[];
+  /** After the additional false-positive/legitimate filter. */
+  scopedEvents: ForensicEvent[];
+  blocks: SynthesisInputBlocks;
+  playbookTasks: PlaybookTask[];
+  synthHash: string;
+}
+
+/**
+ * Everything a run needs decided before it can decide whether to run at all.
+ *
+ * Scope: only events inside the investigation window feed synthesis, so findings, IOCs, the attacker
+ * path and the key questions reflect only in-scope activity. Events the analyst confirmed legitimate
+ * are then dropped so the model never derives conclusions from benign activity — the raw events stay
+ * in state, so it is reversible.
+ *
+ * The two filter stages stay separate so the coverage audit (#62) can attribute omissions:
+ * `inWindowEvents` is after the scope filter, `scopedEvents` after the false-positive filter. The
+ * prompt's token budget drops the rest.
+ */
+async function prepareSynthesisRun(
+  ctx: SynthesisContext,
+  caseId: string,
+  loaded: InvestigationState,
+  observationsBlock: string,
+): Promise<PreparedRun> {
+  const { state, sourceTrust, windowSeconds } = await correlateForSynthesis(ctx, caseId, loaded);
+  const markers = ctx.opts.falsePositiveStore ? await ctx.opts.falsePositiveStore.load(caseId) : [];
+  const scope = ctx.opts.scopeStore ? await ctx.opts.scopeStore.load(caseId) : NO_SCOPE;
+  const inWindowEvents = filterEventsByScope(state.forensicTimeline, scope);
+  const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
+  // The pure inputs — notebook, hypotheses, prior work, incident type — all loaded BEFORE the hash
+  // so changing any of them triggers a fresh synthesis rather than a skip.
+  const { blocks, playbookTasks } = await loadSynthesisInputs(ctx, caseId);
+  return {
+    state,
+    sourceTrust,
+    windowSeconds,
+    markers,
+    scope,
+    inWindowEvents,
+    scopedEvents,
+    blocks,
+    playbookTasks,
+    synthHash: computeSynthHash({
+      scopedEvents,
+      iocs: state.iocs,
+      scope,
+      markers,
+      blocks,
+      observationsBlock,
+    }),
+  };
+}
+
+/**
+ * Bring the finding set to its final form, in the one order that is correct.
+ *
+ * Durability first (issue #116): re-apply any analyst-ACCEPTED second-opinion deltas after the
+ * wholesale findings rewrite, so a confirmed model-B finding/severity/technique is never lost on
+ * re-synthesis. Pure + idempotent; a no-op when the store or record is absent or empty.
+ *
+ * Then per-finding grounding + corroboration (investigation-guidance #6): resolve each finding's
+ * supporting in-scope events (forward relatedEventIds AND reverse forensicTimeline links, so the
+ * deterministic backfill findings ground correctly), roll up { tools, hosts, intel, graph-linked },
+ * flag an uncited finding as `ungrounded`, and CAP an ungrounded/single-source finding's confidence.
+ * It also catches the subtler case where cited ids resolve but the finding's own claimed IP never
+ * appears in their text (`contentMismatch`) — flooring High/Critical to Medium (veridia-deep-pass
+ * 2026-07-22).
+ *
+ * Grading runs LAST so it sees the final set, backfills and accepted second-opinion deltas included.
+ * Deterministic + idempotent; it only ever lowers a confidence or a severity.
+ */
+async function finalizeFindings(
+  ctx: SynthesisContext,
+  caseId: string,
+  folded: InvestigationState,
+  input: {
+    delta: ReturnType<typeof stripAiExtractedFrom>;
+    surviving: Set<string>;
+    eligibleIds: Set<string>;
+    sourceTrust: SourceTrustMap;
+  },
+): Promise<InvestigationState> {
+  const withAccepted = ctx.opts.secondOpinionStore
+    ? applyAcceptedSecondOpinion(folded, await ctx.opts.secondOpinionStore.load(caseId))
+    : folded;
+  return gradeFindings({
+    next: withAccepted,
+    delta: input.delta,
+    surviving: input.surviving,
+    eligibleIds: input.eligibleIds,
+    sourceTrust: input.sourceTrust,
+    kevCatalog: await ctx.getKevCatalog(),
+  });
+}
+
+/**
+ * Auto-generate hypotheses (issue #140). Merge the model's hypotheses into the per-case store,
+ * refreshing pristine auto ones and FREEZING any the analyst touched (see mergeHypotheses). Only
+ * when the model actually returned some — an omitted field must never prune the analyst's set.
+ *
+ * Sanitized against the FINAL event/IOC ids so evidence links can't dangle. A side store, not part
+ * of InvestigationState, and it runs after the state is persisted so a failure here cannot lose the
+ * synthesis.
+ */
+async function autoGenerateHypotheses(
+  ctx: SynthesisContext,
+  caseId: string,
+  hypotheses: ReturnType<typeof stripAiExtractedFrom>["hypotheses"],
+  next: InvestigationState,
+): Promise<void> {
+  if (!ctx.opts.hypothesisStore || !hypotheses || !hypotheses.length) return;
+  const validEventIds = new Set(next.forensicTimeline.map((e) => e.id));
+  const validIocIds = new Set(next.iocs.map((i) => i.id));
+  const seeds = sanitizeHypotheses(hypotheses, validEventIds, validIocIds);
+  await ctx.opts.hypothesisStore.applyAutoGenerated(caseId, seeds, new Date().toISOString());
+}
+
+interface SynthesisOutcome {
+  /** The state as persisted. */
+  next: InvestigationState;
+  /** What the run decided before calling: the correlated state, scope, markers, window. */
+  run: PreparedRun;
+  call: SynthesisCall;
+  prompt: Awaited<ReturnType<typeof buildSynthesisPrompt>>;
+  findingsDiff: FindingsDiff;
+  synthProvider: AIProvider;
+  synthStart: number;
+  highSeverityBackfillCount: number;
+  observationsBlock: string;
+  parentRunId: string | undefined;
+}
+
+/**
+ * The two durable records of a real run: the synth-meta card the dashboard reads, and the full
+ * analysis-run row. Only reached on a real run — a skipped one returns before the model call.
+ */
+async function recordSynthesisOutcome(
+  ctx: SynthesisContext,
+  caseId: string,
+  o: SynthesisOutcome,
+): Promise<void> {
+  await ctx.opts.synthMetaStore?.record(caseId, o.findingsDiff, new Date().toISOString(), {
+    durationMs: Date.now() - o.synthStart,
+    eventCount: o.next.forensicTimeline.length,
+    iocCount: o.next.iocs.length,
+    selectionCounts: { ...o.prompt.selection.counts }, // #4: the evidence mix the model saw
+    coverage: o.prompt.coverage, // #62: included/omitted coverage audit
+    synthModel:
+      ctx.opts.synthesisModelLabel ?? `${o.synthProvider.name}/${o.synthProvider.model}`, // #74
+    findingsCount: o.next.findings.length, // #74
+    highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
+    parseRetries: o.call.parseRetries, // #74
+  });
+  const anonPolicy = toAnonPolicy(ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null);
+  await recordSynthesisRun(ctx.opts.analysisRunStore, caseId, {
+    parentRunId: o.parentRunId,
+    startedAt: new Date(o.synthStart).toISOString(),
+    provider: o.synthProvider.name,
+    model: o.synthProvider.model,
+    eventIds: [...o.prompt.shownIds],
+    inputState: o.run.state,
+    outputState: o.next,
+    prompt: getSynthesisPrompt(),
+    maxEvents: o.prompt.maxEvents,
+    thinkingTokens: o.call.thinkingTokens,
+    correlationWindowSeconds: o.run.windowSeconds,
+    anonymizationPolicy: anonPolicy,
+    scope: o.run.scope,
+    falsePositiveMarkers: o.run.markers.length,
+    infoEventsExcluded: o.prompt.omittedInfo > 0,
+    observationsIncluded: o.observationsBlock.length > 0,
+    parseRetries: o.call.parseRetries,
+    coverage: o.prompt.coverage,
+  });
+}
+
+/**
+ * Correlate the same artifact across tools: deduplicate into one corroborated event carrying both
+ * sources. Idempotent, and the correlated timeline is what gets persisted.
+ *
+ * Clock skew is measured PRE-merge (#228), before correlation erases the disagreeing anchors that
+ * reveal it. Aligned times guide the correlation windows; persisted events keep their recorded
+ * timestamps. Source trust (#66) both selects the merge wording and later caps low-trust-only
+ * findings, so it is resolved here and handed on.
+ */
+async function correlateForSynthesis(
+  ctx: SynthesisContext,
+  caseId: string,
+  loaded: InvestigationState,
+): Promise<{ state: InvestigationState; sourceTrust: SourceTrustMap; windowSeconds: number }> {
+  const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
+  const corrProfile = await ctx.opts.correlationProfileStore?.load(caseId);
+  const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
+  const trustOverrides = ctx.opts.sourceTrustStore
+    ? await ctx.opts.sourceTrustStore.load(caseId)
+    : undefined;
+  const sourceTrust = effectiveTrustMap(trustOverrides);
+  const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
+  return {
+    windowSeconds,
+    sourceTrust,
+    state: {
+      ...loaded,
+      forensicTimeline: correlateEvents(loaded.forensicTimeline, {
+        windowSeconds,
+        sourceTrust,
+        epochOf: skew,
+      }),
+    },
+  };
+}
+
+/**
+ * The synthesis model call, with its two per-run knobs.
+ *
+ * Chain-of-Thought / extended thinking (issue #121, feature 1) is resolved per run: an explicit
+ * value or the dashboard "deep reasoning" toggle wins, else the global
+ * DFIR_AI_SYNTH_THINKING_TOKENS default (off when unset). The Anthropic provider maps it to
+ * extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
+ * synthesis reasons step-by-step — extraction stays cheap.
+ *
+ * Per-model quality telemetry (#74) counts the retries this call actually needed (a failed
+ * parse/schema-mismatch attempt increments it). Counted on catch INSIDE the retried closure rather
+ * than via ctx.withRetry's onRetry hook, because that hook is the shared server-logging callback —
+ * routing through ctx.withRetry keeps the per-attempt WARN logging intact while the local catch
+ * keeps the count. Surfaced on synth-meta so a flaky model shows up empirically.
+ */
+interface SynthesisCall {
+  delta: ReturnType<typeof stripAiExtractedFrom>;
+  thinkingTokens: number;
+  parseRetries: number;
+}
+
+async function callSynthesisModel(
+  ctx: SynthesisContext,
+  caseId: string,
+  state: InvestigationState,
+  provider: AIProvider,
+  userPrompt: string,
+  opts: { signal?: AbortSignal } & SynthThinkingInput,
+): Promise<SynthesisCall> {
+  const thinkingTokens = resolveSynthThinkingBudget(
+    opts,
+    Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0,
+  );
+  let parseRetries = 0;
+  const delta = await ctx.withRetry(
+    caseId,
+    "synthesis",
+    async () => {
+      try {
+        const parsed = await ctx.analyzeRestored(
+          caseId,
+          state,
+          provider,
+          {
+            systemPrompt: getSynthesisPrompt(),
+            userPrompt,
+            images: [],
+            ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
+            ...(opts.signal ? { signal: opts.signal } : {}),
+          },
+          "synthesis",
+        );
+        return stripAiExtractedFrom(deltaSchema.parse(parsed));
+      } catch (err) {
+        parseRetries++;
+        throw err;
+      }
+    },
+    ctx.opts.retries ?? 3,
+    ctx.opts.backoffMs ?? 500,
+  );
+  return { delta, thinkingTokens, parseRetries };
+}
+
+/**
+ * ABOVE 50 LINES ON PURPOSE (#453). Everything here is a single named step and a hand-off of its
+ * result to the next one: load, prepare, decide-to-run, prompt, call, fold, finalize, persist,
+ * record, notify, sweep. Each step's DETAIL lives in its own function or module; what is left is the
+ * ORDER, and the order is the thing most likely to be got wrong.
+ *
+ * Splitting this further would mean inventing a "commit phase" or a "post-call phase" — groupings
+ * with no meaning outside the split itself — and would put the fold, the grading and the write in
+ * three places, when the whole reason the lost-update guard is correct is that you can see it
+ * happens AFTER grading and BEFORE the run record. A reader who needs to know what synthesis does,
+ * in order, should need exactly one screen and no jumps. That is what this is.
+ */
 export async function synthesize(
   ctx: SynthesisContext,
   caseId: string,
@@ -156,213 +454,26 @@ export async function synthesize(
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
 
-  // Correlate the same artifact across tools first: deduplicate into one corroborated event and
-  // one finding with both sources. This is idempotent and the correlated timeline is persisted.
-  const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
-  const corrProfile = await ctx.opts.correlationProfileStore?.load(caseId);
-  const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
-  // Source trust (#66) selects merge wording and caps low-trust-only findings.
-  const trustOverrides = ctx.opts.sourceTrustStore ? await ctx.opts.sourceTrustStore.load(caseId) : undefined;
-  const sourceTrust = effectiveTrustMap(trustOverrides);
-  // Measure clock skew pre-merge (#228), before correlation erases the disagreeing anchors.
-  // Aligned times guide windows; persisted events retain recorded timestamps.
-  const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
-  const state: InvestigationState = {
-    ...loaded,
-    forensicTimeline: correlateEvents(loaded.forensicTimeline, { windowSeconds, sourceTrust, epochOf: skew }),
-  };
-
-  const markers = ctx.opts.falsePositiveStore ? await ctx.opts.falsePositiveStore.load(caseId) : [];
-
-  // Scope: only events inside the investigation window feed synthesis, so
-  // findings/IOCs/attacker-path/questions reflect only in-scope activity.
-  // Then drop events the client confirmed legitimate so the model never derives
-  // conclusions from benign activity (the raw events stay in state — reversible).
-  const scope = ctx.opts.scopeStore ? await ctx.opts.scopeStore.load(caseId) : NO_SCOPE;
-  // Split the two filter stages so the coverage audit (#62) can attribute omissions: `inWindowEvents`
-  // is after the scope filter (out-of-window events dropped); `scopedEvents` is after the additional
-  // false-positive/legitimate filter. The budget cap below drops the rest from the prompt.
-  const inWindowEvents = filterEventsByScope(state.forensicTimeline, scope);
-  const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
-
-  // Analyst notebook context: when both notebookStore and aiControlStore are wired and the
-  // analyst has opted in (includeNotebook: true in ai-control.json), append the notebook
-  // entries to the synthesis prompt so the AI incorporates investigator hypotheses.
-  // Loaded here (before the hash) so notebook changes also trigger a fresh synthesis.
-  let notebookBlock = "";
-  if (ctx.opts.notebookStore && ctx.opts.aiControlStore) {
-    const aiCtrl = await ctx.opts.aiControlStore.load(caseId);
-    if (aiCtrl.includeNotebook) {
-      const notebookEntries = await ctx.opts.notebookStore.load(caseId);
-      if (notebookEntries.length) {
-        notebookBlock =
-          "ANALYST NOTEBOOK (investigator notes and open questions — take these into account when synthesizing findings and the attacker path):\n" +
-          notebookEntries.map((e) => `[${e.type.toUpperCase()}] ${e.text}`).join("\n") +
-          "\n\n";
-      }
-    }
-  }
-
-  // Analyst hypotheses as steering (issue #140): feed the investigator's OPEN, analyst-owned
-  // hypotheses into the prompt so the model actively hunts evidence to support/refute them and
-  // reflects it in findings/events + its own hypotheses output. We do NOT ask it to flip the
-  // analyst's hypothesis status — those are frozen by mergeHypotheses (the analyst stays in
-  // control); the steering shows up as findings/events the analyst then uses to judge. Only
-  // analyst-authored or analyst-touched OPEN ones (pure inputs, never rewritten by synthesis),
-  // so including them in the hash below can't cause a re-synthesis loop. Bounded for prompt size.
-  let analystHypothesesBlock = "";
-  // Refuted hypotheses fed back as NEGATIVE KNOWLEDGE (investigation-guidance #2): a theory the
-  // analyst ruled out must not be re-asserted or re-opened. Loaded from the same store, once.
-  let refutedHypothesesBlock = "";
-  if (ctx.opts.hypothesisStore) {
-    // ACH exhaustion (investigation-guidance #14): before reading, flag hypotheses whose linked or
-    // technique-matched hunts have come back empty — so the negative-knowledge block below and the
-    // "to test" list reflect them. Derived from collected hunt outcomes; persisted; idempotent.
-    const exhaustionOutcomes = await loadHuntOutcomes(ctx, caseId);
-    const huntSignals = exhaustionOutcomes
-      .filter((o) => o.status === "collected")
-      .map((o) => ({
-        ...(o.relatedHypothesisId ? { relatedHypothesisId: o.relatedHypothesisId } : {}),
-        techniques: o.mitreTechniques ?? [],
-        missed: o.foundEvidence === false,
-        title: o.title,
-      }));
-    if (huntSignals.some((s) => s.missed))
-      await ctx.opts.hypothesisStore.applyExhaustion(caseId, huntSignals);
-
-    const allHypotheses = await ctx.opts.hypothesisStore.load(caseId);
-    const open = allHypotheses
-      .filter((h) => h.status === "open" && !h.exhausted && (h.source === "analyst" || h.analystTouched))
-      .slice(0, 15);
-    if (open.length) {
-      analystHypothesesBlock =
-        "ANALYST HYPOTHESES TO TEST (the investigator proposed these — actively look for evidence that " +
-        "SUPPORTS or REFUTES each and surface it in findings/events; you may add a corroborating hypothesis, " +
-        "but do NOT mark the analyst's own hypothesis resolved):\n" +
-        open
-          .map((h) => `- ${h.title}${h.expectedOutcome ? ` (decided by: ${h.expectedOutcome})` : ""}`)
-          .join("\n") +
-        "\n\n";
-    }
-    refutedHypothesesBlock = renderRefutedHypothesesBlock(allHypotheses);
-  }
-
-  // Prior-work feedback (investigation-guidance #2): the hunt hit/miss ledger (#157, previously fed
-  // only to the hunt prompts) and the playbook DONE/SKIPPED digest, so synthesis builds on completed
-  // work and dead hunts instead of re-recommending them. Loaded before the hash so completing a task
-  // or collecting a hunt triggers a fresh synthesis (a hit is a pivot; a miss is negative evidence).
-  const priorHuntsBlock = renderPriorHuntsBlock(await loadHuntOutcomes(ctx, caseId));
-  const playbookTasks = ctx.opts.playbookStore ? await ctx.opts.playbookStore.load(caseId) : [];
-  const playbookProgressBlock = renderPlaybookProgressBlock(playbookTasks);
-
-  // Incident-type framing (#236): the one-line hint for the type the analyst picked at case
-  // creation, so the model prioritizes ransomware / BEC / exfil techniques. A pure INPUT synthesis
-  // never rewrites, and cheap (one short line) — but changing the type must re-synthesize, so it
-  // joins the skip-if-unchanged hash below.
-  const incidentTypeBlock = renderIncidentTypeBlock(
-    ctx.opts.incidentTypeStore ? await ctx.opts.incidentTypeStore.loadType(caseId) : null,
-  );
-
-  // Skip-if-unchanged: hash only the STABLE INPUTS to synthesis — the in-scope timeline,
-  // the IOCs (value + intel verdicts), the scope, the legitimate markers, and (when opted
-  // in) the notebook entries. NOT the findings / MITRE / threads / summary, which synthesis
-  // itself rewrites (including those would make two consecutive runs hash differently and
-  // never skip). If the inputs are identical to the last successful run, return the saved
-  // state — no AI call.
-  const synthHash = createHash("sha1")
-    .update(
-      JSON.stringify({
-        ev: scopedEvents.map((e) => [e.id, e.severity, e.timestamp, e.description]),
-        io: state.iocs.map((i) => [i.id, i.value, (i.enrichments ?? []).map((e) => e.verdict).join(",")]),
-        sc: scope,
-        lg: markers.map((m) => m.id),
-        nb: notebookBlock,
-        hy: analystHypothesesBlock,
-        // Prior-work feedback (#2): completing a task, collecting a hunt, or refuting a hypothesis
-        // changes these strings, so an otherwise-identical timeline re-synthesizes to fold in the
-        // new negative knowledge instead of skipping. Pure inputs — synthesis never rewrites them.
-        pw: priorHuntsBlock + playbookProgressBlock + refutedHypothesesBlock,
-        // Re-picking the incident type reframes what the model should prioritize — an otherwise
-        // identical timeline must re-synthesize rather than skip.
-        it: incidentTypeBlock,
-        // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
-        // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
-        ob: observationsBlock,
-      }),
-    )
-    .digest("hex");
+  const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
+  const { state, sourceTrust, windowSeconds, markers, scope, scopedEvents, synthHash } = run;
   if (!opts.force && !opts.dryRun && ctx.lastSynthHash.get(caseId) === synthHash) return loaded;
 
-  // The prompt, and the coverage audit that describes exactly what it showed the model.
-  const {
-    userPrompt,
-    representedEvents,
-    shownIds,
-    selection,
-    coverage: synthCoverage,
-    maxEvents: SYNTH_MAX_EVENTS,
-    omittedInfo,
-  } = await buildSynthesisPrompt(ctx, {
+  // The prompt, and the coverage audit that describes exactly what it showed the model. Kept whole
+  // because the run record describes the prompt, so it wants nearly every field.
+  const prompt = await buildSynthesisPrompt(ctx, {
     caseId,
     state,
     scope,
     markers,
-    inWindowEvents,
+    inWindowEvents: run.inWindowEvents,
     scopedEvents,
     observationsBlock,
-    notebookBlock,
-    analystHypothesesBlock,
-    refutedHypothesesBlock,
-    priorHuntsBlock,
-    playbookProgressBlock,
-    incidentTypeBlock,
+    ...run.blocks,
   });
 
   const synthStart = Date.now();
-  const retries = ctx.opts.retries ?? 3;
-  const backoffMs = ctx.opts.backoffMs ?? 500;
-  // Chain-of-Thought / extended thinking for the complex synthesis call (issue #121, feature 1).
-  // Budget resolved per-run: an explicit value or the dashboard "deep reasoning" toggle wins, else
-  // the global DFIR_AI_SYNTH_THINKING_TOKENS default (off when unset). The Anthropic provider maps
-  // it to extended thinking; OpenRouter to its unified `reasoning`; other providers ignore it. Only
-  // synthesis reasons step-by-step — extraction stays cheap.
-  const synthThinkingTokens = resolveSynthThinkingBudget(
-    opts,
-    Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0,
-  );
-  // Per-model quality telemetry (#74): count retries the synthesis call actually needed (a failed
-  // parse/schema-mismatch attempt increments this). Counted on catch INSIDE the retried closure
-  // rather than via ctx.withRetry's onRetry hook, because that hook is the shared server-logging
-  // callback — routing through ctx.withRetry keeps master's per-attempt WARN logging intact while
-  // the local catch keeps the count. Surfaced on synth-meta so a flaky model shows up empirically.
-  let synthParseRetries = 0;
-  const delta = await ctx.withRetry(
-    caseId,
-    "synthesis",
-    async () => {
-      try {
-        const parsed = await ctx.analyzeRestored(
-          caseId,
-          state,
-          synthProvider,
-          {
-            systemPrompt: getSynthesisPrompt(),
-            userPrompt,
-            images: [],
-            ...(synthThinkingTokens > 0 ? { thinkingTokens: synthThinkingTokens } : {}),
-            ...(opts.signal ? { signal: opts.signal } : {}),
-          },
-          "synthesis",
-        );
-        return stripAiExtractedFrom(deltaSchema.parse(parsed));
-      } catch (err) {
-        synthParseRetries++;
-        throw err;
-      }
-    },
-    retries,
-    backoffMs,
-  );
+  const call = await callSynthesisModel(ctx, caseId, state, synthProvider, prompt.userPrompt, opts);
+  const { delta } = call;
 
   const {
     next: folded,
@@ -375,191 +486,100 @@ export async function synthesize(
     delta,
     markers,
     scopedEvents,
-    playbookTasks,
+    playbookTasks: run.playbookTasks,
   });
   let next = folded;
   if (opts.dryRun) return next;
 
-  // Durability (issue #116): re-apply any analyst-ACCEPTED second-opinion deltas after the
-  // wholesale findings rewrite, so a confirmed model-B finding/severity/technique is never lost
-  // on re-synthesis. Pure + idempotent; a no-op when the store or record is absent/empty.
-  if (ctx.opts.secondOpinionStore) {
-    next = applyAcceptedSecondOpinion(next, await ctx.opts.secondOpinionStore.load(caseId));
-  }
-
-  // Per-finding grounding + corroboration (investigation-guidance #6): resolve each finding's
-  // supporting in-scope events (forward relatedEventIds AND reverse forensicTimeline links, so the
-  // deterministic backfill findings ground correctly), roll up { tools, hosts, intel, graph-linked },
-  // flag an uncited finding as `ungrounded`, and CAP an ungrounded/single-source finding's confidence.
-  // Also catches the subtler case where cited ids resolve but the finding's own claimed IP never
-  // appears in their text (`contentMismatch`) — floors High/Critical to Medium (veridia-deep-pass
-  // 2026-07-22). Deterministic + idempotent; only ever lowers confidence/severity. Runs last, so it
-  // grades the FINAL finding set (incl. backfills + accepted second-opinion deltas).
-  next = gradeFindings({
-    next,
-    delta,
-    surviving,
-    eligibleIds,
-    sourceTrust,
-    kevCatalog: await ctx.getKevCatalog(),
-  });
+  next = await finalizeFindings(ctx, caseId, next, { delta, surviving, eligibleIds, sourceTrust });
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the
   // Investigation-Log entry (#165), the synth-meta record, and the notify hook.
   const findingsDiff = diffFindings(loaded.findings, next.findings);
 
-  // Lost-update guard (mirrors the pinned-questions re-load above): a manual event/IOC/thread
-  // added DURING the seconds-long AI call would otherwise be clobbered by this write, because
-  // `next` was derived from the snapshot taken before the call. Re-read the LATEST state and
-  // carry forward only items NEW since that snapshot (by id/value), so synthesis's conclusions
-  // and its correlation/legitimate work on the snapshot timeline are preserved while concurrent
-  // analyst additions survive. Reference the RAW snapshot (`loaded`), not the in-memory
-  // correlated `state`, so events deduped by correlateEvents aren't re-added.
-  const persistLatest = async () => {
-    const latest = await ctx.opts.stateStore.load(caseId);
-    const snapEventIds = new Set(loaded.forensicTimeline.map((e) => e.id));
-    const nextEventIds = new Set(next.forensicTimeline.map((e) => e.id));
-    const addedEvents = latest.forensicTimeline.filter(
-      (e) => !snapEventIds.has(e.id) && !nextEventIds.has(e.id),
-    );
-    const snapIocVals = new Set(loaded.iocs.map((i) => i.value.toLowerCase()));
-    const nextIocVals = new Set(next.iocs.map((i) => i.value.toLowerCase()));
-    const latestIocByVal = new Map(latest.iocs.map((i) => [i.value.toLowerCase(), i]));
-    const mergedIocs = [
-      ...next.iocs.map((i) => latestIocByVal.get(i.value.toLowerCase()) ?? i),
-      ...latest.iocs.filter(
-        (i) => !snapIocVals.has(i.value.toLowerCase()) && !nextIocVals.has(i.value.toLowerCase()),
-      ),
-    ];
-    const snapThreadIds = new Set(loaded.openThreads.map((t) => t.id));
-    const nextThreadIds = new Set(next.openThreads.map((t) => t.id));
-    const addedThreads = latest.openThreads.filter(
-      (t) => !snapThreadIds.has(t.id) && !nextThreadIds.has(t.id),
-    );
-    // Investigation Log (#165): carry forward any timeline line a CONCURRENT import appended during
-    // the AI call (dedupe by timestamp+sequence+text), so the synthesis write doesn't clobber it.
-    const tlKey = (t: TimelineEntry) => `${t.timestamp}|${t.windowSequence}|${t.description}`;
-    const snapTimeline = new Set(loaded.timeline.map(tlKey));
-    const nextTimeline = new Set(next.timeline.map(tlKey));
-    const addedTimeline = latest.timeline.filter(
-      (t) => !snapTimeline.has(tlKey(t)) && !nextTimeline.has(tlKey(t)),
-    );
-    next = {
-      ...next,
-      forensicTimeline: addedEvents.length
-        ? sortByEventTime([...next.forensicTimeline, ...addedEvents])
-        : next.forensicTimeline,
-      iocs: mergedIocs,
-      openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
-      timeline: addedTimeline.length ? [...next.timeline, ...addedTimeline] : next.timeline,
-    };
-    // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
-    // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
-    const synthLogEntry: TimelineEntry = {
-      timestamp: new Date().toISOString(),
-      windowSequence: 0,
-      description:
-        `Synthesis: ${next.findings.length} finding(s) (${findingsDiff.added.length} new, ` +
-        `${findingsDiff.severityChanged.length} reclassified), ${next.forensicTimeline.length} event(s), ` +
-        `${next.iocs.length} IOC(s)`,
-      sourceScreenshots: [],
-    };
-    next = { ...next, timeline: [...next.timeline, synthLogEntry] };
-    await ctx.opts.stateStore.save(next);
-  };
-  if (ctx.opts.stateLock) await ctx.opts.stateLock.runExclusive(caseId, persistLatest);
-  else await persistLatest();
+  // Lost-update guard (mirrors the pinned-questions re-load in the delta fold): a manual
+  // event/IOC/thread added DURING the seconds-long AI call would otherwise be clobbered by this
+  // write, because `next` was derived from the snapshot taken before the call.
+  next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
 
-  // Auto-generate hypotheses (issue #140). Merge the model's hypotheses into the per-case store,
-  // refreshing pristine auto ones and FREEZING any the analyst touched (see mergeHypotheses). Only
-  // when the model actually returned some — an omitted field must never prune the analyst's set.
-  // Sanitized against the FINAL event/IOC ids so evidence links can't dangle. Side store, not
-  // InvestigationState; runs after the state is persisted so a failure here can't lose the synthesis.
-  if (ctx.opts.hypothesisStore && delta.hypotheses && delta.hypotheses.length) {
-    const validEventIds = new Set(next.forensicTimeline.map((e) => e.id));
-    const validIocIds = new Set(next.iocs.map((i) => i.id));
-    const seeds = sanitizeHypotheses(delta.hypotheses, validEventIds, validIocIds);
-    await ctx.opts.hypothesisStore.applyAutoGenerated(caseId, seeds, new Date().toISOString());
-  }
+  await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next);
 
   ctx.lastSynthHash.set(caseId, synthHash); // remember these inputs so an identical re-run skips the AI call
-  // Record what this run changed (findingsDiff computed above) and when it ran — surfaced on the
-  // dashboard. Only reached on a real run; skips return early above.
-  await ctx.opts.synthMetaStore?.record(caseId, findingsDiff, new Date().toISOString(), {
-    durationMs: Date.now() - synthStart,
-    eventCount: next.forensicTimeline.length,
-    iocCount: next.iocs.length,
-    selectionCounts: { ...selection.counts }, // #4: the evidence mix the model saw
-    coverage: synthCoverage, // #62: included/omitted coverage audit
-    synthModel: ctx.opts.synthesisModelLabel ?? `${synthProvider.name}/${synthProvider.model}`, // #74
-    findingsCount: next.findings.length, // #74
-    highSeverityBackfillCount, // #74
-    parseRetries: synthParseRetries, // #74
-  });
-  const anonPolicy = toAnonPolicy(ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null);
-  await recordSynthesisRun(ctx.opts.analysisRunStore, caseId, {
+  await recordSynthesisOutcome(ctx, caseId, {
+    next,
+    run,
+    call,
+    prompt,
+    findingsDiff,
+    synthProvider,
+    synthStart,
+    highSeverityBackfillCount,
+    observationsBlock,
     parentRunId: opts.analysisParentRunId,
-    startedAt: new Date(synthStart).toISOString(),
-    provider: synthProvider.name,
-    model: synthProvider.model,
-    eventIds: [...shownIds],
-    inputState: state,
-    outputState: next,
-    prompt: getSynthesisPrompt(),
-    maxEvents: SYNTH_MAX_EVENTS,
-    thinkingTokens: synthThinkingTokens,
-    correlationWindowSeconds: windowSeconds,
-    anonymizationPolicy: anonPolicy,
-    scope,
-    falsePositiveMarkers: markers.length,
-    infoEventsExcluded: omittedInfo > 0,
-    observationsIncluded: observationsBlock.length > 0,
-    parseRetries: synthParseRetries,
-    coverage: synthCoverage,
   });
   // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
   // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.
   ctx.opts.onSynth?.(caseId, findingsDiff, next);
   ctx.opts.onState?.(next);
 
-  // Second-look loop (investigation-guidance #11): now that this run has conclusions + (open)
-  // hypotheses + key questions, re-query the COMPLETE raw record (the super-timeline + the scoped
-  // events the sampler omitted) for the terms those open questions imply, promote the matches, and
-  // trigger EXACTLY ONE bounded re-synthesis so the conclusions fold them in. `skipSecondLook` on that
-  // re-synthesis (and on the second-opinion dryRun path, already returned above) is the one-iteration
-  // guard that makes this terminate. Best-effort: a sweep failure must never fail the synthesis.
-  if (!opts.skipSecondLook && ctx.opts.superTimelineStore) {
-    try {
-      const outcome = await runSecondLook(ctx, caseId, {
-        // The sweep treats anything not in `promptEvents` as a candidate to re-discover; events
-        // already covered by a grouped row HAVE been seen, so hand it the expanded set.
-        next,
-        scopedEvents,
-        promptEvents: representedEvents,
-        scope,
-        evidenceRequests: delta.evidenceRequests,
-      });
-      if (outcome) {
-        if (outcome.meta.promoted > 0) {
-          // Promotion changed the in-scope timeline → the synthHash differs → this re-synthesis runs
-          // (not skipped) and, with skipSecondLook, does NOT sweep again. Bounded to one extra AI call.
-          const resynth = await synthesize(ctx, caseId, {
-            force: true,
-            skipSecondLook: true,
-            ...(opts.signal ? { signal: opts.signal } : {}),
-          });
-          await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
-          return resynth;
-        }
-        // Nothing new to promote, but empty requests are still surfaced as collection leads.
-        await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
-      }
-    } catch (err) {
-      console.warn(`[DFIR] second-look sweep failed for case ${caseId}: ${(err as Error).message}`);
+  return (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta })) ?? next;
+}
+
+/**
+ * Second-look loop (investigation-guidance #11): now that this run has conclusions, open hypotheses
+ * and key questions, re-query the COMPLETE raw record — the super-timeline plus the scoped events
+ * the sampler omitted — for the terms those open questions imply, promote the matches, and trigger
+ * EXACTLY ONE bounded re-synthesis so the conclusions fold them in.
+ *
+ * `skipSecondLook` on that re-synthesis (and on the second-opinion dryRun path, which returns before
+ * reaching here) is the one-iteration guard that makes this terminate.
+ *
+ * Returns the re-synthesized state when a sweep promoted something, else null for "keep what you
+ * have". Best-effort throughout: a sweep failure must never fail the synthesis that produced it.
+ */
+async function sweepSecondLook(
+  ctx: SynthesisContext,
+  caseId: string,
+  opts: { skipSecondLook?: boolean; signal?: AbortSignal },
+  input: {
+    next: InvestigationState;
+    scopedEvents: ForensicEvent[];
+    scope: ScopeWindow;
+    prompt: Awaited<ReturnType<typeof buildSynthesisPrompt>>;
+    delta: ReturnType<typeof stripAiExtractedFrom>;
+  },
+): Promise<InvestigationState | null> {
+  if (opts.skipSecondLook || !ctx.opts.superTimelineStore) return null;
+  try {
+    const outcome = await runSecondLook(ctx, caseId, {
+      // The sweep treats anything not in `promptEvents` as a candidate to re-discover; events
+      // already covered by a grouped row HAVE been seen, so hand it the expanded set.
+      next: input.next,
+      scopedEvents: input.scopedEvents,
+      promptEvents: input.prompt.representedEvents,
+      scope: input.scope,
+      evidenceRequests: input.delta.evidenceRequests,
+    });
+    if (!outcome) return null;
+    // Nothing new to promote still records — empty requests are surfaced as collection leads.
+    if (outcome.meta.promoted === 0) {
+      await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
+      return null;
     }
+    // Promotion changed the in-scope timeline → the synthHash differs → this re-synthesis runs (not
+    // skipped) and, with skipSecondLook, does NOT sweep again. Bounded to one extra AI call.
+    const resynth = await synthesize(ctx, caseId, {
+      force: true,
+      skipSecondLook: true,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
+    return resynth;
+  } catch (err) {
+    console.warn(`[DFIR] second-look sweep failed for case ${caseId}: ${(err as Error).message}`);
+    return null;
   }
-  return next;
 }
 
 // Second-look sweep (investigation-guidance #11) — the impure orchestration around the pure secondLook
