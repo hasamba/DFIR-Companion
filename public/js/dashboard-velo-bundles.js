@@ -10,6 +10,13 @@
   // follows use, so it lives here and js/dashboard-velo-triage.js calls resetVeloSelected().
   let veloSelected = new Set();
 
+  // Declared, not left to implicit-global creation. Both are READ before the code that assigns
+  // them runs — veloArtifactCache by the filter/render path before Browse, veloEditingId by the
+  // save path on the first custom bundle — and an undeclared read is a ReferenceError, not
+  // undefined.
+  let veloArtifactCache = [];
+  let veloEditingId = null;
+
   function veloBrowseArtifacts() {
     const picker = document.getElementById("veloArtifactPicker");
     const btn = document.getElementById("veloBrowseBtn");

@@ -25,17 +25,10 @@
   // The active time-window query string for the graph reads (#83). Mirrors the global timeline
   // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
   // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
-  function _graphTimeQuery() {
-    const p = new URLSearchParams();
-    if (DfirTimelineView.from()) p.set("from", DfirTimelineView.from());
-    if (DfirTimelineView.to()) p.set("until", DfirTimelineView.to());
-    const q = p.toString();
-    return q ? `?${q}` : "";
-  }
   function loadAssetGraph(caseId) {
     const gv = assetEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style/positions)
-    fetch(`/cases/${caseId}/asset-graph${_graphTimeQuery()}`)
+    fetch(`/cases/${caseId}/asset-graph${DfirTimelineView.timeQuery()}`)
       .then((r) => r.json())
       .then((g) => {
         assetGraphData = g;

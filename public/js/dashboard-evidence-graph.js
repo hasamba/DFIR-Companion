@@ -64,7 +64,7 @@
   function loadEvidenceGraph(caseId) {
     const gv = evEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style)
-    fetch(`/cases/${caseId}/evidence-graph${_graphTimeQuery()}`)
+    fetch(`/cases/${caseId}/evidence-graph${DfirTimelineView.timeQuery()}`)
       .then((r) => r.json())
       .then((g) => {
         evGraphData = g;
@@ -75,7 +75,7 @@
   }
   // Lateral chains, optionally including the ones the analyst dismissed (review/undo view).
   function loadLateralPaths(caseId) {
-    const q = _graphTimeQuery();
+    const q = DfirTimelineView.timeQuery();
     const url = `/cases/${caseId}/lateral-paths${q}${evPathsShowDismissed ? (q ? "&" : "?") + "includeDismissed=1" : ""}`;
     return fetch(url)
       .then((r) => r.json())

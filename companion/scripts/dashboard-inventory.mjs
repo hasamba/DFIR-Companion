@@ -445,17 +445,22 @@ const rows = sections.map((sec) => {
 
 const covered = rows.reduce((n, r) => n + r.size, 0);
 const inlineSize = END - START - 1;
+const isReady = (r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0 && !r.isCoreMachinery;
+
 const report = {
   // Regenerate with `npm run inventory:dashboard -- --update`. Do not hand-edit: the point of this
   // file is that it cannot drift from the code the way a hand-kept list of features would.
   inlineScript: { start: START + 2, end: END, lines: inlineSize },
   covered,
-  // Ready means both: the state travels with the feature, AND the block is not holding a function
-  // the rest of the page leans on. Either one alone overstates it.
-  ready: rows.filter((r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0).length,
-  readyLines: rows
-    .filter((r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0)
-    .reduce((n, r) => n + r.size, 0),
+  // Ready means all three: the state travels with the feature, the block is not holding a function
+  // the rest of the page leans on, AND it is not core machinery. Any one alone overstates it.
+  //
+  // isCoreMachinery was added after an extraction that passed both of the other two filters and had
+  // to be reverted — it was the page's connect()/render() dispatch path, not a feature. Computing
+  // the flag and then not consulting it here left the queue still advertising those blocks as
+  // ready, which is the same wrong answer with an extra step.
+  ready: rows.filter(isReady).length,
+  readyLines: rows.filter(isReady).reduce((n, r) => n + r.size, 0),
   sections: rows,
 };
 

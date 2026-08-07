@@ -66,12 +66,16 @@
 
   // AI-free and free of spend, but NOT free of CPU — it groups the whole graded timeline once per
   // floor — so it is fetched on demand (section expand / Refresh), never on every state broadcast.
-  function loadDeepPassPreview() {
+  function loadDeepPassPreview(force) {
     // IDEMPOTENT, so the flag stays private. Both callers used to read deepPassPreviewLoaded to
     // decide whether to call — the one piece of this feature's state that escaped. The guard is
     // the feature's business, so it lives here. A FAILED measure leaves the flag false, so a
     // reopen still retries, exactly as before.
-    if (deepPassPreviewLoaded) return;
+    // `force` is the Refresh button. Before this feature moved out, the "already loaded" test sat
+    // at the two expand callers and Refresh called straight through — folding the guard in here
+    // silently made the button a no-op after the first measurement, which is the one thing it
+    // exists to do.
+    if (deepPassPreviewLoaded && !force) return;
     const cid = deepPassCaseId();
     if (!cid) return;
     const mySeq = ++deepPassPreviewSeq;
@@ -242,7 +246,7 @@
       document.getElementById("deepPassRun").addEventListener("click", runDeepPass);
       document.getElementById("deepPassCancel").addEventListener("click", cancelDeepPass);
     } else dfirFeatureUnavailable("Deep pass");
-    document.getElementById("deepPassRefresh").addEventListener("click", (e) => { e.stopPropagation(); loadDeepPassPreview(); });
+    document.getElementById("deepPassRefresh").addEventListener("click", (e) => { e.stopPropagation(); loadDeepPassPreview(true); });
     // Measure on expand (the h2 click toggles `collapsed` in its own handler — read it after).
     document.querySelector("#sec-deep-pass h2").addEventListener("click", () => {
       setTimeout(() => {

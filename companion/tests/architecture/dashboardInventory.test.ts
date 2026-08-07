@@ -88,17 +88,49 @@ describe("dashboard extraction inventory", () => {
     }
   });
 
-  it("counts a section ready only when its state stays put AND it holds no shared machinery", () => {
-    // Both halves matter. `render()` sits inside the "Now investigator cockpit" banner with 22 call
+  it("counts a section ready only when its state stays put, it holds no shared machinery, AND it is not core machinery", () => {
+    // All three matter. `render()` sits inside the "Now investigator cockpit" banner with 22 call
     // sites elsewhere on the page: by state escapes alone that section reads as 437 ready lines,
     // when extracting it as written would move the page's central render function into a feature
     // module. Dropping the shared-machinery half takes the headline from 61 sections to 65 — the
     // four it lets through are the ones most likely to break the page.
+    //
+    // The third condition was added after this test had already been written, and the test did not
+    // notice — because it re-implemented the filter instead of asserting the property. The report
+    // grew an isCoreMachinery flag, the ready count went on ignoring it, and a copy of the same
+    // omission sat here agreeing. So the property is asserted separately below, where a future
+    // fourth condition cannot be silently dropped from both places at once.
     const ready = report.sections.filter(
-      (s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0,
+      (s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0 && !s.isCoreMachinery,
     );
     expect(report.ready).toBe(ready.length);
     expect(report.ready).toBeLessThan(report.sections.filter((s) => s.stateEscapes.length === 0).length);
+  });
+
+  it("never advertises core machinery as ready, however clean it looks", () => {
+    // The property, not the filter. A core-machinery section can have zero state escapes and zero
+    // shared machinery and still be the page's central dispatch — that combination is exactly what
+    // produced an extraction that had to be reverted, which is why the flag exists at all.
+    const core = report.sections.filter((s) => s.isCoreMachinery);
+    expect(
+      core.length,
+      "no section is marked core machinery — the flag stopped being computed",
+    ).toBeGreaterThan(0);
+    const readyCore = core.filter((s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0);
+    // This is the interesting case: core sections that the other two filters would wave through.
+    expect(
+      readyCore.length,
+      "no core section is otherwise-clean, so this test proves nothing today",
+    ).toBeGreaterThan(0);
+    expect(report.ready + readyCore.length).toBeGreaterThan(report.ready);
+    const readyLabels = new Set(
+      report.sections
+        .filter((s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0 && !s.isCoreMachinery)
+        .map((s) => s.label),
+    );
+    for (const s of core) {
+      expect(readyLabels.has(s.label), `"${s.label}" is core machinery but counted ready`).toBe(false);
+    }
   });
 
   it("still reports SOME section's shared machinery, whatever the biggest fan-out is now", () => {
