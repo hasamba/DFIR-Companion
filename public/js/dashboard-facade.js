@@ -319,6 +319,12 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // "Now" investigator cockpit. `initCockpit` is the sentinel.
+    "cockpitAction",
+    "cockpitJumpEvent",
+    "cockpitOpenTarget",
+    "cockpitWorkspace",
+    "loadCockpit",
     // Customer exposure + false positives. `initExposureFp` is the sentinel.
     "ceAddTarget",
     "ceAutosaveTargets",

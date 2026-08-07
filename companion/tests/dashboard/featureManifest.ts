@@ -908,6 +908,21 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // "Now" investigator cockpit. Its 440-line banner read as core only because render() sat at the
+    // end of it; the cockpit itself is 187 lines with zero escapes.
+    file: "dashboard-cockpit.js",
+    initializer: "initCockpit",
+    publish: [
+      "initCockpit",
+      "cockpitAction",
+      "cockpitJumpEvent",
+      "cockpitOpenTarget",
+      "cockpitWorkspace",
+      "loadCockpit",
+    ],
+    private: [],
+  },
+  {
     // Customer exposure, false-positive markers, learned patterns, source trust. Four features that
     // shared a banner with renderIocs — which is the only reason the 637-line block read as core.
     file: "dashboard-exposure-fp.js",

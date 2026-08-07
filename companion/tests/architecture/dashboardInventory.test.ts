@@ -93,13 +93,19 @@ describe("dashboard extraction inventory", () => {
     expect(report.ready).toBeLessThan(report.sections.filter((s) => s.stateEscapes.length === 0).length);
   });
 
-  it("flags the cockpit section as holding shared machinery", () => {
-    // The concrete case the signal exists for. If `render` ever stops being reported here, either it
-    // moved (fine — update this) or the fan-out measurement broke (not fine).
-    const cockpit = report.sections.find((s) => s.label.includes("cockpit"));
-    expect(cockpit, "the cockpit banner is gone — re-point this test").toBeDefined();
-    expect(cockpit!.sharedMachinery).toContain("render");
-    expect(cockpit!.maxFanout).toBeGreaterThanOrEqual(10);
+  it("flags render()'s own section as holding shared machinery", () => {
+    // The concrete case the signal exists for. This used to look for `render` under the cockpit
+    // banner; render moved to a banner of its own in #415 when the cockpit was extracted out from
+    // around it, which is the "it moved (fine — update this)" branch the original note allowed for.
+    // The other branch — the fan-out measurement breaking — would show as render being reported
+    // nowhere, so the find() is asserted before the contents.
+    const owner = report.sections.find((s) => s.sharedMachinery.includes("render"));
+    expect(
+      owner,
+      "no section reports render as shared machinery — the fan-out measurement broke",
+    ).toBeDefined();
+    expect(owner!.isCoreMachinery, "render's section must still read as core").toBe(true);
+    expect(owner!.maxFanout).toBeGreaterThanOrEqual(10);
   });
 
   it("never reports a fan-out below the shared-machinery threshold it flagged", () => {
