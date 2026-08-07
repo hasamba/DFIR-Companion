@@ -908,6 +908,28 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Customer exposure, false-positive markers, learned patterns, source trust. Four features that
+    // shared a banner with renderIocs — which is the only reason the 637-line block read as core.
+    file: "dashboard-exposure-fp.js",
+    initializer: "initExposureFp",
+    publish: [
+      "initExposureFp",
+      "ceAddTarget",
+      "ceAutosaveTargets",
+      "ceRemoveTarget",
+      "fpEventIdSet",
+      "fpFindingTitleSet",
+      "fpIocValueSet",
+      "loadCustomerExposure",
+      "loadFalsePositives",
+      "loadLearnedPatterns",
+      "loadSourceTrust",
+      "renderFalsePositives",
+      "runCustomerExposureCheck",
+    ],
+    private: [],
+  },
+  {
     // Kill chain tactic phase view. Split out of the 1,145-line "Activity Log" banner, which held
     // ten features and two spine functions — it read as core machinery only because of what else
     // shared its banner.

@@ -317,8 +317,17 @@ describe("the collapse holds against the page's real handler nesting", () => {
         "action runs TWO full renders again",
     ).toMatch(/,\s*false\s*$/);
     // ...and the renderer must still HAVE that parameter for the suppression to mean anything.
-    expect(html).toMatch(/function renderFalsePositives\(markers, redraw\)/);
-    expect(html).toMatch(/if \(redraw !== false && DfirState\.lastState\(\)\) render\(/);
+    // It moved to js/dashboard-exposure-fp.js (#415); the REGISTRATION above stays in the page, so
+    // this pair now spans two files and each half is asserted against the right one.
+    const fpModule = await readFile(
+      new URL("../../../public/js/dashboard-exposure-fp.js", import.meta.url),
+      "utf8",
+    );
+    expect(fpModule.length, "exposure-fp module is empty — has it moved?").toBeGreaterThan(500);
+    expect(fpModule).toMatch(/function renderFalsePositives\(markers, redraw\)/);
+    // Whitespace-tolerant: prettier wraps this across two lines in the module, and the exact-spacing
+    // form only held while it lived in dashboard.html, the one file prettier does not format.
+    expect(fpModule).toMatch(/if \(redraw !== false && DfirState\.lastState\(\)\)\s*render\(/);
   });
 
   it("clearFilters also settles on one full render", () => {

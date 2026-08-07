@@ -319,6 +319,19 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Customer exposure + false positives. `initExposureFp` is the sentinel.
+    "ceAddTarget",
+    "ceAutosaveTargets",
+    "ceRemoveTarget",
+    "fpEventIdSet",
+    "fpFindingTitleSet",
+    "fpIocValueSet",
+    "loadCustomerExposure",
+    "loadFalsePositives",
+    "loadLearnedPatterns",
+    "loadSourceTrust",
+    "renderFalsePositives",
+    "runCustomerExposureCheck",
     // Kill chain tactic phase view.
     "kcSelect",
     "renderKcDetail",
