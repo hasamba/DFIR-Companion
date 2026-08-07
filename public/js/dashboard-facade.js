@@ -319,6 +319,12 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Starred events. No sentinel — the block has no initializer. isSystemPathIoc stubs falsy,
+    // which means the hide-system-paths lens stops hiding: more rows, not fewer.
+    "deriveStarred",
+    "isSystemPathIoc",
+    "migrateLocalStars",
+    "toggleStar",
     // Event-density heatmap. No sentinel — the block has no initializer.
     "renderTimelineHeatmap",
     "zoomToTimeWindow",

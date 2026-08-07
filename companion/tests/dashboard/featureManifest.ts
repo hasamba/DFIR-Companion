@@ -901,6 +901,13 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Starred events. No initializer. Reported five escapes until the IOC view state that shared
+    // its banner — and belongs to renderIocs, not to starring — moved out to the page's shared state.
+    file: "dashboard-starred.js",
+    publish: ["deriveStarred", "isSystemPathIoc", "migrateLocalStars", "toggleStar"],
+    private: ["starredKey", "SYSTEM_PATH_RE"],
+  },
+  {
     // Event-density heatmap. No initializer. Reported 470 lines and zero escapes until the banner
     // it shared with renderTimelineEvents was split — a spine reports no escapes because it
     // declares everything it touches, which is the opposite of what the number usually means.
