@@ -4391,28 +4391,10 @@
     // Deliberately NOT stubbed by js/dashboard-facade.js: a stub would make this test pass, wire a
     // no-op to the button, and silence the chip. A name that a guard tests is evidence, and the
     // facade may only ever replace work.
-    if (typeof runDeepPass === "function" && typeof cancelDeepPass === "function") {
-      document.getElementById("deepPassRun").addEventListener("click", runDeepPass);
-      document.getElementById("deepPassCancel").addEventListener("click", cancelDeepPass);
-    } else dfirFeatureUnavailable("Deep pass");
-    document.getElementById("deepPassRefresh").addEventListener("click", (e) => { e.stopPropagation(); loadDeepPassPreview(); });
-    // Measure on expand (the h2 click toggles `collapsed` in its own handler — read it after).
-    document.querySelector("#sec-deep-pass h2").addEventListener("click", () => {
-      setTimeout(() => {
-        const sec = document.getElementById("sec-deep-pass");
-        if (sec && !sec.classList.contains("collapsed")) loadDeepPassPreview();
-      }, 0);
-    });
-    // Toolbar entry point: reveal the section (it may be hidden by the active view), open it, and
-    // scroll to it — the analyst's route in when the panel isn't already on screen.
-    document.getElementById("deepPassBtn").addEventListener("click", () => {
-      const sec = document.getElementById("sec-deep-pass");
-      if (!sec) return;
-      sec.style.display = "";
-      sec.classList.remove("collapsed");
-      loadDeepPassPreview();
-      sec.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    // The deep-pass panel's own controls moved with the feature to js/dashboard-deep-pass.js
+    // (#415) — they were never Background jobs'.
+    if (typeof initDeepPass === "function") initDeepPass();
+    else dfirFeatureUnavailable("Deep pass");
 
     // Poll the capture count (new screenshots arrive via the extension, not the WS) every 5s while
     // the tab is VISIBLE; pause entirely when it's hidden — background tabs were just emitting an

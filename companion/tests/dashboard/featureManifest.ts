@@ -193,8 +193,11 @@ export const FEATURES: Feature[] = [
     // Deep pass (#282). Two of its four bindings used to escape and both were closed rather than
     // published — see the module header. It calls back into the page's job registry, which is the
     // established shape (js/dashboard-swimlane.js does it seven times), not a new dependency.
+    // Its five controls came home in #415: they had been left under the "Background jobs" banner.
     file: "dashboard-deep-pass.js",
+    initializer: "initDeepPass",
     publish: [
+      "initDeepPass",
       "runDeepPass",
       "cancelDeepPass",
       "resetDeepPass",

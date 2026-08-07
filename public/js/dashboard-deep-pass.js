@@ -232,6 +232,36 @@
   window.runDeepPass = runDeepPass;
   window.cancelDeepPass = cancelDeepPass;
   window.resetDeepPass = resetDeepPass;
+  // Its own five controls, which had been left under the "Background jobs (#225)" banner — the
+  // run/cancel pair, refresh, the section-expand measure and the toolbar entry point. They read
+  // their handlers at LOAD, so with this module extracted a 404 threw there before the facade could
+  // report anything. The run/cancel guard is kept as it was: a dead pair says so out loud.
+  function initDeepPass() {
+    if (typeof runDeepPass === "function" && typeof cancelDeepPass === "function") {
+      document.getElementById("deepPassRun").addEventListener("click", runDeepPass);
+      document.getElementById("deepPassCancel").addEventListener("click", cancelDeepPass);
+    } else dfirFeatureUnavailable("Deep pass");
+    document.getElementById("deepPassRefresh").addEventListener("click", (e) => { e.stopPropagation(); loadDeepPassPreview(); });
+    // Measure on expand (the h2 click toggles `collapsed` in its own handler — read it after).
+    document.querySelector("#sec-deep-pass h2").addEventListener("click", () => {
+      setTimeout(() => {
+        const sec = document.getElementById("sec-deep-pass");
+        if (sec && !sec.classList.contains("collapsed")) loadDeepPassPreview();
+      }, 0);
+    });
+    // Toolbar entry point: reveal the section (it may be hidden by the active view), open it, and
+    // scroll to it — the analyst's route in when the panel isn't already on screen.
+    document.getElementById("deepPassBtn").addEventListener("click", () => {
+      const sec = document.getElementById("sec-deep-pass");
+      if (!sec) return;
+      sec.style.display = "";
+      sec.classList.remove("collapsed");
+      loadDeepPassPreview();
+      sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  window.initDeepPass = initDeepPass;
   window.applyDeepPassGate = applyDeepPassGate;
   window.loadDeepPassPreview = loadDeepPassPreview;
   window.deepPassGuidance = deepPassGuidance;
