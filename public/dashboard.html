@@ -3733,7 +3733,6 @@
     } catch (e) {}
     // Enable the colour transition only after the first paint, so the initial theme doesn't animate.
     requestAnimationFrame(() => document.documentElement.classList.add("theme-anim"));
-
     const SEV = ["Critical", "High", "Medium", "Low", "Info"];
     // The colour half of the same vocabulary, moved here from under the "Screenshot OCR" banner
     // (#415). Three extracted modules read it by bare name — anomalies, timeline-gaps and
@@ -3741,6 +3740,65 @@
     // feature: it is the page's severity palette, and a feature that happened to declare it was
     // holding shared vocabulary hostage.
     const KC_SEV_COLOR = {Critical:"var(--sev-critical)",High:"var(--sev-high)",Medium:"var(--sev-medium)",Low:"var(--sev-low)",Info:"var(--accent)"};
+    // Section registry + storage keys: shared vocabulary (5 modules read SECTION_DEFS), not a feature's.
+    const SECTIONS_VIS_KEY = "dfir.sectionsVis";
+    const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
+    const SECTION_DEFS = [
+      { id: "sec-now",          label: "Now — Decision Cockpit" },
+      // Data-gated (see data-gate-open in its markup): stays hidden until the timeline actually
+      // has Volatility/Rekall events, but the analyst can still switch it off here like any other.
+      { id: "sec-mem-nextsteps", label: "Memory Next Steps" },
+      { id: "sec-ask",          label: "Ask the LLM" },
+      { id: "sec-nlquery",      label: "Query Translator" },
+      { id: "sec-exec",         label: "Executive Summary" },
+      { id: "sec-playbook",     label: "Playbook" },
+      { id: "sec-attack-path",  label: "Attack Path" },
+      { id: "sec-narrative",    label: "Narrative Timeline" },
+      { id: "sec-findings",     label: "Findings" },
+      // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
+      // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
+      // anytime from Settings → section visibility.
+      { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
+      { id: "sec-collection-plan", label: "Collection Plan" },
+      { id: "sec-deep-pass",    label: "Deep Pass" },
+      { id: "sec-timeline",     label: "Forensic Timeline" },
+      { id: "sec-hunt-workbench", label: "Hunt Workbench" },
+      { id: "sec-sessions",     label: "Attacker Sessions" },
+      { id: "sec-kill-chain",   label: "Kill Chain" },
+      { id: "sec-phases",       label: "Attack Phases" },
+      { id: "sec-hostranking",  label: "Host & Account Ranking" },
+      { id: "sec-gaps",         label: "Timeline Gaps" },
+      { id: "sec-evidence-gaps", label: "Evidence Gaps" },
+      { id: "sec-swimlane",     label: "Timeline Swimlane" },
+      { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
+      { id: "sec-login-graph",  label: "Login Graph" },
+      { id: "sec-evidence",     label: "Evidence Chain" },
+      { id: "sec-beacons",      label: "Beacon Candidates" },
+      { id: "sec-anomalies",    label: "Timeline Anomalies" },
+      { id: "sec-geomap",       label: "GeoIP Map" },
+      { id: "sec-iocs",         label: "IOCs" },
+      { id: "sec-exposure",     label: "Customer Exposure" },
+      { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-uncertainties", label: "Uncertainty Ledger" },
+      { id: "sec-huntprofile",  label: "Hunting Profile" },
+      { id: "sec-threads",      label: "Investigation Threads" },
+      { id: "sec-mitre",        label: "MITRE ATT&CK" },
+      { id: "sec-adversary",    label: "Adversary Hints" },
+      { id: "sec-playbook-match", label: "Playbook Match" },
+      { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
+      { id: "sec-compliance",   label: "Compliance Impact" },
+      { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
+      { id: "sec-false-positive", label: "False Positives" },
+      { id: "sec-source-trust", label: "Source Trust" },
+      { id: "sec-hypotheses",   label: "Hypotheses" },
+      { id: "sec-super-timeline", label: "Super-Timeline" },
+      { id: "sec-notebook",     label: "Analyst Notebook" },
+      { id: "sec-inv-log",      label: "Investigation Log" },
+      { id: "sec-activity",     label: "Activity Log" },
+      { id: "sec-mcp",          label: "MCP Analysis" },
+      { id: "sec-custody",      label: "Chain of Custody" },
+      { id: "sec-case-details", label: "Case Details" },
+    ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
     // activeView lives in js/dashboard-state.js now (#415): read it with DfirState.activeView(), and
     // only applyDashboardView() may write it. That file says which of the other 421 bindings follow.
@@ -8101,64 +8159,6 @@
     else dfirFeatureUnavailable("data-act dispatch");
 
     // ── Settings modal ────────────────────────────────────────────────────────
-    const SECTIONS_VIS_KEY = "dfir.sectionsVis";
-    const SECTIONS_ORDER_KEY = "dfir.sectionsOrder";
-    const SECTION_DEFS = [
-      { id: "sec-now",          label: "Now — Decision Cockpit" },
-      // Data-gated (see data-gate-open in its markup): stays hidden until the timeline actually
-      // has Volatility/Rekall events, but the analyst can still switch it off here like any other.
-      { id: "sec-mem-nextsteps", label: "Memory Next Steps" },
-      { id: "sec-ask",          label: "Ask the LLM" },
-      { id: "sec-nlquery",      label: "Query Translator" },
-      { id: "sec-exec",         label: "Executive Summary" },
-      { id: "sec-playbook",     label: "Playbook" },
-      { id: "sec-attack-path",  label: "Attack Path" },
-      { id: "sec-narrative",    label: "Narrative Timeline" },
-      { id: "sec-findings",     label: "Findings" },
-      // Recommended Next Steps is hidden by default — the Playbook (above) supersedes it for
-      // action-tracking. Its data still feeds the Playbook, report, and exports; re-enable it
-      // anytime from Settings → section visibility.
-      { id: "sec-next-steps",   label: "Recommended Next Steps", defaultHidden: true },
-      { id: "sec-collection-plan", label: "Collection Plan" },
-      { id: "sec-deep-pass",    label: "Deep Pass" },
-      { id: "sec-timeline",     label: "Forensic Timeline" },
-      { id: "sec-hunt-workbench", label: "Hunt Workbench" },
-      { id: "sec-sessions",     label: "Attacker Sessions" },
-      { id: "sec-kill-chain",   label: "Kill Chain" },
-      { id: "sec-phases",       label: "Attack Phases" },
-      { id: "sec-hostranking",  label: "Host & Account Ranking" },
-      { id: "sec-gaps",         label: "Timeline Gaps" },
-      { id: "sec-evidence-gaps", label: "Evidence Gaps" },
-      { id: "sec-swimlane",     label: "Timeline Swimlane" },
-      { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
-      { id: "sec-login-graph",  label: "Login Graph" },
-      { id: "sec-evidence",     label: "Evidence Chain" },
-      { id: "sec-beacons",      label: "Beacon Candidates" },
-      { id: "sec-anomalies",    label: "Timeline Anomalies" },
-      { id: "sec-geomap",       label: "GeoIP Map" },
-      { id: "sec-iocs",         label: "IOCs" },
-      { id: "sec-exposure",     label: "Customer Exposure" },
-      { id: "sec-questions",    label: "Key Investigative Questions" },
-      { id: "sec-uncertainties", label: "Uncertainty Ledger" },
-      { id: "sec-huntprofile",  label: "Hunting Profile" },
-      { id: "sec-threads",      label: "Investigation Threads" },
-      { id: "sec-mitre",        label: "MITRE ATT&CK" },
-      { id: "sec-adversary",    label: "Adversary Hints" },
-      { id: "sec-playbook-match", label: "Playbook Match" },
-      { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
-      { id: "sec-compliance",   label: "Compliance Impact" },
-      { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
-      { id: "sec-false-positive", label: "False Positives" },
-      { id: "sec-source-trust", label: "Source Trust" },
-      { id: "sec-hypotheses",   label: "Hypotheses" },
-      { id: "sec-super-timeline", label: "Super-Timeline" },
-      { id: "sec-notebook",     label: "Analyst Notebook" },
-      { id: "sec-inv-log",      label: "Investigation Log" },
-      { id: "sec-activity",     label: "Activity Log" },
-      { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" },
-      { id: "sec-case-details", label: "Case Details" },
-    ];
 
     function loadSectionsVis() {
       try { return JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}"); } catch { return {}; }
