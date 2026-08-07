@@ -43,6 +43,7 @@ const run = (): {
     vocabulary: string[];
     isDispatchBlock: boolean;
     foreignStanzas: string[];
+    functions: number;
   }[];
 } => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
 
@@ -101,10 +102,46 @@ describe("dashboard extraction inventory", () => {
     // omission sat here agreeing. So the property is asserted separately below, where a future
     // fourth condition cannot be silently dropped from both places at once.
     const ready = report.sections.filter(
-      (s) => s.stateEscapes.length === 0 && s.sharedMachinery.length === 0 && !s.isCoreMachinery,
+      (s) =>
+        s.stateEscapes.length === 0 &&
+        s.sharedMachinery.length === 0 &&
+        !s.isCoreMachinery &&
+        s.foreignStanzas.length === 0 &&
+        s.functions > 0,
     );
     expect(report.ready).toBe(ready.length);
-    expect(report.ready).toBeLessThan(report.sections.filter((s) => s.stateEscapes.length === 0).length);
+    expect(report.ready).toBeLessThanOrEqual(
+      report.sections.filter((s) => s.stateEscapes.length === 0).length,
+    );
+  });
+
+  it("never advertises a block of other features' initializer calls as ready", () => {
+    // The third signal that was computed and then not consulted. These sections are what is LEFT
+    // once a feature moves out: `if (typeof initX === "function") initX();`, the call site that has
+    // to stay in the page. Counting them ready pointed the queue at the page's own startup
+    // sequence, and dashboard-section-split.mjs refuses every one of them — so the queue and the
+    // tool that executes the queue disagreed, with the queue read first.
+    const wiring = report.sections.filter((s) => s.foreignStanzas.length > 0);
+    expect(
+      wiring.length,
+      "no section holds another feature's initializer — the signal stopped being computed",
+    ).toBeGreaterThan(0);
+    const readyLabels = new Set(
+      report.sections
+        .filter(
+          (s) =>
+            s.stateEscapes.length === 0 &&
+            s.sharedMachinery.length === 0 &&
+            !s.isCoreMachinery &&
+            s.foreignStanzas.length === 0 &&
+            s.functions > 0,
+        )
+        .map((s) => s.label),
+    );
+    expect(report.ready).toBe(readyLabels.size);
+    for (const s of wiring) {
+      expect(readyLabels.has(s.label), `"${s.label}" is initializer wiring but counted ready`).toBe(false);
+    }
   });
 
   it("never advertises core machinery as ready, however clean it looks", () => {

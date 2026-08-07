@@ -5,8 +5,8 @@
     "lines": 1965
   },
   "covered": 1965,
-  "ready": 5,
-  "readyLines": 127,
+  "ready": 0,
+  "readyLines": 0,
   "sections": [
     {
       "label": "Page state and shared vocabulary",

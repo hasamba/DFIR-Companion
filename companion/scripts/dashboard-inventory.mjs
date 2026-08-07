@@ -445,7 +445,21 @@ const rows = sections.map((sec) => {
 
 const covered = rows.reduce((n, r) => n + r.size, 0);
 const inlineSize = END - START - 1;
-const isReady = (r) => r.stateEscapes.length === 0 && r.sharedMachinery.length === 0 && !r.isCoreMachinery;
+// Ready has to mean "the split tool would accept this range", or the queue and the tool that
+// executes the queue disagree — and the queue is the one that gets read first.
+//
+// Three signals were computed and then not consulted, each found the same way: by an extraction
+// going wrong, never by a test. isCoreMachinery was the second. foreignStanzas is the third, and
+// it is the one that made five sections totalling 127 lines read as ready when every one of them
+// is the page's own initializer wiring for features that ALREADY moved out — three of them contain
+// no functions at all. A block of `if (typeof initX === "function") initX();` is not a feature
+// waiting to be extracted; it is the call site that has to stay behind.
+const isReady = (r) =>
+  r.stateEscapes.length === 0 &&
+  r.sharedMachinery.length === 0 &&
+  !r.isCoreMachinery &&
+  r.foreignStanzas.length === 0 &&
+  r.functions > 0;
 
 const report = {
   // Regenerate with `npm run inventory:dashboard -- --update`. Do not hand-edit: the point of this
