@@ -72,9 +72,7 @@ export async function loadSynthesisInputs(
   const playbookTasks = ctx.opts.playbookStore ? await ctx.opts.playbookStore.load(caseId) : [];
   // Incident-type framing (#236): the one-line hint for the type the analyst picked at case
   // creation, so the model prioritizes ransomware / BEC / exfil techniques.
-  const incidentType = ctx.opts.incidentTypeStore
-    ? await ctx.opts.incidentTypeStore.loadType(caseId)
-    : null;
+  const incidentType = ctx.opts.incidentTypeStore ? await ctx.opts.incidentTypeStore.loadType(caseId) : null;
 
   return {
     playbookTasks,
@@ -158,8 +156,7 @@ async function applyHuntExhaustion(ctx: SynthesisInputContext, caseId: string): 
       missed: o.foundEvidence === false,
       title: o.title,
     }));
-  if (huntSignals.some((s) => s.missed))
-    await ctx.opts.hypothesisStore?.applyExhaustion(caseId, huntSignals);
+  if (huntSignals.some((s) => s.missed)) await ctx.opts.hypothesisStore?.applyExhaustion(caseId, huntSignals);
 }
 
 export interface SynthHashInput {

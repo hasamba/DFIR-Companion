@@ -66,10 +66,7 @@ import { persistSynthesis } from "./synthesisPersist.js";
 
 /** What synthesis needs. Wide by nature — see the note above. */
 export interface SynthesisContext
-  extends AiCallContext,
-    HuntContext,
-    SynthesisPromptContext,
-    SynthesisInputContext {
+  extends AiCallContext, HuntContext, SynthesisPromptContext, SynthesisInputContext {
   readonly log: Logger;
   readonly opts: AiCallContext["opts"] &
     HuntContext["opts"] &
@@ -294,8 +291,7 @@ async function recordSynthesisOutcome(
     iocCount: o.next.iocs.length,
     selectionCounts: { ...o.prompt.selection.counts }, // #4: the evidence mix the model saw
     coverage: o.prompt.coverage, // #62: included/omitted coverage audit
-    synthModel:
-      ctx.opts.synthesisModelLabel ?? `${o.synthProvider.name}/${o.synthProvider.model}`, // #74
+    synthModel: ctx.opts.synthesisModelLabel ?? `${o.synthProvider.name}/${o.synthProvider.model}`, // #74
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
@@ -340,9 +336,7 @@ async function correlateForSynthesis(
   const envWindow = Number(process.env.DFIR_CORRELATE_WINDOW_S);
   const corrProfile = await ctx.opts.correlationProfileStore?.load(caseId);
   const windowSeconds = Number.isFinite(envWindow) ? envWindow : (corrProfile?.windowSeconds ?? 2);
-  const trustOverrides = ctx.opts.sourceTrustStore
-    ? await ctx.opts.sourceTrustStore.load(caseId)
-    : undefined;
+  const trustOverrides = ctx.opts.sourceTrustStore ? await ctx.opts.sourceTrustStore.load(caseId) : undefined;
   const sourceTrust = effectiveTrustMap(trustOverrides);
   const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
   return {

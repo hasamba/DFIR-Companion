@@ -40,7 +40,7 @@ import {
   renderCaseDataSources,
   type QueryTranslationResult,
 } from "../queryTranslate.js";
-import type { ForensicEvent } from "../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../synthSelect.js";
 import { maxPromptEvents } from "../synthGroup.js";
 import { getHuntSuggestPrompt, getPlaybookHuntPrompt, getQueryTranslatePrompt } from "./prompts/index.js";
@@ -94,26 +94,105 @@ const excludeNote = (excludeVql?: string): string =>
     ? `ALREADY SUGGESTED (this VQL was already shown to the analyst — generate something DIFFERENT that investigates from a different angle or uses different VQL plugins):\n${excludeVql}\n\n`
     : "";
 
-// Propose proactive Velociraptor VQL fleet-hunts from the synthesized findings (issue #57).
-// Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
-// The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
-// launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
-export async function suggestHunts(
+/**
+ * The VQL generators prefer the narrow velociraptorProvider when one is configured, falling back to
+ * the strong synthesis model. (translateQuery deliberately does NOT use this — it spans many query
+ * languages, so the VQL-tuned model is the wrong choice there.)
+ */
+const huntProvider = (ctx: HuntContext, label: string): AIProvider =>
+  ctx.opts.velociraptorProvider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider(label);
+
+/** Slack for the JSON scaffolding around the blocks each hunt prompt's overhead estimate counts. */
+const HUNT_OVERHEAD_SLACK_TOKENS = 300;
+
+/**
+ * The tail all three hunt-suggestion calls share (#453): one retried, restore-wrapped model call,
+ * then the caller's own parse+sanitize, then the #157 exclusion of hunts already deployed.
+ *
+ * The exclusion is applied HERE rather than by each caller because it is the step easiest to forget
+ * and the one whose absence is invisible — a re-suggested hunt looks like a fine suggestion.
+ */
+async function callHuntModel<T extends { vql: string }>(
   ctx: HuntContext,
   caseId: string,
-  opts?: { excludeVql?: string },
-): Promise<HuntSuggestion[]> {
-  const provider =
-    ctx.opts.velociraptorProvider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider("hunt suggestions");
-  const loaded = await ctx.opts.stateStore.load(caseId);
-  if (!hasHuntMaterial(loaded)) return []; // nothing to pivot on — don't spend a call
+  loaded: InvestigationState,
+  provider: AIProvider,
+  kind: "suggest-hunts" | "hunt-technique" | "suggest-playbook-hunts",
+  systemPrompt: string,
+  userPrompt: string,
+  outcomes: readonly HuntOutcome[],
+  parse: (raw: unknown) => T[],
+): Promise<T[]> {
+  const { retries, backoffMs } = retryPolicy(ctx);
+  return ctx.withRetry(
+    caseId,
+    kind,
+    async () => {
+      const parsed = await ctx.analyzeRestored(
+        caseId,
+        loaded,
+        provider,
+        { systemPrompt, userPrompt, images: [] },
+        kind,
+      );
+      return excludeDeployedHunts(parse(parsed), outcomes);
+    },
+    retries,
+    backoffMs,
+  );
+}
 
-  const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
-
-  const max = maxPromptEvents();
+/**
+ * Trim the timeline so the whole prompt fits the model context — every other block is fixed
+ * overhead. Re-selects (rather than truncating) for the smaller count so the events that survive
+ * stay the most important ones.
+ */
+function renderHuntTimeline(
+  scoped: ForensicEvent[],
+  max: number,
+  renderEvent: (e: ForensicEvent) => string,
+  systemPrompt: string,
+  overheadText: string,
+): string {
   let events = selectSynthesisEvents(scoped, max);
-  const renderEvent = (e: ForensicEvent) =>
-    `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+  const overhead =
+    estimateTokens(systemPrompt) + estimateTokens(overheadText) + HUNT_OVERHEAD_SLACK_TOKENS;
+  const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
+  if (fit < events.length) events = selectSynthesisEvents(scoped, fit);
+  return events.map(renderEvent).join("\n") || "(no events yet)";
+}
+
+/**
+ * The two feedback blocks, derived from one read of the hunt outcome ledger.
+ *
+ * `prior` is the per-hunt signal (#157) — what hit, what missed — so the model pivots on productive
+ * hunts and avoids repeating dead ones. `productivity` is the aggregate one (#72): the hit-rate by
+ * pivot class (hash/process/path/network/registry), so the model biases toward classes that have
+ * found evidence rather than only avoiding exact repeats.
+ */
+function huntFeedbackBlocks(outcomes: HuntOutcome[]): { prior: string; productivity: string } {
+  return {
+    prior: renderPriorHuntsBlock(outcomes),
+    productivity: renderHuntProductivityBlock(outcomes),
+  };
+}
+
+/**
+ * The fleet-hunt prompt: every grounding block, then the timeline trimmed to whatever budget is left.
+ *
+ * `leading` is built once and used twice — as the prompt's own prefix and as part of the overhead
+ * the timeline has to fit around. Estimating those separately would size the budget against a
+ * prompt that was never assembled.
+ */
+async function buildFleetHuntPrompt(
+  ctx: HuntContext,
+  caseId: string,
+  loaded: InvestigationState,
+  scoped: ForensicEvent[],
+  outcomes: HuntOutcome[],
+  opts?: { excludeVql?: string },
+): Promise<string> {
+  const feedback = huntFeedbackBlocks(outcomes);
   const findingsText = renderHuntFindings(loaded.findings);
   const iocText = renderHuntIocs(loaded.iocs);
   const techText = loaded.mitreTechniques.map((t) => `${t.id} ${t.name}`).join(", ") || "(none)";
@@ -123,77 +202,112 @@ export async function suggestHunts(
   // parent→child chain, the binary/account that moved between hosts) fleet-wide, not just the leaf
   // indicator. The flat timeline drops processName/parentName; the graph carries them. Built from
   // the SAME scoped+legitimate-filtered events as the rest of the prompt; "" when there are no edges.
-  // Capped at the shared default (the timeline trim below absorbs the block into the prompt budget).
   const graphBlock = buildGraphContext(
     { ...loaded, forensicTimeline: scoped },
     { maxEdges: DEFAULT_MAX_GRAPH_EDGES },
   );
-
-  // Feedback loop (#157): the prior hunts already run in this case (what hit / what missed), so the
-  // model proposes follow-ups that pivot on productive hunts and avoids repeating dead ones. "" when
-  // there are no recorded outcomes (or no store wired). Also drives the deterministic exclusion below.
-  const outcomes = await loadHuntOutcomes(ctx, caseId);
-  const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
-  // Productivity tuning (#72): the aggregate hit-rate by pivot class (hash/process/path/network/
-  // registry) across this case's hunt history, so the model biases toward classes that have found
-  // evidence rather than only avoiding exact repeats (priorHuntsBlock is the per-hunt signal; this
-  // is the aggregate one). "" until there's collected history to bias on.
-  const productivityBlock = renderHuntProductivityBlock(outcomes);
   // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases, likely-
   // next techniques) so suggested hunts target what's MISSING, not just re-confirm what's known.
   const unknownsBlock = await knownUnknownsBlock(ctx, loaded, scoped, caseId);
 
-  // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
-  const overhead =
-    estimateTokens(getHuntSuggestPrompt()) +
-    estimateTokens(
-      priorHuntsBlock +
-        productivityBlock +
-        contextBlock +
-        unknownsBlock +
-        graphBlock +
-        findingsText +
-        iocText +
-        techText +
-        (loaded.attackerPath || ""),
-    ) +
-    300;
-  const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
-  if (fit < events.length) events = selectSynthesisEvents(scoped, fit);
-  const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
+  const leading = feedback.prior + feedback.productivity + contextBlock + unknownsBlock + graphBlock;
+  const timelineText = renderHuntTimeline(
+    scoped,
+    maxPromptEvents(),
+    (e) => `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`,
+    getHuntSuggestPrompt(),
+    leading + findingsText + iocText + techText + (loaded.attackerPath || ""),
+  );
 
-  const userPrompt =
-    priorHuntsBlock +
-    productivityBlock +
-    contextBlock +
-    unknownsBlock +
-    graphBlock +
+  return (
+    leading +
     `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
     `ATT&CK TECHNIQUES: ${techText}\n\n` +
     `FINDINGS:\n${findingsText}\n\n` +
     `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
     `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
     excludeNote(opts?.excludeVql) +
-    `Propose the fleet-hunts as JSON.`;
+    `Propose the fleet-hunts as JSON.`
+  );
+}
+
+/**
+ * The per-task playbook-hunt prompt.
+ *
+ * This call hunts PER TASK — grounded by the tasks, findings, IOCs and endpoints — so it does NOT
+ * need the full synthesis timeline. A smaller stratified sample keeps the signal while cutting the
+ * prompt (the timeline dominates it). A leaner prompt is faster and cheaper, and shrinks the window
+ * for a transient provider transport failure on a long generation. Tune via DFIR_PBHUNT_MAX_EVENTS
+ * (default 120, well below synthesis's 300).
+ */
+async function buildPlaybookHuntPrompt(
+  ctx: HuntContext,
+  caseId: string,
+  loaded: InvestigationState,
+  scoped: ForensicEvent[],
+  outcomes: HuntOutcome[],
+  text: { tasksText: string; endpointsText: string; artifactsText: string; excludeVql?: string },
+): Promise<string> {
+  const feedback = huntFeedbackBlocks(outcomes);
+  const findingsText = renderHuntFindings(loaded.findings);
+  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
+  const leading = feedback.prior + feedback.productivity + contextBlock;
+  const timelineText = renderHuntTimeline(
+    scoped,
+    Number(process.env.DFIR_PBHUNT_MAX_EVENTS) || 120,
+    (e) =>
+      `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`,
+    getPlaybookHuntPrompt(),
+    leading +
+      text.tasksText +
+      text.endpointsText +
+      text.artifactsText +
+      findingsText +
+      (loaded.attackerPath || ""),
+  );
+
+  return (
+    leading +
+    `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${text.endpointsText}\n\n` +
+    `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${text.artifactsText}\n\n` +
+    `PLAYBOOK TASKS:\n${text.tasksText}\n\n` +
+    `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
+    `FINDINGS:\n${findingsText}\n\n` +
+    `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
+    excludeNote(text.excludeVql) +
+    `Propose the per-task hunts as JSON.`
+  );
+}
+
+// Propose proactive Velociraptor VQL fleet-hunts from the synthesized findings (issue #57).
+// Single text-only AI call; EPHEMERAL like ask()/executiveSummary() — it does NOT mutate state.
+// The analyst reviews each hunt's VQL + rationale, then one-click deploys it through the existing
+// launchHunt flow (POST /velociraptor/hunt). Returns [] without an AI call on an empty case.
+export async function suggestHunts(
+  ctx: HuntContext,
+  caseId: string,
+  opts?: { excludeVql?: string },
+): Promise<HuntSuggestion[]> {
+  const provider = huntProvider(ctx, "hunt suggestions");
+  const loaded = await ctx.opts.stateStore.load(caseId);
+  if (!hasHuntMaterial(loaded)) return []; // nothing to pivot on — don't spend a call
+
+  const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
+
+  const outcomes = await loadHuntOutcomes(ctx, caseId);
+  const userPrompt = await buildFleetHuntPrompt(ctx, caseId, loaded, scoped, outcomes, opts);
 
   const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
+  return callHuntModel(
+    ctx,
     caseId,
+    loaded,
+    provider,
     "suggest-hunts",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] },
-        "suggest-hunts",
-      );
-      const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
-    },
-    retries,
-    backoffMs,
+    getHuntSuggestPrompt(),
+    userPrompt,
+    outcomes,
+    (raw) => sanitizeHuntSuggestions(huntSuggestionsResponseSchema.parse(raw).suggestions, limit),
   );
 }
 
@@ -209,8 +323,7 @@ export async function suggestTechniqueHunts(
   techniqueId: string,
   techniqueName?: string,
 ): Promise<HuntSuggestion[]> {
-  const provider =
-    ctx.opts.velociraptorProvider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider("technique hunt");
+  const provider = huntProvider(ctx, "technique hunt");
   const id = String(techniqueId || "")
     .trim()
     .toUpperCase();
@@ -219,11 +332,10 @@ export async function suggestTechniqueHunts(
   const iocText = renderHuntIocs(loaded.iocs);
   const label = techniqueName ? `${id} (${techniqueName})` : id;
   const outcomes = await loadHuntOutcomes(ctx, caseId); // #157 feedback loop (exclude + prior-hunts context)
-  const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
-  const productivityBlock = renderHuntProductivityBlock(outcomes); // #72: aggregate hit-rate by pivot class
+  const feedback = huntFeedbackBlocks(outcomes);
   const userPrompt =
-    priorHuntsBlock +
-    productivityBlock +
+    feedback.prior +
+    feedback.productivity +
     `Focus EXCLUSIVELY on ONE ATT&CK technique the analyst wants to hunt for proactively across the fleet:\n` +
     `  ${label}\n\n` +
     `This technique has NOT yet been observed in this case. A group whose tradecraft resembles this case is known ` +
@@ -233,23 +345,16 @@ export async function suggestTechniqueHunts(
     `PIVOTABLE INDICATORS:\n${iocText}\n\n` +
     `Set every suggestion's mitreTechniques to ["${id}"]. Propose the hunt(s) as JSON.`;
   const limit = Number(process.env.DFIR_HUNT_SUGGEST_MAX) || HUNT_SUGGEST_MAX_DEFAULT;
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
+  return callHuntModel(
+    ctx,
     caseId,
+    loaded,
+    provider,
     "hunt-technique",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getHuntSuggestPrompt(), userPrompt, images: [] },
-        "hunt-technique",
-      );
-      const { suggestions } = huntSuggestionsResponseSchema.parse(parsed);
-      return excludeDeployedHunts(sanitizeHuntSuggestions(suggestions, limit), outcomes);
-    },
-    retries,
-    backoffMs,
+    getHuntSuggestPrompt(),
+    userPrompt,
+    outcomes,
+    (raw) => sanitizeHuntSuggestions(huntSuggestionsResponseSchema.parse(raw).suggestions, limit),
   );
 }
 
@@ -265,93 +370,46 @@ export async function suggestPlaybookHunts(
   availableArtifacts: string[] = [],
   opts?: { excludeVql?: string },
 ): Promise<PlaybookHuntSuggestion[]> {
-  const provider =
-    ctx.opts.velociraptorProvider ??
-    ctx.opts.synthesisProvider ??
-    ctx.requireProvider("playbook hunt suggestions");
+  const provider = huntProvider(ctx, "playbook hunt suggestions");
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (!hasPlaybookHuntMaterial(loaded, tasks)) return []; // empty/closed playbook → don't spend a call
 
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
+  // Built here, not in the prompt builder: this is both the grounding AND the sanitizer's
+  // allow-list, and an invented targetHost must be rejected against the set the prompt offered.
   const endpointsByTaskId = buildTaskEndpointsMap(loaded, tasks);
   const endpoints = knownEndpoints(loaded);
-  const tasksText = renderPlaybookHuntTasks(tasks, endpointsByTaskId);
-  const endpointsText = renderKnownEndpoints(endpoints);
-  // The server's REAL CLIENT artifacts (passed in by the route) — the model may reference an
-  // Artifact.<Name> only from this list (otherwise it hallucinates a name that won't compile).
-  const artifactsText = renderAvailableArtifacts(
-    availableArtifacts,
-    Number(process.env.DFIR_PBHUNT_MAX_ARTIFACTS) || 150,
-  );
-
-  // This call hunts PER TASK (grounded by the tasks + findings + IOCs + endpoints), so it does NOT
-  // need the full synthesis timeline — a smaller stratified event sample keeps the signal while
-  // cutting the prompt (the timeline dominates it). A leaner prompt is faster + cheaper and shrinks
-  // the window for a transient provider transport failure on a long generation. Tune via
-  // DFIR_PBHUNT_MAX_EVENTS (default 120, well below synthesis's 300).
-  const max = Number(process.env.DFIR_PBHUNT_MAX_EVENTS) || 120;
-  let events = selectSynthesisEvents(scoped, max);
-  const renderEvent = (e: ForensicEvent) =>
-    `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`;
-  const findingsText = renderHuntFindings(loaded.findings);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog());
   const outcomes = await loadHuntOutcomes(ctx, caseId); // #157 feedback loop (exclude + prior-hunts context)
-  const priorHuntsBlock = renderPriorHuntsBlock(outcomes);
-  const productivityBlock = renderHuntProductivityBlock(outcomes); // #72: aggregate hit-rate by pivot class
-
-  // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
-  const overhead =
-    estimateTokens(getPlaybookHuntPrompt()) +
-    estimateTokens(
-      priorHuntsBlock +
-        productivityBlock +
-        contextBlock +
-        tasksText +
-        endpointsText +
-        artifactsText +
-        findingsText +
-        (loaded.attackerPath || ""),
-    ) +
-    300;
-  const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overhead));
-  if (fit < events.length) events = selectSynthesisEvents(scoped, fit);
-  const timelineText = events.map(renderEvent).join("\n") || "(no events yet)";
-
-  const userPrompt =
-    priorHuntsBlock +
-    productivityBlock +
-    contextBlock +
-    `KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): ${endpointsText}\n\n` +
-    `AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):\n${artifactsText}\n\n` +
-    `PLAYBOOK TASKS:\n${tasksText}\n\n` +
-    `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
-    `FINDINGS:\n${findingsText}\n\n` +
-    `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
-    excludeNote(opts?.excludeVql) +
-    `Propose the per-task hunts as JSON.`;
+  const userPrompt = await buildPlaybookHuntPrompt(ctx, caseId, loaded, scoped, outcomes, {
+    tasksText: renderPlaybookHuntTasks(tasks, endpointsByTaskId),
+    endpointsText: renderKnownEndpoints(endpoints),
+    // The server's REAL CLIENT artifacts (passed in by the route) — the model may reference an
+    // Artifact.<Name> only from this list (otherwise it hallucinates a name that won't compile).
+    artifactsText: renderAvailableArtifacts(
+      availableArtifacts,
+      Number(process.env.DFIR_PBHUNT_MAX_ARTIFACTS) || 150,
+    ),
+    excludeVql: opts?.excludeVql,
+  });
 
   const limit = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
-  const { retries, backoffMs } = retryPolicy(ctx);
-  return ctx.withRetry(
+  return callHuntModel(
+    ctx,
     caseId,
+    loaded,
+    provider,
     "suggest-playbook-hunts",
-    async () => {
-      const parsed = await ctx.analyzeRestored(
-        caseId,
-        loaded,
-        provider,
-        { systemPrompt: getPlaybookHuntPrompt(), userPrompt, images: [] },
-        "suggest-playbook-hunts",
-      );
-      const { suggestions } = playbookHuntResponseSchema.parse(parsed);
-      return excludeDeployedHunts(
-        sanitizePlaybookHuntSuggestions(suggestions, endpointsByTaskId, endpoints, limit),
-        outcomes,
-      );
-    },
-    retries,
-    backoffMs,
+    getPlaybookHuntPrompt(),
+    userPrompt,
+    outcomes,
+    (raw) =>
+      sanitizePlaybookHuntSuggestions(
+        playbookHuntResponseSchema.parse(raw).suggestions,
+        endpointsByTaskId,
+        endpoints,
+        limit,
+      ),
   );
 }
 

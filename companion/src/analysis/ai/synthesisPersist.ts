@@ -96,9 +96,7 @@ export function mergeConcurrentAdditions(
 
   const snapThreadIds = new Set(loaded.openThreads.map((t) => t.id));
   const nextThreadIds = new Set(next.openThreads.map((t) => t.id));
-  const addedThreads = latest.openThreads.filter(
-    (t) => !snapThreadIds.has(t.id) && !nextThreadIds.has(t.id),
-  );
+  const addedThreads = latest.openThreads.filter((t) => !snapThreadIds.has(t.id) && !nextThreadIds.has(t.id));
 
   const snapTimeline = new Set(loaded.timeline.map(timelineKey));
   const nextTimeline = new Set(next.timeline.map(timelineKey));
