@@ -905,6 +905,28 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Analyst triage tags. Two escapes crossing in opposite directions: bulk-select WROTE tagTarget
+    // (so it gets an operation), and two modules READ tagsByTarget in two different ways (so they
+    // get the two questions they ask, not the Map).
+    file: "dashboard-tags.js",
+    initializer: "initTagModal",
+    publish: [
+      "initTagModal",
+      "addTag",
+      "closeTagModal",
+      "loadTags",
+      "openTagModal",
+      "renderTagModal",
+      "tagAddBtn",
+      "tagChip",
+      "tagPills",
+      "setBulkTagTarget",
+      "eachTagList",
+      "tagsForTarget",
+    ],
+    private: ["tagTarget", "tagsByTarget"],
+  },
+  {
     // Theme (#53). Its three escapes were read by renderThemeMenu and the menu handlers, which sat
     // on the wrong side of the "Theme picker" banner — that banner is the page's state hub, not a
     // theme feature. Moving the boundary past the menu left this with no escapes.

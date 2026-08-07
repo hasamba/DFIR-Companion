@@ -319,6 +319,18 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Analyst triage tags. No sentinel — no initializer.
+    "addTag",
+    "closeTagModal",
+    "loadTags",
+    "openTagModal",
+    "renderTagModal",
+    "tagAddBtn",
+    "tagChip",
+    "tagPills",
+    "setBulkTagTarget",
+    "eachTagList",
+    "tagsForTarget",
     // Theme. `initTheme` is the sentinel.
     "applyTheme",
     "storedTheme",

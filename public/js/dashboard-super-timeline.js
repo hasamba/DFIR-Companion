@@ -256,7 +256,7 @@
   // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
   // Tags box and reloads). Mirrors tagPills() but adds the st-tag-filter affordance.
   function superTagPills(type, id) {
-    const list = (tagsByTarget.get(targetKey(type, id)) || []).filter(t => !(t.label === "starred" && t.targetType === "event"));
+    const list = (typeof tagsForTarget === "function" ? tagsForTarget(targetKey(type, id)) : []).filter(t => !(t.label === "starred" && t.targetType === "event"));
     return list.map(t => {
       const c = tagColor(t.label);
       return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" data-safe-style="color:${c};border-color:${c};cursor:pointer" title="Filter the super-timeline to this tag">${esc(t.label)}</span>`;

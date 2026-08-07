@@ -93,7 +93,9 @@
     );
   }
   function openBulkTagModal(ids, targetType) {
-    tagTarget = { bulk: true, ids, targetType: targetType || "event" };
+    // Asked of the tags feature rather than assigned into it: tagTarget is its state.
+    if (typeof setBulkTagTarget === "function")
+      setBulkTagTarget(ids, targetType);
     document.getElementById("tagOverlay").classList.add("open");
     renderTagModal();
     document.getElementById("tagInput").focus();

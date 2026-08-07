@@ -49,7 +49,8 @@
   function deriveStarred() {
     const starred = [];
     starredTagIds = new Map();
-    tagsByTarget.forEach((list) =>
+    // eachTagList() rather than the Map itself — see js/dashboard-tags.js.
+    (typeof eachTagList === "function" ? eachTagList : () => {})((list) =>
       list.forEach((t) => {
         if (t.targetType === "event" && t.label === "starred") {
           starred.push(t.targetId);
