@@ -11,6 +11,20 @@
 // The 419-line banner this came from is mostly NOT this feature: nine guard stanzas from earlier
 // extractions and the page's shared Settings wiring sit below it, and all of that stays.
 (function () {
+  // Moved here from dashboard.html (#415). The wizard module already existed; its STATE did not
+  // come with it — the fourth time in this PR an extraction stopped at the code and left the
+  // bindings behind, where nothing fails because classic scripts share one global lexical
+  // environment. F and WIZARD_STEPS travel together: F builds every entry of it, and both
+  // wizardOrder() and WIZARD_BY_ID are derived from it.
+  //
+  // WIZ_MODEL_HINTS and LOCAL_PROVIDERS stay in the page for now — they belong to
+  // js/dashboard-wizard-ai-step.js, and they interleave with these. Separate pass.
+  const WIZ_DISMISS_KEY = "dfir.aiWizardDismissed"; // kept for back-compat with #181
+  // The step table lives in js/dashboard-wizard-steps.js — it is pure data, and keeping it here
+  // put this module over the 800-line budget. Accessors because published names must be callable.
+  let wizCurrent = "ai"; // active step id
+  let wizStatus = {}; // last /setup/status snapshot (drives ✓/○)
+
   // ── Synthesis model (optional, sub-section of the AI step) ──
   // No live connectivity test here: /diagnostics/ai-test only probes the main extraction
   // provider, so this mirrors Settings → AI (save + apply, no per-field test).
@@ -262,7 +276,7 @@
       wizUpdateNav();
       return;
     }
-    const step = WIZARD_BY_ID[stepId];
+    const step = wizardStepById(stepId);
     const pane = wizEl("wizPaneDynamic");
     pane.innerHTML = wizRenderStep(step);
     if (step.kind === "providers") {
@@ -366,43 +380,47 @@
   // Left rail: one row per step, with a ✓ (configured) / ○ (optional) dot.
   function wizRenderRail() {
     const rail = wizEl("wizRail");
-    rail.innerHTML = WIZ_ORDER.map((id) => {
-      const label = id === "ai" ? "AI analysis" : WIZARD_BY_ID[id].label;
-      const icon = id === "ai" ? "👋" : WIZARD_BY_ID[id].icon;
-      let done = false;
-      if (id === "ai") done = !!wizStatus.ai;
-      else {
-        const st = wizStatus[WIZARD_BY_ID[id].status];
-        done =
-          typeof st === "object" ? Object.values(st || {}).some(Boolean) : !!st;
-      }
-      const cls =
-        "wiz-rail-item" +
-        (id === wizCurrent ? " active" : "") +
-        (done ? " done" : "");
-      return (
-        '<div class="' +
-        cls +
-        '" data-step="' +
-        id +
-        '"><span class="wiz-rail-dot">' +
-        (done ? "✓" : "○") +
-        "</span>" +
-        '<span class="wiz-rail-label">' +
-        icon +
-        " " +
-        esc(label) +
-        "</span></div>"
-      );
-    }).join("");
+    rail.innerHTML = wizardOrder()
+      .map((id) => {
+        const label = id === "ai" ? "AI analysis" : wizardStepById(id).label;
+        const icon = id === "ai" ? "👋" : wizardStepById(id).icon;
+        let done = false;
+        if (id === "ai") done = !!wizStatus.ai;
+        else {
+          const st = wizStatus[wizardStepById(id).status];
+          done =
+            typeof st === "object"
+              ? Object.values(st || {}).some(Boolean)
+              : !!st;
+        }
+        const cls =
+          "wiz-rail-item" +
+          (id === wizCurrent ? " active" : "") +
+          (done ? " done" : "");
+        return (
+          '<div class="' +
+          cls +
+          '" data-step="' +
+          id +
+          '"><span class="wiz-rail-dot">' +
+          (done ? "✓" : "○") +
+          "</span>" +
+          '<span class="wiz-rail-label">' +
+          icon +
+          " " +
+          esc(label) +
+          "</span></div>"
+        );
+      })
+      .join("");
     rail.querySelectorAll(".wiz-rail-item").forEach((el) => {
       el.onclick = () => wizShowStep(el.getAttribute("data-step"));
     });
   }
   function wizUpdateNav() {
-    const i = WIZ_ORDER.indexOf(wizCurrent);
+    const i = wizardOrder().indexOf(wizCurrent);
     wizEl("wizBackBtn").disabled = i <= 0;
-    wizEl("wizNextBtn").disabled = i >= WIZ_ORDER.length - 1;
+    wizEl("wizNextBtn").disabled = i >= wizardOrder().length - 1;
   }
   async function wizRefreshStatus() {
     try {
@@ -474,12 +492,12 @@
     wizEl("wizDismissBtn").onclick = wizDismiss;
     wizEl("wizDoneBtn").onclick = wizDone;
     wizEl("wizBackBtn").onclick = () => {
-      const i = WIZ_ORDER.indexOf(wizCurrent);
-      if (i > 0) wizShowStep(WIZ_ORDER[i - 1]);
+      const i = wizardOrder().indexOf(wizCurrent);
+      if (i > 0) wizShowStep(wizardOrder()[i - 1]);
     };
     wizEl("wizNextBtn").onclick = () => {
-      const i = WIZ_ORDER.indexOf(wizCurrent);
-      if (i < WIZ_ORDER.length - 1) wizShowStep(WIZ_ORDER[i + 1]);
+      const i = wizardOrder().indexOf(wizCurrent);
+      if (i < wizardOrder().length - 1) wizShowStep(wizardOrder()[i + 1]);
     };
     wizEl("wizOverlay").addEventListener("keydown", (e) => {
       if (e.key === "Escape") closeSetupWizard();

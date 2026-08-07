@@ -543,6 +543,8 @@ export const FEATURES: Feature[] = [
   },
   {
     // Setup wizard AI step (#181). Its wiring was a self-calling IIFE — the fourth in this PR.
+    // WIZ_MODEL_HINTS and LOCAL_PROVIDERS came home in #415, in a second pass — they interleaved
+    // with the setup-wizard bindings and could not move in the same splice.
     file: "dashboard-wizard-ai-step.js",
     initializer: "initWizardAiStep",
     publish: ["initWizardAiStep", "wizResetAiStep"],
@@ -818,6 +820,8 @@ export const FEATURES: Feature[] = [
   {
     // Comprehensive setup wizard (#181). Everything load-time is in the initializer, including two
     // `const`s that read the DOM and would be null in a <head> script.
+    // Its state came home in #415: the module existed but WIZ_DISMISS_KEY, F, WIZARD_STEPS,
+    // WIZ_ORDER, WIZARD_BY_ID, wizCurrent and wizStatus had stayed in the page.
     file: "dashboard-setup-wizard.js",
     initializer: "initSetupWizard",
     publish: ["initSetupWizard", "openSetupWizard", "closeSetupWizard", "wizRefreshStatus", "fetchLogLevel"],
@@ -899,6 +903,14 @@ export const FEATURES: Feature[] = [
       "setVeloMonAutoBrowsed",
     ],
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
+  },
+  {
+    // Setup-wizard step definitions — pure data, split out when moving the wizard's state home put
+    // dashboard-setup-wizard.js over the 800-line budget. Accessors, because published names must
+    // be callable.
+    file: "dashboard-wizard-steps.js",
+    publish: ["wizardOrder", "wizardStepById"],
+    private: ["WIZARD_STEPS", "WIZ_ORDER", "WIZARD_BY_ID", "F"],
   },
   {
     // Asset↔IoC graph, split out of the Login Graph banner. Its expand handler came along; the

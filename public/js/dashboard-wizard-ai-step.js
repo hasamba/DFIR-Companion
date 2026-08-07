@@ -5,6 +5,31 @@
 // wireLifecycleButtons. A `(function(){…})()` at module scope looks deliberate and is the same trap:
 // in a <head> script it runs before the wizard's controls exist and binds nothing, silently.
 (function () {
+  // Moved here from dashboard.html (#415), second pass. These two are read by this module and
+  // nothing else, but they sat interleaved with js/dashboard-setup-wizard.js's bindings under one
+  // banner, so the two groups had to move separately — a single splice across the interleave is
+  // how a neighbour gets taken by mistake.
+  //
+  // Neither is published: a lookup object and a Set are not callable, and the feature manifest
+  // requires published names to be functions (the gate that rejected a bare QA_AUDIT_MARK in
+  // extraction 76). Nothing outside needs them, so they stay private rather than growing accessors
+  // that no one calls.
+  const WIZ_MODEL_HINTS = {
+    openai:
+      "Try <code>gpt-4o-mini</code> (cheap) or <code>gpt-4o</code> (stronger).",
+    openrouter:
+      "Try <code>openai/gpt-4o-mini</code> or <code>anthropic/claude-3.5-sonnet</code>.",
+    ollama:
+      "Try <code>llama3.2-vision</code> or <code>llava</code> (must support vision).",
+    litellm:
+      "Use your proxy's model name, e.g. <code>gpt-4o-mini</code>. Set the base URL below.",
+    gemini:
+      "Try <code>gemini-2.0-flash</code> (cheap) or <code>gemini-1.5-pro</code>.",
+    anthropic:
+      "Try <code>claude-haiku-4-5</code> (cheap) or <code>claude-sonnet-4-6</code>.",
+  };
+  const LOCAL_PROVIDERS = new Set(["ollama", "litellm"]);
+
   // ── AI step logic (#181, preserved) ──
   function wizResetAiStep() {
     wizEl("wizProvider").value = "";

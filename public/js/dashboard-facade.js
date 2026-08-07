@@ -319,6 +319,9 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Setup-wizard step definitions.
+    "wizardOrder",
+    "wizardStepById",
     // Asset↔IoC graph. `initAssetGraph` is the sentinel.
     "assetEnsureGV",
     "renderAssetGraph",
