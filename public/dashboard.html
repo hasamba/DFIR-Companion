@@ -4698,28 +4698,8 @@
     }
 
     // --- Pinned findings (#220) ---------------------------------------------------
-    // A small ordered shortlist the analyst pins so the most important findings stay visible in a
-    // sticky top strip while scrolling the timeline/graph. Server-backed (state/pinned-findings.json),
-    // capped, drag-to-reorder, one-click jump. Each finding card gets a 📌 pin toggle.
-    let pinnedList = [];              // ordered [{ findingId, pinnedBy, pinnedAt }]
-    let pinnedSet = new Set();        // findingIds, for O(1) button state
-    let pinLimit = 5;                 // server-reported cap
-
-    function pinBtn(fid) {
-      const pinned = pinnedSet.has(String(fid));
-      return `<button class="pin-btn${pinned ? " pinned" : ""}" data-pin="${escAttr(String(fid))}" `
-        + `title="${pinned ? "Unpin — remove from the pinned strip" : "Pin — keep this finding in the top strip"}">${ICON_PIN}</button>`;
-    }
-
-    function loadPins(caseId) {
-      fetch(`/cases/${caseId}/pinned-findings`).then(r => r.json()).then(data => {
-        pinnedList = Array.isArray(data && data.pins) ? data.pins : [];
-        pinnedSet = new Set(pinnedList.map(p => String(p.findingId)));
-        if (typeof (data && data.limit) === "number") pinLimit = data.limit;
-        renderPinned();
-        if (DfirState.lastState()) render(DfirState.lastState());   // refresh the 📌 button state on the finding cards
-      }).catch(() => {});
-    }
+    // Pinned findings (#220) live in public/js/dashboard-pinned-findings.js — including the
+    // three bindings and loadPins() that had stayed behind here.
 
     // Finding assignment + workflow status (#87) moved to js/dashboard-finding-workflow.js, and
     // Pinned findings (#220) — which shared its banner and nothing else — to

@@ -224,6 +224,8 @@
     "setFindingWorkflowStatus",
     "assignFinding",
     "renderPinned",
+    "loadPins",
+    "pinBtn",
     "togglePin",
     // The palette registry and the section order/visibility code. initPaletteConfig is a sentinel.
     "revealSection",

@@ -10,6 +10,37 @@
 // NO INITIALIZER: the drag handlers are attached by wirePinnedDrag() each time the strip is
 // re-rendered, because the rows it binds are recreated every time.
 (function () {
+  // Moved here from dashboard.html (#415). The feature came out earlier but its state and its two
+  // entry points stayed behind, so the module read three bindings it did not own and the page held
+  // the writer. renderPinned() below is the only consumer of any of them.
+  // A small ordered shortlist the analyst pins so the most important findings stay visible in a
+  // sticky top strip while scrolling the timeline/graph. Server-backed (state/pinned-findings.json),
+  // capped, drag-to-reorder, one-click jump. Each finding card gets a 📌 pin toggle.
+  let pinnedList = []; // ordered [{ findingId, pinnedBy, pinnedAt }]
+  let pinnedSet = new Set(); // findingIds, for O(1) button state
+  let pinLimit = 5; // server-reported cap
+
+  function pinBtn(fid) {
+    const pinned = pinnedSet.has(String(fid));
+    return (
+      `<button class="pin-btn${pinned ? " pinned" : ""}" data-pin="${escAttr(String(fid))}" ` +
+      `title="${pinned ? "Unpin — remove from the pinned strip" : "Pin — keep this finding in the top strip"}">${ICON_PIN}</button>`
+    );
+  }
+
+  function loadPins(caseId) {
+    fetch(`/cases/${caseId}/pinned-findings`)
+      .then((r) => r.json())
+      .then((data) => {
+        pinnedList = Array.isArray(data && data.pins) ? data.pins : [];
+        pinnedSet = new Set(pinnedList.map((p) => String(p.findingId)));
+        if (typeof (data && data.limit) === "number") pinLimit = data.limit;
+        renderPinned();
+        if (DfirState.lastState()) render(DfirState.lastState()); // refresh the 📌 button state on the finding cards
+      })
+      .catch(() => {});
+  }
+
   // Resolve pins against the live findings, worst-severity label preserved. A pin whose finding
   // no longer exists (dropped by a later synthesis) is skipped — the raw pin stays on the server
   // so it reappears if the finding comes back, but it isn't rendered as a dangling row.
@@ -223,5 +254,7 @@
   }
 
   window.renderPinned = renderPinned;
+  window.loadPins = loadPins;
+  window.pinBtn = pinBtn;
   window.togglePin = togglePin;
 })();

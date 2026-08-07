@@ -653,9 +653,11 @@ export const FEATURES: Feature[] = [
   {
     // Pinned findings (#220) — the other half of that banner. Nothing here references the feature
     // above it and nothing there references this.
+    // The three bindings and loadPins() came home in #415: the feature had moved out but its state
+    // and writer stayed in the page, so the module was reading globals it did not own.
     file: "dashboard-pinned-findings.js",
-    publish: ["renderPinned", "togglePin"],
-    private: ["pinDragActive", "_pinnedSig", "pinMsgTimer"],
+    publish: ["renderPinned", "togglePin", "loadPins", "pinBtn"],
+    private: ["pinDragActive", "_pinnedSig", "pinMsgTimer", "pinnedList", "pinnedSet", "pinLimit"],
   },
   {
     // Command palette registry (#238). Split from the section-order code sharing its banner.
