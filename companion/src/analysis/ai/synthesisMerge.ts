@@ -254,10 +254,7 @@ function correctKeyQuestions(
  * drop) any such step to priority "low" with an annotation, requiring a shared host/artifact token so
  * a same-verb different-target step survives. Keeps the top of the next-steps list actionable.
  */
-function demoteCompletedSteps(
-  next: InvestigationState,
-  playbookTasks: PlaybookTask[],
-): InvestigationState {
+function demoteCompletedSteps(next: InvestigationState, playbookTasks: PlaybookTask[]): InvestigationState {
   if (!playbookTasks.length) return next;
   const doneTitles = playbookTasks.filter((t) => t.status === "done").map((t) => t.title);
   if (!doneTitles.length) return next;

@@ -191,9 +191,7 @@ function buildSatisfiedBlock(
   const satisfied = detectSatisfiedCollections(state, scopedEvents);
   return {
     block: buildSatisfiedCollectionsBlock(satisfied),
-    questionIds: new Set(
-      satisfied.filter((s) => s.target.from === "question").map((s) => s.target.refId),
-    ),
+    questionIds: new Set(satisfied.filter((s) => s.target.from === "question").map((s) => s.target.refId)),
   };
 }
 

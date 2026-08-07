@@ -85,8 +85,7 @@ export function createTimelineSelection(
   const maxEvents = maxPromptEvents();
   let selection = selectSynthesisEventsAnnotated(collapsedEvents, maxEvents, rarityOf);
   let promptEvents = selection.events;
-  const isContext = (id: string): boolean =>
-    CONTEXT_CLASSES.has(selection.classOf.get(id) as SelectionClass);
+  const isContext = (id: string): boolean => CONTEXT_CLASSES.has(selection.classOf.get(id) as SelectionClass);
 
   return {
     grouping,
