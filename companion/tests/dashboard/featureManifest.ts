@@ -908,6 +908,25 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Facet filter renderers. The first extraction whose absence degrades a CORE render rather than
+    // a feature: renderIocs and the timeline path call these. Every call site is guarded, and the
+    // stated failure is "no filter menus, lists still render in full" — more evidence, not less.
+    // sortTimelineEvents stayed behind: skipping a SORT silently misrepresents evidence.
+    file: "dashboard-facet-filters.js",
+    publish: [
+      "renderIocTypeFilter",
+      "renderIocExcludeRules",
+      "renderSourceFilter",
+      "renderOriginFilter",
+      "renderHostFilter",
+      "iocTypeFacets",
+      "sourceFacets",
+      "hostFacets",
+    ],
+    // The two facet sentinels stayed in the page: renderTimelineEvents reads them too.
+    private: ["IOC_TYPE_ORDER"],
+  },
+  {
     // AI-suggested hunts + the cross-panel jump helpers. Fourth block out of the 1,145-line
     // "Activity Log" banner, which was never 1,145 lines of Activity Log.
     file: "dashboard-hunts-jumps.js",

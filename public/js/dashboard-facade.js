@@ -319,6 +319,15 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Facet filter renderers. Stubbed falsy: no filter menus, and the lists render in full.
+    "renderIocTypeFilter",
+    "renderIocExcludeRules",
+    "renderSourceFilter",
+    "renderOriginFilter",
+    "renderHostFilter",
+    "iocTypeFacets",
+    "sourceFacets",
+    "hostFacets",
     // Suggested hunts + jump helpers.
     "clearEvIdFilter",
     "doSuggestHunts",

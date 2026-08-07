@@ -234,8 +234,15 @@ describe("no renderer writes a facet", () => {
   // actually consult it, and that is exactly the gap review flagged: the suite was green while two
   // visible regressions sat in the production renderers.
   it("gates every picker's hide-condition on the effective hidden count", async () => {
-    const html = await readFile(DASHBOARD, "utf8");
-    const hides = [...html.matchAll(/if \((\w+)\.length < \d[^)]*\) \{ wrap\.style\.display = "none"/g)];
+    // The four pickers moved to js/dashboard-facet-filters.js (#415); the guard is pinned there now.
+    const html = await readFile(
+      new URL("../../../public/js/dashboard-facet-filters.js", import.meta.url),
+      "utf8",
+    );
+    expect(html.length, "facet-filters module is empty — has it moved?").toBeGreaterThan(500);
+    // Whitespace-tolerant: prettier puts the body on its own line in a module, and the one-line
+    // form only held while this lived in dashboard.html — the one file prettier does not format.
+    const hides = [...html.matchAll(/if \((\w+)\.length < \d[^)]*\)\s*\{\s*wrap\.style\.display = "none"/g)];
     expect(hides.length, "expected the four facet pickers").toBe(4);
     for (const m of hides) {
       expect(m[0], `${m[1]} hides its picker without checking whether a filter is still live on it`).toMatch(

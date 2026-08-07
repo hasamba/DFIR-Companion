@@ -291,6 +291,7 @@
   <!-- Velociraptor triage. Owns the bundle/client caches behind accessors. -->
   <script src="/js/dashboard-velo-triage.js"></script>
   <!-- Vim-style keyboard navigation. initKeyboardNav() binds its four controls. -->
+  <script src="/js/dashboard-facet-filters.js"></script>
   <script src="/js/dashboard-hunts-jumps.js"></script>
   <script src="/js/dashboard-timeline-controls.js"></script>
   <script src="/js/dashboard-cockpit.js"></script>
@@ -4396,8 +4397,8 @@
       if (!_iocKeepPage) iocPage = 0;           // any non-pagination re-render (import, filter, state push) resets to page 1
       _iocKeepPage = false;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
-      const iocTypeHidden = renderIocTypeFilter(iocs);   // effective count, so the chip below cannot claim a filter that is not there
-      renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
+      const iocTypeHidden = typeof renderIocTypeFilter === "function" && renderIocTypeFilter(iocs);   // effective count, so the chip below cannot claim a filter that is not there
+      typeof renderIocExcludeRules === "function" && renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
       const flaggedTotal = iocs.filter(iocFlagged).length;
       let visible = showFlaggedIocsOnly ? iocs.filter(iocFlagged) : iocs;
       if (DfirTimelineView.search()) visible = visible.filter(i => _iocMatchesSearch(i, DfirTimelineView.search()));
@@ -4514,71 +4515,12 @@
     // never a fixed allowlist: well-known types render in this preferred order, then any other present
     // type (e.g. "vulnerability" from the demo case / a CVE, or a custom importer's type) is appended
     // sorted — so every type gets a filterable facet — with the "other" catch-all pinned last. Pure.
-    const IOC_TYPE_ORDER = ["ip", "domain", "url", "hash", "file", "process"];
-    function iocTypeFacets(iocs) {
-      const present = new Set((iocs || []).map(i => (i && i.type) || "other"));
-      const known = IOC_TYPE_ORDER.filter(t => present.has(t));
-      const extra = [...present].filter(t => !IOC_TYPE_ORDER.includes(t) && t !== "other").sort();
-      const out = [...known, ...extra];
-      if (present.has("other")) out.push("other");
-      return out;
-    }
-
-    // Per-case IOC exclude rules — list/add/remove UI, IOCs section title bar (🚫 Exclude). Rules
-    // ride along on every pushed state (InvestigationState.iocExcludeRules), so this just re-renders
-    // off `DfirState.lastState()` — no separate fetch needed.
-    function renderIocExcludeRules(rules) {
-      const btn = document.getElementById("iocExcludeBtn");
-      const list = document.getElementById("iocExcludeList");
-      if (!btn || !list) return;
-      btn.classList.toggle("active", rules.length > 0);
-      btn.textContent = rules.length ? `🚫 Exclude (${rules.length})` : "🚫 Exclude";
-      if (!rules.length) {
-        list.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px;padding:4px'>No exclude rules yet for this case.</div>";
-        return;
-      }
-      list.innerHTML = rules.map(r => {
-        const type = r.iocType ? `<span data-safe-style="color:var(--text-muted)">${esc(r.iocType)}</span> ` : "";
-        const note = r.note ? ` <span data-safe-style="color:var(--text-dim)">— ${esc(r.note)}</span>` : "";
-        return `<div data-safe-style="display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border-subtle);font-size:12px">`
-          + `<span data-safe-style="color:var(--accent);flex:0 0 46px">${esc(r.match)}</span>`
-          + `<span data-safe-style="flex:1;font-family:monospace;word-break:break-all">${esc(r.pattern)}</span>`
-          + `<span data-safe-style="flex:0 0 auto">${type}${note}</span>`
-          + `<button class="iex-del" data-id="${escAttr(r.id)}" title="Delete rule (does not restore already-purged IOCs)" data-safe-style="background:transparent;border:1px solid var(--danger-border);color:var(--tag-red-text);border-radius:5px;padding:0 7px;cursor:pointer">✕</button>`
-          + `</div>`;
-      }).join("");
-    }
-
-    // Build/refresh the IOC-type-filter dropdown from the current (full, pre-filter) IOC list. Hidden
-    // when fewer than 2 types exist (nothing to filter). The menu is rebuilt only when the type set or
-    // its per-type counts change; otherwise we just sync checkbox state so an open menu isn't disrupted.
-    function renderIocTypeFilter(iocs) {
-      const wrap = document.getElementById("iocTypeLegendWrap");
-      const menu = document.getElementById("iocTypeFilterMenu");
-      const btn = document.getElementById("iocTypeFilterBtn");
-      if (!wrap || !menu || !btn) return 0;
-      const types = iocTypeFacets(iocs);
-      const hiddenHere = DfirFacets.iocTypes.countIn(types);   // derived; also keeps the picker up while it filters
-      if (types.length < 2 && hiddenHere === 0) { wrap.style.display = "none"; menu.hidden = true; _iocTypeMenuSig = ""; return 0; }
-      wrap.style.display = "";
-      const shown = types.length - hiddenHere;
-      const active = hiddenHere > 0;
-      btn.classList.toggle("active", active);
-      btn.textContent = active ? `▾ Types (${shown}/${types.length})` : "▾ Types";
-      const counts = {};
-      for (const i of iocs) { const t = (i && i.type) || "other"; counts[t] = (counts[t] || 0) + 1; }
-      const sig = types.map(t => `${t}:${counts[t]}`).join(",");
-      if (sig !== _iocTypeMenuSig) {
-        const items = types.map(t =>
-          `<label class="src-item"><input type="checkbox" class="ioc-type-cb" value="${escAttr(t)}"${DfirFacets.iocTypes.has(t) ? "" : " checked"}><span>${esc(t)} <span data-safe-style="color:var(--text-muted)">(${counts[t]})</span></span></label>`
-        ).join("");
-        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-ioctype-all="1">All</button><button type="button" class="src-menu-link" data-ioctype-none="1">None</button></div>${items}`;
-        _iocTypeMenuSig = sig;
-      } else {
-        menu.querySelectorAll(".ioc-type-cb").forEach(cb => { cb.checked = !DfirFacets.iocTypes.has(cb.value); });
-      }
-      return hiddenHere;
-    }
+    // The two facet sentinels stay here: renderTimelineEvents reads them as well as the filter
+    // renderers, so they are shared vocabulary. Constants cannot be published anyway — the manifest
+    // requires published names to be callable.
+    const NO_SOURCE_FACET = "(no source)";
+    const NO_HOST_FACET = "(no host)";
+    // Facet filter renderers live in public/js/dashboard-facet-filters.js.
 
     // Order the (already filtered) timeline rows per the per-column sort arrows (#104). Pure —
     // returns a new array. Undated events always sink to the bottom (both directions). Date sort:
@@ -4617,124 +4559,6 @@
 
     // Render the forensic timeline from a pre-scoped+FP-filtered list.
     // Called both from render() (new state) and from the severity-filter checkboxes (re-filter only).
-    // The option set for the source filter: distinct real source/tool names across the in-scope
-    // timeline (excludes the "unknown source" placeholder), sorted, plus a trailing "(no source)"
-    // pseudo-facet when any event has no real source — so those events are controllable too and
-    // "None" truly empties the timeline.
-    const NO_SOURCE_FACET = "(no source)";
-    function sourceFacets(ft) {
-      const set = new Set();
-      let hasNone = false;
-      for (const e of (ft || [])) {
-        const real = (e.sources || []).filter(s => s && s !== "unknown source");
-        if (real.length) for (const s of real) set.add(s);
-        else hasNone = true;
-      }
-      const list = [...set].sort((a, b) => a.localeCompare(b));
-      if (hasNone) list.push(NO_SOURCE_FACET);
-      return list;
-    }
-
-    // Build/refresh the source-filter dropdown from the current timeline. Hidden when there are
-    // fewer than 2 sources (nothing to filter). The menu is rebuilt only when the source set
-    // changes; otherwise we just sync checkbox state so an open menu isn't disrupted mid-use.
-    // `lensFt` (optional): the corroboration-lens-filtered subset. When the 2+/3+ lens is active the menu
-    // lists ONLY the tools that appear in that view (no dead facets that show nothing), while pruning of
-    // stale hidden sources still uses the FULL timeline so toggling the lens never forgets a hidden choice.
-    function renderSourceFilter(ft, lensFt) {
-      const wrap = document.getElementById("srcLegendWrap");
-      const menu = document.getElementById("srcFilterMenu");
-      const btn = document.getElementById("srcFilterBtn");
-      if (!wrap || !menu || !btn) return 0;
-      const allSources = sourceFacets(ft);
-      // Prune gone; countIn() derives `hidden ∩ available`. See js/dashboard-facets.js.
-      const sources = lensFt ? sourceFacets(lensFt) : allSources;
-      const hiddenInView = DfirFacets.sources.countIn(sources);
-      if (sources.length < 1 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _srcMenuSig = ""; return 0; }
-      wrap.style.display = "";
-      const shown = sources.length - hiddenInView;
-      const active = hiddenInView > 0;
-      btn.classList.toggle("active", active);
-      btn.textContent = active ? `⛏ Sources (${shown}/${sources.length})` : "⛏ Sources";
-      const sig = sources.join("");
-      if (sig !== _srcMenuSig) {
-        const items = sources.map(s =>
-          `<label class="src-item${s === NO_SOURCE_FACET ? " src-item-none" : ""}"><input type="checkbox" class="src-filter" value="${escAttr(s)}"${DfirFacets.sources.has(s) ? "" : " checked"}><span>${esc(s)}</span></label>`
-        ).join("");
-        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-src-all="1">All</button><button type="button" class="src-menu-link" data-src-none="1">None</button></div>${items}`;
-        _srcMenuSig = sig;
-      } else {
-        menu.querySelectorAll(".src-filter").forEach(cb => { cb.checked = !DfirFacets.sources.has(cb.value); });
-      }
-      return hiddenInView;
-    }
-
-    // Build/refresh the origin-filter dropdown. Hidden when there are fewer than 2 origins (nothing to
-    // filter). Rebuilt only when the origin set changes; otherwise just sync checkbox state.
-    function renderOriginFilter(ft) {
-      const wrap = document.getElementById("originLegendWrap");
-      const menu = document.getElementById("originFilterMenu");
-      const btn = document.getElementById("originFilterBtn");
-      if (!wrap || !menu || !btn) return 0;
-      const origins = originFacets(ft);
-      const hiddenInView = DfirFacets.origins.countIn(origins);   // derived; also keeps the picker up while it filters
-      if (origins.length < 2 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _originMenuSig = ""; return 0; }
-      wrap.style.display = "";
-      const shown = origins.length - hiddenInView;
-      btn.classList.toggle("active", hiddenInView > 0);
-      btn.textContent = hiddenInView > 0 ? `⛏ Origins (${shown}/${origins.length})` : "⛏ Origins";
-      const sig = origins.join("");
-      if (sig !== _originMenuSig) {
-        const items = origins.map(o =>
-          `<label class="src-item"><input type="checkbox" class="origin-filter" value="${escAttr(o)}"${DfirFacets.origins.has(o) ? "" : " checked"}><span>${esc(o)}</span></label>`
-        ).join("");
-        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-origin-all="1">All</button><button type="button" class="src-menu-link" data-origin-none="1">None</button></div>${items}`;
-        _originMenuSig = sig;
-      } else {
-        menu.querySelectorAll(".origin-filter").forEach(cb => { cb.checked = !DfirFacets.origins.has(cb.value); });
-      }
-      return hiddenInView;
-    }
-
-    // Forensic host filter (mirrors the source filter): the distinct affected hosts across the in-scope
-    // timeline, plus a trailing "(no host)" pseudo-facet for events with no asset (so those are
-    // controllable and "None" truly empties the timeline).
-    const NO_HOST_FACET = "(no host)";
-    function hostFacets(ft) {
-      const set = new Set();
-      let hasNone = false;
-      for (const e of (ft || [])) { if (e.asset) set.add(e.asset); else hasNone = true; }
-      const list = [...set].sort((a, b) => a.localeCompare(b));
-      if (hasNone) list.push(NO_HOST_FACET);
-      return list;
-    }
-    // Build/refresh the host-filter dropdown. Hidden when there are fewer than 2 hosts (nothing to filter).
-    // Rebuilt only when the host set changes; otherwise just sync checkbox state (don't disrupt an open menu).
-    function renderHostFilter(ft) {
-      const wrap = document.getElementById("hostLegendWrap");
-      const menu = document.getElementById("hostFilterMenu");
-      const btn = document.getElementById("hostFilterBtn");
-      if (!wrap || !menu || !btn) return 0;
-      const hosts = hostFacets(ft);
-      // A control the analyst cannot see must not be filtering — see js/dashboard-facets.js.
-      const hiddenInView = DfirFacets.hosts.countIn(hosts);   // derived; also keeps the picker up while it filters
-      if (hosts.length < 2 && hiddenInView === 0) { wrap.style.display = "none"; menu.hidden = true; _hostMenuSig = ""; return 0; }
-      wrap.style.display = "";
-      const shown = hosts.length - hiddenInView;
-      btn.classList.toggle("active", hiddenInView > 0);
-      btn.textContent = hiddenInView > 0 ? `🖥 Hosts (${shown}/${hosts.length})` : "🖥 Hosts";
-      const sig = hosts.join("");
-      if (sig !== _hostMenuSig) {
-        const items = hosts.map(h =>
-          `<label class="src-item${h === NO_HOST_FACET ? " src-item-none" : ""}"><input type="checkbox" class="host-filter" value="${escAttr(h)}"${DfirFacets.hosts.has(h) ? "" : " checked"}><span>${esc(h)}</span></label>`
-        ).join("");
-        menu.innerHTML = `<div class="src-menu-actions"><button type="button" class="src-menu-link" data-host-all="1">All</button><button type="button" class="src-menu-link" data-host-none="1">None</button></div>${items}`;
-        _hostMenuSig = sig;
-      } else {
-        menu.querySelectorAll(".host-filter").forEach(cb => { cb.checked = !DfirFacets.hosts.has(cb.value); });
-      }
-      return hiddenInView;
-    }
 
     // Event-density heatmap (#219) lives in public/js/dashboard-heatmap.js.
     // ── Forensic timeline rendering and its wiring (core machinery, not a feature) ──────
@@ -4764,9 +4588,9 @@
         : null;
       // These return the EFFECTIVE hidden count, so the "N of M events" label below agrees with the
       // buttons the analyst sees — see js/dashboard-facets.js.
-      const srcHidden = renderSourceFilter(ft, lensFt);
-      const originHidden = renderOriginFilter(ft);
-      const hostHidden = renderHostFilter(ft);
+      const srcHidden = typeof renderSourceFilter === "function" && renderSourceFilter(ft, lensFt);
+      const originHidden = typeof renderOriginFilter === "function" && renderOriginFilter(ft);
+      const hostHidden = typeof renderHostFilter === "function" && renderHostFilter(ft);
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
