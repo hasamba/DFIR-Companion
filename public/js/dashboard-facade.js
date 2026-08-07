@@ -319,6 +319,10 @@
     "invalidateTemplateCache",
     // Velociraptor triage. The accessors are stubbed too: two other modules call them, and a
     // missing triage module must not turn their renders into ReferenceErrors.
+    // Asset↔IoC graph. `initAssetGraph` is the sentinel.
+    "assetEnsureGV",
+    "renderAssetGraph",
+    "renderAssetList",
     // Login Graph. `initLoginGraph` is the sentinel.
     "loadLoginGraph",
     "scheduleLoginGraphReload",

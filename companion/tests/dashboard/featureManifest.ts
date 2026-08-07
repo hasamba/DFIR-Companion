@@ -901,6 +901,15 @@ export const FEATURES: Feature[] = [
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
   },
   {
+    // Asset↔IoC graph, split out of the Login Graph banner. Its expand handler came along; the
+    // .asset-type-toggle handlers beside it did not — those mutate the Compromised-assets
+    // section's state and only call in here afterwards.
+    file: "dashboard-asset-graph.js",
+    initializer: "initAssetGraph",
+    publish: ["initAssetGraph", "assetEnsureGV", "renderAssetGraph", "renderAssetList"],
+    private: ["assetGV", "ASSET_STYLE"],
+  },
+  {
     // Login Graph. The banner it shared with the asset↔IoC graph was split first — that graph's
     // helpers are used by the "Compromised assets" section next door. lgEl is published for the
     // same reason: a shared DOM helper, not state.
