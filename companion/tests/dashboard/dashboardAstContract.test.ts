@@ -692,7 +692,24 @@ describe("#477 — a mention is not a call", () => {
     ["setTimeout by name", `function h() { N(); }\nsetTimeout(h, 0);`],
     ["forEach by name", `function h() { N(); }\n[1].forEach(h);`],
     ["handed to a helper", `function h() { N(); }\nfunction ready(f) { f(); }\nready(h);`],
+    // Codex review of the first cut: an alias IS an invocation path. Dropping the `run -> live`
+    // relationship reported a genuinely-reached initializer as unreachable — a false alarm, which
+    // is the failure mode that teaches people to ignore the gate.
+    ["an invoked alias", `function live() { N(); }\nconst run = live;\nrun();`],
+    ["an invoked alias assigned later", `function live() { N(); }\nlet run;\nrun = live;\nrun();`],
   ])("still counts %s", (_label, src) => {
     expect(cb(src)).toBe(true);
+  });
+
+  // Also from that review, and the more dangerous direction: a property call only resolves to a
+  // page-level function through a GLOBAL ROOT. `api.dead()` is somebody else's method that happens
+  // to share the spelling, and counting it revived a function nothing invokes — reintroducing this
+  // very issue by a different door.
+  it.each([
+    ["an unrelated method of the same name", `function dead() { N(); }\napi.dead();`],
+    ["a computed member of a non-global", `function dead() { N(); }\napi["dead"]();`],
+    ["an alias that is never invoked", `function live() { N(); }\nconst run = live;`],
+  ])("does not count %s", (_label, src) => {
+    expect(cb(src)).toBe(false);
   });
 });

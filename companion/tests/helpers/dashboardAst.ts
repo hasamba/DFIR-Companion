@@ -1470,12 +1470,55 @@ function invocationEdges(n: ts.Node): string[] {
       let target: ts.Node = callee.expression;
       while (ts.isParenthesizedExpression(target)) target = target.expression;
       if (ts.isIdentifier(target)) names.push(target.text);
-    } else names.push(callee.name.text);
-  } else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    } else if (isGlobalRoot(callee.expression)) {
+      // ONLY THROUGH A GLOBAL ROOT. `window.live()` IS the page-level `live`; `api.dead()` is
+      // somebody else's method that merely shares the spelling, and counting it as an edge revives
+      // a function nothing invokes — reintroducing this very issue by a different door.
+      names.push(callee.name.text);
+    }
+  } else if (
+    ts.isElementAccessExpression(callee) &&
+    ts.isStringLiteralLike(callee.argumentExpression) &&
+    isGlobalRoot(callee.expression)
+  ) {
     names.push(callee.argumentExpression.text);
   }
   for (const a of n.arguments) if (ts.isIdentifier(a)) names.push(a.text);
   return names;
+}
+
+/** `window` · `globalThis` · `self` — the roots through which a page-level function is itself. */
+function isGlobalRoot(n: ts.Node): boolean {
+  let cur: ts.Node = n;
+  while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+  return ts.isIdentifier(cur) && GLOBAL_ROOTS.has(cur.text);
+}
+
+/**
+ * `const run = live;` — an alias is not an invocation, but invoking the alias invokes the target.
+ *
+ * Modelled as a graph edge from alias to target rather than as a call, which keeps both halves
+ * right: `const run = live; run();` reaches `live`, while `const run = live;` alone leaves both
+ * unreachable, because nothing ever adds `run` to a live unit's edges.
+ */
+function aliasEdge(n: ts.Node): { from: string; to: string } | null {
+  if (
+    ts.isVariableDeclaration(n) &&
+    ts.isIdentifier(n.name) &&
+    n.initializer &&
+    ts.isIdentifier(n.initializer)
+  ) {
+    return { from: n.name.text, to: n.initializer.text };
+  }
+  if (
+    ts.isBinaryExpression(n) &&
+    n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(n.left) &&
+    ts.isIdentifier(n.right)
+  ) {
+    return { from: n.left.text, to: n.right.text };
+  }
+  return null;
 }
 
 /**
@@ -1509,6 +1552,12 @@ export function callsByName(script: DashboardScript, name: string): boolean {
         }
       }
       for (const invoked of invocationEdges(c)) mentions.get(unit)?.add(invoked);
+      const alias = aliasEdge(c);
+      if (alias) {
+        const edges = mentions.get(alias.from) ?? new Set<string>();
+        edges.add(alias.to);
+        mentions.set(alias.from, edges);
+      }
       if (ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === name) {
         sites.push({ unit });
       }
