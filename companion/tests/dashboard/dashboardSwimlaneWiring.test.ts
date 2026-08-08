@@ -161,15 +161,26 @@ describe("initSwimlane wires every control it owns", () => {
     expect(fx.observed).toEqual([]);
   });
 
-  it("is safe to run twice, as a re-render would", () => {
-    // Double-wiring is the failure a `length > N` check reads as success. Each control must appear
-    // exactly twice after two inits — never once, which would mean a registration was skipped.
+  it("registers each control exactly once per run", () => {
+    // The duplicate direction, stated as a count rather than inferred from the toEqual above. A
+    // control wired twice in ONE pass gives the analyst a button that fires twice, and #475's
+    // lesson is that a `length > N` check reads that as more evidence of success.
     const { api, fx } = load();
-    init(api);
     init(api);
     const counts = new Map<string, number>();
     for (const l of fx.listeners) counts.set(l, (counts.get(l) ?? 0) + 1);
-    expect([...counts.keys()].sort()).toEqual([...WIRED].sort());
-    expect([...counts.values()].every((c) => c === 2)).toBe(true);
+    expect([...counts.entries()].filter(([, c]) => c !== 1)).toEqual([]);
   });
+
+  // NOT ASSERTED HERE: what a SECOND initSwimlane() should do.
+  //
+  // It currently re-registers all seventeen, because every handler is a fresh anonymous function
+  // and the browser keeps both — so one click would run twice. That is a latent defect in the
+  // feature, not in this suite, and the page calls the initializer exactly once (pinned by "the
+  // page calls initSwimlane exactly once, at load"), so nothing reaches it today.
+  //
+  // An earlier draft of this file asserted the double-wiring as if it were the contract, under a
+  // test named "is safe to run twice". That is worse than no coverage: it cements the bug, and the
+  // next person who makes the initializer idempotent sees a red suite and reverts the fix. Codex
+  // review caught it. Recorded rather than asserted, and filed separately.
 });
