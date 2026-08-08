@@ -1569,15 +1569,28 @@ export function callsByName(script: DashboardScript, name: string): boolean {
  * The same walk carries the locals bound to the document, because `const doc = document` renames
  * the root and the chain no longer bottoms out at the identifier this was looking for.
  *
+ * THE DOCUMENT ALSO TRAVELS AS AN ARGUMENT. `wire(document)` renames it across a call boundary
+ * exactly as `const doc = document` renames it within one, so entering a callee binds its
+ * parameters to what the caller passed. The same pass UNBINDS the others, because a parameter
+ * shadows whatever the caller called that name — `document` included, and taking the parameter in
+ * `function wire(document)` for the global was a false positive that would block a correct module.
+ *
+ * A MICROTASK IS LOAD-TIME WORK HERE. This note used to file `queueMicrotask` and promise
+ * callbacks alongside `setTimeout` under "correctly silent", and for a <head> script that is
+ * wrong: the microtask checkpoint drains when this script's job ends and BEFORE the parser
+ * resumes, so the body still does not exist. Only an ALREADY-RESOLVED promise counts —
+ * `fetch(…).then(…)` settles when the network does, which is not load.
+ *
  * WHAT IT DELIBERATELY DOES NOT CLAIM. "Called during load" is decided structurally, from a call
- * whose callee is a bare name declared in a scope already known to run at load — plus a function
- * handed to one of the Array methods that invoke synchronously. Everything indirect is out of
- * reach without a type system and is NOT reported: `table[key]()`, `(cond ? a : b)()`,
- * `fn.call(...)` through a variable, `eval`/`new Function`, a helper reached only as a property of
- * an object, and a document obtained from a function's return value. Deferred registration —
- * `addEventListener`, `setTimeout`, `queueMicrotask`, a promise callback — is not load-time work
- * and is correctly silent. A check that claimed those too would be guessing, and a gate that
- * guesses is how this issue got here.
+ * whose callee is a bare name declared in a scope already known to run at load, a function written
+ * in place or named at one of the Array methods that invoke synchronously, and a microtask
+ * callback. Everything indirect is out of reach without a type system and is NOT reported:
+ * `table[key]()`, `(cond ? a : b)()`, `fn.call(...)` through a variable, `eval`/`new Function`, a
+ * helper reached only as a property of an object, a DESTRUCTURED parameter, and a document
+ * obtained from a function's return value. `addEventListener` and `setTimeout` really do defer and
+ * stay silent. It errs the other way on one shape: a method NAMED like a synchronous Array one is
+ * taken at its word rather than by resolving its receiver, so a hand-rolled `forEach` that never
+ * calls back would be reported. Guessing at the rest is how this issue got here.
  */
 export function domAccessOutsideFunctions(script: DashboardScript): string[] {
   const sf = script.ast;
@@ -1606,11 +1619,18 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
     return false;
   };
 
-  /** Does this member chain bottom out at the document — directly, via a global, or via an alias? */
+  /**
+   * Does this member chain bottom out at the document — directly, via a global, or via an alias?
+   *
+   * `document` is not special-cased here; it is seeded into the root scope's alias set instead, so
+   * that the ONE set decides what the name means. That is what lets a parameter shadow it: a bare
+   * `document` was hardcoded as the global no matter what the enclosing signature had rebound it
+   * to, and no amount of unbinding at the call boundary could reach a literal in this comparison.
+   */
   const rootsAtDocument = (n: ts.Node, aliases: ReadonlySet<string>): boolean => {
     let cur: ts.Node = n;
     for (;;) {
-      if (ts.isIdentifier(cur)) return cur.text === "document" || aliases.has(cur.text);
+      if (ts.isIdentifier(cur)) return aliases.has(cur.text);
       if (isGlobalDocument(cur)) return true;
       if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) cur = cur.expression;
       else if (ts.isNonNullExpression(cur) || ts.isParenthesizedExpression(cur)) cur = cur.expression;
@@ -1638,8 +1658,9 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
   };
 
   // Array methods that invoke their callback SYNCHRONOUSLY, so `ids.forEach(wire)` at load scope
-  // runs wire at load. setTimeout/queueMicrotask/then are deliberately absent: those run after the
-  // parser is done, which is the whole point of deferring to them.
+  // runs wire at load. setTimeout stays deliberately absent: it runs after the parser is done,
+  // which is the whole point of deferring to it. queueMicrotask and a settled `then` do NOT get
+  // that far — see the microtask paragraph above — so they are handled just below.
   const SYNC_INVOKERS = new Set([
     "forEach",
     "map",
@@ -1652,6 +1673,59 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
     "reduce",
     "sort",
   ]);
+
+  const unwrap = (n: ts.Node): ts.Node => {
+    let cur = n;
+    while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+    return cur;
+  };
+
+  /**
+   * `Promise.resolve()` over a value that is provably not itself a promise.
+   *
+   * BOTH HALVES OF THAT MATTER. `Promise.resolve(p)` ADOPTS p, so the callback waits on whatever p
+   * waits on — `Promise.resolve(fetch(…)).then(wire)` runs wire when the network answers, not
+   * during the load drain. And only the FIRST link of the chain is knowable: past it, whether the
+   * drain continues depends on what each handler returned, and a handler returning a pending
+   * promise suspends the rest. Guessing there is what the note above refuses to do, so a deeper
+   * link is out of reach and stays silent.
+   */
+  const isSettledRoot = (n: ts.Node): boolean => {
+    const cur = unwrap(n);
+    if (!ts.isCallExpression(cur)) return false;
+    const callee = unwrap(cur.expression);
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "resolve" &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Promise" &&
+      cur.arguments.every((a) => ts.isStringLiteralLike(a) || ts.isNumericLiteral(a))
+    );
+  };
+
+  /**
+   * The arguments this call runs as functions before the parser reaches the body.
+   *
+   * Empty for everything else, including a settled chain's DEAD handlers: a chain that fulfils
+   * never enters `.catch`, nor the second argument of `.then`, and reporting either would block a
+   * module for guarding a load-time step the ordinary way.
+   */
+  const loadTimeCallbacks = (n: ts.CallExpression, scope: LoadScope): readonly ts.Expression[] => {
+    const callee = unwrap(n.expression);
+    const first = n.arguments.length ? [n.arguments[0]] : [];
+    // A module that declares its own `queueMicrotask` gets that one, not the platform's — and the
+    // local is entered by the ordinary named-call path just below, on its own merits.
+    if (ts.isIdentifier(callee))
+      return callee.text === "queueMicrotask" && !scope.fns.has("queueMicrotask") ? n.arguments : [];
+    if (!ts.isPropertyAccessExpression(callee)) return [];
+    if (SYNC_INVOKERS.has(callee.name.text)) return n.arguments;
+    if (callee.name.text === "queueMicrotask")
+      return ts.isIdentifier(callee.expression) && GLOBAL_ROOTS.has(callee.expression.text)
+        ? n.arguments
+        : [];
+    if (!isSettledRoot(callee.expression)) return [];
+    return callee.name.text === "then" || callee.name.text === "finally" ? first : [];
+  };
 
   /** What a scope knows: its callable local functions, and its locals bound to the document. */
   interface LoadScope {
@@ -1689,16 +1763,73 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
     return { fns, docs };
   };
 
-  const visited = new Set<ts.Node>();
+  // Keyed by the callee AND the documents its parameters were bound to, because the same helper
+  // called twice is two different questions: `wire(x); wire(document);` must not be skipped the
+  // second time on the strength of the first. The set of bindings is finite, so this terminates.
+  const visited = new Set<string>();
+  // WHERE EACH FUNCTION WAS DECLARED, because a callee sees the names ITS OWN declaration site
+  // sees. Handing it the caller's scope instead made the walk dynamically scoped, and the bug that
+  // buys is silence: `function call(document) { touch(); }` correctly unbinds the name for its own
+  // body, and that unbinding then followed the walk into `touch`, whose free `document` is the
+  // real global. A missed load-time access is the exact failure this whole check exists to catch.
+  const declScope = new Map<ts.Node, LoadScope>();
 
   const scan = (body: ts.Node, outer: LoadScope): void => {
     const scope = collect(body, outer);
-    const enter = (fn: ts.Node): void => {
-      if (visited.has(fn)) return; // and it stops mutual recursion walking forever
-      visited.add(fn);
-      const inner = (fn as ts.FunctionLikeDeclaration).body;
-      if (inner) scan(inner, scope);
+    // Functions declared in THIS body take this scope; ones inherited from an enclosing scope keep
+    // the association they were given there, since collect() never descends into a function body.
+    for (const fn of scope.fns.values()) if (!declScope.has(fn)) declScope.set(fn, scope);
+
+    /**
+     * Enter a callee in its own lexical scope, adjusted for what its parameters shadow and receive.
+     *
+     * `args` is the caller's argument list, or null when an INVOKER supplies the arguments — a
+     * forEach callback is handed an element and a microtask callback a resolved value, neither of
+     * which this can name. Null still shadows, because the parameters exist either way; it just
+     * declines to bind them, and in particular declines to apply a default the invoker overwrote.
+     */
+    const enter = (fn: ts.Node, args: ts.NodeArray<ts.Expression> | null): void => {
+      const decl = fn as ts.FunctionLikeDeclaration;
+      const inner = decl.body;
+      if (!inner) return;
+      // A function written in place is declared right here; a named one carries its own site.
+      const lexical = declScope.get(fn) ?? scope;
+      const fns = new Map(lexical.fns);
+      const docs = new Set(lexical.docs);
+      decl.parameters.forEach((p, i) => {
+        if (!ts.isIdentifier(p.name)) return; // a destructured parameter is out of reach
+        // SHADOWING FIRST, and unconditionally: inside the body this name is the parameter,
+        // whatever it meant outside. Without this, `function wire(document)` read as the global.
+        fns.delete(p.name.text);
+        docs.delete(p.name.text);
+        if (!args) return;
+        // Then ONLY the document itself propagates, on the same terms as a `const` alias, and
+        // resolved in the CALLER's scope because that is where the argument was written:
+        // `wire(document.getElementById(…))` hands over an element, and treating that as a
+        // document would report every legitimate capture the callee makes from it.
+        const passed = args[i] ?? p.initializer;
+        if (
+          passed &&
+          (ts.isIdentifier(passed) || isGlobalDocument(passed)) &&
+          rootsAtDocument(passed, scope.docs)
+        ) {
+          docs.add(p.name.text);
+        }
+      });
+      const key = `${decl.pos}:${decl.end}:${[...docs].sort().join(",")}`;
+      if (visited.has(key)) return; // and it stops mutual recursion walking forever
+      visited.add(key);
+      scan(inner, { fns, docs });
     };
+
+    /** The function a call would invoke: written in place, or a local named at the call site. */
+    const callbackArg = (arg: ts.Expression): ts.Node | null => {
+      const e = unwrap(arg);
+      if (ts.isFunctionExpression(e) || ts.isArrowFunction(e)) return e;
+      if (ts.isIdentifier(e)) return scope.fns.get(e.text) ?? null;
+      return null;
+    };
+
     const visit = (n: ts.Node): void => {
       const immediate = iifeBody(n);
       if (immediate) {
@@ -1708,11 +1839,10 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
       if (ts.isCallExpression(n)) {
         const callee = n.expression;
         if (ts.isIdentifier(callee) && scope.fns.has(callee.text))
-          enter(scope.fns.get(callee.text) as ts.Node);
-        if (ts.isPropertyAccessExpression(callee) && SYNC_INVOKERS.has(callee.name.text)) {
-          for (const arg of n.arguments) {
-            if (ts.isIdentifier(arg) && scope.fns.has(arg.text)) enter(scope.fns.get(arg.text) as ts.Node);
-          }
+          enter(scope.fns.get(callee.text) as ts.Node, n.arguments);
+        for (const arg of loadTimeCallbacks(n, scope)) {
+          const fn = callbackArg(arg);
+          if (fn) enter(fn, null); // null: the invoker chooses the arguments, and this cannot name them
         }
         ts.forEachChild(n, visit);
         return;
@@ -1733,10 +1863,14 @@ export function domAccessOutsideFunctions(script: DashboardScript): string[] {
       }
       ts.forEachChild(n, visit);
     };
-    ts.forEachChild(body, visit);
+    // AN EXPRESSION-BODIED ARROW HAS NO STATEMENTS, so descending into the body's children skips
+    // the body itself: `() => document.body` would have offered up only the two identifiers, and
+    // the access they spell was never examined. Judge such a body as the expression it is.
+    if (ts.isSourceFile(body) || ts.isBlock(body)) ts.forEachChild(body, visit);
+    else visit(body);
   };
 
-  scan(sf, { fns: new Map(), docs: new Set() });
+  scan(sf, { fns: new Map(), docs: new Set(["document"]) });
   return out;
 }
 

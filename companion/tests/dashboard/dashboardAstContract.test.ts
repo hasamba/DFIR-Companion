@@ -12,7 +12,7 @@
 // is as useless as one that flags nothing.
 
 import { describe, expect, it } from "vitest";
-import { duplicateBindings } from "./featureManifest.js";
+import { duplicateBindings, read } from "./featureManifest.js";
 import {
   buildCallGraph,
   callsByName,
@@ -356,6 +356,53 @@ describe("the module-scope DOM check follows an alias and a helper that runs at 
       `const wire = () => { document.getElementById("x").onclick = function () {}; };\nwire();`,
     ],
     ["a destructure off the document", `const { body } = document;\nvoid body;`],
+    // AN INLINE CALLBACK IS THE COMMON SPELLING, and only the named one was covered. The check
+    // entered `ids.forEach(wire)` by looking the name up in scope, so the function expression
+    // written in place — which every one of these modules prefers — walked straight past it.
+    [
+      "an inline function expression handed to a synchronous iteration",
+      `["a", "b"].forEach(function (id) { document.getElementById(id).onclick = function () {}; });`,
+    ],
+    [
+      "an inline arrow handed to a synchronous iteration",
+      `["a", "b"].forEach((id) => { document.getElementById(id).onclick = function () {}; });`,
+    ],
+    [
+      "an expression-bodied arrow, whose body is the access itself",
+      `const ids = ["a"].map((id) => document.getElementById(id));\nvoid ids;`,
+    ],
+    // THE DOCUMENT CAN ARRIVE AS AN ARGUMENT. Every alias the check knew was bound by a `const`;
+    // passing the same value across a call boundary renamed it somewhere the walk never looked.
+    [
+      "a parameter the module passed the document to",
+      `function wire(d) { d.getElementById("x").onclick = function () {}; }\nwire(document);`,
+    ],
+    [
+      "a parameter passed an alias of the document",
+      `const doc = document;\nfunction wire(d) { d.getElementById("x").onclick = function () {}; }\nwire(doc);`,
+    ],
+    [
+      "a parameter defaulted to the document",
+      `function wire(d = document) { d.getElementById("x").onclick = function () {}; }\nwire();`,
+    ],
+    // A MICROTASK IS LOAD-TIME WORK IN A <head> SCRIPT. The checkpoint drains when this script's
+    // job ends and BEFORE the parser resumes, so the body still does not exist — the docstring
+    // used to file these under "correctly silent" alongside setTimeout, which is a real defer.
+    [
+      "a queueMicrotask callback",
+      `queueMicrotask(function () { document.getElementById("x").onclick = function () {}; });`,
+    ],
+    [
+      "a callback on an already-resolved promise",
+      `Promise.resolve().then(function () { document.getElementById("x").onclick = function () {}; });`,
+    ],
+    // A SHADOWED NAME MUST NOT FOLLOW THE CALLER DOWNHILL. Unbinding `document` for the callee
+    // that rebound it leaked into every helper THAT callee went on to call, and those helpers see
+    // the real global — so the access below is load-time work the gate had stopped reporting.
+    [
+      "a sibling helper's own access, when the caller shadowed the name",
+      `function touch() { document.body.textContent = ""; }\nfunction call(document) { touch(); }\ncall(fakeDoc);`,
+    ],
   ])("reports %s", (_label, body) => {
     expect(hits(body), "a DOM touch that really happens at load went unreported").not.toEqual([]);
   });
@@ -397,11 +444,105 @@ describe("the module-scope DOM check follows an alias and a helper that runs at 
       "an element captured and used inside the same deferred function",
       `function init() { const doc = document; doc.getElementById("x").onclick = function () {}; }\nwindow.init = init;`,
     ],
+    // THE THREE FIXES BELOW MUST NOT COST THESE. Each shape the check newly learned has a
+    // neighbour that looks like it and is not, and reporting one of those blocks a correct module
+    // — the failure this gate is least able to survive, because the only way out is to weaken it.
+    [
+      "an inline callback on a deferred promise",
+      `fetch("/api").then(function () { document.getElementById("x").textContent = ""; });`,
+    ],
+    [
+      "an inline callback on a promise from a call that merely returns one",
+      `loadCase().then(function () { document.getElementById("x").textContent = ""; });`,
+    ],
+    [
+      "a parameter that received an ELEMENT rather than the document",
+      `function wire(el) { el.querySelector("a").textContent = ""; }\nwire(cachedPanel);`,
+    ],
+    [
+      "a parameter shadowing the document that received something else",
+      `function wire(document) { document.getElementById("x").textContent = ""; }\nwire(fakeDoc);`,
+    ],
+    // WHICH HANDLER ACTUALLY RUNS. A settled chain fulfils, so the rejection side is dead code,
+    // and reporting it would block the ordinary way these modules guard a load-time step.
+    [
+      "a catch handler on a chain that fulfils",
+      `Promise.resolve().catch(function () { document.getElementById("x").textContent = ""; });`,
+    ],
+    [
+      "the rejection handler of a chain that fulfils",
+      `Promise.resolve().then(ok, function () { document.getElementById("x").textContent = ""; });`,
+    ],
+    // AND WHETHER THE CHAIN IS SETTLED AT ALL. `Promise.resolve(p)` adopts p, so the callback waits
+    // on p; and past the first link, whether the drain continues depends on what each handler
+    // returned, which is not knowable here.
+    [
+      "a callback on a promise that merely wraps a pending one",
+      `Promise.resolve(fetch("/api")).then(function () { document.getElementById("x").textContent = ""; });`,
+    ],
+    [
+      "a callback further down a resolved chain, where a handler may have returned a promise",
+      `Promise.resolve(1).then(step).then(() => { document.getElementById("x").textContent = ""; });`,
+    ],
+    // AN INVOKER SUPPLIES ITS OWN ARGUMENTS, so a default never fires: forEach hands the callback
+    // an element, and `d` is that element rather than the document its signature falls back to.
+    [
+      "a default the iteration's own argument replaces",
+      `["x"].forEach((d = document) => { d.body.textContent = ""; });`,
+    ],
+    [
+      "a local queueMicrotask that never calls back",
+      `function queueMicrotask(cb) { void cb; }\nqueueMicrotask(() => { document.getElementById("x").textContent = ""; });`,
+    ],
   ])("says nothing about %s", (_label, body) => {
     expect(
       hits(body),
       "flagged work that does not run at load — the gate would block a correct module",
     ).toEqual([]);
+  });
+});
+
+// AND THE SAME SHAPES IN A REAL FILE. Everything above is a snippet, and a snippet cannot show
+// that the production assertion in dashboardFeatureLifecycle.test.ts would have caught the
+// regression — a helper can be right about `wrap(body)` and still be reached differently once it
+// is walking a 400-line IIFE with its own helpers and captures. So each shape is injected at the
+// load scope of a module the suite really guards, with the clean file as the control.
+describe("the module-scope DOM check catches these in a module the suite really guards", () => {
+  const MODULE = "dashboard-tickets.js";
+  /** Splice a line in just inside the module's IIFE, which is where load-time work would sit. */
+  const inject = (src: string, line: string): string => {
+    const brace = src.indexOf("{", src.indexOf("(function"));
+    return `${src.slice(0, brace + 1)}\n${line}\n${src.slice(brace + 1)}`;
+  };
+  const offenders = (src: string) => domAccessOutsideFunctions(scriptFromSource(MODULE, src));
+
+  it.each([
+    [
+      "an inline arrow in a synchronous iteration",
+      `["a"].forEach((id) => { document.getElementById(id).onclick = null; });`,
+    ],
+    ["an expression-bodied arrow", `const _p = ["a"].map((id) => document.getElementById(id)); void _p;`],
+    [
+      "the document handed across a call",
+      `function _w(d) { d.getElementById("x").onclick = null; }\n_w(document);`,
+    ],
+    ["a microtask", `queueMicrotask(function () { document.getElementById("x").onclick = null; });`],
+    [
+      "a settled promise callback",
+      `Promise.resolve().then(function () { document.getElementById("x").onclick = null; });`,
+    ],
+  ])("catches %s", async (_label, line) => {
+    const src = await read(MODULE);
+    expect(offenders(src), `${MODULE} is not clean, so this mutation proves nothing`).toEqual([]);
+    expect(offenders(inject(src, line)), "the mutation ran at load and the gate stayed green").not.toEqual(
+      [],
+    );
+  });
+
+  it("and still says nothing when that same work is deferred to a fetch", async () => {
+    const src = await read(MODULE);
+    const line = `fetch("/api/x").then(function () { document.getElementById("x").onclick = null; });`;
+    expect(offenders(inject(src, line))).toEqual([]);
   });
 });
 
