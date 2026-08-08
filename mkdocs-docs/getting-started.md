@@ -8,7 +8,7 @@ Choose the method that fits your setup:
 
     Recommended for development or if you want to customise prompts.
 
-    1. Install [Node.js](https://nodejs.org/) **22.5 or later** (required by the indexed case store).
+    1. Install [Node.js](https://nodejs.org/) **22.19 or later** (required by the indexed case store).
     2. Clone or download the repository.
     3. Run:
        ```bash

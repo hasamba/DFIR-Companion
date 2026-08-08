@@ -678,7 +678,7 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 ## Quick start
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **22.5 or later** (which ships with `npm`).
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.19 or later** (which ships with `npm`).
 > Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
 > Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
 > cases. The portable build bundles a compatible runtime.
