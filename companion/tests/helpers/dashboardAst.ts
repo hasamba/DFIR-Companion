@@ -1427,6 +1427,58 @@ function invocableName(fn: ts.Node): string | null {
 const TOP_LEVEL_UNIT = "<top-level>";
 
 /**
+ * The names this node actually INVOKES or hands to something that will (#477).
+ *
+ * callsByName() used to draw its reachability edges from any identifier READ, which answers "is
+ * this name mentioned here" — a different question, and the wrong one. `void dead;` mentions
+ * `dead`, so a function nothing invokes was marked live and the initializer inside it counted as
+ * reached. A feature could be fully unwired — no listeners, no fetches, no published entry point —
+ * with the suite green.
+ *
+ * So an edge now needs a real invocation:
+ *   - a call in any spelling the page uses: `f()` · `(f)()` · `f.call(…)` · `f.apply(…)` ·
+ *     `window.f()` · `window["f"]()`
+ *   - a hand-off BY NAME as a call argument, which is how every registration spells it:
+ *     `el.addEventListener("click", h)` · `setTimeout(h, 0)` · `xs.forEach(h)` · `ready(h)`
+ *   - an event-handler property assignment: `el.onclick = h`
+ *
+ * A bare read that is none of these — `void dead`, `const x = dead`, `console.log(dead)` — no
+ * longer creates one. The last of those is the honest limit of this: a name passed to ANY call is
+ * treated as invocable, because distinguishing `ready(h)` from `console.log(h)` needs to know what
+ * the callee does with it. Erring that way keeps the false alarms out of a gate whose whole value
+ * is that people trust it when it fires.
+ */
+function invocationEdges(n: ts.Node): string[] {
+  // `el.onclick = handler` registers it; the browser calls it later.
+  if (
+    ts.isBinaryExpression(n) &&
+    n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isPropertyAccessExpression(n.left) &&
+    /^on[a-z]/.test(n.left.name.text) &&
+    ts.isIdentifier(n.right)
+  ) {
+    return [n.right.text];
+  }
+  if (!ts.isCallExpression(n)) return [];
+  const names: string[] = [];
+  let callee: ts.Node = n.expression;
+  while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+  if (ts.isIdentifier(callee)) names.push(callee.text);
+  else if (ts.isPropertyAccessExpression(callee)) {
+    // `f.call(…)` / `f.apply(…)` — the invoked function is the OBJECT, not the property.
+    if (callee.name.text === "call" || callee.name.text === "apply") {
+      let target: ts.Node = callee.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) names.push(target.text);
+    } else names.push(callee.name.text);
+  } else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    names.push(callee.argumentExpression.text);
+  }
+  for (const a of n.arguments) if (ts.isIdentifier(a)) names.push(a.text);
+  return names;
+}
+
+/**
  * Does this script make a REACHABLE call to `name`?
  *
  * A comment mentioning it never counted. Neither, now, do the two shapes review used to walk past
@@ -1456,7 +1508,7 @@ export function callsByName(script: DashboardScript, name: string): boolean {
           if (!mentions.has(next)) mentions.set(next, new Set<string>());
         }
       }
-      if (ts.isIdentifier(c) && isValueRef(c)) mentions.get(unit)?.add(c.text);
+      for (const invoked of invocationEdges(c)) mentions.get(unit)?.add(invoked);
       if (ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === name) {
         sites.push({ unit });
       }
