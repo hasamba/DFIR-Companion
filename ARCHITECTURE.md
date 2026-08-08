@@ -235,19 +235,38 @@ belongs in a boundary ledger pretending to be a small fix:
    inline JS and CSS as separate shrink-only budgets. The markup itself is deliberately not measured
    — ~3,000 lines of HTML is fine; a 16,000-line program inside a markup file is not.
 
-   **`check:imports` does not, in practice, cover the extracted modules.** It includes `public/js/**`
-   so that "the first cycle between extracted feature modules fails a PR", but all 26 modules #415
-   has produced are classic scripts publishing onto `window` — none uses `import`/`export`, so the
-   regex-based graph sees 26 nodes and 0 edges. The real graph is ~35 edges carried by globals. That
-   pattern is deliberate (a feature must survive a sibling 404; see `public/js/dashboard-facade.js`),
-   but it routes every inter-module dependency around the gate. Tracked in #482.
+   **`check:imports` does not cover the extracted modules, and no longer claims to.** It includes
+   `public/js/**` so that "the first cycle between extracted feature modules fails a PR", but all
+   138 modules #415 has produced are classic scripts publishing onto `window` — none uses
+   `import`/`export`, so the regex-based graph sees 138 nodes and 0 edges. That pattern is
+   deliberate (a feature must survive a sibling 404; see `public/js/dashboard-facade.js`), and it
+   routes every inter-module dependency around that gate. The root stays for the pre-#415 ES modules
+   under `public/js`, which do import.
+
+   The ~463-edge global graph is governed instead by
+   `companion/tests/dashboard/dashboardLoadOrder.test.ts`. **It does not look for cycles**, because
+   that question is borrowed from ES-module semantics and does not transfer: here every cross-module
+   name resolves through `window` at call time, so two features whose handlers call each other are
+   fine, and 32 such cycles exist today, harmlessly. It asks about ORDER instead — whether a module
+   calls a sibling's published name *during load*, before that sibling's `<script>` tag has run.
+   Unguarded that throws inside the load-time IIFE and takes the rest of the module with it; guarded
+   with `typeof` it is skipped in silence and the feature is simply never there. That is the blank
+   page `check:imports` was reaching for.
+
+   Standing it up found one: `dashboard-ioc-provenance.js` probed `window.DfirFacade` at its own
+   load, ten module tags before the facade publishes it, so the guard was always false and its
+   "feature unavailable" notice could never appear. That probe now sits with its siblings in the
+   inline script, which runs after every module. With it fixed the count is zero, so the gate is
+   hard and unbaselined. Closed by #482.
 
    It is **not** in the domain map above, and that is the remaining gap: the layer/tier rules cover
    `companion/src` only. Two extraction patterns now exist and they are not interchangeable:
-   `public/js/hunt-workbench.js` and five siblings are ES modules with direct vitest coverage, while
-   the 26 `dashboard-*.js` feature modules are classic scripts whose contract is enforced by the
-   manifest gate in `companion/tests/dashboard/dashboardFeatureModules.test.ts`. Nine of those ten
-   tier-3 features have no behavioural test of their own — the gap #479 tracks.
+   `public/js/hunt-workbench.js` and five siblings are ES modules with direct vitest coverage —
+   those six predate #415 and are **not** what the extraction produces — while the 138
+   `dashboard-*.js` feature modules are classic scripts whose contract is enforced by the manifest
+   gate in `companion/tests/dashboard/dashboardFeatureModules.test.ts` and whose load order is
+   enforced by `dashboardLoadOrder.test.ts`. Most have no behavioural test of their own; the
+   swimlane's execution fixture (`dashboardSwimlaneWiring.test.ts`, #479) is the pattern for one.
 
 ## Migration
 

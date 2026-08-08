@@ -31,10 +31,20 @@ import { fileURLToPath } from "node:url";
 
 const COMPANION = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(COMPANION, "src");
-// The dashboard's extracted feature modules. They import NOTHING from each other today, so this
-// root contributes zero cycles — which is exactly why it is wired in now. As #384 pulls features
-// out of dashboard.html's 19k lines of inline script, these modules start importing one another,
-// and the first cycle should fail a PR rather than be discovered later from a blank page.
+// The dashboard's extracted feature modules. This root was wired in on the expectation that as
+// features came out of dashboard.html they would start importing one another, so the first cycle
+// would fail a PR. THAT IS NOT THE PATTERN #415 SETTLED ON: all of them are classic scripts
+// publishing onto `window` so a feature survives a sibling 404 (see public/js/dashboard-facade.js),
+// and 138 modules later not one uses import/export. A graph resolved by regex over import
+// statements therefore sees 138 nodes and 0 edges, and this root cannot fail for them. It stays
+// because the pre-#415 ES modules under public/js DO import, and a cycle among those is still
+// worth catching — but it governs those, not the extracted features.
+//
+// The extracted features' real graph — ~463 edges carried by globals — is governed instead by
+// tests/dashboard/dashboardLoadOrder.test.ts, which asks the question that actually bites here:
+// not "is there a cycle" (harmless when every name resolves through `window` at call time) but
+// "does a module call a sibling's name during load, before that sibling's <script> has run". That
+// is the blank page this comment used to warn about. See #482.
 const PUBLIC_JS = resolve(COMPANION, "..", "public", "js");
 const BASELINE = join(COMPANION, "scripts", "import-cycles.json");
 
