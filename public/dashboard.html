@@ -4625,7 +4625,7 @@
       const reader = new FileReader();
       reader.onload = () => {
         const uri = String(reader.result || "");
-        if (!setReportLogo(uri)) { st.textContent = "logo too large (max ~750 KB) — use a smaller image"; return; }
+        if (setReportLogo(uri) === false) { st.textContent = "logo too large (max ~750 KB) — use a smaller image"; return; }
         st.textContent = "logo loaded — click Save case details"; setTimeout(() => st.textContent = "", 3000);
       };
       reader.onerror = () => { st.textContent = "could not read that image file"; };
