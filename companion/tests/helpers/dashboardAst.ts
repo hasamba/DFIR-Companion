@@ -1952,18 +1952,91 @@ export function reachableFrom(graph: Map<string, Set<string>>, start: Iterable<s
 // exists? Shape-independent, and scoped to load time — the ~600 references from inside functions
 // are contained to one interaction and are not this gate's business.
 
-/** Visit every node that RUNS when the script loads: everything outside a function, plus IIFE bodies. */
+/**
+ * Every function this script declares under a name, so a load-time call can be followed into one.
+ *
+ * First declaration wins: a redeclared name is a different bug, and either body answers "does
+ * load-time code reach a reference to a missing module" the same way.
+ */
+function declaredFunctionsOf(script: DashboardScript): Map<string, ts.Node> {
+  const out = new Map<string, ts.Node>();
+  for (const f of functionsOf(script)) {
+    if (f.name.startsWith("<anonymous")) continue;
+    if (!out.has(f.name)) out.set(f.name, f.node);
+  }
+  return out;
+}
+
+/**
+ * The names a call expression could invoke, in every spelling the page actually uses.
+ *
+ * `f()` · `(f)()` · `f.call(…)` · `f.apply(…)` · `window.f()` · `window["f"]()`, plus any helper
+ * handed off BY NAME as an argument — `ready(initTicketIntegrations)` invokes it as surely as
+ * writing the call. Over-collecting is safe: a name that is not a declared function is dropped by
+ * the caller, so an extra spelling costs one map lookup that misses.
+ */
+function invokedNames(n: ts.CallExpression): string[] {
+  const names: string[] = [];
+  let callee: ts.Node = n.expression;
+  while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+  if (ts.isIdentifier(callee)) names.push(callee.text);
+  else if (ts.isPropertyAccessExpression(callee)) {
+    // `f.call(…)` / `f.apply(…)` — the invoked function is the OBJECT, not the property.
+    if (callee.name.text === "call" || callee.name.text === "apply") {
+      let target: ts.Node = callee.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) names.push(target.text);
+    } else names.push(callee.name.text);
+  } else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    names.push(callee.argumentExpression.text);
+  }
+  for (const a of n.arguments) if (ts.isIdentifier(a)) names.push(a.text);
+  return names;
+}
+
+/**
+ * Visit every node that RUNS when the script loads — everything outside a function, IIFE bodies,
+ * and TRANSITIVELY the body of any declared function those reach by calling it.
+ *
+ * AN IIFE RUNS AT LOAD. Six of the page's load-time blocks are `(() => { … })()`, and treating any
+ * enclosing function as "contained" would have hidden every one of them — the same mistake
+ * domAccessOutsideFunctions() above had to correct.
+ *
+ * SO DOES AN ORDINARY HELPER THAT LOAD-TIME CODE CALLS (#476). Stopping at the syntactic region left
+ * exactly one hop invisible, and one hop was enough to ship a page that dies: `renderExcludeChips()`
+ * held a bare `DfirTimelineView` reference and a top-level statement called it, so blocking that
+ * module threw a ReferenceError that aborted the rest of the inline script while every gate stayed
+ * green. Rewriting a guarded call as `function boot() { … } boot();` reproduced it exactly.
+ *
+ * The fixpoint is the shape calleesInsideLoops() already uses for the loop checker, whose own
+ * contract test is "no function reachable from a loop through ANY number of hops commits". A
+ * function merely DEFINED at load is still not this hazard — it runs later, on an event, where a
+ * throw is contained to one interaction. Being CALLED is the property that matters.
+ */
 function walkLoadTime(script: DashboardScript, fn: (n: ts.Node) => void): void {
-  // AN IIFE RUNS AT LOAD. Six of the page's load-time blocks are `(() => { … })()`, and treating
-  // any enclosing function as "contained" would have hidden every one of them — the same mistake
-  // domAccessOutsideFunctions() above had to correct.
   const iifeBodyOf = (n: ts.CallExpression): ts.Node | null => {
     let callee: ts.Node = n.expression;
     while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
-    return ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) ? callee.body : null;
+    if (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) return callee.body;
+    // `(function(){ … }).call(this)` invokes it just as directly as `(function(){ … })()`.
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      (callee.name.text === "call" || callee.name.text === "apply")
+    ) {
+      let target: ts.Node = callee.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isFunctionExpression(target) || ts.isArrowFunction(target)) return target.body;
+    }
+    return null;
   };
+
+  const declared = declaredFunctionsOf(script);
+  const pending: string[] = [];
+  const entered = new Set<string>();
+
   const go = (n: ts.Node): void => {
     if (ts.isCallExpression(n)) {
+      for (const name of invokedNames(n)) if (declared.has(name)) pending.push(name);
       const body = iifeBodyOf(n);
       if (body) {
         fn(n);
@@ -1977,7 +2050,18 @@ function walkLoadTime(script: DashboardScript, fn: (n: ts.Node) => void): void {
     fn(n);
     ts.forEachChild(n, go);
   };
+
   ts.forEachChild(script.ast, go);
+
+  // Fixpoint over what load-time code calls. `entered` also breaks recursion, direct or mutual.
+  while (pending.length > 0) {
+    const name = pending.shift() as string;
+    if (entered.has(name)) continue;
+    entered.add(name);
+    // Walking the DECLARATION's children rather than the body alone keeps default parameter values
+    // in scope — `function f(x = DfirTimelineView.id) {}` evaluates that default on every call.
+    ts.forEachChild(declared.get(name) as ts.Node, go);
+  }
 }
 
 /**
