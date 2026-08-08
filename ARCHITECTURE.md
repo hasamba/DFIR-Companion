@@ -225,15 +225,20 @@ belongs in a boundary ledger pretending to be a small fix:
    `velociraptorApi.ts` is a raw HTTP client with no domain knowledge (Platform). Until it is split
    into `integrations/push/` and `integrations/clients/`, one direction of every
    `analysis ↔ integrations` edge has to be ledgered whichever layer the directory is assigned.
-2. **`public/dashboard.html` is gated and half decomposed.** Its inline JavaScript is 16,634 lines,
-   down from 19,203 when #384 wired the gates in — still larger than `pipeline.ts` and `server.ts`
-   combined, and still 14,634 lines above its 2,000-line target. The CSS half is done: 3,234 lines
-   of `<style>` became `public/css/dashboard-*.css`, leaving 4 lines that are a DOM node the runtime
-   writes into rather than a stylesheet. That file is now its own row above, 4× over its own limit.
+2. **`public/dashboard.html` is decomposed, and all three of its targets are met.** Its inline
+   JavaScript is 1,964 lines against the 2,000-line target, down from 19,203 when #384 wired the
+   gates in. The CSS half finished first: 3,234 lines of `<style>` became `public/css/dashboard-*.css`
+   — since split by concern into seven files, the largest 488 lines — leaving 4 lines that are a DOM
+   node the runtime writes into rather than a stylesheet. #415 is closed.
+
+   What remains inline is the part that was never the target: the page's own wiring, `esc`/`escAttr`
+   (pinned, at 694 and 263 call sites), and the shared keys like `targetKey` and `investigatorName`
+   that belong to no single feature. 137 feature modules under `public/js/` hold the rest.
 
    `check:size` holds `public/js/**.js` to the same 800-line limit and freezes `dashboard.html`'s
-   inline JS and CSS as separate shrink-only budgets. The markup itself is deliberately not measured
-   — ~3,000 lines of HTML is fine; a 16,000-line program inside a markup file is not.
+   inline JS and CSS as separate shrink-only budgets — shrink-only, so meeting the target locks it
+   in rather than reopening it as headroom. The markup itself is deliberately not measured — ~3,000
+   lines of HTML is fine; a 16,000-line program inside a markup file was not.
 
    **`check:imports` does not cover the extracted modules, and no longer claims to.** It includes
    `public/js/**` so that "the first cycle between extracted feature modules fails a PR", but all
@@ -321,7 +326,7 @@ the issue that owns the work, so no number is a blocker without an assignee:
 |---|---|---|---|
 | `analysis/pipeline.ts` | 800 | **591 — met** | [#418](https://github.com/hasamba/DFIR-Companion/issues/418) |
 | `server.ts` | 800 | **623 — met** | [#416](https://github.com/hasamba/DFIR-Companion/issues/416) |
-| `public/dashboard.html` inline JS | 2,000 | 16,634 | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
+| `public/dashboard.html` inline JS | 2,000 | 1,964 — met | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/css/dashboard-*.css` (8 parts) | 800 | **489 max — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | Files in `src/` over 800 lines | 0 | 11 | the ledger below |

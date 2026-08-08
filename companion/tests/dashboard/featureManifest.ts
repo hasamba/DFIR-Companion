@@ -1034,6 +1034,44 @@ export const FEATURES: Feature[] = [
     private: ["_jobsCache", "_jobsMenuShape"],
   },
   {
+    // The thread index and the open-modal target stay private; dashboard-render.js reads every
+    // thread through eachCommentList() rather than the Map, mirroring tagsForTarget().
+    file: "dashboard-comments.js",
+    publish: [
+      "commentChip",
+      "loadComments",
+      "openCommentModal",
+      "closeCommentModal",
+      "renderCommentModal",
+      "postComment",
+      "deleteComment",
+      "eachCommentList",
+    ],
+    private: ["commentsByTarget", "commentTarget"],
+  },
+  {
+    // The unload flush registers in an initializer, not at load: this is a <head> script and the
+    // test harness that runs these modules has no window listener API either, so registering on
+    // the way down would make the module unloadable rather than merely early.
+    file: "dashboard-confidence-control.js",
+    initializer: "initConfidenceControl",
+    publish: ["initConfidenceControl", "loadConfidenceControl", "saveConfidenceControl"],
+    private: ["confSaveTimer", "confPending"],
+  },
+  {
+    // setReportLogo is the operation the page's file picker calls; rmLogo and its size cap never
+    // leave the closure, which is what stopped the upload handler owning half this feature.
+    file: "dashboard-report-meta.js",
+    publish: ["fillReportMeta", "loadReportMeta", "saveReportMeta", "setReportLogo"],
+    private: ["rmLogo", "LOGO_MAX_LEN"],
+  },
+  {
+    file: "dashboard-activity-log.js",
+    initializer: "initActivityLog",
+    publish: ["loadActivityLog", "initActivityLog"],
+    private: ["ACTIVITY_CATEGORY_LABELS", "activityFilterValue"],
+  },
+  {
     // Analyst triage tags. Two escapes crossing in opposite directions: bulk-select WROTE tagTarget
     // (so it gets an operation), and two modules READ tagsByTarget in two different ways (so they
     // get the two questions they ask, not the Map).

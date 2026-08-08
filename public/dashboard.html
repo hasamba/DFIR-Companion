@@ -301,6 +301,10 @@
   <script src="/js/dashboard-kill-chain.js"></script>
   <script src="/js/dashboard-jobs.js"></script>
   <script src="/js/dashboard-tags.js"></script>
+  <script src="/js/dashboard-comments.js"></script>
+  <script src="/js/dashboard-confidence-control.js"></script>
+  <script src="/js/dashboard-report-meta.js"></script>
+  <script src="/js/dashboard-activity-log.js"></script>
   <script src="/js/dashboard-theme.js"></script>
   <script src="/js/dashboard-wizard-steps.js"></script>
   <script src="/js/dashboard-asset-graph.js"></script>
@@ -3868,104 +3872,7 @@
       }).catch(() => {});
     }
 
-    // Findings min-confidence display floor (#226) — a per-case setting so it survives a page
-    // reload, unlike a plain in-browser filter. Loaded on case connect; saved (debounced) on change.
-    // A pending debounced save is flushed on unload (beforeunload/pagehide) via `keepalive: true` —
-    // otherwise a reload shortly after typing (well within the 500ms debounce) would cancel the
-    // in-flight timer and silently drop the edit, reverting to the last-saved value.
-    let confSaveTimer = null;
-    let confPending = null;   // { caseId, minConfidence } once a keystroke schedules a save, else null
-    function putConfidenceControl(caseId, minConfidence, opts) {
-      return fetch(`/cases/${caseId}/confidence-control`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minConfidence: minConfidence > 0 ? minConfidence : null }),
-        ...opts,
-      });
-    }
-    function flushConfidenceControl() {
-      if (!confPending) return;
-      clearTimeout(confSaveTimer);
-      const { caseId, minConfidence } = confPending;
-      confPending = null;
-      putConfidenceControl(caseId, minConfidence, { keepalive: true }).catch(() => {});
-    }
-    window.addEventListener("beforeunload", flushConfidenceControl);
-    window.addEventListener("pagehide", flushConfidenceControl);
-    function loadConfidenceControl(caseId) {
-      fetch(`/cases/${caseId}/confidence-control`).then(r => r.json()).then(c => {
-        document.getElementById("confFilter").value = c.minConfidence ?? 0;
-        if (DfirState.lastState()) typeof render === "function" && render(DfirState.lastState());
-      }).catch(() => {});
-    }
-    function saveConfidenceControl(caseId, minConfidence) {
-      clearTimeout(confSaveTimer);
-      confPending = { caseId, minConfidence };
-      confSaveTimer = setTimeout(() => {
-        confPending = null;
-        putConfidenceControl(caseId, minConfidence).catch(() => {});
-      }, 500);
-    }
 
-    // Company logo is uploaded client-side, held as a base64 data URI, and sent inline with
-    // the rest of report-meta (the server re-validates: raster-only, length-capped).
-    let rmLogo = "";                       // current company-logo data URI, or ""
-    const LOGO_MAX_LEN = 1000000;          // mirror reportMeta.ts LOGO_MAX_LEN (~1 MB text)
-    function renderLogoPreview() {
-      const wrap = document.getElementById("rm-logoPreviewWrap");
-      const img = document.getElementById("rm-logoPreview");
-      if (rmLogo) { img.src = rmLogo; wrap.style.display = "flex"; }
-      else { img.removeAttribute("src"); wrap.style.display = "none"; }
-    }
-
-    function fillReportMeta(m) {
-      const v = (id, val) => document.getElementById(id).value = val || "";
-      v("rm-companyName", m.companyName);
-      rmLogo = m.companyLogo || ""; renderLogoPreview();
-      v("rm-organization", m.organization); v("rm-incidentId", m.incidentId);
-      v("rm-investigators", (m.investigators || []).join("\n"));
-      v("rm-reviewer", m.reviewer); v("rm-incidentManager", m.incidentManager);
-      v("rm-restrictions", m.restrictions);
-      document.getElementById("rm-includeDisclaimer").checked = m.includeDisclaimer !== false;
-      v("rm-intendedAudience", m.intendedAudience); v("rm-executiveSummary", m.executiveSummary);
-      v("rm-businessImpact", m.businessImpact); v("rm-investigationLimitations", m.investigationLimitations);
-      v("rm-investigationGoals", m.investigationGoals); v("rm-conclusions", m.conclusions);
-      v("rm-recommendations", (m.recommendations || []).join("\n"));
-      document.getElementById("rm-revisions").value = rowsToText(m.revisions, ["version", "date", "author", "comments"]);
-      document.getElementById("rm-distribution").value = rowsToText(m.distribution, ["name", "role", "method"]);
-      document.getElementById("rm-glossary").value = rowsToText(m.glossary, ["term", "explanation"]);
-    }
-
-    function loadReportMeta(caseId) {
-      fetch(`/cases/${caseId}/report-meta`).then(r => r.json()).then(fillReportMeta).catch(() => {});
-    }
-
-    function saveReportMeta() {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const g = (id) => document.getElementById(id).value;
-      const body = {
-        companyName: g("rm-companyName"), companyLogo: rmLogo,
-        organization: g("rm-organization"), incidentId: g("rm-incidentId"),
-        investigators: linesToArray(g("rm-investigators")),
-        reviewer: g("rm-reviewer"), incidentManager: g("rm-incidentManager"),
-        restrictions: g("rm-restrictions"),
-        includeDisclaimer: document.getElementById("rm-includeDisclaimer").checked,
-        intendedAudience: g("rm-intendedAudience"), executiveSummary: g("rm-executiveSummary"),
-        businessImpact: g("rm-businessImpact"), investigationLimitations: g("rm-investigationLimitations"),
-        investigationGoals: g("rm-investigationGoals"), conclusions: g("rm-conclusions"),
-        recommendations: linesToArray(g("rm-recommendations")),
-        revisions: parseRows(g("rm-revisions"), ["version", "date", "author", "comments"]),
-        distribution: parseRows(g("rm-distribution"), ["name", "role", "method"]),
-        glossary: parseRows(g("rm-glossary"), ["term", "explanation"]),
-      };
-      const st = document.getElementById("rmStatus");
-      st.textContent = "saving…";
-      fetch(`/cases/${caseId}/report-meta`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(m => { fillReportMeta(m); st.textContent = "saved ✓"; setTimeout(() => st.textContent = "", 2500); })
-        .catch(e => st.textContent = "save failed: " + e.message + " — restart the companion server if this 404s");
-    }
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
     // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,
@@ -4036,10 +3943,11 @@
     // Login Graph (cytoscape) lives in public/js/dashboard-login-graph.js.
     // Asset↔IoC graph lives in public/js/dashboard-asset-graph.js.
     // --- Investigator comments (collaboration) -----------------------------------
-    let commentsByTarget = new Map();   // "type:id" -> [comment]
-    let commentTarget = null;           // currently-open { type, id } in the modal
 
     const targetKey = (type, id) => type + ":" + String(id);
+    // Shared by nine modules, so it belongs to none of them — it stays here beside targetKey
+    // rather than travelling with the comment threads that happened to declare it (#415).
+    const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
     // Inline SVG icon set — replaces emoji glyphs in shared chip/action buttons so they render
     // consistently across platforms (Windows renders 🏷 as a faint mono glyph without the FE0F
     // variation selector) and read as deliberate UI rather than decoration.
@@ -4062,65 +3970,6 @@
     const ICON_TARGET = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15" stroke-linecap="round"/></svg>';
     const ICON_DOWNLOAD = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v7.5M5 6.8 8 9.8l3-3"/><path d="M3 12.5h10"/></svg>';
 
-    function commentChip(type, id) {
-      const list = commentsByTarget.get(targetKey(type, id)) || [];
-      return `<button class="comment-chip${list.length ? " has" : ""}" data-ct="${escAttr(type)}" data-ci="${escAttr(String(id))}" `
-        + `title="Comments — collaborate with other investigators">${ICON_COMMENT}${list.length ? " " + list.length : ""}</button>`;
-    }
-    const investigatorName = () => (localStorage.getItem("dfir.investigator") || "").trim();
-    function loadComments(caseId) {
-      fetch(`/cases/${caseId}/comments`).then(r => r.json()).then(list => {
-        commentsByTarget = new Map();
-        (list || []).forEach(c => {
-          const k = targetKey(c.targetType, c.targetId);
-          let arr = commentsByTarget.get(k); if (!arr) { arr = []; commentsByTarget.set(k, arr); }
-          arr.push(c);
-        });
-        if (DfirState.lastState()) typeof render === "function" && render(DfirState.lastState());          // refresh chip counts
-        refreshSuperRows();                          // super-timeline rows share the comment chips
-        if (commentTarget) renderCommentModal();    // refresh an open thread (live collaboration)
-      }).catch(() => {});
-    }
-
-    function openCommentModal(type, id) {
-      commentTarget = { type, id };
-      document.getElementById("commentOverlay").classList.add("open");
-      renderCommentModal();
-      document.getElementById("commentText").focus();
-    }
-    function closeCommentModal() {
-      commentTarget = null;
-      document.getElementById("commentOverlay").classList.remove("open");
-      document.getElementById("commentText").value = "";
-      document.getElementById("commentMsg").textContent = "";
-    }
-    function renderCommentModal() {
-      if (!commentTarget) return;
-      const list = commentsByTarget.get(targetKey(commentTarget.type, commentTarget.id)) || [];
-      document.getElementById("commentTitle").textContent = `Comments on ${commentTarget.type} ${commentTarget.id}`;
-      document.getElementById("commentList").innerHTML = list.length
-        ? list.map(c => `<div class="comment-item"><div class="meta"><strong data-safe-style="color:var(--text-primary)">${esc(c.author)}</strong> · `
-            + `${esc(new Date(c.createdAt).toLocaleString())} <button class="comment-del" data-id="${escAttr(c.id)}" title="Delete">✕</button></div>`
-            + `<div class="body">${mentionHtml(c.text)}</div></div>`).join("")
-        : "<div data-safe-style='color:var(--text-muted);font-size:12px'>No comments yet.</div>";
-      document.getElementById("commentList").querySelectorAll(".comment-del").forEach(b => b.onclick = () => deleteComment(b.getAttribute("data-id")));
-    }
-    function postComment() {
-      const caseId = document.getElementById("caseId").value.trim();
-      const text = document.getElementById("commentText").value.trim();
-      if (!caseId || !commentTarget || !text) return;
-      const msg = document.getElementById("commentMsg"); msg.textContent = "posting…";
-      fetch(`/cases/${caseId}/comments`, { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ targetType: commentTarget.type, targetId: commentTarget.id, author: investigatorName(), text }) })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(() => { document.getElementById("commentText").value = ""; msg.textContent = ""; loadComments(caseId); })
-        .catch(e => msg.textContent = "failed: " + e.message);
-    }
-    function deleteComment(id) {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      fetch(`/cases/${caseId}/comments/${id}`, { method: "DELETE" }).then(() => loadComments(caseId)).catch(() => {});
-    }
 
     // Analyst triage tags live in public/js/dashboard-tags.js.
     // --- Pinned findings (#220) ---------------------------------------------------
@@ -4265,43 +4114,6 @@
     let vhsFlat = [];
 
     // ── Activity Log (#238) ───────────────────────────────────────────────────────────────
-    const ACTIVITY_CATEGORY_LABELS = {
-      import: "Import", triage: "Mark/Unmark", ai: "AI run", enrichment: "Enrichment",
-      anonymization: "Anonymization", settings: "Settings", playbook: "Playbook",
-      collaboration: "Comment/Tag", hunt: "Hunt", export: "Export",
-    };
-    let activityFilterValue = "";
-    function renderActivityLog(entries) {
-      const el = document.getElementById("activityLogPanel");
-      if (!el) return;
-      if (!entries.length) { el.innerHTML = "<div data-safe-style='color:var(--text-muted);font-size:12px'>No activity recorded yet.</div>"; return; }
-      el.innerHTML = "<table data-safe-style='width:100%;font-size:12px;border-collapse:collapse'>" +
-        entries.map(e => `<tr data-safe-style="border-bottom:1px solid var(--border-color)">
-          <td data-safe-style="padding:4px 8px;white-space:nowrap;color:var(--text-muted)" title="${escAttr(e.timestamp)}">${activityTimeAgo(e.timestamp)}</td>
-          <td data-safe-style="padding:4px 8px;white-space:nowrap">${esc(ACTIVITY_CATEGORY_LABELS[e.category] || e.category)}</td>
-          <td data-safe-style="padding:4px 8px;white-space:nowrap;color:var(--text-muted)">${esc(e.actor)}</td>
-          <td data-safe-style="padding:4px 8px">${esc(e.detail)}</td>
-          <td data-safe-style="padding:4px 8px;white-space:nowrap">${e.outcome === "error" ? "<span data-safe-style='color:#e5484d'>error</span>" : ""}</td>
-        </tr>`).join("") + "</table>";
-    }
-    function loadActivityLog(caseId) {
-      const qs = activityFilterValue ? `?category=${encodeURIComponent(activityFilterValue)}` : "";
-      fetch(`/cases/${caseId}/activity-log${qs}`).then(r => r.ok ? r.json() : []).then(renderActivityLog).catch(() => {});
-    }
-    (function initActivityFilter() {
-      const sel = document.getElementById("activityFilter");
-      if (!sel) return;
-      Object.entries(ACTIVITY_CATEGORY_LABELS).forEach(([value, label]) => {
-        const opt = document.createElement("option");
-        opt.value = value; opt.textContent = label;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener("change", () => {
-        activityFilterValue = sel.value;
-        const caseId = document.getElementById("caseId").value.trim();
-        if (caseId) loadActivityLog(caseId);
-      });
-    })();
 
 
 
@@ -4801,7 +4613,7 @@
     // ── Page wiring: report metadata and the delegated action blocks ───────────────────
     // Evidence Chain graph controls moved with the feature to js/dashboard-evidence-graph.js.
     if (typeof initEvidenceGraph === "function") initEvidenceGraph();
-    document.getElementById("saveReportMeta").onclick = saveReportMeta;
+    document.getElementById("saveReportMeta").onclick = () => saveReportMeta();
     document.getElementById("rm-companyLogoFile").addEventListener("change", (e) => {
       const file = e.target.files && e.target.files[0];
       e.target.value = "";                                   // allow re-selecting the same file
@@ -4813,17 +4625,16 @@
       const reader = new FileReader();
       reader.onload = () => {
         const uri = String(reader.result || "");
-        if (uri.length > LOGO_MAX_LEN) { st.textContent = "logo too large (max ~750 KB) — use a smaller image"; return; }
-        rmLogo = uri; renderLogoPreview();
+        if (!setReportLogo(uri)) { st.textContent = "logo too large (max ~750 KB) — use a smaller image"; return; }
         st.textContent = "logo loaded — click Save case details"; setTimeout(() => st.textContent = "", 3000);
       };
       reader.onerror = () => { st.textContent = "could not read that image file"; };
       reader.readAsDataURL(file);
     });
-    document.getElementById("rm-removeLogo").onclick = () => { rmLogo = ""; renderLogoPreview(); };
+    document.getElementById("rm-removeLogo").onclick = () => setReportLogo("");
     // Comment modal + delegated chip clicks.
-    document.getElementById("commentPost").onclick = postComment;
-    document.getElementById("commentClose").onclick = closeCommentModal;
+    document.getElementById("commentPost").onclick = () => postComment();
+    document.getElementById("commentClose").onclick = () => closeCommentModal();
     document.getElementById("commentOverlay").addEventListener("click", (e) => { if (e.target.id === "commentOverlay") closeCommentModal(); });
     // Finding workflow status <select> (#87) — delegated 'change' (a select doesn't emit 'click').
     document.querySelector("main").addEventListener("change", (e) => {
@@ -5106,6 +4917,8 @@
     // Tag modal + delegated chip clicks (the tag-add buttons are handled by the main click handler above).
     // The tag modal's own four controls moved with it to js/dashboard-tags.js (#415).
     if (typeof initTagModal === "function") initTagModal();
+    if (typeof initActivityLog === "function") initActivityLog();
+    if (typeof initConfidenceControl === "function") initConfidenceControl();
     // Mark-false-positive modal (#227) (the 🚫 mark-FP buttons are handled by the main click handler above).
     // The mark-false-positive modal's own six controls moved with the feature to
     // js/dashboard-false-positive.js (#415) — they were never part of this wiring block.
