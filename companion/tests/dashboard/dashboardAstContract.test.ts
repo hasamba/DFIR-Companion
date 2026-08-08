@@ -661,6 +661,109 @@ describe("duplicateBindings compares the page at its top level", () => {
   });
 });
 
+// ── #476: THE LOAD-TIME WALK FOLLOWS CALLS, NOT JUST IIFEs ──────────────────────────────────────
+//
+// walkLoadTime() used to stop at the syntactic load-time region — top level plus IIFE bodies — so an
+// ordinary helper CALLED during load was invisible. One hop was enough to ship a page that dies:
+// renderExcludeChips() held a bare DfirTimelineView reference and a top-level statement called it,
+// so blocking that module aborted the whole inline script while every gate stayed green.
+//
+// Each case below is written the way the page writes it, and each is paired with the DEFINED-BUT-
+// NOT-CALLED twin that must stay silent. That pairing is the mutation evidence: if the walk ever
+// goes back to stopping at the region, the first half goes quiet; if it starts entering every
+// function body, the second half starts shouting.
+describe("#476 — a module reference one call from load is a load-time hazard", () => {
+  const MISSING = new Set(["DfirTimelineView"]);
+  const linesFor = (src: string): number[] =>
+    unguardedTopLevelRefs(scriptFromSource("p.js", src), MISSING).map((r) => r.line);
+
+  it("follows an ordinary helper invoked by a top-level statement", () => {
+    // The exact reproduction named in #476.
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }\nboot();`)).toHaveLength(1);
+  });
+
+  it("stays silent when that same helper is only DEFINED", () => {
+    // The control. A function that merely exists runs later, on an event, where a throw is
+    // contained to one interaction — reporting it would bury the real hazards in noise.
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }`)).toHaveLength(0);
+  });
+
+  it("follows through several hops", () => {
+    expect(
+      linesFor(`function c() { DfirTimelineView.hydrate({}); }
+                function b() { c(); }
+                function a() { b(); }
+                a();`),
+    ).toHaveLength(1);
+  });
+
+  it("follows window.N() and window['N']()", () => {
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }\nwindow.boot();`)).toHaveLength(1);
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }\nwindow["boot"]();`)).toHaveLength(1);
+  });
+
+  it("follows a .call()/.apply()-form invocation of a named helper", () => {
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }\nboot.call(this);`)).toHaveLength(1);
+    expect(linesFor(`function boot() { DfirTimelineView.hydrate({}); }\nboot.apply(null, []);`)).toHaveLength(
+      1,
+    );
+  });
+
+  it("enters a .call()-form IIFE, which runs exactly where a bare block would", () => {
+    expect(linesFor(`(function () { DfirTimelineView.hydrate({}); }).call(this);`)).toHaveLength(1);
+  });
+
+  it("follows a helper handed off BY NAME to something invoked at load", () => {
+    // `ready(initTicketIntegrations)` invokes it as surely as writing the call, and the identifier
+    // is the only trace — there is no call expression naming it anywhere.
+    expect(
+      linesFor(`function handler() { DfirTimelineView.hydrate({}); }
+                function ready(f) { f(); }
+                ready(handler);`),
+    ).toHaveLength(1);
+  });
+
+  it("still honours a typeof guard inside the followed helper", () => {
+    // Following the call must not lose the guard analysis — otherwise the fix trades a false
+    // negative for a few hundred false positives.
+    expect(
+      linesFor(`function boot() { if (typeof DfirTimelineView !== "undefined") DfirTimelineView.hydrate({}); }
+                boot();`),
+    ).toHaveLength(0);
+  });
+
+  it("terminates on direct and mutual recursion", () => {
+    expect(linesFor(`function a() { DfirTimelineView.x; a(); }\na();`)).toHaveLength(1);
+    expect(
+      linesFor(`function a() { b(); }
+                function b() { DfirTimelineView.x; a(); }
+                a();`),
+    ).toHaveLength(1);
+  });
+});
+
+// Codex review of the sibling #477 change found the same unrestricted branch here: a property call
+// resolved to ANY same-named declared function. Following `api.boot()` into a local `boot` walks a
+// body that never runs at load, so the gate reports hazards that cannot happen — the false-alarm
+// direction, which is how a gate loses its readers.
+describe("#476 — a property call only reaches a page function through a global root", () => {
+  const MISSING = new Set(["DfirTimelineView"]);
+  const linesFor = (src: string): number[] =>
+    unguardedTopLevelRefs(scriptFromSource("p.js", src), MISSING).map((r) => r.line);
+
+  it.each([
+    ["an unrelated method of the same name", `function boot() { DfirTimelineView.x; }\napi.boot();`],
+    ["a computed member of a non-global", `function boot() { DfirTimelineView.x; }\napi["boot"]();`],
+  ])("does not follow %s", (_label, src) => {
+    expect(linesFor(src)).toHaveLength(0);
+  });
+
+  it("still follows the global-root spellings", () => {
+    expect(linesFor(`function boot() { DfirTimelineView.x; }\nwindow.boot();`)).toHaveLength(1);
+    expect(linesFor(`function boot() { DfirTimelineView.x; }\nglobalThis["boot"]();`)).toHaveLength(1);
+  });
+});
+
 // ── #477: REACHABILITY NEEDS AN INVOCATION, NOT A MENTION ───────────────────────────────────────
 //
 // callsByName() drew its edges from any identifier READ, which answers "is this name mentioned
