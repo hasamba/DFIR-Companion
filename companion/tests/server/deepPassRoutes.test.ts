@@ -6,10 +6,11 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
+import { awaitActivityEntry } from "../helpers/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
-import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
 
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
@@ -19,12 +20,21 @@ class ScriptedProvider implements AIProvider {
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     if (/ONE SLICE/i.test(req.systemPrompt)) {
       if (this.failBatches) throw new Error("Bad control character in string literal in JSON");
-      return { rawText: JSON.stringify({ observations: [{ summary: "s", eventIds: ["c0"], whyItMatters: "w" }] }) };
+      return {
+        rawText: JSON.stringify({ observations: [{ summary: "s", eventIds: ["c0"], whyItMatters: "w" }] }),
+      };
     }
     return {
       rawText: JSON.stringify({
-        findings: [], iocs: [], mitreTechniques: [], attackerPath: "", summary: "s",
-        forensicEvents: [], threadsOpened: [], threadsClosed: [], timelineNote: "",
+        findings: [],
+        iocs: [],
+        mitreTechniques: [],
+        attackerPath: "",
+        summary: "s",
+        forensicEvents: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "",
       }),
     };
   }
@@ -44,11 +54,16 @@ function events(): ForensicEvent[] {
       timestamp: `2026-05-20T${String(i % 24).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
       description: `${p} detection ${title(i)}`,
       severity: sev,
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [],
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
     }));
   return [
-    ...mk(10, "Critical", "c"), ...mk(40, "High", "h"), ...mk(60, "Medium", "m"),
-    ...mk(90, "Low", "l"), ...mk(20, "Info", "i"),
+    ...mk(10, "Critical", "c"),
+    ...mk(40, "High", "h"),
+    ...mk(60, "Medium", "m"),
+    ...mk(90, "Low", "l"),
+    ...mk(20, "Info", "i"),
   ];
 }
 
@@ -68,38 +83,17 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
   // Every AI-status broadcast the route makes, in order — the dashboard's "AI:" pill reads these.
   const aiStatus: { status: string; phase?: string; detail?: string }[] = [];
   const app = createApp(store, {
-    pipeline, stateStore, aiConfigured: opts.aiConfigured !== false,
+    pipeline,
+    stateStore,
+    aiConfigured: opts.aiConfigured !== false,
     activityLogStore: new ActivityLogStore(store),
-    onAiStatus: (_caseId, evt) => { aiStatus.push(evt); },
+    onAiStatus: (_caseId, evt) => {
+      aiStatus.push(evt);
+    },
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
   return { app, stateStore, aiStatus };
-}
-
-// logActivity is deliberately FIRE-AND-FORGET (`void store.add(...)` in activityLog.ts) so a log
-// write can never fail the request — which means the response can be sent before the entry lands.
-// Reading the log straight after the POST therefore races the write: it wins on a fast dev box and
-// loses on contended CI (seen live: `Cannot read properties of undefined (reading 'detail')`).
-// Poll for the entry instead of assuming it has arrived; the assertion is unchanged, only the wait.
-// The wait itself is a WALL-CLOCK budget: the 50x20ms loop this replaces returned `undefined` when
-// it expired, so the caller's `expect(entry).toBeTruthy()` reported the timeout as a missing log
-// entry — the same defect the fire-and-forget write would produce (issue #408).
-async function awaitActivityEntry(
-  app: Parameters<typeof request>[0],
-  caseId: string,
-  action: string,
-): Promise<{ action: string; detail?: string }> {
-  let seen: string[] = [];
-  return pollFor(
-    () => `an activity-log entry for "${action}" on case ${caseId}, saw only [${seen.join(", ")}]`,
-    async () => {
-      const log = await request(app).get(`/cases/${caseId}/activity-log`);
-      const entries = log.body as { action: string; detail?: string }[];
-      seen = entries.map((e) => e.action);
-      return entries.find((e) => e.action === action);
-    },
-  );
 }
 
 describe("deep-pass routes", () => {
@@ -114,7 +108,12 @@ describe("deep-pass routes", () => {
     const res = await request(app).get("/cases/c1/deep-pass/preview");
 
     expect(res.status).toBe(200);
-    expect(res.body.floors.map((f: { floor: string }) => f.floor)).toEqual(["Critical", "High", "Medium", "Low"]);
+    expect(res.body.floors.map((f: { floor: string }) => f.floor)).toEqual([
+      "Critical",
+      "High",
+      "Medium",
+      "Low",
+    ]);
     for (const f of res.body.floors) {
       expect(f).toHaveProperty("events");
       expect(f).toHaveProperty("rows");
@@ -129,7 +128,7 @@ describe("deep-pass routes", () => {
     const res = await request(app).get("/cases/c1/deep-pass/preview");
 
     const low = res.body.floors.find((f: { floor: string }) => f.floor === "Low");
-    expect(low.events).toBe(200);   // 10 + 40 + 60 + 90, the 20 Info excluded
+    expect(low.events).toBe(200); // 10 + 40 + 60 + 90, the 20 Info excluded
   });
 
   it("POST .../deep-pass rejects an unparseable minSeverity rather than defaulting", async () => {
@@ -137,7 +136,7 @@ describe("deep-pass routes", () => {
 
     const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "banana" });
 
-    expect(res.status).toBe(400);   // must NOT silently fall back to reading everything
+    expect(res.status).toBe(400); // must NOT silently fall back to reading everything
   });
 
   it("POST .../deep-pass runs the pass and returns its summary", async () => {
@@ -175,9 +174,9 @@ describe("deep-pass routes", () => {
 
     await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "Low" });
 
-    const batchLines = aiStatus.filter(e => /batch \d+ of \d+/i.test(String(e.detail)));
+    const batchLines = aiStatus.filter((e) => /batch \d+ of \d+/i.test(String(e.detail)));
     expect(batchLines.length).toBeGreaterThan(0);
-    expect(batchLines.every(e => e.status === "analyzing" && e.phase === "deep-pass")).toBe(true);
+    expect(batchLines.every((e) => e.status === "analyzing" && e.phase === "deep-pass")).toBe(true);
   });
 
   it("leaves the pill idle — not stuck analyzing — when a run is refused", async () => {
@@ -237,16 +236,20 @@ describe("deep-pass routes", () => {
   // A run whose batches failed read LESS than it appears to. The HTTP body is transient — the
   // activity log is the durable record an analyst re-reads days later, so partial coverage has to
   // survive there too, or an incomplete read is silently filed as a complete one.
-  it("records failed batches in the activity log, not just in the response body", async () => {
-    const { app } = await makeApp({ failBatches: true });
+  it(
+    "records failed batches in the activity log, not just in the response body",
+    async () => {
+      const { app } = await makeApp({ failBatches: true });
 
-    const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
-    expect(res.status).toBe(200);
-    expect(res.body.batchesFailed).toBeGreaterThan(0);
+      const res = await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+      expect(res.status).toBe(200);
+      expect(res.body.batchesFailed).toBeGreaterThan(0);
 
-    const entry = await awaitActivityEntry(app, "c1", "deep-pass");
-    expect(String(entry.detail)).toMatch(/fail/i);
-  }, POLL_TIMEOUT_MS * 2);   // one poll budget, doubled to leave room for setup + assertions
+      const entry = await awaitActivityEntry(app, "c1", "deep-pass");
+      expect(String(entry.detail)).toMatch(/fail/i);
+    },
+    POLL_TIMEOUT_MS * 2,
+  ); // one poll budget, doubled to leave room for setup + assertions
 
   // The dashboard must be able to DISABLE the Run button up front instead of letting the analyst
   // click into a 501. /health.aiEnabled is the VISION gate (hasAiProvider) and answers the wrong
@@ -267,12 +270,16 @@ describe("deep-pass routes", () => {
     expect(res.body.synthesisEnabled).toBe(false);
   });
 
-  it("says nothing about failures when every batch succeeded", async () => {
-    const { app } = await makeApp();
+  it(
+    "says nothing about failures when every batch succeeded",
+    async () => {
+      const { app } = await makeApp();
 
-    await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
+      await request(app).post("/cases/c1/deep-pass").send({ minSeverity: "High" });
 
-    const entry = await awaitActivityEntry(app, "c1", "deep-pass");
-    expect(String(entry.detail)).not.toMatch(/fail/i);
-  }, POLL_TIMEOUT_MS * 2);
+      const entry = await awaitActivityEntry(app, "c1", "deep-pass");
+      expect(String(entry.detail)).not.toMatch(/fail/i);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 });
