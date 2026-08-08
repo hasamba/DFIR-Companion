@@ -424,8 +424,8 @@
       ts: t.timestamp,
       html: esc(t.description),
     }));
-    commentsByTarget.forEach((list) =>
-      (list || []).forEach((c) => {
+    eachCommentList((list) =>
+      list.forEach((c) => {
         if (typeof c.text === "string" && c.text.indexOf(_auditMark) === 0) {
           const who = c.author
             ? ` <span data-safe-style="color:var(--text-muted)">— ${esc(c.author)}</span>`
