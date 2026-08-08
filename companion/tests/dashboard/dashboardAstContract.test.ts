@@ -741,3 +741,25 @@ describe("#476 — a module reference one call from load is a load-time hazard",
     ).toHaveLength(1);
   });
 });
+
+// Codex review of the sibling #477 change found the same unrestricted branch here: a property call
+// resolved to ANY same-named declared function. Following `api.boot()` into a local `boot` walks a
+// body that never runs at load, so the gate reports hazards that cannot happen — the false-alarm
+// direction, which is how a gate loses its readers.
+describe("#476 — a property call only reaches a page function through a global root", () => {
+  const MISSING = new Set(["DfirTimelineView"]);
+  const linesFor = (src: string): number[] =>
+    unguardedTopLevelRefs(scriptFromSource("p.js", src), MISSING).map((r) => r.line);
+
+  it.each([
+    ["an unrelated method of the same name", `function boot() { DfirTimelineView.x; }\napi.boot();`],
+    ["a computed member of a non-global", `function boot() { DfirTimelineView.x; }\napi["boot"]();`],
+  ])("does not follow %s", (_label, src) => {
+    expect(linesFor(src)).toHaveLength(0);
+  });
+
+  it("still follows the global-root spellings", () => {
+    expect(linesFor(`function boot() { DfirTimelineView.x; }\nwindow.boot();`)).toHaveLength(1);
+    expect(linesFor(`function boot() { DfirTimelineView.x; }\nglobalThis["boot"]();`)).toHaveLength(1);
+  });
+});

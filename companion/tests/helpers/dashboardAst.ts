@@ -1975,6 +1975,13 @@ function declaredFunctionsOf(script: DashboardScript): Map<string, ts.Node> {
  * writing the call. Over-collecting is safe: a name that is not a declared function is dropped by
  * the caller, so an extra spelling costs one map lookup that misses.
  */
+/** `window` · `globalThis` · `self` — the roots through which a page-level function is itself. */
+function isGlobalRoot(n: ts.Node): boolean {
+  let cur: ts.Node = n;
+  while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+  return ts.isIdentifier(cur) && GLOBAL_ROOTS.has(cur.text);
+}
+
 function invokedNames(n: ts.CallExpression): string[] {
   const names: string[] = [];
   let callee: ts.Node = n.expression;
@@ -1986,8 +1993,18 @@ function invokedNames(n: ts.CallExpression): string[] {
       let target: ts.Node = callee.expression;
       while (ts.isParenthesizedExpression(target)) target = target.expression;
       if (ts.isIdentifier(target)) names.push(target.text);
-    } else names.push(callee.name.text);
-  } else if (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)) {
+    } else if (isGlobalRoot(callee.expression)) {
+      // ONLY THROUGH A GLOBAL ROOT. `window.boot()` IS the page-level `boot`; `api.boot()` is
+      // somebody else's method that merely shares the spelling, and following it would walk a body
+      // that never runs at load — reporting hazards that cannot happen. (Found by Codex review of
+      // the sibling #477 change, which had the same unrestricted branch.)
+      names.push(callee.name.text);
+    }
+  } else if (
+    ts.isElementAccessExpression(callee) &&
+    ts.isStringLiteralLike(callee.argumentExpression) &&
+    isGlobalRoot(callee.expression)
+  ) {
     names.push(callee.argumentExpression.text);
   }
   for (const a of n.arguments) if (ts.isIdentifier(a)) names.push(a.text);
