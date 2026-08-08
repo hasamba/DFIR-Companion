@@ -14,6 +14,7 @@ import { sendPipelineError } from "../../src/routes/presidioApproval.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { LoggerImpl, createConsoleLogger } from "../../src/logging/logger.js";
 import { createApp, setServerLogger } from "../../src/server.js";
+import { awaitActivityEntries } from "../helpers/activityLog.js";
 
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
@@ -28,19 +29,24 @@ let loggedLines: string[];
 
 beforeEach(async () => {
   loggedLines = [];
-  setServerLogger(new LoggerImpl({
-    level: "info",
-    sessionLogPath: null,
-    consoleFns: {
-      log: (s) => loggedLines.push(s),
-      warn: (s) => loggedLines.push(s),
-      error: (s) => loggedLines.push(s),
-    },
-  }));
+  setServerLogger(
+    new LoggerImpl({
+      level: "info",
+      sessionLogPath: null,
+      consoleFns: {
+        log: (s) => loggedLines.push(s),
+        warn: (s) => loggedLines.push(s),
+        error: (s) => loggedLines.push(s),
+      },
+    }),
+  );
   const root = await mkdtemp(join(tmpdir(), "dfir-presidioroute-"));
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  app = createApp(cases, { stateStore: new StateStore(cases), activityLogStore: new ActivityLogStore(cases) });
+  app = createApp(cases, {
+    stateStore: new StateStore(cases),
+    activityLogStore: new ActivityLogStore(cases),
+  });
   pendingStore = new PresidioPendingStore(cases);
   discoveredStore = new DiscoveredEntitiesStore(cases);
   customStore = new CustomEntitiesStore(cases);
@@ -99,9 +105,7 @@ describe("presidio approval routes", () => {
   });
 
   it("POST .../suppress vetoes a value and clears it from pending", async () => {
-    const res = await request(app)
-      .post("/cases/c1/presidio-pending/suppress")
-      .send({ value: "Jane Doe" });
+    const res = await request(app).post("/cases/c1/presidio-pending/suppress").send({ value: "Jane Doe" });
     expect(res.status).toBe(200);
     expect((await discoveredStore.load("c1")).suppressed).toContain("jane doe");
     expect(await pendingStore.load("c1")).toEqual([]);
@@ -124,12 +128,16 @@ describe("presidio approval routes", () => {
   });
 
   it("POST .../approve rejects an invalid case id", async () => {
-    const res = await request(app).post("/cases/bad%20id/presidio-pending/approve").send({ value: "Jane Doe" });
+    const res = await request(app)
+      .post("/cases/bad%20id/presidio-pending/approve")
+      .send({ value: "Jane Doe" });
     expect(res.status).toBe(400);
   });
 
   it("POST .../suppress rejects an invalid case id", async () => {
-    const res = await request(app).post("/cases/bad%20id/presidio-pending/suppress").send({ value: "Jane Doe" });
+    const res = await request(app)
+      .post("/cases/bad%20id/presidio-pending/suppress")
+      .send({ value: "Jane Doe" });
     expect(res.status).toBe(400);
   });
 
@@ -153,29 +161,29 @@ describe("presidio approval routes", () => {
       .post("/cases/c1/presidio-pending/approve")
       .send({ value: "Jane Doe", category: "PERSON" });
     expect(res.status).toBe(200);
-    const log = await request(app).get("/cases/c1/activity-log");
-    const entries = log.body.filter((e: { action: string }) => e.action === "presidio-approve");
+    // POLLED, not read straight off the response. The approve route logs fire-and-forget (`void
+    // logActivity(...)` in anonymization.ts) so a log failure can never fail the analyst's action,
+    // and nothing in the Presidio panel re-reads the log after approving — so the entry is allowed
+    // to land a moment later, and reading immediately just races it. On CI it lost (#489).
+    const entries = await awaitActivityEntries(app, "c1", "presidio-approve");
     expect(entries).toHaveLength(1);
     expect(entries[0].detail).not.toContain("Jane Doe");
     expect(entries[0].detail).toContain("PERSON");
   });
 
   it("does not write the suppressed value's text to the server log", async () => {
-    const res = await request(app)
-      .post("/cases/c1/presidio-pending/suppress")
-      .send({ value: "Jane Doe" });
+    const res = await request(app).post("/cases/c1/presidio-pending/suppress").send({ value: "Jane Doe" });
     expect(res.status).toBe(200);
     expect(loggedLines.some((l) => l.includes("Jane Doe"))).toBe(false);
     expect(loggedLines.some((l) => /suppressed a finding/.test(l))).toBe(true);
   });
 
   it("does not write the suppressed value's text to the case's activity log", async () => {
-    const res = await request(app)
-      .post("/cases/c1/presidio-pending/suppress")
-      .send({ value: "Jane Doe" });
+    const res = await request(app).post("/cases/c1/presidio-pending/suppress").send({ value: "Jane Doe" });
     expect(res.status).toBe(200);
-    const log = await request(app).get("/cases/c1/activity-log");
-    const entries = log.body.filter((e: { action: string }) => e.action === "presidio-suppress");
+    // Same race as the approve case above, and #489 named only that one — this shape is the class,
+    // not the instance. Slowing the log store made both fail every run.
+    const entries = await awaitActivityEntries(app, "c1", "presidio-suppress");
     expect(entries).toHaveLength(1);
     expect(entries[0].detail).not.toContain("Jane Doe");
   });
@@ -186,8 +194,14 @@ function fakeRes(): Response & { statusCode: number; body: unknown } {
   const res = {
     statusCode: 200,
     body: undefined as unknown,
-    status(code: number) { res.statusCode = code; return res; },
-    json(payload: unknown) { res.body = payload; return res; },
+    status(code: number) {
+      res.statusCode = code;
+      return res;
+    },
+    json(payload: unknown) {
+      res.body = payload;
+      return res;
+    },
   };
   return res as unknown as Response & { statusCode: number; body: unknown };
 }
