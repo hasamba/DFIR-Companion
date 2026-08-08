@@ -660,3 +660,56 @@ describe("duplicateBindings compares the page at its top level", () => {
     expect(duplicateBindings("dashboard-thing.js", moduleSrc, page(pageSrc))).toEqual([]);
   });
 });
+
+// ── #477: REACHABILITY NEEDS AN INVOCATION, NOT A MENTION ───────────────────────────────────────
+//
+// callsByName() drew its edges from any identifier READ, which answers "is this name mentioned
+// here" — a different question from "is this initializer reached". `void dead;` mentions `dead`, so
+// a function nothing invokes was marked live and the call inside it counted. A feature could be
+// fully unwired, with the suite green.
+describe("#477 — a mention is not a call", () => {
+  const cb = (src: string): boolean => callsByName(scriptFromSource("p.js", src), "N");
+
+  it.each([
+    ["void dead", `function dead() { N(); }\nvoid dead;`],
+    ["a bare expression statement", `function dead() { N(); }\ndead;`],
+    ["stored in a const", `function dead() { N(); }\nconst keep = dead;`],
+    ["named in an array literal", `function dead() { N(); }\nconst all = [dead];`],
+    ["compared", `function dead() { N(); }\nif (dead === undefined) {}`],
+    ["typeof", `function dead() { N(); }\nif (typeof dead === "function") {}`],
+  ])("does not count %s", (_label, src) => {
+    expect(cb(src)).toBe(false);
+  });
+
+  it.each([
+    ["a plain call", `function live() { N(); }\nlive();`],
+    ["window.live()", `function live() { N(); }\nwindow.live();`],
+    ["window['live']()", `function live() { N(); }\nwindow["live"]();`],
+    ["live.call(this)", `function live() { N(); }\nlive.call(this);`],
+    ["live.apply(null, [])", `function live() { N(); }\nlive.apply(null, []);`],
+    ["addEventListener by name", `function h() { N(); }\nel.addEventListener("click", h);`],
+    ["onclick assignment", `function h() { N(); }\nel.onclick = h;`],
+    ["setTimeout by name", `function h() { N(); }\nsetTimeout(h, 0);`],
+    ["forEach by name", `function h() { N(); }\n[1].forEach(h);`],
+    ["handed to a helper", `function h() { N(); }\nfunction ready(f) { f(); }\nready(h);`],
+    // Codex review of the first cut: an alias IS an invocation path. Dropping the `run -> live`
+    // relationship reported a genuinely-reached initializer as unreachable — a false alarm, which
+    // is the failure mode that teaches people to ignore the gate.
+    ["an invoked alias", `function live() { N(); }\nconst run = live;\nrun();`],
+    ["an invoked alias assigned later", `function live() { N(); }\nlet run;\nrun = live;\nrun();`],
+  ])("still counts %s", (_label, src) => {
+    expect(cb(src)).toBe(true);
+  });
+
+  // Also from that review, and the more dangerous direction: a property call only resolves to a
+  // page-level function through a GLOBAL ROOT. `api.dead()` is somebody else's method that happens
+  // to share the spelling, and counting it revived a function nothing invokes — reintroducing this
+  // very issue by a different door.
+  it.each([
+    ["an unrelated method of the same name", `function dead() { N(); }\napi.dead();`],
+    ["a computed member of a non-global", `function dead() { N(); }\napi["dead"]();`],
+    ["an alias that is never invoked", `function live() { N(); }\nconst run = live;`],
+  ])("does not count %s", (_label, src) => {
+    expect(cb(src)).toBe(false);
+  });
+});
