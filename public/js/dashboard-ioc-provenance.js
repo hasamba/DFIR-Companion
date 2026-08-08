@@ -375,11 +375,6 @@
   // keeps the refresh fan-out alive — and a no-op panel looks exactly like a panel with nothing
   // to show. DfirFacade.stubbed records which names the facade had to fill in, so asking it is
   // how a module with no entry point of its own still gets to say it is gone.
-  if (window.DfirFacade && window.DfirFacade.filled.includes("loadBeacons")) {
-    dfirFeatureUnavailable(
-      "Beacons, evidence gaps, playbook match and mitigations",
-    );
-  }
 
   // Timeline Gaps (#83) moved to js/dashboard-timeline-gaps.js (#415 tier 3). No initializer.
   // Memory Next Steps (#101) moved to js/dashboard-memory-next-steps.js (#415 tier 3).
@@ -404,13 +399,22 @@
     return iocProvenanceChains[iocId];
   }
 
-  // The persisted risk-filter choice. Also the module's only load-time work, so it is the whole
-  // initializer.
+  // The persisted risk-filter choice, and the facade probe below.
   function initIocProvenance() {
     try {
       riskIocsFilter =
         parseInt(localStorage.getItem("dfir.risk.iocs") || "0", 10) || 0;
     } catch {}
+    // THE PROBE HAS TO RUN HERE, not at module load, which is where it used to sit. The facade is
+    // ten module tags further down the page, so `window.DfirFacade` was always undefined then, the
+    // guard was always false, and the notice could never appear -- a feature reporting its own
+    // absence, silently absent itself. The page calls this initializer after every module, which is
+    // the first moment the answer exists. Found by the load-order gate, #482.
+    if (window.DfirFacade && window.DfirFacade.filled.includes("loadBeacons")) {
+      dfirFeatureUnavailable(
+        "Beacons, evidence gaps, playbook match and mitigations",
+      );
+    }
   }
 
   // ---- what the controls set ----

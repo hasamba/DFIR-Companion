@@ -2189,6 +2189,20 @@ function declaredFunctionsOf(script: DashboardScript): Map<string, ts.Node> {
  * writing the call. Over-collecting is safe: a name that is not a declared function is dropped by
  * the caller, so an extra spelling costs one map lookup that misses.
  */
+/** Array methods that invoke their callback SYNCHRONOUSLY, so a callback handed to one runs now. */
+const SYNC_CALLBACK_INVOKERS = new Set([
+  "forEach",
+  "map",
+  "filter",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+  "flatMap",
+  "reduce",
+  "sort",
+]);
+
 function invokedNames(n: ts.CallExpression): string[] {
   const names: string[] = [];
   let callee: ts.Node = n.expression;
@@ -2214,6 +2228,11 @@ function invokedNames(n: ts.CallExpression): string[] {
   ) {
     names.push(callee.argumentExpression.text);
   }
+  // DELIBERATELY UNRESTRICTED. Handing a name to `addEventListener` or `setTimeout` counts here,
+  // because the questions this feeds — #477's "does the page really call it" and #476's "is this
+  // reference one hop from load" — are both satisfied by the wiring existing at all. The stricter
+  // "does it run BEFORE the parser finishes" question needs the opposite answer, so it does not
+  // use this: see loadTimeDependencies(), which carries its own walk for exactly that reason.
   for (const a of n.arguments) if (ts.isIdentifier(a)) names.push(a.text);
   return names;
 }
@@ -2541,6 +2560,238 @@ export function moduleGlobals(scripts: DashboardScript[] = dashboardScripts()): 
     });
     for (const name of names) out.set(name, [...(out.get(name) ?? []), s.name]);
   }
+  return out;
+}
+
+/** A module reaching for a sibling's published name before that sibling has loaded. */
+export interface LoadOrderViolation {
+  /** The module making the call. */
+  from: string;
+  /** The name it calls. */
+  name: string;
+  /** The module that publishes that name, whose <script> tag comes later. */
+  to: string;
+  line: number;
+}
+
+/**
+ * Cross-module calls that run DURING LOAD against a module the page loads afterwards.
+ *
+ * `check:imports` was supposed to govern this graph and cannot: these are classic scripts
+ * publishing onto `window`, so its regex over import statements sees every module as an island
+ * (#482). The dependencies are real regardless — they just travel through the global object.
+ *
+ * CYCLES ARE NOT THE HAZARD, so this does not look for them. That question is borrowed from ES
+ * modules, where a cycle means a half-initialised binding; here every cross-module name is resolved
+ * through `window` at CALL time, so two features whose handlers call each other are fine and dozens
+ * of such cycles exist harmlessly. ORDER is the hazard: a call that runs while the page is still
+ * parsing reaches a name whose defining <script> has not executed. Unguarded it throws inside the
+ * load-time IIFE and takes the rest of that module with it; guarded with `typeof` it is skipped in
+ * silence and the feature is simply never there — the blank page the import gate's own comment
+ * warned about.
+ *
+ * A NAMESPACE IS A DEPENDENCY. Most of these modules reach a sibling as `DfirState.cell(…)` or
+ * `window.DfirState.cell(…)` rather than as a bare function — 16 of them, including
+ * dashboard-facets.js, which does exactly that at load. An analysis that only matched a call whose
+ * CALLEE is the published name saw none of it, so the dominant shape was invisible; the root of the
+ * callee chain is the name that has to exist, and that is what is checked.
+ *
+ * IT ASKS AT THE CALL SITE, not across the file. The first version joined two file-wide answers —
+ * "is this name free anywhere" and "is it called at load anywhere" — and neither knows the other's
+ * position, so a local called at load was reported on the strength of an unrelated deferred
+ * reference elsewhere in the file. Binding is now resolved where the call actually is.
+ *
+ * WHAT IT WILL NOT SAY. Only calls are considered, not mere references: `const c = Sibling.cell`
+ * and `window.x = sibling` copy a value that may still be undefined, but flagging those would
+ * report most of the facade, and the throw they cause is a separate question from ordering.
+ * Deferred work is out of scope by construction. A module the page never loads has no position, so
+ * it cannot be out of order with anything and is skipped.
+ */
+export function loadOrderViolations(
+  modules: ReadonlyArray<{ file: string; script: DashboardScript }>,
+  publishedBy: ReadonlyMap<string, readonly string[]>,
+  order: ReadonlyMap<string, number>,
+): LoadOrderViolation[] {
+  const out: LoadOrderViolation[] = [];
+  for (const { file, script } of modules) {
+    const mine = order.get(file);
+    if (mine === undefined) continue;
+    for (const dep of loadTimeDependencies(script)) {
+      for (const to of publishedBy.get(dep.name) ?? []) {
+        const at = order.get(to);
+        if (to === file || at === undefined || at <= mine) continue;
+        out.push({ from: file, name: dep.name, to, line: dep.line });
+      }
+    }
+  }
+  return out;
+}
+
+/** The names of every binding a pattern introduces: `{ a, b: [c] }` gives a and c. */
+function bindingNamesOf(n: ts.Node, out: Set<string>): void {
+  if (ts.isIdentifier(n)) out.add(n.text);
+  else if (ts.isObjectBindingPattern(n) || ts.isArrayBindingPattern(n)) {
+    for (const e of n.elements) if (ts.isBindingElement(e)) bindingNamesOf(e.name, out);
+  }
+}
+
+const scopeDeclCache = new Map<ts.Node, Set<string>>();
+
+/** Every name this scope introduces: parameters, catch bindings, and its own declarations. */
+function declaredInScope(scope: ts.Node): Set<string> {
+  const cached = scopeDeclCache.get(scope);
+  if (cached) return cached;
+  const out = new Set<string>();
+  if (isFunctionLike(scope)) {
+    const fn = scope as ts.FunctionLikeDeclaration;
+    for (const p of fn.parameters) bindingNamesOf(p.name, out);
+    if (ts.isFunctionDeclaration(scope) && scope.name) out.add(scope.name.text);
+  }
+  if (ts.isCatchClause(scope) && scope.variableDeclaration) {
+    bindingNamesOf(scope.variableDeclaration.name, out);
+  }
+  // `var` and function declarations hoist out of nested blocks, so the walk descends through them
+  // and stops only at a nested function, which is a scope of its own.
+  const collect = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n)) {
+      if (n.name) out.add(n.name.text);
+      return;
+    }
+    if (isFunctionLike(n)) return;
+    if (ts.isVariableDeclaration(n)) bindingNamesOf(n.name, out);
+    if (ts.isClassDeclaration(n) && n.name) out.add(n.name.text);
+    ts.forEachChild(n, collect);
+  };
+  const body = isFunctionLike(scope) ? (scope as ts.FunctionLikeDeclaration).body : scope;
+  if (body) ts.forEachChild(body, collect);
+  scopeDeclCache.set(scope, out);
+  return out;
+}
+
+/** Is this name declared by any scope enclosing this node, rather than coming from the page? */
+function boundAt(node: ts.Node, name: string): boolean {
+  for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
+    const isScope =
+      isFunctionLike(p) ||
+      ts.isSourceFile(p) ||
+      ts.isBlock(p) ||
+      ts.isCatchClause(p) ||
+      ts.isForStatement(p) ||
+      ts.isForOfStatement(p) ||
+      ts.isForInStatement(p);
+    if (isScope && declaredInScope(p).has(name)) return true;
+  }
+  return false;
+}
+
+/**
+ * The name a call needs to already exist: the root of its callee chain.
+ *
+ * `lateThing()` needs `lateThing`; `DfirState.cell()` needs `DfirState`; and a chain rooted at a
+ * global object needs the segment AFTER it, because `window.DfirState.cell()` depends on
+ * `DfirState` and not on `window`.
+ */
+function calleeRoot(call: ts.CallExpression): { name: string; node: ts.Node } | null {
+  const strip = (n: ts.Node): ts.Node => {
+    let cur = n;
+    while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+    return cur;
+  };
+  let cur = strip(call.expression);
+  // `f.call(…)` / `f.apply(…)` — the invoked function is the object, not the property.
+  if (ts.isPropertyAccessExpression(cur) && (cur.name.text === "call" || cur.name.text === "apply")) {
+    cur = strip(cur.expression);
+  }
+  const chain: ts.Node[] = [];
+  while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+    chain.unshift(cur);
+    cur = strip(cur.expression);
+  }
+  if (!ts.isIdentifier(cur)) return null;
+  if (!GLOBAL_ROOTS.has(cur.text)) return { name: cur.text, node: cur };
+  const first = chain[0];
+  if (first && ts.isPropertyAccessExpression(first)) return { name: first.name.text, node: first.name };
+  if (first && ts.isElementAccessExpression(first) && ts.isStringLiteralLike(first.argumentExpression)) {
+    return { name: first.argumentExpression.text, node: first.argumentExpression };
+  }
+  return null;
+}
+
+/**
+ * Every name a script CALLS while it loads, that it does not bind itself at that call site.
+ *
+ * IT CANNOT USE walkLoadTime(). That walk follows every identifier ARGUMENT of every call, so
+ * `addEventListener("click", h)` and `setTimeout(h, 0)` are walked as though the handler had
+ * already run. That is deliberate and correct there — #477 asks "does the page really call this"
+ * and #476 asks "is this reference one hop from load", and both are answered by the wiring
+ * existing at all. This asks the narrower question of what runs BEFORE THE PARSER REACHES THE
+ * NEXT <script>, where a registered handler is precisely the thing that has NOT run yet, and
+ * reporting it would reject the safest way to depend on a sibling. So the traversal here follows
+ * only what genuinely runs now: the top level, an IIFE, a local function something calls, and a
+ * callback handed to an Array method that invokes synchronously.
+ */
+export function loadTimeDependencies(script: DashboardScript): Array<{ name: string; line: number }> {
+  const out: Array<{ name: string; line: number }> = [];
+  const sf = script.ast;
+  const declared = declaredFunctionsOf(script);
+  const entered = new Set<ts.Node>();
+
+  const strip = (n: ts.Node): ts.Node => {
+    let cur = n;
+    while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+    return cur;
+  };
+  const iifeBodyOf = (n: ts.CallExpression): ts.Node | null => {
+    let callee = strip(n.expression);
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      (callee.name.text === "call" || callee.name.text === "apply")
+    ) {
+      callee = strip(callee.expression);
+    }
+    return ts.isFunctionExpression(callee) || ts.isArrowFunction(callee) ? callee.body : null;
+  };
+
+  const enter = (fn: ts.Node | undefined): void => {
+    if (!fn || entered.has(fn)) return; // and it stops recursion, direct or mutual
+    entered.add(fn);
+    // The DECLARATION's children, not the body alone, so a default parameter value is in scope.
+    ts.forEachChild(fn, visit);
+  };
+
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const root = calleeRoot(n);
+      if (root && !boundAt(root.node, root.name)) {
+        out.push({
+          name: root.name,
+          line: sf.getLineAndCharacterOfPosition(root.node.getStart(sf)).line + 1,
+        });
+      }
+      const body = iifeBodyOf(n);
+      if (body) {
+        ts.forEachChild(body, visit);
+        // An IIFE's ARGUMENTS are evaluated at load too — `(fn => …)(DfirTimelineView)`.
+        for (const arg of n.arguments) visit(arg);
+        return;
+      }
+      const callee = strip(n.expression);
+      if (ts.isIdentifier(callee)) enter(declared.get(callee.text));
+      if (ts.isPropertyAccessExpression(callee) && SYNC_CALLBACK_INVOKERS.has(callee.name.text)) {
+        for (const arg of n.arguments) {
+          const a = strip(arg);
+          if (ts.isIdentifier(a)) enter(declared.get(a.text));
+          else if (ts.isFunctionExpression(a) || ts.isArrowFunction(a)) enter(a);
+        }
+      }
+      ts.forEachChild(n, visit);
+      return;
+    }
+    if (isFunctionLike(n)) return; // judged on its own pass, only if something calls it at load
+    ts.forEachChild(n, visit);
+  };
+
+  ts.forEachChild(sf, visit);
   return out;
 }
 
