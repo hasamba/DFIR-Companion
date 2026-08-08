@@ -429,7 +429,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **🌍 Geographic IP map** — plot geo-located IP IOCs on an interactive Leaflet world map (severity colors, victim→attacker flows, country stats, filtering, CSV export); coordinates from the opt-in GeoIP enrichment, offline-friendly (tiles overridable)
 
 ### Ops
-- **Indexed SQLite case storage** — worker-backed, cursor-paged database replaces flat JSON case state (requires Node 22.5+)
+- **Indexed SQLite case storage** — worker-backed, cursor-paged database replaces flat JSON case state
 - **Essential / All view in Settings** — opens on a curated 43-control view instead of all ~257 fields; remembered per browser
 - **Health / Diagnostics** — **Settings → Diagnostics** one-page operator view: disk usage, case count, capture/synthesis queue, redacted AI config + live *Test AI connectivity*, importer attempts (24h/7d) + recent failures; compute-on-demand case sizes; key-free copy-to-clipboard
 - **Case Statistics panel** — per-case totals, source breakdown, and import velocity in Diagnostics
@@ -678,7 +678,7 @@ attacker path, questions). Configure both via `.env` — see `companion/README.m
 
 ## Quick start
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **22.5 or later** (which ships with `npm`).
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.19 or later** (which ships with `npm`).
 > Check with `node --version`. Everything below uses `npm`, so no other runtime is needed.
 > Indexed case storage uses the built-in `node:sqlite` module, so older Node releases cannot open
 > cases. The portable build bundles a compatible runtime.

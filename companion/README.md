@@ -7,7 +7,7 @@ live dashboard. Paired with the MV3 capture extension in `../extension`.
 
 ## Quick start
 
-> **Prerequisite:** [Node.js](https://nodejs.org/) **22.5 or later**. Indexed case storage uses
+> **Prerequisite:** [Node.js](https://nodejs.org/) **22.19 or later**. Indexed case storage uses
 > Node's built-in `node:sqlite` module, so this is the runtime floor for the server and test suite.
 
     cd companion

@@ -63,7 +63,7 @@ Choose the method that fits your setup:
 
 #### From source (recommended for development)
 
-1. Install [Node.js](https://nodejs.org/) **20 or later** (Node 22.5+ if you want the NSRL SQLite backend).
+1. Install [Node.js](https://nodejs.org/) **22.19 or later**. This is a hard floor, not an optional extra: case storage, authentication and the job ledger all use the built-in `node:sqlite` module, so the server will not start below it. Check with `node --version`.
 2. Clone or download the repository.
 3. Run:
    ```
