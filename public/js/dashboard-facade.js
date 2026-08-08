@@ -560,6 +560,28 @@
     "veloClientsList",
     "veloMonAutoBrowsed",
     "setVeloMonAutoBrowsed",
+    // #415's last four extractions. Every one of these was declared in the page before the move, so
+    // it could not fail to resolve; making them modules turned fifteen certainties into cross-module
+    // dependencies, and the render path is among them. commentChip and eachCommentList are called
+    // bare by dashboard-render.js on EVERY render, so without a stub a 404 on the comments module
+    // empties findings and timelines instead of only disabling comments — strictly worse than the
+    // page-declared Map they replaced. initActivityLog and initConfidenceControl are the sentinels
+    // and are guarded at their call sites, so they are deliberately absent.
+    "commentChip",
+    "eachCommentList",
+    "loadComments",
+    "openCommentModal",
+    "closeCommentModal",
+    "renderCommentModal",
+    "postComment",
+    "deleteComment",
+    "loadConfidenceControl",
+    "saveConfidenceControl",
+    "fillReportMeta",
+    "loadReportMeta",
+    "saveReportMeta",
+    "setReportLogo",
+    "loadActivityLog",
   ];
   // Not `window[n] = window[n] || noop`: a name that exists but is not callable is a different bug,
   // and quietly replacing it would hide that one too.
