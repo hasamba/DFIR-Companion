@@ -36,22 +36,32 @@ export async function getCodexStatus(opts: GetCodexStatusOptions = {}): Promise<
 
   const run = await runner({ bin, args: ["--version"], stdin: "", timeoutMs: opts.timeoutMs ?? 10_000 });
   if (run.spawnError) {
-    const msg = run.spawnError.code === "ENOENT"
-      ? "Codex CLI isn't installed on this machine. Install it (`npm i -g @openai/codex`), then click Re-check."
-      : `Codex could not be run: ${run.spawnError.message}`;
+    const msg =
+      run.spawnError.code === "ENOENT"
+        ? "Codex CLI isn't installed on this machine. Install it (`npm i -g @openai/codex`), then click Re-check."
+        : `Codex could not be run: ${run.spawnError.message}`;
     return { state: "not_installed", message: msg };
   }
 
   const envKey = (env.OPENAI_API_KEY || env.CODEX_API_KEY || "").trim();
   if (envKey) {
-    return { state: "connected", authMethod: "api_key", message: "Codex is ready (using an API key from the environment)." };
+    return {
+      state: "connected",
+      authMethod: "api_key",
+      message: "Codex is ready (using an API key from the environment).",
+    };
   }
   if (authFileExists()) {
-    return { state: "connected", authMethod: "codex login", message: "Codex is ready (signed in via `codex login`)." };
+    return {
+      state: "connected",
+      authMethod: "codex login",
+      message: "Codex is ready (signed in via `codex login`).",
+    };
   }
   return {
     state: "not_connected",
-    message: "Codex is installed but not signed in. Run `codex login` (or set OPENAI_API_KEY), then click Re-check.",
+    message:
+      "Codex is installed but not signed in. Run `codex login` (or set OPENAI_API_KEY), then click Re-check.",
   };
 }
 
@@ -91,8 +101,12 @@ export async function startCodexLogin(
       clearTimeout(timer);
       resolve({ started: false, output, error: err.code === "ENOENT" ? "Codex CLI not found" : err.message });
     });
-    child.stdout?.on("data", (d) => { output += d.toString(); });
-    child.stderr?.on("data", (d) => { output += d.toString(); });
+    child.stdout?.on("data", (d) => {
+      output += d.toString();
+    });
+    child.stderr?.on("data", (d) => {
+      output += d.toString();
+    });
     child.on("close", finish);
   });
 }
