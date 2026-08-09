@@ -331,8 +331,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Import a large file from the server's local filesystem by path — bypasses the browser
   // FileReader memory limit for files too large to upload through the dashboard (400 MB+).
   // Same pipeline as /import: detect kind → persist evidence → dispatchImport → diff → resynth.
-  // Localhost-only tool: reading an operator-specified path is intentional (same trust level
-  // as DFIR_NSRL_FILE / KEV import-file). Body: { path, minSeverity? }.
+  // Reading an operator-named path is intentional and gated like DFIR_NSRL_FILE / KEV import-file:
+  // resolveRequestPolicy makes this suffix global-admin, not case-write. Body: { path, minSeverity? }.
   app.post("/cases/:id/import-file", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;

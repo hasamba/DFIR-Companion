@@ -65,6 +65,17 @@ describe("team-auth configuration and policy", () => {
       caseId: "c1",
     });
     expect(resolveRequestPolicy("POST", "/captures")).toEqual({ kind: "capture" });
+    // /import-file reads an operator-named absolute path off the server's own filesystem, so it
+    // carries the same trust as /nsrl/import-file and /kev/import-file — global admin, never the
+    // per-case "write" a plain investigator holds (#520).
+    expect(resolveRequestPolicy("POST", "/cases/c1/import-file")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/c1/%69mport-file")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });

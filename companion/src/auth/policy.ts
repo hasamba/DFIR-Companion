@@ -53,6 +53,10 @@ const CASE_ADMIN_SEGMENTS = [
   "/delete",
   "/restore-backup",
 ];
+// Case-scoped routes that nonetheless read the SERVER's own filesystem at an operator-named path.
+// Holding "write" on one case must not let a user name a path outside that case and have its bytes
+// copied in as evidence. Same trust as /nsrl and /kev import-file, already global-admin prefixes.
+const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file"];
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
 const CASE_REVIEW_SEGMENTS = [
   "/review",
@@ -88,6 +92,9 @@ function pathStarts(path: string, prefix: string): boolean {
 
 function casePolicy(method: string, path: string, caseId: string): RequestPolicy {
   const suffix = path.slice(`/cases/${caseId}`.length);
+  if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
+    return { kind: "global", permission: "admin" };
+  }
   if (CASE_READ_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
     return { kind: "case", permission: "read", caseId };
   }
