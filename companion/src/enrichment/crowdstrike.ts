@@ -39,6 +39,18 @@ function asArray(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
 function str(v: unknown): string { return v === undefined || v === null ? "" : String(v); }
 function isSha256(v: string): boolean { return /^[a-f0-9]{64}$/i.test(v); }
 
+/**
+ * Escape a value for a single-quoted FQL string literal. encodeURIComponent protects the URL, not
+ * the query language underneath it: a quote inside the value still terminates the literal. IOC
+ * values arrive from parsed evidence and a quote is legal in a URL, so without this a single
+ * apostrophe malforms the filter — CrowdStrike 400s and that IOC fails on every enrichment run
+ * from then on — or closes the literal and changes what the query asks. Backslash first, or it
+ * would escape the escapes added after it.
+ */
+function escapeFqlLiteral(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 // CrowdStrike Falcon — Threat Intelligence enrichment (NO endpoint/SIEM data). One indicator is
 // looked up across the abuse-free, intel-only back-ends and each hit is a SEPARATE result:
 //   hash         → Falcon Intelligence Indicators + MalQuery sample metadata
@@ -102,7 +114,7 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
 
   // Falcon Intelligence Indicators — adversary-attributed IOC intel.
   private async intelLookup(value: string): Promise<EnrichmentResult | null> {
-    const filter = encodeURIComponent(`indicator:'${value}'`);
+    const filter = encodeURIComponent(`indicator:'${escapeFqlLiteral(value)}'`);
     const json = await this.apiGet(
       `/intel/combined/indicators/v1?filter=${filter}&limit=1&sort=last_updated.desc`,
       "Indicators (Falcon Intelligence): Read",
