@@ -44,12 +44,31 @@ export class InvalidImageError extends Error {
   }
 }
 
-// In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
-// The claim identifies WHICH ingest wrote the entry: two overlapping captures of the same frame
-// carry the same hash, so a hash comparison alone cannot tell whose entry is in the map, and a
-// failing ingest would roll back a successful one's.
-type DedupEntry = { hash: string; claim: symbol };
-const lastHashByCase = new Map<string, DedupEntry>();
+// In-memory cache of the last PERSISTED content hash per case, to decide duplicates without
+// re-reading disk. Only a frame that actually landed is recorded here.
+const lastHashByCase = new Map<string, string>();
+
+// One queue per case, so the read-decide-write sequence below never interleaves with another
+// capture for the same case. Without it the dedup decision races its own write: two overlapping
+// identical frames both read the stale hash and are both analyzed, and a frame that failed to
+// persist can leave a hash behind that makes the extension's retry look like a duplicate. Trying
+// to patch those windows with a claim token and rollback only moves them around — a pending claim
+// is not the same fact as a persisted hash. Different cases still run in parallel.
+const caseQueues = new Map<string, Promise<unknown>>();
+
+function withCaseLock<T>(caseId: string, run: () => Promise<T>): Promise<T> {
+  const previous = caseQueues.get(caseId) ?? Promise.resolve();
+  // Run whether the previous capture resolved or rejected: one failure must not stall the case.
+  const result = previous.then(run, run);
+  caseQueues.set(
+    caseId,
+    result.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return result;
+}
 
 export async function ingestCapture(
   store: CaseStore,
@@ -75,30 +94,24 @@ export async function ingestCapture(
 
   const hash = computeContentHash(bytes);
 
-  const previousEntry = lastHashByCase.get(payload.caseId);
-  // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
-  // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
-  const duplicate = dedup && previousEntry !== undefined && previousEntry.hash === hash;
-  // Claim the hash in the same tick the decision is made — an await between the read and the write
-  // would let two overlapping identical captures for one case both read the stale value and both
-  // come back non-duplicate. The claim is rolled back below if the frame never lands.
-  const claim = Symbol("capture-claim");
-  lastHashByCase.set(payload.caseId, { hash, claim });
-
-  try {
-    return await persistCapture(store, payload, { bytes, hash, duplicate, ext: format.ext });
-  } catch (err) {
-    // The frame never landed, so the claim must not stand: the extension retries the identical bytes
-    // after a 5xx and that retry would match the remembered hash, coming back a duplicate — which
-    // willAnalyze, the OCR indexer and captureAnalysis all skip, so it would be stored but never
-    // analyzed, with no error surfaced (#513). Undo only OUR claim, identified by its token: a later
-    // capture that already replaced the entry owns the slot now, even with an identical hash.
-    if (lastHashByCase.get(payload.caseId)?.claim === claim) {
-      if (previousEntry === undefined) lastHashByCase.delete(payload.caseId);
-      else lastHashByCase.set(payload.caseId, previousEntry);
-    }
-    throw err;
-  }
+  return withCaseLock(payload.caseId, async () => {
+    const previous = lastHashByCase.get(payload.caseId);
+    // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
+    // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
+    const duplicate = dedup && previous !== undefined && previous === hash;
+    const metadata = await persistCapture(store, payload, {
+      bytes,
+      hash,
+      duplicate,
+      ext: format.ext,
+    });
+    // Only a frame that is on disk AND in the log is remembered. Recording it any earlier means a
+    // failed write poisons the cache: the extension retries the identical bytes after a 5xx (its
+    // queue keeps the entry at the head) and that retry comes back a duplicate — which willAnalyze,
+    // the OCR indexer and captureAnalysis all skip, so it is stored but never analyzed (#513).
+    lastHashByCase.set(payload.caseId, hash);
+    return metadata;
+  });
 }
 
 /** Everything after the dedup claim: allocate the sequence, name the file, write both records. */
@@ -154,4 +167,5 @@ async function persistCapture(
 // Exposed for test isolation.
 export function _resetDedupCache(): void {
   lastHashByCase.clear();
+  caseQueues.clear();
 }

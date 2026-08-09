@@ -102,10 +102,9 @@ describe("ingestCapture", () => {
     },
   );
 
-  // Two overlapping captures of the same frame carry the SAME hash, so "is the cached hash still
-  // mine?" cannot be answered by comparing hashes: the one that fails would roll back the one that
-  // succeeded, and the next identical frame would be re-analyzed as new. Ownership is a token.
-  it("keeps a successful capture's claim when an overlapping identical one fails", async () => {
+  // When one of two overlapping identical captures fails, the one that DID land is the only copy on
+  // disk — so it must be analyzed, not written off as a duplicate of the frame that never made it.
+  it("analyzes the surviving capture when an overlapping identical one fails", async () => {
     const img = await pngBase64(5, 6, 7);
     const realSave = store.saveScreenshot.bind(store);
     let failFirst = true;
@@ -124,8 +123,11 @@ describe("ingestCapture", () => {
     ]);
     expect(doomed.status).toBe("rejected");
     expect(landed.status).toBe("fulfilled");
+    // The only copy on disk: it has to be analyzed, not skipped as a duplicate of a frame that
+    // never landed.
+    if (landed.status === "fulfilled") expect(landed.value.isDuplicate).toBe(false);
 
-    // The frame that landed still owns the slot, so the next identical one is a duplicate.
+    // And it is what the next identical frame dedupes against.
     const third = await ingestCapture(store, payload({ imageBase64: img }));
     expect(third.isDuplicate).toBe(true);
   });
