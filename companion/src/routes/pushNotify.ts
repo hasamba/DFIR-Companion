@@ -47,6 +47,14 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     }
 
     if (!(await store.caseExists(caseId))) return res.status(404).json({ error: "case not found" });
+    // Same write guard as the other evidence routes: a closed or archived case is immutable and
+    // takes no new evidence. The caller here is an unattended webhook or poller that has no idea
+    // the case was closed, so it needs the 423 as much as the dashboard does.
+    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
+    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
+      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
+      return res.status(423).json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before pushing evidence` });
+    }
 
     const { text, source, filename } = extractPushPayload(req.body);
     if (!text.trim()) return res.status(400).json({ error: "empty push payload" });
