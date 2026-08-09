@@ -75,7 +75,6 @@ export async function ingestCapture(
   // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
   // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
   const duplicate = dedup && previous !== undefined && previous === hash;
-  lastHashByCase.set(payload.caseId, hash);
 
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
   const tsSafe = payload.timestamp.replace(/[:.]/g, "-");
@@ -112,6 +111,11 @@ export async function ingestCapture(
     screenshotFile,
   };
   await store.appendCapture(payload.caseId, metadata);
+  // Only once the frame is actually on disk and in the log. Remembering it any earlier means a
+  // failed write poisons the cache: the extension retries the identical bytes after a 5xx and that
+  // retry comes back a duplicate, which willAnalyze, the OCR indexer and captureAnalysis all skip —
+  // the frame would be stored but never analyzed (#513).
+  lastHashByCase.set(payload.caseId, hash);
   return metadata;
 }
 

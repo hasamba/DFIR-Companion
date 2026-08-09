@@ -71,6 +71,30 @@ describe("ingestCapture", () => {
     expect(second.isDuplicate).toBe(false);
   });
 
+  // The extension retries the SAME bytes after a 5xx (captureQueue classifies it as `retry` and
+  // keeps the entry at the head of the queue). If the cache remembered a frame whose write blew up,
+  // that retry would come back isDuplicate — and a duplicate is skipped by willAnalyze, the OCR
+  // indexer and captureAnalysis alike, so the frame would be stored but never analyzed (#513).
+  it("does not remember a frame whose write failed, so the retry is still analyzed", async () => {
+    const img = await pngBase64(10, 20, 30);
+    const realSave = store.saveScreenshot.bind(store);
+    let failNext = true;
+    store.saveScreenshot = async (...args: Parameters<typeof realSave>) => {
+      if (failNext) {
+        failNext = false;
+        throw new Error("ENOSPC: no space left on device");
+      }
+      return realSave(...args);
+    };
+
+    await expect(ingestCapture(store, payload({ imageBase64: img }))).rejects.toThrow(/ENOSPC/);
+
+    const retried = await ingestCapture(store, payload({ imageBase64: img }));
+    expect(retried.isDuplicate).toBe(false);
+    const onDisk = await readFile(join(store.screenshotsDir("c1"), retried.screenshotFile));
+    expect(onDisk.length).toBeGreaterThan(0);
+  });
+
   it("never flags a duplicate when dedup is disabled", async () => {
     const img = await pngBase64(128, 128, 128);
     await ingestCapture(store, payload({ imageBase64: img }), false);
