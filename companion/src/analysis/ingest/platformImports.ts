@@ -540,5 +540,7 @@ export async function importEvtxXml(
   };
   const delta = deltaSchema.parse(raw);
 
-  return commitDelta(ctx, caseId, delta, opts);
+  // awaitProgress: this importer's callback checkpoints the job, and the import is not finished
+  // until that lands — it is the one wrapper whose tail awaited it before the tails were shared.
+  return commitDelta(ctx, caseId, delta, { ...opts, awaitProgress: true });
 }

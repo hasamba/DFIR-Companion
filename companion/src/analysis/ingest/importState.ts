@@ -34,6 +34,13 @@ export async function commitDelta(
     importedAt: string;
     onProgress?: (done: number, total: number) => void | Promise<void>;
     signal?: AbortSignal;
+    /**
+     * Wait for the progress callback before returning. Only the EVTX importer does, because its
+     * callback checkpoints the job and the import is not really finished until that lands. Everyone
+     * else fires and forgets, and must keep doing so: awaiting would let a rejected checkpoint mark
+     * an import failed AFTER its state was already saved, so the retry would re-import it.
+     */
+    awaitProgress?: boolean;
   },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
@@ -50,7 +57,8 @@ export async function commitDelta(
     });
     await ctx.opts.stateStore.save(state);
     ctx.opts.onState?.(state);
-    await opts.onProgress?.(1, 1);
+    const progress = opts.onProgress?.(1, 1);
+    if (opts.awaitProgress) await progress;
     return state;
   });
 }
