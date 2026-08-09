@@ -63,6 +63,16 @@ const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file"];
 // Exempting the whole /cases/import subtree would hand /cases/import/delete and
 // /cases/import/import-file to any authenticated session.
 const NON_CASE_PATHS = new Set(["/cases/import/encrypted", "/cases/seed-demo"]);
+
+/**
+ * The spelling Express itself would route by: case-insensitive, trailing slash optional (neither
+ * "case sensitive routing" nor "strict routing" is enabled). Matching NON_CASE_PATHS byte-exactly
+ * would miss /cases/seed-demo/ and /cases/import/ENCRYPTED, which the router still serves — the
+ * seeder would then read as a case named "seed-demo" and drop from global admin to case write.
+ */
+function collectionPath(path: string): string {
+  return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
+}
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
 const CASE_REVIEW_SEGMENTS = [
   "/review",
@@ -145,7 +155,7 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   }
   if (normalizedMethod === "POST" && path === "/captures") return { kind: "capture" };
   const match = /^\/cases\/([^/]+)(?:\/|$)/.exec(path);
-  if (match && !NON_CASE_PATHS.has(path)) {
+  if (match && !NON_CASE_PATHS.has(collectionPath(path))) {
     let caseId: string;
     try {
       caseId = decodeURIComponent(match[1]);
@@ -158,7 +168,7 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   if (
     path === "/cases" ||
     path === "/captures/recent" ||
-    path === "/cases/import/encrypted" ||
+    collectionPath(path) === "/cases/import/encrypted" ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

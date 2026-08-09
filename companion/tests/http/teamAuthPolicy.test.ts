@@ -120,6 +120,19 @@ describe("team-auth configuration and policy", () => {
       kind: "global",
       permission: "admin",
     });
+    // Express serves those two endpoints for any casing and with a trailing slash, so the exemption
+    // has to recognise the same spellings the router does. Otherwise POST /cases/seed-demo/ reads as
+    // a case named "seed-demo" and the demo seeder drops from global admin to plain case write.
+    expect(resolveRequestPolicy("POST", "/cases/seed-demo/")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/SEED-DEMO")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/import/encrypted/")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/cases/import/ENCRYPTED")).toEqual({ kind: "authenticated" });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });
