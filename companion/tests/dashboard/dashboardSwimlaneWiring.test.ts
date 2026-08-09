@@ -50,6 +50,22 @@ describe("initSwimlane wires every control it owns", () => {
     const observed: string[] = [];
     const els = new Map<string, Record<string, unknown>>();
 
+    // DEDUPES THE WAY A BROWSER DOES. addEventListener ignores a registration whose type, listener
+    // REFERENCE and capture flag all match one already present, so two of this feature's handlers —
+    // swScopeToView and swExportPng, module-level declarations rather than closures — cannot double
+    // up however many times the initializer runs. A recorder that just pushed every call reported
+    // them as duplicated anyway, which meant it could not tell a real double-wire from a safe
+    // re-registration, and would fail a correct fix that swapped closures for named functions.
+    const registered = new Set<string>();
+    const record = (scope: string, type: string, fn: unknown): void => {
+      const key = `${scope}:${type}`;
+      const seen = `${key}::${fnIds.get(fn) ?? (fnIds.set(fn, String(fnIds.size)), fnIds.size - 1)}`;
+      if (registered.has(seen)) return;
+      registered.add(seen);
+      listeners.push(key);
+    };
+    const fnIds = new Map<unknown, string>();
+
     const el = (id: string): Record<string, unknown> => {
       if (!els.has(id)) {
         els.set(id, {
@@ -63,7 +79,7 @@ describe("initSwimlane wires every control it owns", () => {
           style: {},
           dataset: {},
           classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-          addEventListener: (type: string) => listeners.push(`${id}:${type}`),
+          addEventListener: (type: string, fn: unknown) => record(id, type, fn),
           getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
           // Only swRenderCanvas() reaches for a 2d context, and initSwimlane does not call it — but
           // a stub costs nothing and keeps a future render inside the initializer from turning this
@@ -86,7 +102,7 @@ describe("initSwimlane wires every control it owns", () => {
       querySelector: () => null,
       querySelectorAll: () => [],
       createElement: () => el("__created"),
-      addEventListener: (type: string) => listeners.push(`document:${type}`),
+      addEventListener: (type: string, fn: unknown) => record("document", type, fn),
       body: { classList: { add() {}, remove() {} }, appendChild() {} },
       fullscreenElement: null,
     };
@@ -108,7 +124,7 @@ describe("initSwimlane wires every control it owns", () => {
         document,
         ResizeObserver,
         // `sandbox.window = sandbox`, so a window-level listener is a bare global here.
-        addEventListener: (type: string) => listeners.push(`window:${type}`),
+        addEventListener: (type: string, fn: unknown) => record("window", type, fn),
         requestAnimationFrame: (cb: () => void) => {
           void cb;
           return 0;
@@ -173,6 +189,16 @@ describe("initSwimlane wires every control it owns", () => {
   });
 
   // NOT ASSERTED HERE: what a SECOND initSwimlane() should do.
+  //
+  // A MODULE-WIDE ONE-SHOT GUARD IS THE WRONG FIX, which is worth recording because it is the first
+  // one #496 suggests. `if (swWired) return` makes a repeat call safe and a RE-RENDER fatal: when
+  // the panel's markup is rebuilt, getElementById hands back a new canvas and the guard refuses to
+  // wire it, so the panel is silently dead rather than merely double-wired. Measured with this
+  // fixture — clear the element cache to model a re-render and the new canvas receives nothing.
+  // Re-render is the scenario #496 names as how this goes live, so the guard makes the primary case
+  // worse. A correct fix has to key on the ELEMENT, and separately keep the document/window
+  // handlers from stacking; two of those capture init-local `canvas`/`tooltip`, so they cannot just
+  // be hoisted to named functions without moving that state too. Caught by Codex stop-gate review.
   //
   // It currently re-registers all seventeen, because every handler is a fresh anonymous function
   // and the browser keeps both — so one click would run twice. That is a latent defect in the
