@@ -34,6 +34,37 @@ describe("defaultClaudeRunner", () => {
     expect(r.stdout).toBe("€");
   });
 
+  // maxStdoutBytes exists so a long agent run does not retain every tool_result event for the life
+  // of the process. What matters is WHICH end survives: consumers scan for the LAST result line
+  // (#518), so the cap has to drop the oldest output, not the newest.
+  it("keeps the tail of stdout when maxStdoutBytes is set", async () => {
+    const script =
+      'for (let i = 0; i < 200; i++) process.stdout.write("x".repeat(1000) + "\\n");' +
+      'process.stdout.write(JSON.stringify({ type: "result", result: "the answer" }) + "\\n");';
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStdoutBytes: 16_000,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.stdout.length).toBeLessThan(200_000); // the full stream is ~200 KB
+    // The end survived: the result line a consumer needs is still there.
+    expect(r.stdout).toContain('"result":"the answer"');
+  });
+
+  it("keeps everything when no cap is set", async () => {
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", 'process.stdout.write("y".repeat(100000))'],
+      stdin: "",
+      timeoutMs: 30_000,
+    });
+    expect(r.stdout.length).toBe(100_000);
+  });
+
   it("reports a non-zero exit code", async () => {
     const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", "process.exit(3)"], stdin: "", timeoutMs: 10_000 });
     expect(r.code).toBe(3);

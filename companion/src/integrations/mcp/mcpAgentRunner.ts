@@ -33,6 +33,20 @@ export const DEFAULT_AGENT_TIMEOUT_MS = 3_600_000;
 /** A short, tool-free continuation reserved for turning collected evidence into the required JSON. */
 const FINAL_REPORT_TURNS = 3;
 
+/**
+ * How much of the agent's stdout to keep for the result scan (#518).
+ *
+ * `--output-format stream-json` emits every tool result as its own event, so an hour-long, 40-turn
+ * investigation can produce far more output than anything reads back: `streamProgress` deliberately
+ * ignores the content as it flows past, and the only thing wanted at the end is the last `result`
+ * event. Retaining all of it just grew the heap for the length of the run.
+ *
+ * 8 MB leaves thousands of events of headroom past the tail anyone reads, and what is retained is
+ * the END of the stream, where the result lives. Both readers skip lines that fail to parse, so the
+ * partial line at the truncation point is ignored rather than mistaken for data.
+ */
+const MAX_AGENT_STDOUT_BYTES = 8 * 1024 * 1024;
+
 export interface McpAgentOptions {
   /** Servers to expose. Callers pass only agent-enabled ones — this module does not re-check. */
   servers: McpServer[];
@@ -200,6 +214,7 @@ async function finalizeMaxTurnRun(
     timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
+    maxStdoutBytes: MAX_AGENT_STDOUT_BYTES,
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
@@ -334,6 +349,7 @@ export async function runMcpAgent(opts: McpAgentOptions): Promise<McpAgentResult
     timeoutMs: opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS,
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.onProgress ? { onStdout: streamProgress(opts.onProgress) } : {}),
+    maxStdoutBytes: MAX_AGENT_STDOUT_BYTES,
   });
 
   if (run.spawnError) throw new Error(claudeMissingMessage(opts.bin, run.spawnError));
