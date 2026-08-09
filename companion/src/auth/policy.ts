@@ -91,7 +91,11 @@ function pathStarts(path: string, prefix: string): boolean {
 }
 
 function casePolicy(method: string, path: string, caseId: string): RequestPolicy {
-  const suffix = path.slice(`/cases/${caseId}`.length);
+  // Express routing is case-insensitive by default, so /PassWord and /IMPORT-FILE reach the same
+  // handlers as their lowercase spellings. Fold case before matching: every segment and pattern
+  // below is lowercase, and the branch they guard is more restrictive than the default one — an
+  // unfolded compare would put an elevated route one shift key away from plain case "write".
+  const suffix = path.slice(`/cases/${caseId}`.length).toLowerCase();
   if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
     return { kind: "global", permission: "admin" };
   }

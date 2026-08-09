@@ -76,6 +76,21 @@ describe("team-auth configuration and policy", () => {
       kind: "global",
       permission: "admin",
     });
+    // Express routing is case-insensitive by default, so /IMPORT-FILE reaches the same handler.
+    // The classifier has to fold case too, or the elevated segments are one shift key from the
+    // permissive default branch — for /import-file and for the case-admin segments alike.
+    expect(resolveRequestPolicy("POST", "/cases/c1/IMPORT-FILE")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/c1/PassWord")).toMatchObject({
+      permission: "admin",
+      caseId: "c1",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/c1/ARCHIVE")).toMatchObject({
+      permission: "admin",
+      caseId: "c1",
+    });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });
