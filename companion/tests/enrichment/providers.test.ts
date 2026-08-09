@@ -193,6 +193,24 @@ describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
     expect(decodeURIComponent(intelCall)).toContain("indicator:'evil.test'");
   });
 
+  // FQL is a query language, and encodeURIComponent only protects URL transport — it leaves the
+  // quote that terminates the string literal intact. IOC values reach here straight from parsed
+  // evidence (enrichService passes ioc.value through), and a quote is legal in a URL, so an
+  // unescaped one either malforms the filter — CrowdStrike 400s, and that IOC then fails on every
+  // enrichment run forever — or closes the literal and changes what the query means (#514).
+  it("escapes quotes and backslashes in the FQL filter instead of letting them terminate it", async () => {
+    const fetchFn = csFetch({ intel: { resources: [] } });
+    const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn });
+    await cs.lookup("url", "http://evil.test/a'b\\c");
+
+    const intelCall = String(
+      fetchFn.mock.calls.find((c) => String(c[0]).includes("/intel/combined/indicators"))![0],
+    );
+    const filter = decodeURIComponent(new URL(intelCall).searchParams.get("filter") ?? "");
+    // The value's own quote is escaped, so the literal still opens and closes exactly once.
+    expect(filter).toBe("indicator:'http://evil.test/a\\'b\\\\c'");
+  });
+
   it("returns [] when CrowdStrike has no intel on the indicator", async () => {
     const cs = new CrowdStrikeProvider({ clientId: "id", clientSecret: "sec", fetchFn: csFetch({ intel: { resources: [] }, malquery: { resources: [] } }) });
     expect(await cs.lookup("hash", SHA)).toEqual([]);
