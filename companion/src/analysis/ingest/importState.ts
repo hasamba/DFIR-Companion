@@ -14,14 +14,34 @@ import type { ImportContext } from "./importContext.js";
  * code lives where the callers do.
  */
 
-/** The load → merge → save → announce tail all deterministic imports share. */
-async function commitDelta(
+/**
+ * The load → merge → save → announce tail all deterministic imports share.
+ *
+ * Exported because it was not actually being shared: every wrapper in platformImports.ts had this
+ * same block pasted into it, so the one sequence that must stay consistent across importers — take
+ * the lock, merge under the import's timestamp, save, announce — existed in a dozen copies free to
+ * drift apart (#517).
+ *
+ * `signal` is checked inside the lock: an import cancelled while queued behind another write to the
+ * same case must not merge its delta after the analyst gave up on it.
+ */
+export async function commitDelta(
   ctx: ImportContext,
   caseId: string,
   delta: ReturnType<typeof deltaSchema.parse>,
-  opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
+  opts: {
+    label: string;
+    importedAt: string;
+    onProgress?: (done: number, total: number) => void | Promise<void>;
+    signal?: AbortSignal;
+  },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
+    if (opts.signal?.aborted) {
+      throw Object.assign(new Error("import processing cancelled; stored evidence retained"), {
+        name: "AbortError",
+      });
+    }
     let state = await ctx.opts.stateStore.load(caseId);
     state = await ctx.mergeWithAliases(state, delta, {
       windowSequence: -1,
@@ -30,7 +50,7 @@ async function commitDelta(
     });
     await ctx.opts.stateStore.save(state);
     ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
+    await opts.onProgress?.(1, 1);
     return state;
   });
 }
