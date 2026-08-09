@@ -1,9 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { selectSynthesisEvents, selectSynthesisEventsAnnotated, buildSynthesisContext } from "../../src/analysis/synthSelect.js";
+import {
+  selectSynthesisEvents,
+  selectSynthesisEventsAnnotated,
+  buildSynthesisContext,
+} from "../../src/analysis/synthSelect.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, t: string, sev: Severity): ForensicEvent {
-  return { id, timestamp: t, description: id, severity: sev, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] };
+  return {
+    id,
+    timestamp: t,
+    description: id,
+    severity: sev,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  };
 }
 
 function host(e: ForensicEvent, asset: string, processName?: string): ForensicEvent {
@@ -29,9 +41,9 @@ describe("selectSynthesisEvents", () => {
     const picked = selectSynthesisEvents(events, 30);
     const ids = picked.map((e) => e.id);
     expect(picked.length).toBeLessThanOrEqual(30);
-    expect(ids).toContain("crit");                 // all Critical/High kept
+    expect(ids).toContain("crit"); // all Critical/High kept
     expect(ids).toContain("high");
-    expect(ids).toContain("low0");                 // earliest (initial-access) kept
+    expect(ids).toContain("low0"); // earliest (initial-access) kept
     // chronological order
     const times = picked.map((e) => e.timestamp);
     expect(times).toEqual([...times].sort());
@@ -43,19 +55,26 @@ describe("selectSynthesisEvents", () => {
     // one here is pure waste — and `rarityOf` is the one builder a caller can observe, which makes it the
     // probe: any call to it means a list was built and thrown away.
     const events: ForensicEvent[] = [];
-    for (let i = 0; i < 20; i++) events.push(ev(`crit${i}`, `2026-05-20T${String(i).padStart(2, "0")}:00:00Z`, "Critical"));
-    for (let i = 0; i < 30; i++) events.push(ev(`low${i}`, `2026-05-21T${String(i % 24).padStart(2, "0")}:00:00Z`, "Low"));
+    for (let i = 0; i < 20; i++)
+      events.push(ev(`crit${i}`, `2026-05-20T${String(i).padStart(2, "0")}:00:00Z`, "Critical"));
+    for (let i = 0; i < 30; i++)
+      events.push(ev(`low${i}`, `2026-05-21T${String(i % 24).padStart(2, "0")}:00:00Z`, "Low"));
 
     let rarityCalls = 0;
-    const picked = selectSynthesisEvents(events, 20, (e) => { rarityCalls++; return e.id.startsWith("low") ? 1 : 0; });
+    const picked = selectSynthesisEvents(events, 20, (e) => {
+      rarityCalls++;
+      return e.id.startsWith("low") ? 1 : 0;
+    });
 
     expect(picked.length).toBe(20);
-    expect(picked.every((e) => e.severity === "Critical")).toBe(true);   // budget went entirely to anchors
+    expect(picked.every((e) => e.severity === "Critical")).toBe(true); // budget went entirely to anchors
     expect(rarityCalls).toBe(0);
   });
 
   it("keeps the severest when Critical/High alone exceed the budget", () => {
-    const events = Array.from({ length: 50 }, (_, i) => ev(`c${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "Critical"));
+    const events = Array.from({ length: 50 }, (_, i) =>
+      ev(`c${i}`, `2026-05-20T${String(i % 24).padStart(2, "0")}:00:00Z`, "Critical"),
+    );
     expect(selectSynthesisEvents(events, 10).length).toBe(10);
   });
 
@@ -77,7 +96,9 @@ describe("selectSynthesisEvents", () => {
   it("drops the most-repeated anchors first when a rarity function is supplied", () => {
     // 20 copies of a noisy repeated pattern plus 2 genuinely rare ones, all Critical, budget 6.
     const events = [
-      ...Array.from({ length: 20 }, (_, i) => ev(`noise${i}`, `2026-05-20T10:${String(i).padStart(2, "0")}:00Z`, "Critical")),
+      ...Array.from({ length: 20 }, (_, i) =>
+        ev(`noise${i}`, `2026-05-20T10:${String(i).padStart(2, "0")}:00Z`, "Critical"),
+      ),
       ev("rare1", "2026-05-20T11:00:00Z", "Critical"),
       ev("rare2", "2026-05-20T11:05:00Z", "Critical"),
     ];
@@ -93,9 +114,11 @@ describe("selectSynthesisEvents", () => {
   // `tail` filler pushes the timeline past the budget so the reserved fills actually run.
   function anchorScenario(...middle: ForensicEvent[]): ForensicEvent[] {
     const lead = Array.from({ length: 20 }, (_, i) =>
-      host(ev(`lead${i}`, `2026-05-19T${String(i % 24).padStart(2, "0")}:30:00Z`, "Info"), "WIN-50"));
+      host(ev(`lead${i}`, `2026-05-19T${String(i % 24).padStart(2, "0")}:30:00Z`, "Info"), "WIN-50"),
+    );
     const tail = Array.from({ length: 40 }, (_, i) =>
-      host(ev(`tail${i}`, `2026-05-21T${String(i % 24).padStart(2, "0")}:30:00Z`, "Info"), "WIN-50"));
+      host(ev(`tail${i}`, `2026-05-21T${String(i % 24).padStart(2, "0")}:30:00Z`, "Info"), "WIN-50"),
+    );
     return [...lead, ...middle, ...tail];
   }
 
@@ -123,7 +146,7 @@ describe("selectSynthesisEvents", () => {
   it("prefers process-like events when an anchor has more context than its per-anchor share", () => {
     const events = anchorScenario(
       host(ev("anchor", "2026-05-20T12:00:00Z", "High"), "WIN-01"),
-      host(ev("near-plain", "2026-05-20T12:01:00Z", "Low"), "WIN-01"),        // closer in time…
+      host(ev("near-plain", "2026-05-20T12:01:00Z", "Low"), "WIN-01"), // closer in time…
       host(ev("near-proc", "2026-05-20T12:05:00Z", "Low"), "WIN-01", "powershell.exe"), // …but this ran something
     );
     // max 19 = 1 anchor + 15 earliest + 3 remaining → a single anchor-context seat, so only the
@@ -152,49 +175,99 @@ describe("selectSynthesisEvents", () => {
   // windowed per-asset lookup leaves it essentially flat. Asserting that RATIO rather than a millisecond
   // bound keeps the test honest on a shared CI runner — machine speed cancels out instead of forcing a
   // threshold so loose it catches nothing.
-  it("does not get proportionally slower as a timeline gains anchors", () => {
+  it("does not rescan the timeline once per anchor as anchors multiply", () => {
+    // COUNTED, NOT TIMED. This was a wall-clock ratio — time with 200 anchors over time with 20,
+    // asserted under 2. The defect it catches scores 4.2-5.2, so nothing real lived between 2 and 5,
+    // and the trip point sat inside ordinary CI noise instead: measured over 20 local runs on an idle
+    // machine the healthy ratio wandered 0.70-1.38, and CI saw 2.08 twice on an unchanged commit
+    // (#492). A gate that cries wolf trains reviewers to re-run rather than read, which is the reflex
+    // that lets a real 4x regression through.
+    //
+    // The defect is countable, so it is counted. "Each anchor rescans the timeline" means the
+    // per-anchor loop visits O(anchors x events) entries instead of O(anchors x window). Every visit
+    // reads `.id` — `t.e.id === a.id || claimed.has(t.e.id)` — so an id accessor tallies the visits
+    // exactly. No production instrumentation: the seam is the test's own fixture.
+    let reads = 0;
+    const counting = (e: ForensicEvent): ForensicEvent => {
+      const id = e.id;
+      return Object.defineProperties({ ...e }, { id: { get: () => (reads++, id), enumerable: true } });
+    };
     const hosts = Array.from({ length: 20 }, (_, i) => `HOST-${i}`);
     const start = Date.parse("2026-05-20T00:00:00Z");
     const build = (anchorEvery: number): ForensicEvent[] =>
       Array.from({ length: 20_000 }, (_, i) => {
-        const e = ev(`e${i}`, new Date(start + i * 30_000).toISOString(), i % anchorEvery === 0 ? "High" : "Low");
+        const e = ev(
+          `e${i}`,
+          new Date(start + i * 30_000).toISOString(),
+          i % anchorEvery === 0 ? "High" : "Low",
+        );
         e.description = `powershell.exe ran step ${i}`;
-        return host(e, hosts[i % hosts.length]);
+        return counting(host(e, hosts[i % hosts.length]));
       });
 
-    const fewAnchors = build(1000);    // 20 anchors
-    const manyAnchors = build(100);    // 200 anchors
+    const fewAnchors = build(1000); // 20 anchors
+    const manyAnchors = build(100); // 200 anchors
     // Preconditions: both stay under the budget (so neither takes the anchor-overflow short-circuit)
     // and both leave real budget for the context fill. If either flips, this silently stops measuring
     // the path it was written to measure.
     expect(manyAnchors.filter((e) => e.severity === "High").length).toBe(200);
     expect(fewAnchors.filter((e) => e.severity === "High").length).toBe(20);
 
-    const timeOf = (evts: ForensicEvent[]): number => {
-      let best = Infinity;
-      for (let i = 0; i < 3; i++) {          // min-of-3 — the fastest run is the least noise-polluted
-        const t0 = performance.now();
-        selectSynthesisEvents(evts, 300);
-        best = Math.min(best, performance.now() - t0);
-      }
-      return best;
+    const readsFor = (evts: ForensicEvent[]): number => {
+      reads = 0;
+      selectSynthesisEvents(evts, 300);
+      return reads;
     };
+    const few = readsFor(fewAnchors);
+    const many = readsFor(manyAnchors);
 
-    timeOf(fewAnchors);                       // discarded: warm the JIT so neither run pays compilation
-    // Measured: ~1.0 with the windowed lookup, 4.2–5.2 when each anchor rescans the timeline.
-    expect(timeOf(manyAnchors) / timeOf(fewAnchors)).toBeLessThan(2);
+    // The fixture has to be doing SOMETHING, or a broken accessor would make this pass at 0/0.
+    expect(few, "no id reads counted — the counting fixture stopped working").toBeGreaterThan(100);
+    // THE DELTA, NOT THE RATIO. Both runs pay the same ~160k reads for sorting and bucketing the
+    // 20,000 events, and that constant dilutes a ratio badly: reintroducing the rescan for real
+    // moves the ratio only 1.01 -> 8.94, so a ratio bound has to sit in a narrow band to catch it.
+    // The 180 EXTRA anchors are the whole question, and their cost is not diluted — 2,155 extra
+    // reads windowed against 10,800,535 rescanning, five thousand times apart. Both measured, the
+    // second by putting the defect back.
+    expect(
+      many - few,
+      `rescan suspected: 180 more anchors cost ${many - few} extra id reads (windowed: ~2k)`,
+    ).toBeLessThan(100_000);
   });
 });
 
 describe("buildSynthesisContext", () => {
   it("summarizes compromised assets and threat-intel verdicts", () => {
     const s = emptyState("c1");
-    s.iocs.push({ id: "i1", type: "process", value: "evil.exe", firstSeen: "",
-      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "52/73", fetchedAt: "" }] });
-    s.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "evil.exe run", severity: "Critical",
-      mitreTechniques: [], relatedFindingIds: ["f1"], sourceScreenshots: [], asset: "WIN-01" });
-    s.findings.push({ id: "f1", severity: "Critical", title: "RW", description: "", relatedIocs: ["i1"],
-      mitreTechniques: [], sourceScreenshots: [], firstSeen: "", lastUpdated: "", status: "confirmed" });
+    s.iocs.push({
+      id: "i1",
+      type: "process",
+      value: "evil.exe",
+      firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "52/73", fetchedAt: "" }],
+    });
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "evil.exe run",
+      severity: "Critical",
+      mitreTechniques: [],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+    });
+    s.findings.push({
+      id: "f1",
+      severity: "Critical",
+      title: "RW",
+      description: "",
+      relatedIocs: ["i1"],
+      mitreTechniques: [],
+      sourceScreenshots: [],
+      firstSeen: "",
+      lastUpdated: "",
+      status: "confirmed",
+    });
 
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
     expect(ctx).toContain("COMPROMISED ASSETS");
@@ -213,10 +286,23 @@ describe("buildSynthesisContext", () => {
     // db-01 is the case's own internal server (an event carries it as `asset`); a threat-intel
     // provider nonetheless marked the same value suspicious — likely stale/wrong data, not a real
     // external C2, and the model must not treat it as confirmed without saying so.
-    s.iocs.push({ id: "i1", type: "domain", value: "db-01.northpeaklabs.com", firstSeen: "",
-      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }] });
-    s.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "connection to db-01.northpeaklabs.com",
-      severity: "Info", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "db-01.northpeaklabs.com" });
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "db-01.northpeaklabs.com",
+      firstSeen: "",
+      enrichments: [{ source: "OpenCTI", verdict: "suspicious", score: "", fetchedAt: "" }],
+    });
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "connection to db-01.northpeaklabs.com",
+      severity: "Info",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "db-01.northpeaklabs.com",
+    });
 
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
     // #7: a conflicted verdict (own-host asset) is moved to the dedicated INTEL CONFLICTS block so the
@@ -229,10 +315,23 @@ describe("buildSynthesisContext", () => {
 
   it("tags a corroborated verdict (provider + behavioral event) as [corroborated]", () => {
     const s = emptyState("c1");
-    s.iocs.push({ id: "i1", type: "process", value: "evil.exe", firstSeen: "",
-      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "52/73", fetchedAt: "" }] });
-    s.forensicTimeline.push({ id: "e1", timestamp: "2026-05-20T09:00:00Z", description: "evil.exe run", severity: "Critical",
-      mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [], asset: "WIN-01" });
+    s.iocs.push({
+      id: "i1",
+      type: "process",
+      value: "evil.exe",
+      firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "52/73", fetchedAt: "" }],
+    });
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "evil.exe run",
+      severity: "Critical",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WIN-01",
+    });
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
     expect(ctx).toContain("THREAT-INTEL VERDICTS");
     expect(ctx).toContain("evil.exe = malicious (VirusTotal 52/73) [corroborated]");
@@ -240,8 +339,13 @@ describe("buildSynthesisContext", () => {
 
   it("tags a single-provider verdict with no behavioral evidence as [lone-intel]", () => {
     const s = emptyState("c1");
-    s.iocs.push({ id: "i1", type: "domain", value: "evil-c2.example", firstSeen: "",
-      enrichments: [{ source: "VirusTotal", verdict: "suspicious", score: "", fetchedAt: "" }] });
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "evil-c2.example",
+      firstSeen: "",
+      enrichments: [{ source: "VirusTotal", verdict: "suspicious", score: "", fetchedAt: "" }],
+    });
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
     expect(ctx).toContain("[lone-intel]");
   });
