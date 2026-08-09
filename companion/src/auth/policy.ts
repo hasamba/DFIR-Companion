@@ -91,18 +91,21 @@ function pathStarts(path: string, prefix: string): boolean {
 }
 
 function casePolicy(method: string, path: string, caseId: string): RequestPolicy {
+  const suffix = path.slice(`/cases/${caseId}`.length);
   // Express routing is case-insensitive by default, so /PassWord and /IMPORT-FILE reach the same
-  // handlers as their lowercase spellings. Fold case before matching: every segment and pattern
-  // below is lowercase, and the branch they guard is more restrictive than the default one — an
-  // unfolded compare would put an elevated route one shift key away from plain case "write".
-  const suffix = path.slice(`/cases/${caseId}`.length).toLowerCase();
-  if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
+  // handlers as their lowercase spellings; an unfolded compare would leave an elevated route one
+  // shift key from the permissive "write" default. Fold case ONLY for the checks anchored at a
+  // literal route segment. The review and export checks below scan the whole suffix, which carries
+  // user-named values (an MCP server id, a report version) — folding those would let a server named
+  // "Report" pull POST /mcp/:id/run into the export bucket that a reader holds.
+  const lowerSuffix = suffix.toLowerCase();
+  if (CASE_GLOBAL_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "global", permission: "admin" };
   }
-  if (CASE_READ_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
+  if (CASE_READ_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "read", caseId };
   }
-  if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(suffix, segment))) {
+  if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
   }
   if (CASE_REVIEW_SEGMENTS.some((segment) => suffix.includes(segment))) {

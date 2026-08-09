@@ -91,6 +91,14 @@ describe("team-auth configuration and policy", () => {
       permission: "admin",
       caseId: "c1",
     });
+    // ...but only where the match is anchored at a literal route segment. The export and review
+    // checks scan the whole suffix, which contains user-named values (an MCP server id, a report
+    // version): folding those would let a server named "Report" pull POST /mcp/:id/run — a write
+    // route — into the export bucket, which a reader holds.
+    expect(resolveRequestPolicy("POST", "/cases/c1/mcp/Report/run")).toMatchObject({
+      permission: "write",
+      caseId: "c1",
+    });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });

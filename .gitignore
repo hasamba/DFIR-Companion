@@ -85,3 +85,7 @@ graphify-out/
 /AGENTS.md
 
 /tools/mcp-servers.json
+
+# Tesseract language models: downloaded into the working directory on first OCR run, ~5 MB each,
+# and reproducible from upstream. Never evidence, never source.
+*.traineddata
