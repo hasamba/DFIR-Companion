@@ -227,7 +227,11 @@ belongs in a boundary ledger pretending to be a small fix:
    `analysis ↔ integrations` edge has to be ledgered whichever layer the directory is assigned.
 2. **`public/dashboard.html` is decomposed, and all three of its targets are met.** Its inline
    JavaScript is 1,964 lines against the 2,000-line target, down from 19,203 when #384 wired the
-   gates in. The CSS half finished first: 3,234 lines of `<style>` became `public/css/dashboard-*.css`
+   gates in. **That is all five `<script>` blocks without a `src`, which is what `check:size`
+   ratchets** — 1,776 in the main block plus 82, 45, 43 and 18 in the four small ones. The main
+   block alone is the flattering number and has never been the measure; #490 caught it circulating
+   as if it were, at a point when choosing it would have closed #415 with 170 extractable lines
+   still inline. The CSS half finished first: 3,234 lines of `<style>` became `public/css/dashboard-*.css`
    — since split by concern into seven files, the largest 488 lines — leaving 4 lines that are a DOM
    node the runtime writes into rather than a stylesheet. #415 is closed.
 
