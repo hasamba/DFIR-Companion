@@ -46,13 +46,17 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     const done = (r: ClaudeRunResult) => { if (!settled) { settled = true; cleanup(); resolve(r); } };
 
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
-    child.stdout.on("data", (d) => {
-      const chunk = d.toString();
+    // Decode through the stream's own StringDecoder, which holds a partial multi-byte sequence back
+    // until the rest arrives. Calling toString() on each Buffer instead turns any character split
+    // across a ~64 KB pipe chunk into two U+FFFDs that concatenation cannot repair — corrupting
+    // non-ASCII evidence and breaking JSON.parse on stream-json lines (#515).
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
       opts.onStdout?.(chunk);
     });
-    child.stderr.on("data", (d) => {
-      const chunk = d.toString();
+    child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
       opts.onStderr?.(chunk);
     });

@@ -60,8 +60,13 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
     child.on("error", (err: NodeJS.ErrnoException) => done({ code: null, stdout, stderr, spawnError: err }));
     // Non-null: stdio: ["pipe", "pipe", "pipe"] above guarantees these pipes exist; cross-spawn's
     // return type is the generic ChildProcess (stdout/stderr/stdin typed nullable for other stdio configs).
-    child.stdout!.on("data", (d) => { stdout += d.toString(); });
-    child.stderr!.on("data", (d) => { stderr += d.toString(); });
+    // setEncoding, not per-chunk toString(): the stream's StringDecoder holds a partial multi-byte
+    // sequence until the rest arrives, so a character split across a ~64 KB pipe chunk survives
+    // instead of decoding to two unrecoverable U+FFFDs (#515).
+    child.stdout!.setEncoding("utf8");
+    child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr!.on("data", (chunk: string) => { stderr += chunk; });
     child.on("close", (code) => done({ code, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) }));
 
     child.stdin!.on("error", () => { /* ignore EPIPE if the child exits before we finish writing */ });
