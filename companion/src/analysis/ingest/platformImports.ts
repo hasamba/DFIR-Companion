@@ -19,7 +19,7 @@ import { parseTheHive, type TheHiveImportOptions } from "../theHiveImport.js";
 import { detectTool } from "../toolDetect.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
-import { noteEmptyImport } from "./importState.js";
+import { commitDelta, noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -80,18 +80,7 @@ export async function importSiem(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Run a USER-authored declarative importer (the external plugin path). Mirrors the built-in
@@ -139,18 +128,7 @@ export async function importDeclarative(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import a malware-sandbox detonation report (CAPEv2 or CrowdStrike Falcon Sandbox).
@@ -193,18 +171,7 @@ export async function importSandbox(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -253,18 +220,7 @@ export async function importMemory(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import an email artifact (.eml RFC 2822, or best-effort .msg). Deterministic (no AI call):
@@ -308,18 +264,7 @@ export async function importEmail(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import a TheHive 5 case, alert, or observable export. Deterministic (no AI call):
@@ -362,18 +307,7 @@ export async function importTheHive(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import an existing DFIR-IRIS case (issue #88) — the reverse of the IRIS push. Takes the raw
@@ -417,18 +351,7 @@ export async function importIris(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import Wazuh SIEM/EDR alert exports (alerts.json / NDJSON / API export). Deterministic
@@ -471,18 +394,7 @@ export async function importWazuh(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import YARA CLI scan output (`yara -s -m <rules> <target>`). Deterministic (no AI): each rule
@@ -526,18 +438,7 @@ export async function importYara(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import SO-CRATES (dougburks/so-crates) verdicts — Suricata IDS alerts, YARA file matches, and
@@ -579,18 +480,7 @@ export async function importSocrates(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    opts.onProgress?.(1, 1);
-    return state;
-  });
+  return commitDelta(ctx, caseId, delta, opts);
 }
 
 // Import Windows Event XML through the shared deterministic SIEM/EVTX mapping.
@@ -650,20 +540,7 @@ export async function importEvtxXml(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    if (opts.signal?.aborted)
-      throw Object.assign(new Error("import processing cancelled; stored evidence retained"), {
-        name: "AbortError",
-      });
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
-    await opts.onProgress?.(1, 1);
-    return state;
-  });
+  // awaitProgress: this importer's callback checkpoints the job, and the import is not finished
+  // until that lands — it is the one wrapper whose tail awaited it before the tails were shared.
+  return commitDelta(ctx, caseId, delta, { ...opts, awaitProgress: true });
 }
