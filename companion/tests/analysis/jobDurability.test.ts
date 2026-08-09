@@ -17,6 +17,7 @@ async function harness(
     globalConcurrency?: number;
     perCaseConcurrency?: number;
     max?: number;
+    onError?: (error: Error) => void;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-job-ledger-"));
@@ -304,5 +305,83 @@ describe("durable job ledger", () => {
 
     expect(manager.list("case-a").map((job) => job.id)).toEqual([first.jobId]);
     expect(manager.list("case-b").map((job) => job.id)).toEqual([second.jobId]);
+  });
+
+  // scheduleQueued marks a job "running" in memory BEFORE it can persist that transition. If the
+  // ledger write fails there is no way back on its own: the job is running to every reader, its
+  // admission promise never settles, and because nextAdmissible counts running jobs against
+  // perCaseConcurrency (1 with a ledger) the case never admits another job again — a permanent
+  // wedge that only a restart clears (#512).
+  it("releases the admission and the case slot when the ledger write for a start fails", async () => {
+    const errors: Error[] = [];
+    const { ledger, manager } = await harness({ onError: (error) => errors.push(error) });
+    const realUpdate = ledger.update.bind(ledger);
+    let failNext = true;
+    ledger.update = async (job) => {
+      if (failNext && job.status === "running") {
+        failNext = false;
+        throw new Error("ledger offline");
+      }
+      return realUpdate(job);
+    };
+
+    const wedged = manager.register({ caseId: "case-a", kind: "import" });
+    await expect(wedged.ready).rejects.toThrow(/ledger offline/);
+    await manager.drain();
+
+    // The failed admission must not leave a phantom "running" job holding the case's only slot.
+    expect(manager.get(wedged.jobId)?.status).not.toBe("running");
+    expect(errors.map((error) => error.message)).toContain("ledger offline");
+
+    // The case still accepts work: the next job is admitted and runs to completion.
+    const next = manager.register({ caseId: "case-a", kind: "import" });
+    await next.ready;
+    expect(manager.get(next.jobId)?.status).toBe("running");
+    await manager.finish(next.jobId);
+    expect(manager.get(next.jobId)?.status).toBe("succeeded");
+  });
+
+  // Failing the one job must not abandon the rest of the pass. Nothing guarantees another
+  // scheduleQueued run — it takes a fresh registration or a terminal transition — so a job already
+  // sitting in the queue would wait indefinitely for an admission that never settles.
+  it("still admits the jobs queued behind one whose ledger write failed", async () => {
+    const { ledger, manager } = await harness({
+      globalConcurrency: 2,
+      perCaseConcurrency: 2,
+      onError: () => {},
+    });
+    // Saturate the two slots, then queue two more. Their own registration passes admit nothing, so
+    // the only pass that can ever start them is the one triggered by a slot being freed below —
+    // which is exactly the pass the failure interrupts.
+    const running = [
+      manager.register({ caseId: "case-a", kind: "import" }),
+      manager.register({ caseId: "case-a", kind: "import" }),
+    ];
+    await Promise.all(running.map((job) => job.ready));
+    const doomed = manager.register({ caseId: "case-a", kind: "enrichment" });
+    const behind = manager.register({ caseId: "case-a", kind: "synthesis" });
+    // Let both registrations commit AND their own scheduling passes drain, so the pass triggered by
+    // the finish below is genuinely the only one left that can start either of them.
+    await Promise.all([doomed.durable, behind.durable]);
+    await manager.drain();
+    expect(manager.get(doomed.jobId)?.status).toBe("queued");
+    expect(manager.get(behind.jobId)?.status).toBe("queued");
+
+    const realUpdate = ledger.update.bind(ledger);
+    let failNext = true;
+    ledger.update = async (job) => {
+      if (failNext && job.status === "running") {
+        failNext = false;
+        throw new Error("ledger offline");
+      }
+      return realUpdate(job);
+    };
+
+    // One freed slot, one pass: it must get past the doomed job to the one behind it.
+    await manager.finish(running[0].jobId);
+
+    await expect(doomed.ready).rejects.toThrow(/ledger offline/);
+    await behind.ready;
+    expect(manager.get(behind.jobId)?.status).toBe("running");
   });
 });
