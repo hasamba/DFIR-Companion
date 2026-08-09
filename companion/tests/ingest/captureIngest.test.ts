@@ -75,24 +75,40 @@ describe("ingestCapture", () => {
   // keeps the entry at the head of the queue). If the cache remembered a frame whose write blew up,
   // that retry would come back isDuplicate — and a duplicate is skipped by willAnalyze, the OCR
   // indexer and captureAnalysis alike, so the frame would be stored but never analyzed (#513).
-  it("does not remember a frame whose write failed, so the retry is still analyzed", async () => {
-    const img = await pngBase64(10, 20, 30);
-    const realSave = store.saveScreenshot.bind(store);
-    let failNext = true;
-    store.saveScreenshot = async (...args: Parameters<typeof realSave>) => {
-      if (failNext) {
-        failNext = false;
-        throw new Error("ENOSPC: no space left on device");
-      }
-      return realSave(...args);
-    };
+  // Both writes matter: whichever one blows up, the frame is not on record, so the cache must not
+  // claim it. Parameterised so moving the cache update between the two calls cannot pass.
+  it.each(["saveScreenshot", "appendCapture"] as const)(
+    "does not remember a frame whose %s failed, so the retry is still analyzed",
+    async (method) => {
+      const img = await pngBase64(10, 20, 30);
+      const real = store[method].bind(store) as (...args: unknown[]) => Promise<unknown>;
+      let failNext = true;
+      (store as unknown as Record<string, unknown>)[method] = async (...args: unknown[]) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("ENOSPC: no space left on device");
+        }
+        return real(...args);
+      };
 
-    await expect(ingestCapture(store, payload({ imageBase64: img }))).rejects.toThrow(/ENOSPC/);
+      await expect(ingestCapture(store, payload({ imageBase64: img }))).rejects.toThrow(/ENOSPC/);
 
-    const retried = await ingestCapture(store, payload({ imageBase64: img }));
-    expect(retried.isDuplicate).toBe(false);
-    const onDisk = await readFile(join(store.screenshotsDir("c1"), retried.screenshotFile));
-    expect(onDisk.length).toBeGreaterThan(0);
+      const retried = await ingestCapture(store, payload({ imageBase64: img }));
+      expect(retried.isDuplicate).toBe(false);
+      const onDisk = await readFile(join(store.screenshotsDir("c1"), retried.screenshotFile));
+      expect(onDisk.length).toBeGreaterThan(0);
+    },
+  );
+
+  // The claim is made in the same tick as the decision, so an await cannot open a window where two
+  // overlapping identical captures both read the stale hash and both come back non-duplicate.
+  it("still flags the second of two overlapping identical captures", async () => {
+    const img = await pngBase64(77, 88, 99);
+    const [first, second] = await Promise.all([
+      ingestCapture(store, payload({ imageBase64: img })),
+      ingestCapture(store, payload({ imageBase64: img })),
+    ]);
+    expect([first.isDuplicate, second.isDuplicate].filter(Boolean)).toHaveLength(1);
   });
 
   it("never flags a duplicate when dedup is disabled", async () => {
