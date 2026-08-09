@@ -207,6 +207,23 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
  * Update specific keys in the .env file, preserving comments and structure.
  * Keys not already in the file are appended. Empty-string values are skipped.
  */
+// One writer at a time. updateEnv is a read-modify-write over a single file, so two overlapping
+// saves — the setup wizard and the Settings modal, or two browser tabs — both read the same
+// baseline and the second atomicWrite replaces the first caller's keys wholesale. atomicWrite makes
+// each individual write atomic; it cannot make the read and the write one step. The 200 has already
+// gone out by then, so the loss is silent (#510).
+let envWriteQueue: Promise<unknown> = Promise.resolve();
+
+function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {
+  // Run whether or not the previous save succeeded: one failed write must not wedge every later one.
+  const result = envWriteQueue.then(run, run);
+  envWriteQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 export async function updateEnv(updates: Record<string, string>): Promise<void> {
   // Fail closed on the record syntax even though the route validates first (#422). This function
   // is exported, and the cost of a caller forgetting is an attacker-authored line in the file the
@@ -217,28 +234,31 @@ export async function updateEnv(updates: Record<string, string>): Promise<void> 
       throw new Error(`refusing to write malformed .env record for key "${safeKeyLabel(key)}"`);
     }
   }
-  const raw = await readRaw();
-  const lines = raw.split("\n");
-  const updatedKeys = new Set<string>();
+  // Read and write as one step, or a concurrent save that read the same baseline overwrites us.
+  return withEnvWriteLock(async () => {
+    const raw = await readRaw();
+    const lines = raw.split("\n");
+    const updatedKeys = new Set<string>();
 
-  const newLines = lines.map(line => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) return line;
-    const key = trimmed.slice(0, eq).trim();
-    if (key in updates) {
-      updatedKeys.add(key);
-      return `${key}=${updates[key]}`;
+    const newLines = lines.map(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      const eq = trimmed.indexOf("=");
+      if (eq < 0) return line;
+      const key = trimmed.slice(0, eq).trim();
+      if (key in updates) {
+        updatedKeys.add(key);
+        return `${key}=${updates[key]}`;
+      }
+      return line;
+    });
+
+    for (const [key, val] of Object.entries(updates)) {
+      if (!updatedKeys.has(key) && val !== "") {
+        newLines.push(`${key}=${val}`);
+      }
     }
-    return line;
+
+    await atomicWrite(resolveEnvFilePath(), newLines.join("\n"));
   });
-
-  for (const [key, val] of Object.entries(updates)) {
-    if (!updatedKeys.has(key) && val !== "") {
-      newLines.push(`${key}=${val}`);
-    }
-  }
-
-  await atomicWrite(resolveEnvFilePath(), newLines.join("\n"));
 }
