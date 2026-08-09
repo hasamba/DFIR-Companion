@@ -3,6 +3,7 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { buildAssetGraph } from "../analysis/assetGraph.js";
 import { renderMarkdownReport } from "./markdown.js";
+import { escapeHtml } from "./escapeHtml.js";
 import type { CustodyRecord } from "../analysis/custody.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
 import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js";
@@ -20,14 +21,6 @@ import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
 // in a self-contained, print-friendly document. Raw HTML in the Markdown source is escaped
 // rather than passed through: DFIR data (filenames, IOC values, AI/analyst text) is
 // untrusted and must never become live markup in the exported file.
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 function attr(name: string, value: string | null | undefined): string {
   return value ? ` ${name}="${escapeHtml(value)}"` : "";

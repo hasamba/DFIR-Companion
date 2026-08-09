@@ -3,6 +3,7 @@ import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
 import { CSP_NONCE_PLACEHOLDER } from "../http/securityHeaders.js";
+import { escapeHtml } from "./escapeHtml.js";
 
 // A self-contained, interactive HTML report (#233). Unlike the canonical print-oriented HTML
 // report (html.ts), this is a single-page app: all case data is embedded as a JSON blob inside a
@@ -74,14 +75,6 @@ export interface InteractiveCaseData {
   /** True when the guard dropped rows; `timeline.length` vs `totalEvents` gives the shortfall. */
   truncated: boolean;
   totalEvents: number;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 // Serialize the case data as a JSON string that is safe to embed inside a <script> tag.

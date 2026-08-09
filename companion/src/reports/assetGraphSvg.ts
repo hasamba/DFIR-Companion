@@ -1,4 +1,5 @@
 import type { AssetGraph } from "../analysis/assetGraph.js";
+import { escapeHtml } from "./escapeHtml.js";
 
 // Self-contained SVG rendering of the asset ↔ IoC bipartite graph.
 // Pure and dependency-free — no JavaScript in the output, safe to embed in
@@ -17,9 +18,9 @@ const LABEL_X = BADGE_W + 6;          // 24 — label left offset within the nod
 const TRUNC = 26;
 const MAX_ITEMS = 30;
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+// The shared escaper, not a fourth copy: this SVG is embedded in the same report document and
+// carries the same untrusted evidence, so it needs the same escape set (#521).
+const esc = escapeHtml;
 
 function trunc(s: string): string {
   return s.length > TRUNC ? s.slice(0, TRUNC - 1) + "…" : s;

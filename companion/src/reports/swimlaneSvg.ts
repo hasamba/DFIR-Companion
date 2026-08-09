@@ -1,4 +1,5 @@
 import type { SwimlaneData } from "../analysis/swimlane.js";
+import { escapeHtml } from "./escapeHtml.js";
 
 // Self-contained SVG rendering of the timeline swimlane for the HTML report export.
 // Pure and dependency-free — no JavaScript in the output, safe to embed in the report
@@ -26,9 +27,9 @@ const LANE_LABEL_COLOR: Record<string, string> = {
   host: "#2d6cdf", account: "#7b2fc8", severity: "#44506a", tactic: "#44506a", unassigned: "#8d9aac",
 };
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+// The shared escaper, not a fourth copy: this SVG is embedded in the same report document and
+// carries the same untrusted evidence, so it needs the same escape set (#521).
+const esc = escapeHtml;
 
 function trunc(s: string, n = LABEL_TRUNC): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
