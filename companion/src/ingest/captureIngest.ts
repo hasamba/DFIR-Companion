@@ -44,8 +44,36 @@ export class InvalidImageError extends Error {
   }
 }
 
-// In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
+// In-memory cache of the last PERSISTED content hash per case, to decide duplicates without
+// re-reading disk. Only a frame that actually landed is recorded here.
 const lastHashByCase = new Map<string, string>();
+
+// One queue per case, so the read-decide-write sequence below never interleaves with another
+// capture for the same case. Without it the dedup decision races its own write: two overlapping
+// identical frames both read the stale hash and are both analyzed, and a frame that failed to
+// persist can leave a hash behind that makes the extension's retry look like a duplicate. Trying
+// to patch those windows with a claim token and rollback only moves them around — a pending claim
+// is not the same fact as a persisted hash. Different cases still run in parallel.
+const caseQueues = new Map<string, Promise<unknown>>();
+
+function withCaseLock<T>(caseId: string, run: () => Promise<T>): Promise<T> {
+  const previous = caseQueues.get(caseId) ?? Promise.resolve();
+  // Run whether the previous capture resolved or rejected: one failure must not stall the case.
+  // (A capture that never settles at all would, but a hung evidence write already blocks that
+  // case's captures downstream — they share the store's sequence allocation.)
+  const result = previous.then(run, run);
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  caseQueues.set(caseId, settled);
+  // Drop the entry once this is the tail and nothing is waiting on it, so the map holds only
+  // active chains rather than one dead promise per case the process has ever seen.
+  void settled.then(() => {
+    if (caseQueues.get(caseId) === settled) caseQueues.delete(caseId);
+  });
+  return result;
+}
 
 export async function ingestCapture(
   store: CaseStore,
@@ -71,12 +99,38 @@ export async function ingestCapture(
 
   const hash = computeContentHash(bytes);
 
-  const previous = lastHashByCase.get(payload.caseId);
-  // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
-  // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
-  const duplicate = dedup && previous !== undefined && previous === hash;
-  lastHashByCase.set(payload.caseId, hash);
+  return withCaseLock(payload.caseId, async () => {
+    const previous = lastHashByCase.get(payload.caseId);
+    // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
+    // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
+    const duplicate = dedup && previous !== undefined && previous === hash;
+    const metadata = await persistCapture(store, payload, {
+      bytes,
+      hash,
+      duplicate,
+      ext: format.ext,
+    });
+    // Only a frame that is on disk AND in the log is remembered. Recording it any earlier means a
+    // failed write poisons the cache: the extension retries the identical bytes after a 5xx (its
+    // queue keeps the entry at the head) and that retry comes back a duplicate — which willAnalyze,
+    // the OCR indexer and captureAnalysis all skip, so it is stored but never analyzed (#513).
+    lastHashByCase.set(payload.caseId, hash);
+    return metadata;
+  });
+}
 
+/** Everything after the dedup claim: allocate the sequence, name the file, write both records. */
+async function persistCapture(
+  store: CaseStore,
+  payload: {
+    caseId: string;
+    timestamp: string;
+    url: string;
+    tabTitle: string;
+    triggerType: CaptureMetadata["triggerType"];
+  },
+  frame: { bytes: Buffer; hash: string; duplicate: boolean; ext: string },
+): Promise<CaptureMetadata> {
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
   const tsSafe = payload.timestamp.replace(/[:.]/g, "-");
   // Include the captured window's tab title in the filename so evidence is
@@ -88,17 +142,8 @@ export async function ingestCapture(
   // stored as WebP whatever it was, which made the filename — part of the evidence record — wrong,
   // and the evidence route derives its Content-Type from exactly this name (#425).
   const screenshotFile = titleSlug
-    ? `${seq}_${tsSafe}_${titleSlug}${format.ext}`
-    : `${seq}_${tsSafe}${format.ext}`;
-
-  // Evidence first: write the image before recording metadata. The provenance goes with the write
-  // because this is the only layer that still knows where the frame came from — the store below
-  // sees bytes and a filename, and custody wants the origin URL and what triggered the shot (#231).
-  await store.saveScreenshot(payload.caseId, screenshotFile, bytes, {
-    source: payload.url,
-    trigger: payload.triggerType,
-    collectedBy: "browser-extension",
-  });
+    ? `${seq}_${tsSafe}_${titleSlug}${frame.ext}`
+    : `${seq}_${tsSafe}${frame.ext}`;
 
   const metadata: CaptureMetadata = {
     caseId: payload.caseId,
@@ -107,10 +152,19 @@ export async function ingestCapture(
     url: payload.url,
     tabTitle: payload.tabTitle,
     triggerType: payload.triggerType,
-    contentHash: hash,
-    isDuplicate: duplicate,
+    contentHash: frame.hash,
+    isDuplicate: frame.duplicate,
     screenshotFile,
   };
+
+  // Evidence first: write the image before recording metadata. The provenance goes with the write
+  // because this is the only layer that still knows where the frame came from — the store below
+  // sees bytes and a filename, and custody wants the origin URL and what triggered the shot (#231).
+  await store.saveScreenshot(payload.caseId, screenshotFile, frame.bytes, {
+    source: payload.url,
+    trigger: payload.triggerType,
+    collectedBy: "browser-extension",
+  });
   await store.appendCapture(payload.caseId, metadata);
   return metadata;
 }
@@ -118,4 +172,7 @@ export async function ingestCapture(
 // Exposed for test isolation.
 export function _resetDedupCache(): void {
   lastHashByCase.clear();
+  // Deliberately NOT clearing caseQueues: dropping a live chain would let a post-reset capture run
+  // alongside one still in flight, which is the interleaving the queue exists to prevent. Settled
+  // chains remove themselves, so there is nothing left to clear anyway.
 }
