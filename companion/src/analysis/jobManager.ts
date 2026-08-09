@@ -549,7 +549,38 @@ export class JobManager {
           if (!next) break;
           this.table = startJob(this.table, next.id, this.now());
           const started = getJob(this.table, next.id)!;
-          await this.persistUpdate(started);
+          try {
+            await this.persistUpdate(started);
+          } catch (error) {
+            // The start is already applied in memory, so a failed ledger write cannot simply
+            // propagate: the job would stay "running" to every reader, its admission would never
+            // settle (runResumedJob's await hangs for good), and nextAdmissible would keep counting
+            // it against perCaseConcurrency — the case would never admit another job until a
+            // restart. Fail it in memory instead, hand the error to whoever waits on the admission,
+            // and stop the pass; the failure is retryable and the next scheduleQueued picks the
+            // queue up again.
+            const normalized =
+              error instanceof Error ? error : new Error(String(error));
+            this.table = failJob(
+              this.table,
+              next.id,
+              {
+                code: "ledger_write_failed",
+                message: normalized.message,
+                retryable: true,
+                at: this.now(),
+              },
+              this.now(),
+            );
+            this.clearBudgetTimer(next.id);
+            this.admissions.get(next.id)?.reject(normalized);
+            this.admissions.delete(next.id);
+            this.durabilities.delete(next.id);
+            this.controllers.delete(next.id);
+            this.emit(next.caseId);
+            this.reportError(normalized);
+            break;
+          }
           this.armRuntimeBudget(started);
           this.admissions.get(next.id)?.resolve();
           this.emit(started.caseId);

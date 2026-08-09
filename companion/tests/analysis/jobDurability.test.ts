@@ -17,6 +17,7 @@ async function harness(
     globalConcurrency?: number;
     perCaseConcurrency?: number;
     max?: number;
+    onError?: (error: Error) => void;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-job-ledger-"));
@@ -304,5 +305,39 @@ describe("durable job ledger", () => {
 
     expect(manager.list("case-a").map((job) => job.id)).toEqual([first.jobId]);
     expect(manager.list("case-b").map((job) => job.id)).toEqual([second.jobId]);
+  });
+
+  // scheduleQueued marks a job "running" in memory BEFORE it can persist that transition. If the
+  // ledger write fails there is no way back on its own: the job is running to every reader, its
+  // admission promise never settles, and because nextAdmissible counts running jobs against
+  // perCaseConcurrency (1 with a ledger) the case never admits another job again — a permanent
+  // wedge that only a restart clears (#512).
+  it("releases the admission and the case slot when the ledger write for a start fails", async () => {
+    const errors: Error[] = [];
+    const { ledger, manager } = await harness({ onError: (error) => errors.push(error) });
+    const realUpdate = ledger.update.bind(ledger);
+    let failNext = true;
+    ledger.update = async (job) => {
+      if (failNext && job.status === "running") {
+        failNext = false;
+        throw new Error("ledger offline");
+      }
+      return realUpdate(job);
+    };
+
+    const wedged = manager.register({ caseId: "case-a", kind: "import" });
+    await expect(wedged.ready).rejects.toThrow(/ledger offline/);
+    await manager.drain();
+
+    // The failed admission must not leave a phantom "running" job holding the case's only slot.
+    expect(manager.get(wedged.jobId)?.status).not.toBe("running");
+    expect(errors.map((error) => error.message)).toContain("ledger offline");
+
+    // The case still accepts work: the next job is admitted and runs to completion.
+    const next = manager.register({ caseId: "case-a", kind: "import" });
+    await next.ready;
+    expect(manager.get(next.jobId)?.status).toBe("running");
+    await manager.finish(next.jobId);
+    expect(manager.get(next.jobId)?.status).toBe("succeeded");
   });
 });
