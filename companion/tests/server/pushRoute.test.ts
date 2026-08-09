@@ -33,7 +33,7 @@ async function makeApp(opts: { pushToken?: string; withTokenStore?: boolean } = 
     pushTokenStore: opts.withTokenStore === false ? undefined : new PushTokenStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore };
+  return { app, stateStore, store };
 }
 
 describe("POST /cases/:id/push — generic push ingest", () => {
@@ -65,6 +65,27 @@ describe("POST /cases/:id/push — generic push ingest", () => {
     expect(res.body.source).toBe("siem-webhook");
     expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
   }, POLL_TIMEOUT_MS * 2);   // one waitForEvents budget, doubled to leave room for setup + assertions
+
+  // /push runs the same import → diff → re-synthesize pipeline as the Import button, so it owes the
+  // same write guard: a closed or archived case is immutable and takes no new evidence (#511). The
+  // token holder here is a SIEM webhook or poller that has no idea the case was closed.
+  it("423s a push into a closed case and imports nothing", async () => {
+    const { app, store, stateStore } = await makeApp({ pushToken: "secret" });
+    await store.updateCaseMeta("c1", { status: "closed" });
+    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ source: "siem", events: [THOR_EVENT] });
+    expect(res.status).toBe(423);
+    expect(res.body.error).toMatch(/closed/i);
+    const after = await stateStore.load("c1").catch(() => null);
+    expect(after?.forensicTimeline ?? []).toEqual([]);
+  });
+
+  it("423s a push into an archived case", async () => {
+    const { app, store } = await makeApp({ pushToken: "secret" });
+    await store.updateCaseMeta("c1", { status: "archived" });
+    const res = await request(app).post("/cases/c1/push").set("X-DFIR-Key", "secret").send({ events: [THOR_EVENT] });
+    expect(res.status).toBe(423);
+    expect(res.body.error).toMatch(/archived/i);
+  });
 
   it("accepts a Bearer token too", async () => {
     const { app } = await makeApp({ pushToken: "secret" });
