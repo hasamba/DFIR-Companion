@@ -118,6 +118,8 @@ describe("initSwimlane wires every control it owns", () => {
     }
 
     return {
+      // Model a panel re-render: the markup is rebuilt, so getElementById hands back NEW elements.
+      rerender: () => els.clear(),
       listeners,
       observed,
       globals: {
@@ -186,6 +188,58 @@ describe("initSwimlane wires every control it owns", () => {
     const counts = new Map<string, number>();
     for (const l of fx.listeners) counts.set(l, (counts.get(l) ?? 0) + 1);
     expect([...counts.entries()].filter(([, c]) => c !== 1)).toEqual([]);
+  });
+
+  it("wires nothing when the same panel is initialised twice", () => {
+    // The repeat-call half. Every handler bar swScopeToView and swExportPng is a fresh closure, so
+    // without a guard a second run hands addEventListener a reference it has never seen and
+    // registers alongside the first — 17 listeners became 32, one click ran twice, no error.
+    const { api, fx } = load();
+    init(api);
+    const afterFirst = [...fx.listeners].sort();
+    const observedFirst = [...fx.observed];
+    init(api);
+    expect([...fx.listeners].sort(), "a second run re-wired controls it had already wired").toEqual(
+      afterFirst,
+    );
+    expect(fx.observed, "a second run added another resize observer").toEqual(observedFirst);
+  });
+
+  it("wires the new canvas when the panel is re-rendered", () => {
+    // THE OTHER HALF, and the one a plain `swWired` flag gets wrong. #496 names a re-render as how
+    // this defect goes live; a module-wide one-shot answers it by wiring nothing at all, which is a
+    // dead panel rather than a noisy one. Keyed on the element, a rebuilt panel is wired afresh.
+    const { api, fx } = load();
+    init(api);
+    fx.rerender();
+    init(api);
+    const canvasListeners = fx.listeners.filter((l) => l.startsWith("swimlaneCanvas:"));
+    expect(
+      [...new Set(canvasListeners)].sort(),
+      "the rebuilt canvas got no handlers — the panel would be silently dead",
+    ).toEqual([
+      "swimlaneCanvas:click",
+      "swimlaneCanvas:mousedown",
+      "swimlaneCanvas:mouseleave",
+      "swimlaneCanvas:wheel",
+    ]);
+    expect(canvasListeners.length, "the rebuilt canvas was wired more than once").toBe(8);
+  });
+
+  it("does not stack the document and window handlers across a re-render", () => {
+    // Those four outlive any canvas, so an element-keyed guard alone would re-register them every
+    // time the panel is rebuilt. They go through a once-only helper instead.
+    const { api, fx } = load();
+    init(api);
+    fx.rerender();
+    init(api);
+    const globals = fx.listeners.filter((l) => l.startsWith("document:") || l.startsWith("window:"));
+    expect(globals.sort(), "a global handler was registered twice").toEqual([
+      "document:fullscreenchange",
+      "document:keydown",
+      "window:mousemove",
+      "window:mouseup",
+    ]);
   });
 
   // NOT ASSERTED HERE: what a SECOND initSwimlane() should do.

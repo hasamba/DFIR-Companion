@@ -309,10 +309,35 @@
     }
 
     // Wiring. Called by the page where the old setupSwimlane IIFE sat, once the markup exists.
+    // The canvas and tooltip THIS FEATURE IS CURRENTLY DRIVING. The window-level drag handlers below
+    // outlive any one panel, so they must read these rather than close over whichever elements
+    // existed the first time they were registered — after a re-render those are detached, and a
+    // handler quietly styling a detached node is the same silent failure by another route.
+    let swCanvas = null;
+    let swTooltip = null;
+    // Which canvas element is wired, and whether the document/window handlers are up. Two separate
+    // questions: the panel's own controls belong to the element and must be re-wired when the markup
+    // is rebuilt, while the global handlers belong to the page and must not stack (#496).
+    let swWiredCanvas = null;
+    const swGlobalsWired = new Set();
+    function swOnceGlobal(target, type, fn) {
+      const key = (target === window ? "window:" : "document:") + type;
+      if (swGlobalsWired.has(key)) return;
+      swGlobalsWired.add(key);
+      target.addEventListener(type, fn);
+    }
     function initSwimlane() {
       const canvas = document.getElementById("swimlaneCanvas");
       const tooltip = document.getElementById("swimlaneTooltip");
       if (!canvas) return;
+      swCanvas = canvas;
+      swTooltip = tooltip;
+      // KEYED ON THE ELEMENT, not a boolean. A module-wide one-shot makes a repeat call safe and a
+      // re-render fatal: rebuilt markup means a NEW canvas, and a flag would refuse to wire it,
+      // leaving the panel silently dead rather than merely double-wired. Asked of the element, a
+      // second call on the same panel does nothing and a rebuilt panel is wired afresh.
+      if (swWiredCanvas === canvas) return;
+      swWiredCanvas = canvas;
 
       // Zoom via mouse wheel — pin the time under the cursor
       canvas.addEventListener("wheel", function(e) {
@@ -350,23 +375,23 @@
         swDragStartX = e.clientX; swDragViewStart = swViewStartMs;
         canvas.style.cursor = "grabbing";
       });
-      window.addEventListener("mousemove", function(e) {
+      swOnceGlobal(window, "mousemove", function(e) {
         if (swTimeBrush) {
-          const p = swCanvasXY(e, canvas);
-          swTimeBrush.x1 = Math.max(0, Math.min(canvas.width, p.x));
+          const p = swCanvasXY(e, swCanvas);
+          swTimeBrush.x1 = Math.max(0, Math.min(swCanvas.width, p.x));
           swRenderCanvas(); return;
         }
         if (swRubber) {
-          const p = swCanvasXY(e, canvas);
-          swRubber.x1 = Math.max(0, Math.min(canvas.width, p.x));
-          swRubber.y1 = Math.max(0, Math.min(canvas.height, p.y));
+          const p = swCanvasXY(e, swCanvas);
+          swRubber.x1 = Math.max(0, Math.min(swCanvas.width, p.x));
+          swRubber.y1 = Math.max(0, Math.min(swCanvas.height, p.y));
           swRenderCanvas(); return;
         }
         if (swDrag) {
           const dx = e.clientX - swDragStartX;
           if (Math.abs(dx) > 3) swDragMoved = true;
           const span = swViewEndMs - swViewStartMs;
-          const dtMs = -(dx / (canvas.width||600)) * span;
+          const dtMs = -(dx / (swCanvas.width||600)) * span;
           let ns = swDragViewStart + dtMs;
           if (ns < swDataMinMs) ns = swDataMinMs;
           if (ns + span > swDataMaxMs) ns = swDataMaxMs - span;
@@ -374,34 +399,34 @@
           swViewEndMs = swViewStartMs + span;
           swRenderCanvas(); return;
         }
-        const rect = canvas.getBoundingClientRect();
-        const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const rect = swCanvas.getBoundingClientRect();
+        const cx = (e.clientX - rect.left) * (swCanvas.width / rect.width);
+        const cy = (e.clientY - rect.top) * (swCanvas.height / rect.height);
         if (swLanes.length && cy < swLanes.length * SW_LANE_H) {
-          const hit = swHitTest(canvas, cx, cy);
+          const hit = swHitTest(swCanvas, cx, cy);
           if (hit) {
             const d = String(hit.description||"").replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i,"").slice(0,120);
-            tooltip.textContent = `[${hit.severity}] ${hit.timestamp}` +
+            swTooltip.textContent = `[${hit.severity}] ${hit.timestamp}` +
               (hit.count&&hit.count>1 ? ` (×${hit.count})` : "") + `\n${d}`;
-            tooltip.style.display = "block";
-            tooltip.style.left = (e.clientX+14)+"px";
-            tooltip.style.top  = (e.clientY-10)+"px";
+            swTooltip.style.display = "block";
+            swTooltip.style.left = (e.clientX+14)+"px";
+            swTooltip.style.top  = (e.clientY-10)+"px";
             if (swHoverEvId !== hit.id) { swHoverEvId = hit.id; swRenderCanvas(); }
           } else {
-            tooltip.style.display = "none";
+            swTooltip.style.display = "none";
             if (swHoverEvId) { swHoverEvId = null; swRenderCanvas(); }
           }
         } else {
-          tooltip.style.display = "none";
+          swTooltip.style.display = "none";
           if (swHoverEvId) { swHoverEvId = null; swRenderCanvas(); }
         }
       });
-      window.addEventListener("mouseup", function() {
+      swOnceGlobal(window, "mouseup", function() {
         if (swTimeBrush) {
           const tb = swTimeBrush; swTimeBrush = null;
           const x0 = Math.min(tb.x0, tb.x1), x1 = Math.max(tb.x0, tb.x1);
           if (x1 - x0 > 4) {
-            const ms0 = swXToTs(x0, canvas.width), ms1 = swXToTs(x1, canvas.width);
+            const ms0 = swXToTs(x0, swCanvas.width), ms1 = swXToTs(x1, swCanvas.width);
             DfirTimelineView.setTimeWindow(new Date(ms0).toISOString(), new Date(ms1).toISOString());
             const sec = document.getElementById("sec-timeline");
             if (sec && sec.classList.contains("collapsed")) sec.classList.remove("collapsed");
@@ -409,7 +434,7 @@
           swRenderCanvas(); return;
         }
         if (swRubber) { swFinishRubber(); swRubber = null; swRenderCanvas(); return; }
-        if (swDrag) { swDrag = false; canvas.style.cursor = "crosshair"; }
+        if (swDrag) { swDrag = false; swCanvas.style.cursor = "crosshair"; }
       });
       canvas.addEventListener("mouseleave", function() {
         tooltip.style.display = "none";
@@ -463,14 +488,14 @@
         else swMaximizeCss(true);
       });
       // Esc exits the CSS fallback (the native API already handles its own Esc).
-      document.addEventListener("keydown", function(e) {
+      swOnceGlobal(document, "keydown", function(e) {
         if (e.key === "Escape" &&
             document.getElementById("sec-swimlane").classList.contains("swimlane-maximized")) {
           swMaximizeCss(false);
         }
       });
       // Re-render at the new viewport width when the swimlane enters/exits native fullscreen.
-      document.addEventListener("fullscreenchange", function() {
+      swOnceGlobal(document, "fullscreenchange", function() {
         if (document.fullscreenElement && document.fullscreenElement.id !== "sec-swimlane") return;
         setTimeout(swRenderCanvas, 60);   // wait for the fullscreen relayout before measuring
       });
