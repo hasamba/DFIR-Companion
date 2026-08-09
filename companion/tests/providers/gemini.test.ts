@@ -20,6 +20,35 @@ describe("GeminiProvider — base URL validation (#246)", () => {
   });
 });
 
+describe("GeminiProvider — API key placement (#516)", () => {
+  // A key in the query string is written into the request line, so it lands in the access log of
+  // any proxy or gateway on the path — and baseUrl is user-configurable, so that path can be one
+  // the operator does not control. Google accepts the key as a header; nothing needs it in the URL.
+  it("sends the key in the x-goog-api-key header and keeps it out of the URL", async () => {
+    let seenUrl = "";
+    let seenHeaders: Record<string, string> = {};
+    const provider = new GeminiProvider({
+      apiKey: "super-secret-key",
+      model: "gemini-2.5-pro",
+      fetchFn: async (input: RequestInfo | URL, init?: RequestInit) => {
+        seenUrl = String(input);
+        seenHeaders = (init?.headers ?? {}) as Record<string, string>;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ candidates: [{ content: { parts: [{ text: '{"findings":[]}' }] } }] }),
+          text: async () => "",
+        } as unknown as Response;
+      },
+    });
+    await provider.analyze({ systemPrompt: "s", userPrompt: "x", images: [] });
+
+    expect(seenUrl).not.toContain("super-secret-key");
+    expect(seenUrl).not.toContain("key=");
+    expect(seenHeaders["x-goog-api-key"]).toBe("super-secret-key");
+  });
+});
+
 describe("GeminiProvider — usageMetadata parsing (#3)", () => {
   it("reports input/output/cacheRead tokens from usageMetadata so the AI cost card is not always 0/0", async () => {
     const fakeResponse = {
