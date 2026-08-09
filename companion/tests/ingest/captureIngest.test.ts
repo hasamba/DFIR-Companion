@@ -17,7 +17,9 @@ let store: CaseStore;
 async function pngBase64(r: number, g: number, b: number): Promise<string> {
   const buf = await sharp({
     create: { width: 32, height: 32, channels: 3, background: { r, g, b } },
-  }).png().toBuffer();
+  })
+    .png()
+    .toBuffer();
   return buf.toString("base64");
 }
 
@@ -77,7 +79,7 @@ describe("ingestCapture", () => {
   // indexer and captureAnalysis alike, so the frame would be stored but never analyzed (#513).
   // Both writes matter: whichever one blows up, the frame is not on record, so the cache must not
   // claim it. Parameterised so moving the cache update between the two calls cannot pass.
-  it.each(["saveScreenshot", "appendCapture"] as const)(
+  it.each(["nextSequenceNumber", "saveScreenshot", "appendCapture"] as const)(
     "does not remember a frame whose %s failed, so the retry is still analyzed",
     async (method) => {
       const img = await pngBase64(10, 20, 30);
@@ -100,6 +102,34 @@ describe("ingestCapture", () => {
     },
   );
 
+  // Two overlapping captures of the same frame carry the SAME hash, so "is the cached hash still
+  // mine?" cannot be answered by comparing hashes: the one that fails would roll back the one that
+  // succeeded, and the next identical frame would be re-analyzed as new. Ownership is a token.
+  it("keeps a successful capture's claim when an overlapping identical one fails", async () => {
+    const img = await pngBase64(5, 6, 7);
+    const realSave = store.saveScreenshot.bind(store);
+    let failFirst = true;
+    store.saveScreenshot = async (...args: Parameters<typeof realSave>) => {
+      if (failFirst) {
+        failFirst = false;
+        await new Promise((r) => setTimeout(r, 20)); // lose the race deliberately
+        throw new Error("ENOSPC: no space left on device");
+      }
+      return realSave(...args);
+    };
+
+    const [doomed, landed] = await Promise.allSettled([
+      ingestCapture(store, payload({ imageBase64: img })),
+      ingestCapture(store, payload({ imageBase64: img })),
+    ]);
+    expect(doomed.status).toBe("rejected");
+    expect(landed.status).toBe("fulfilled");
+
+    // The frame that landed still owns the slot, so the next identical one is a duplicate.
+    const third = await ingestCapture(store, payload({ imageBase64: img }));
+    expect(third.isDuplicate).toBe(true);
+  });
+
   // The claim is made in the same tick as the decision, so an await cannot open a window where two
   // overlapping identical captures both read the stale hash and both come back non-duplicate.
   it("still flags the second of two overlapping identical captures", async () => {
@@ -120,10 +150,7 @@ describe("ingestCapture", () => {
 
   it("includes the slugified tab title in the screenshot filename", async () => {
     const img = await pngBase64(10, 20, 30);
-    const meta = await ingestCapture(
-      store,
-      payload({ imageBase64: img, tabTitle: "Velociraptor — Hunts" }),
-    );
+    const meta = await ingestCapture(store, payload({ imageBase64: img, tabTitle: "Velociraptor — Hunts" }));
     // .png, not .webp: the extension follows the DETECTED format (#425), and this fixture is a PNG.
     expect(meta.screenshotFile).toMatch(/^000001_.*_Velociraptor-Hunts\.png$/);
     const onDisk = await readFile(join(store.screenshotsDir("c1"), meta.screenshotFile));
@@ -149,25 +176,28 @@ describe("ingestCapture — image magic-byte validation", () => {
   const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
   it("rejects arbitrary binary posing as a screenshot", async () => {
-    await expect(ingestCapture(store, payload({ imageBase64: b64(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) })))
-      .rejects.toBeInstanceOf(InvalidImageError);
+    await expect(
+      ingestCapture(store, payload({ imageBase64: b64(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) })),
+    ).rejects.toBeInstanceOf(InvalidImageError);
   });
 
   it("rejects bytes too short to carry a signature", async () => {
-    await expect(ingestCapture(store, payload({ imageBase64: b64(...PNG) })))
-      .rejects.toBeInstanceOf(InvalidImageError);
+    await expect(ingestCapture(store, payload({ imageBase64: b64(...PNG) }))).rejects.toBeInstanceOf(
+      InvalidImageError,
+    );
   });
 
   it("writes nothing to disk when the bytes are rejected", async () => {
-    await expect(ingestCapture(store, payload({ imageBase64: b64(...Array(16).fill(0x41)) })))
-      .rejects.toBeInstanceOf(InvalidImageError);
+    await expect(
+      ingestCapture(store, payload({ imageBase64: b64(...Array(16).fill(0x41)) })),
+    ).rejects.toBeInstanceOf(InvalidImageError);
     await expect(readdir(store.screenshotsDir("c1"))).resolves.toEqual([]);
   });
 
   it.each([
-    ["PNG",  [...PNG, 0, 0, 0, 13]],
+    ["PNG", [...PNG, 0, 0, 0, 13]],
     ["JPEG", [0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]],
-    ["GIF",  [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0]],
+    ["GIF", [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0]],
     ["WebP", [0x52, 0x49, 0x46, 0x46, 26, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]],
   ])("accepts %s", async (_name, bytes) => {
     const meta = await ingestCapture(store, payload({ imageBase64: b64(...bytes) }));

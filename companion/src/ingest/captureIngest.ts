@@ -45,7 +45,11 @@ export class InvalidImageError extends Error {
 }
 
 // In-memory cache of the last content hash per case, to decide duplicates without re-reading disk.
-const lastHashByCase = new Map<string, string>();
+// The claim identifies WHICH ingest wrote the entry: two overlapping captures of the same frame
+// carry the same hash, so a hash comparison alone cannot tell whose entry is in the map, and a
+// failing ingest would roll back a successful one's.
+type DedupEntry = { hash: string; claim: symbol };
+const lastHashByCase = new Map<string, DedupEntry>();
 
 export async function ingestCapture(
   store: CaseStore,
@@ -71,15 +75,44 @@ export async function ingestCapture(
 
   const hash = computeContentHash(bytes);
 
-  const previous = lastHashByCase.get(payload.caseId);
+  const previousEntry = lastHashByCase.get(payload.caseId);
   // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
   // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
-  const duplicate = dedup && previous !== undefined && previous === hash;
+  const duplicate = dedup && previousEntry !== undefined && previousEntry.hash === hash;
   // Claim the hash in the same tick the decision is made — an await between the read and the write
   // would let two overlapping identical captures for one case both read the stale value and both
   // come back non-duplicate. The claim is rolled back below if the frame never lands.
-  lastHashByCase.set(payload.caseId, hash);
+  const claim = Symbol("capture-claim");
+  lastHashByCase.set(payload.caseId, { hash, claim });
 
+  try {
+    return await persistCapture(store, payload, { bytes, hash, duplicate, ext: format.ext });
+  } catch (err) {
+    // The frame never landed, so the claim must not stand: the extension retries the identical bytes
+    // after a 5xx and that retry would match the remembered hash, coming back a duplicate — which
+    // willAnalyze, the OCR indexer and captureAnalysis all skip, so it would be stored but never
+    // analyzed, with no error surfaced (#513). Undo only OUR claim, identified by its token: a later
+    // capture that already replaced the entry owns the slot now, even with an identical hash.
+    if (lastHashByCase.get(payload.caseId)?.claim === claim) {
+      if (previousEntry === undefined) lastHashByCase.delete(payload.caseId);
+      else lastHashByCase.set(payload.caseId, previousEntry);
+    }
+    throw err;
+  }
+}
+
+/** Everything after the dedup claim: allocate the sequence, name the file, write both records. */
+async function persistCapture(
+  store: CaseStore,
+  payload: {
+    caseId: string;
+    timestamp: string;
+    url: string;
+    tabTitle: string;
+    triggerType: CaptureMetadata["triggerType"];
+  },
+  frame: { bytes: Buffer; hash: string; duplicate: boolean; ext: string },
+): Promise<CaptureMetadata> {
   const sequenceNumber = await store.nextSequenceNumber(payload.caseId);
   const tsSafe = payload.timestamp.replace(/[:.]/g, "-");
   // Include the captured window's tab title in the filename so evidence is
@@ -91,8 +124,8 @@ export async function ingestCapture(
   // stored as WebP whatever it was, which made the filename — part of the evidence record — wrong,
   // and the evidence route derives its Content-Type from exactly this name (#425).
   const screenshotFile = titleSlug
-    ? `${seq}_${tsSafe}_${titleSlug}${format.ext}`
-    : `${seq}_${tsSafe}${format.ext}`;
+    ? `${seq}_${tsSafe}_${titleSlug}${frame.ext}`
+    : `${seq}_${tsSafe}${frame.ext}`;
 
   const metadata: CaptureMetadata = {
     caseId: payload.caseId,
@@ -101,33 +134,20 @@ export async function ingestCapture(
     url: payload.url,
     tabTitle: payload.tabTitle,
     triggerType: payload.triggerType,
-    contentHash: hash,
-    isDuplicate: duplicate,
+    contentHash: frame.hash,
+    isDuplicate: frame.duplicate,
     screenshotFile,
   };
 
-  try {
-    // Evidence first: write the image before recording metadata. The provenance goes with the write
-    // because this is the only layer that still knows where the frame came from — the store below
-    // sees bytes and a filename, and custody wants the origin URL and what triggered the shot (#231).
-    await store.saveScreenshot(payload.caseId, screenshotFile, bytes, {
-      source: payload.url,
-      trigger: payload.triggerType,
-      collectedBy: "browser-extension",
-    });
-    await store.appendCapture(payload.caseId, metadata);
-  } catch (err) {
-    // The frame never landed, so the claim above must not stand: the extension retries the identical
-    // bytes after a 5xx and that retry would match the remembered hash, coming back a duplicate —
-    // which willAnalyze, the OCR indexer and captureAnalysis all skip. The frame would be stored on
-    // the retry but never analyzed, with no error surfaced (#513). Only undo our own claim; a later
-    // capture that already replaced it owns the slot now.
-    if (lastHashByCase.get(payload.caseId) === hash) {
-      if (previous === undefined) lastHashByCase.delete(payload.caseId);
-      else lastHashByCase.set(payload.caseId, previous);
-    }
-    throw err;
-  }
+  // Evidence first: write the image before recording metadata. The provenance goes with the write
+  // because this is the only layer that still knows where the frame came from — the store below
+  // sees bytes and a filename, and custody wants the origin URL and what triggered the shot (#231).
+  await store.saveScreenshot(payload.caseId, screenshotFile, frame.bytes, {
+    source: payload.url,
+    trigger: payload.triggerType,
+    collectedBy: "browser-extension",
+  });
+  await store.appendCapture(payload.caseId, metadata);
   return metadata;
 }
 
