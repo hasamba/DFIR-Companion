@@ -556,9 +556,12 @@ export class JobManager {
             // propagate: the job would stay "running" to every reader, its admission would never
             // settle (runResumedJob's await hangs for good), and nextAdmissible would keep counting
             // it against perCaseConcurrency — the case would never admit another job until a
-            // restart. Fail it in memory instead, hand the error to whoever waits on the admission,
-            // and stop the pass; the failure is retryable and the next scheduleQueued picks the
-            // queue up again.
+            // restart. Fail it in memory instead and hand the error to whoever waits on the
+            // admission. Then keep going rather than stopping the pass: the failed job is terminal
+            // so nextAdmissible cannot pick it again (no spin), and every other queued job still
+            // gets its chance — breaking here would strand them until some later registration or
+            // terminal transition happened to schedule another pass. The failure is retryable, so
+            // if the ledger is genuinely down each job fails visibly and can be resumed.
             const normalized =
               error instanceof Error ? error : new Error(String(error));
             this.table = failJob(
@@ -579,7 +582,7 @@ export class JobManager {
             this.controllers.delete(next.id);
             this.emit(next.caseId);
             this.reportError(normalized);
-            break;
+            continue;
           }
           this.armRuntimeBudget(started);
           this.admissions.get(next.id)?.resolve();
