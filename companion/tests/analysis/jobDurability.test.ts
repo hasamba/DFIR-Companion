@@ -250,11 +250,15 @@ describe("durable job ledger", () => {
       ok: true,
       job: { id: registered.jobId, cancellable: true },
     });
-    await pollFor("resumed EVTX job starting", async () => {
-      return restarted.get(registered.jobId)?.status === "running" ? true : undefined;
-    });
+    // Wait for handler entry, not for the status flip. `scheduleQueued` marks the job "running"
+    // and only resolves its admission after an intervening ledger write, so a poll on the status
+    // can return a full disk round-trip before `runResumedJob` invokes the handler — which is what
+    // sets `receivedSignal` (issue #506). Handler entry implies "running": `runResumedJob` bails
+    // unless the job is running, so this poll subsumes the status check rather than dropping it.
+    await pollFor("the resumed EVTX job's handler to receive its abort signal", async () => receivedSignal);
 
     expect(receivedSignal).toBeInstanceOf(AbortSignal);
+    expect(restarted.get(registered.jobId)?.status).toBe("running");
     expect(await restarted.cancel(registered.jobId)).toMatchObject({ ok: true });
     expect(receivedSignal?.aborted).toBe(true);
   });
