@@ -57,6 +57,12 @@ const CASE_ADMIN_SEGMENTS = [
 // Holding "write" on one case must not let a user name a path outside that case and have its bytes
 // copied in as evidence. Same trust as /nsrl and /kev import-file, already global-admin prefixes.
 const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file"];
+// The only /cases/* paths that are NOT a case: the encrypted-bundle import and the demo seeder.
+// "import" and "seed-demo" are themselves valid case ids (isValidCaseId accepts both) and any
+// authenticated user can create a case so named, so the exemption has to be these exact paths.
+// Exempting the whole /cases/import subtree would hand /cases/import/delete and
+// /cases/import/import-file to any authenticated session.
+const NON_CASE_PATHS = new Set(["/cases/import/encrypted", "/cases/seed-demo"]);
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
 const CASE_REVIEW_SEGMENTS = [
   "/review",
@@ -139,7 +145,7 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   }
   if (normalizedMethod === "POST" && path === "/captures") return { kind: "capture" };
   const match = /^\/cases\/([^/]+)(?:\/|$)/.exec(path);
-  if (match && match[1] !== "import" && match[1] !== "seed-demo") {
+  if (match && !NON_CASE_PATHS.has(path)) {
     let caseId: string;
     try {
       caseId = decodeURIComponent(match[1]);
@@ -152,7 +158,7 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
   if (
     path === "/cases" ||
     path === "/captures/recent" ||
-    pathStarts(path, "/cases/import") ||
+    path === "/cases/import/encrypted" ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

@@ -99,6 +99,27 @@ describe("team-auth configuration and policy", () => {
       permission: "write",
       caseId: "c1",
     });
+    // "import" and "seed-demo" are valid case ids (isValidCaseId accepts them) and any authenticated
+    // user can create a case so named. Only the two real collection-level endpoints may skip the
+    // case classifier — anything deeper is a case route and gets case rules, or /cases/import/delete
+    // and /cases/import/import-file would answer to a plain authenticated session.
+    expect(resolveRequestPolicy("POST", "/cases/import/import-file")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/import/delete")).toMatchObject({
+      permission: "admin",
+      caseId: "import",
+    });
+    expect(resolveRequestPolicy("GET", "/cases/import/state")).toMatchObject({
+      permission: "read",
+      caseId: "import",
+    });
+    expect(resolveRequestPolicy("POST", "/cases/import/encrypted")).toEqual({ kind: "authenticated" });
+    expect(resolveRequestPolicy("POST", "/cases/seed-demo")).toEqual({
+      kind: "global",
+      permission: "admin",
+    });
     expect(resolveRequestPolicy("GET", "/js/safe-dom.js")).toEqual({ kind: "public" });
     expect(resolveRequestPolicy("GET", "/cases")).toEqual({ kind: "case-list" });
     expect(resolveRequestPolicy("GET", "/api/jobs")).toEqual({ kind: "authenticated" });
