@@ -13,6 +13,27 @@ describe("defaultClaudeRunner", () => {
     expect(r.stdout).toBe("GOT:hello");
   });
 
+  // A pipe delivers ~64 KB per data event, wherever that lands in the byte stream. Decoding each
+  // Buffer on its own splits any multi-byte character straddling the boundary into two U+FFFDs that
+  // concatenation cannot repair — mangling non-ASCII evidence (hostnames, filenames) or breaking
+  // JSON.parse on a stream-json line, which the MCP runner then silently skips (#515).
+  it("reassembles multi-byte UTF-8 split across pipe chunk boundaries", async () => {
+    // Split one character across two writes explicitly rather than relying on where a ~64 KB pipe
+    // boundary happens to land — that is platform- and scheduling-dependent, so a size-based test
+    // can pass against the unfixed code on a kernel that happens to align the reads.
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: [
+        "-e",
+        'const b=Buffer.from("\\u20ac","utf8");process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),50);',
+      ],
+      stdin: "",
+      timeoutMs: 30_000,
+    });
+    expect(r.stdout).not.toContain("�");
+    expect(r.stdout).toBe("€");
+  });
+
   it("reports a non-zero exit code", async () => {
     const r = await defaultClaudeRunner({ bin: process.execPath, args: ["-e", "process.exit(3)"], stdin: "", timeoutMs: 10_000 });
     expect(r.code).toBe(3);

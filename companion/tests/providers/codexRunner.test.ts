@@ -12,6 +12,22 @@ describe("defaultCodexRunner", () => {
     expect(r.stdout).toBe("HELLO");
   });
 
+  // Same hazard as claudeRunner: the two halves of one character arrive in separate data events,
+  // and decoding each Buffer on its own strands them as two U+FFFDs (#515).
+  it("reassembles multi-byte UTF-8 split across pipe chunk boundaries", async () => {
+    const r = await defaultCodexRunner({
+      bin: process.execPath,
+      args: [
+        "-e",
+        'const b=Buffer.from("\\u20ac","utf8");process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),50);',
+      ],
+      stdin: "",
+      timeoutMs: 30_000,
+    });
+    expect(r.stdout).not.toContain("�");
+    expect(r.stdout).toBe("€");
+  });
+
   it("captures stderr and a non-zero exit code", async () => {
     const r = await defaultCodexRunner({ bin: process.execPath, args: ["-e", "process.stderr.write('boom');process.exit(2)"], stdin: "", timeoutMs: 10_000 });
     expect(r.code).toBe(2);
