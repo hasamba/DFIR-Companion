@@ -25,7 +25,9 @@ describe("CodexProvider", () => {
 
   it("builds the codex exec invocation with the prompt sent over stdin", async () => {
     let captured: CodexRunOptions | undefined;
-    const runner = fakeRunner({ stdout: JSON.stringify({ type: "agent_message", text: "ok" }) }, (o) => { captured = o; });
+    const runner = fakeRunner({ stdout: JSON.stringify({ type: "agent_message", text: "ok" }) }, (o) => {
+      captured = o;
+    });
     const p = new CodexProvider({ model: "gpt-5-codex", runner });
     const out = await p.analyze({ systemPrompt: "SYS", userPrompt: "USER", images: [] });
     expect(out.rawText).toBe("ok");
@@ -41,8 +43,14 @@ describe("CodexProvider", () => {
 
   it("omits -m when the model is empty", async () => {
     let captured: CodexRunOptions | undefined;
-    const runner = fakeRunner({ stdout: JSON.stringify({ type: "agent_message", text: "x" }) }, (o) => { captured = o; });
-    await new CodexProvider({ model: "", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const runner = fakeRunner({ stdout: JSON.stringify({ type: "agent_message", text: "x" }) }, (o) => {
+      captured = o;
+    });
+    await new CodexProvider({ model: "", runner }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
     expect(captured!.args).not.toContain("-m");
   });
 
@@ -53,8 +61,11 @@ describe("CodexProvider", () => {
       JSON.stringify({ type: "agent_message", text: "the answer" }),
       JSON.stringify({ type: "token_count", usage: { input_tokens: 12, output_tokens: 7 } }),
     ].join("\n");
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
     expect(out.rawText).toBe("the answer");
     expect(out.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
   });
@@ -70,8 +81,10 @@ describe("CodexProvider", () => {
       '{"id":"0","msg":{"type":"agent_message","message":"PONG"}}',
       '{"id":"0","msg":{"type":"token_count","info":{"total_token_usage":{"input_tokens":6717,"cached_input_tokens":0,"output_tokens":4,"total_tokens":6721}}}}',
     ].join("\n");
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({
+      model: "m",
+      runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }),
+    }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(out.rawText).toBe("PONG");
     expect(out.usage).toEqual({ inputTokens: 6717, outputTokens: 4 });
   });
@@ -86,8 +99,10 @@ describe("CodexProvider", () => {
       '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"PONG"}}',
       '{"type":"turn.completed","usage":{"input_tokens":14174,"cached_input_tokens":9984,"output_tokens":6,"reasoning_output_tokens":0}}',
     ].join("\n");
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({
+      model: "m",
+      runner: fakeRunner({ stdout, stderr: "Reading prompt from stdin...\n" }),
+    }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(out.rawText).toBe("PONG");
     expect(out.usage).toEqual({ inputTokens: 14174, outputTokens: 6 });
   });
@@ -100,8 +115,11 @@ describe("CodexProvider", () => {
       '{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"the real answer"}}',
       '{"type":"item.completed","item":{"id":"i2","type":"command_execution","text":"ls -la"}}',
     ].join("\n");
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
     expect(out.rawText).toBe("the real answer");
   });
 
@@ -111,8 +129,11 @@ describe("CodexProvider", () => {
       '{"id":"","msg":{"type":"error","message":"MCP client for `n8n` failed to start: program not found"}}',
       '{"id":"0","msg":{"type":"agent_message","message":"the answer"}}',
     ].join("\n");
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout }) }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
     expect(out.rawText).toBe("the answer");
   });
 
@@ -121,7 +142,11 @@ describe("CodexProvider", () => {
   // events are the useful message, not the stderr noise.
   it("surfaces codex error events, not stderr noise, when no answer came back", async () => {
     const stdout = '{"id":"0","msg":{"type":"error","message":"stream error: connection refused"}}';
-    const runner = fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\nERROR MCP client blah\n" });
+    const runner = fakeRunner({
+      code: 0,
+      stdout,
+      stderr: "Reading prompt from stdin...\nERROR MCP client blah\n",
+    });
     await expect(
       new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
     ).rejects.toThrow(/stream error: connection refused/);
@@ -137,7 +162,11 @@ describe("CodexProvider", () => {
       '{"id":"0","msg":{"type":"stream_error","message":"stream error: unexpected status 404 Not Found: {\\"error\\":{\\"message\\":\\"model \'gpt-5-codex\' not found\\"}}; retrying 5/5 in 3.263s…"}}',
     ].join("\n");
     const runner = fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" });
-    const call = new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const call = new CodexProvider({ model: "m", runner }).analyze({
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
+    });
     await expect(call).rejects.toBeInstanceOf(ProviderError);
     await expect(call).rejects.toThrow(/model 'gpt-5-codex' not found/);
   });
@@ -159,19 +188,26 @@ describe("CodexProvider", () => {
 
   it("does not fail a successful run just because stderr has content", async () => {
     const stdout = '{"id":"0","msg":{"type":"agent_message","message":"fine"}}';
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({
+      model: "m",
+      runner: fakeRunner({ code: 0, stdout, stderr: "Reading prompt from stdin...\n" }),
+    }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(out.rawText).toBe("fine");
   });
 
   it("falls back to raw stdout when there is no JSON message event", async () => {
-    const out = await new CodexProvider({ model: "m", runner: fakeRunner({ stdout: "plain text answer\n" }) })
-      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    const out = await new CodexProvider({
+      model: "m",
+      runner: fakeRunner({ stdout: "plain text answer\n" }),
+    }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(out.rawText).toBe("plain text answer");
   });
 
   it("throws an actionable error when the CLI binary is missing", async () => {
-    const runner = fakeRunner({ code: null, spawnError: Object.assign(new Error("nope"), { code: "ENOENT" }) });
+    const runner = fakeRunner({
+      code: null,
+      spawnError: Object.assign(new Error("nope"), { code: "ENOENT" }),
+    });
     await expect(
       new CodexProvider({ model: "m", runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
     ).rejects.toThrow(/codex login|@openai\/codex|not found/i);
@@ -187,7 +223,11 @@ describe("CodexProvider", () => {
   it("maps a timeout to a timeout error", async () => {
     const runner = fakeRunner({ code: null, timedOut: true });
     await expect(
-      new CodexProvider({ model: "m", timeoutMs: 5, runner }).analyze({ systemPrompt: "s", userPrompt: "u", images: [] }),
+      new CodexProvider({ model: "m", timeoutMs: 5, runner }).analyze({
+        systemPrompt: "s",
+        userPrompt: "u",
+        images: [],
+      }),
     ).rejects.toMatchObject({ kind: "timeout" });
   });
 

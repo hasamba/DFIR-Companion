@@ -5,18 +5,29 @@ import { isLogLevel } from "../logging/logger.js";
 import { getCodexStatus, startCodexLogin } from "../providers/codexStatus.js";
 import { getDiskStats, getDiskWarningLevel, diskWarnEnvThresholds } from "../analysis/diskWarn.js";
 import {
-  buildAiDiagnostics, summarizeImportAttempts, countByKind, aggregateCaseSizes, buildDiagnosticsText,
-  summarizeImporterHealth, type DiagnosticsReport, type ScannedFile,
+  buildAiDiagnostics,
+  summarizeImportAttempts,
+  countByKind,
+  aggregateCaseSizes,
+  buildDiagnosticsText,
+  summarizeImporterHealth,
+  type DiagnosticsReport,
+  type ScannedFile,
 } from "../analysis/diagnostics.js";
 import { getClaudeCodeStatus, startClaudeLogin } from "../providers/claudeCodeStatus.js";
 import {
-  buildPreflightReport, buildPreflightText,
-  type PreflightItem, type PreflightReport,
+  buildPreflightReport,
+  buildPreflightText,
+  type PreflightItem,
+  type PreflightReport,
 } from "../analysis/preflight.js";
 import { checkConfiguredPromptDrift } from "../analysis/promptCapabilities.js";
 import { getAppVersion } from "../version.js";
 import {
-  resolveUpdateMode, buildUpdateStatus, DEFAULT_UPDATE_REPO, type UpdateMode,
+  resolveUpdateMode,
+  buildUpdateStatus,
+  DEFAULT_UPDATE_REPO,
+  type UpdateMode,
 } from "../analysis/updateCheck.js";
 import { performUpdateCheck } from "../analysis/updateCheckRun.js";
 import { HUNT_PLATFORMS } from "../analysis/huntPlatforms.js";
@@ -87,7 +98,33 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     const irisClient = ctx.irisClient();
     const dropWatchEnabled = ctx.dropWatchEnabled();
     const importerRegistry = ctx.importerRegistry();
-    res.status(200).json({ ok: true, service: "dfir-companion", aiEnabled: hasAiProvider(), synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(), enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0, customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0, velociraptorEnabled: !!options.velociraptorClient, irisEnabled: !!irisClient, timesketchEnabled: !!options.timesketchClient, notionEnabled: !!options.notionClient, clickupEnabled: !!options.clickupClient, jiraEnabled: !!options.jiraClient, servicenowEnabled: !!options.servicenowClient, notificationsEnabled: !!options.notificationStore, notifyEmailEnabled: !!options.notifyEmailEnabled, pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()), huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS], logLevel: serverLogger.getLevel(), kevEnabled: !!options.kevStore, secondOpinionEnabled: !!options.secondOpinionEnabled, dropEnabled: dropWatchEnabled && !!options.dropStatusStore, toolsEnabled: !!options.toolRunner, customImporters: importerRegistry.importers.size, updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked, geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" });
+    res.status(200).json({
+      ok: true,
+      service: "dfir-companion",
+      aiEnabled: hasAiProvider(),
+      synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(),
+      enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0,
+      customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0,
+      velociraptorEnabled: !!options.velociraptorClient,
+      irisEnabled: !!irisClient,
+      timesketchEnabled: !!options.timesketchClient,
+      notionEnabled: !!options.notionClient,
+      clickupEnabled: !!options.clickupClient,
+      jiraEnabled: !!options.jiraClient,
+      servicenowEnabled: !!options.servicenowClient,
+      notificationsEnabled: !!options.notificationStore,
+      notifyEmailEnabled: !!options.notifyEmailEnabled,
+      pushEnabled: !!options.pushTokenStore || !!(options.pushToken && options.pushToken.trim()),
+      huntPlatforms: options.huntPlatforms ?? [...HUNT_PLATFORMS],
+      logLevel: serverLogger.getLevel(),
+      kevEnabled: !!options.kevStore,
+      secondOpinionEnabled: !!options.secondOpinionEnabled,
+      dropEnabled: dropWatchEnabled && !!options.dropStatusStore,
+      toolsEnabled: !!options.toolRunner,
+      customImporters: importerRegistry.importers.size,
+      updateCheckLocked: resolveUpdateMode(options.updateCheckEnv, undefined).locked,
+      geoMapTileUrl: process.env.DFIR_GEOMAP_TILE_URL || "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    });
   });
 
   // ── Update check (opt-in "newer release available" notice; NEVER downloads) ──────────────
@@ -113,8 +150,10 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
 
   app.post("/update-check/settings", async (req: Request, res: Response) => {
     try {
-      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
-      if ((await currentUpdateMode()).locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
+      if (!options.updateCheckStore)
+        return res.status(404).json({ error: "update-check store not configured — restart the server" });
+      if ((await currentUpdateMode()).locked)
+        return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
       const enabled = (req.body as { enabled?: unknown })?.enabled;
       if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be a boolean" });
       await options.updateCheckStore.setEnabled(enabled);
@@ -128,11 +167,18 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
 
   app.post("/update-check/run", async (_req: Request, res: Response) => {
     try {
-      if (!options.updateCheckStore) return res.status(404).json({ error: "update-check store not configured — restart the server" });
+      if (!options.updateCheckStore)
+        return res.status(404).json({ error: "update-check store not configured — restart the server" });
       const mode = await currentUpdateMode();
-      if (mode.locked) return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
+      if (mode.locked)
+        return res.status(423).json({ error: "update checks are disabled by DFIR_UPDATE_CHECK=0" });
       if (!mode.enabled) return res.status(400).json({ error: "enable update checks first" });
-      const result = await performUpdateCheck({ store: options.updateCheckStore, repo: updateRepo, fetchFn: updateFetch, now: Date.now() });
+      const result = await performUpdateCheck({
+        store: options.updateCheckStore,
+        repo: updateRepo,
+        fetchFn: updateFetch,
+        now: Date.now(),
+      });
       return res.status(200).json(buildUpdateStatus(mode, updateAppVersion, result));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -188,7 +234,13 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         disk = { ...stats, level: getDiskWarningLevel(stats.usedPct, thresholds), thresholds };
       } catch {
         // statfs can fail on exotic mounts — report zeros rather than 500 the whole page.
-        disk = { totalBytes: 0, freeBytes: 0, usedPct: 0, level: getDiskWarningLevel(0, thresholds), thresholds };
+        disk = {
+          totalBytes: 0,
+          freeBytes: 0,
+          usedPct: 0,
+          level: getDiskWarningLevel(0, thresholds),
+          thresholds,
+        };
       }
 
       const cases = await store.listCases();
@@ -205,40 +257,61 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         bufferedCaptures += buf.length;
         for (const c of buf) {
           const t = Date.parse(c.timestamp);
-          if (Number.isFinite(t)) oldestBufferedAtMs = oldestBufferedAtMs == null ? t : Math.min(oldestBufferedAtMs, t);
+          if (Number.isFinite(t))
+            oldestBufferedAtMs = oldestBufferedAtMs == null ? t : Math.min(oldestBufferedAtMs, t);
         }
       }
       // Cases whose last analysis window failed (pending_analysis.json on disk).
-      const pendingChecks = await Promise.all(cases.map(async (c) => {
-        try { await stat(join(store.stateDir(c.caseId), "pending_analysis.json")); return 1; } catch { return 0; }
-      }));
+      const pendingChecks = await Promise.all(
+        cases.map(async (c) => {
+          try {
+            await stat(join(store.stateDir(c.caseId), "pending_analysis.json"));
+            return 1;
+          } catch {
+            return 0;
+          }
+        }),
+      );
       const pendingAnalysisCases = pendingChecks.reduce<number>((a, b) => a + b, 0);
 
       // Import attempts: count the per-case imports.jsonl audit lines (durable; survives restart).
       const importTimestamps: number[] = [];
-      await Promise.all(cases.map(async (c) => {
-        try {
-          const log = await readFile(store.importsLogPath(c.caseId), "utf8");
-          for (const line of log.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const rec = JSON.parse(trimmed) as { importedAt?: string };
-              const ms = Date.parse(rec.importedAt ?? "");
-              if (Number.isFinite(ms)) importTimestamps.push(ms);
-            } catch { /* skip a malformed audit line */ }
+      await Promise.all(
+        cases.map(async (c) => {
+          try {
+            const log = await readFile(store.importsLogPath(c.caseId), "utf8");
+            for (const line of log.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                const rec = JSON.parse(trimmed) as { importedAt?: string };
+                const ms = Date.parse(rec.importedAt ?? "");
+                if (Number.isFinite(ms)) importTimestamps.push(ms);
+              } catch {
+                /* skip a malformed audit line */
+              }
+            }
+          } catch {
+            /* no imports for this case */
           }
-        } catch { /* no imports for this case */ }
-      }));
+        }),
+      );
 
       const now = Date.now();
       const ai = buildAiDiagnostics(process.env);
       const metrics = options.operationalMetrics;
       const databaseBytes = options.stateStore
-        ? (await Promise.all(cases.map(async (item) => {
-            try { return (await stat(options.stateStore!.databasePath(item.caseId))).size; }
-            catch { return 0; }
-          }))).reduce((sum, bytes) => sum + bytes, 0)
+        ? (
+            await Promise.all(
+              cases.map(async (item) => {
+                try {
+                  return (await stat(options.stateStore!.databasePath(item.caseId))).size;
+                } catch {
+                  return 0;
+                }
+              }),
+            )
+          ).reduce((sum, bytes) => sum + bytes, 0)
         : 0;
       const memory = process.memoryUsage();
       await metrics?.record({
@@ -250,7 +323,12 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         heapUsedBytes: memory.heapUsed,
       });
       const baseOperational = metrics?.enabled
-        ? summarizeOperationalMetrics(await metrics.snapshot(), options.jobManager?.list() ?? [], now, metrics.retentionMs)
+        ? summarizeOperationalMetrics(
+            await metrics.snapshot(),
+            options.jobManager?.list() ?? [],
+            now,
+            metrics.retentionMs,
+          )
         : disabledOperationalDiagnostics(metrics?.retentionMs);
       const operational = {
         ...baseOperational,
@@ -289,32 +367,53 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
               // possible when every survivor is exempt (the newest backup, the newest
               // pre-synthesis one). Reported so the budget shown is the budget enforced (#295).
               let overBudgetCases = 0;
-              await Promise.all(cases.map(async (c) => {
-                try {
-                  const s = await options.backupManager!.summary(c.caseId);
-                  totalCount += s.count;
-                  totalBytes += s.totalBytes;
-                  if (maxBytes > 0 && s.totalBytes > maxBytes) overBudgetCases++;
-                } catch { /* best-effort */ }
-              }));
+              await Promise.all(
+                cases.map(async (c) => {
+                  try {
+                    const s = await options.backupManager!.summary(c.caseId);
+                    totalCount += s.count;
+                    totalBytes += s.totalBytes;
+                    if (maxBytes > 0 && s.totalBytes > maxBytes) overBudgetCases++;
+                  } catch {
+                    /* best-effort */
+                  }
+                }),
+              );
               return { enabled: true, totalCount, totalBytes, retain, maxBytes, overBudgetCases };
             })()
           : { enabled: false, totalCount: 0, totalBytes: 0, retain: 0, maxBytes: 0, overBudgetCases: 0 },
         // Reported from the last completed sweep, never computed here: re-hashing every artifact
         // is far too heavy for a route the dashboard polls (#231).
         evidenceIntegrity: options.integrityMonitor?.status() ?? {
-          enabled: false, intervalMs: 0, verifyOnOpen: false, onOpenThrottleMs: 0,
-          lastRunAt: null, lastDurationMs: null, casesVerified: 0,
-          artifacts: 0, failedArtifacts: 0, chainBreaks: 0, problemCaseIds: [],
+          enabled: false,
+          intervalMs: 0,
+          verifyOnOpen: false,
+          onOpenThrottleMs: 0,
+          lastRunAt: null,
+          lastDurationMs: null,
+          casesVerified: 0,
+          artifacts: 0,
+          failedArtifacts: 0,
+          chainBreaks: 0,
+          problemCaseIds: [],
         },
       };
       const support = buildSupportBundle({
         generatedAt: report.generatedAt,
         version: options.appVersion ?? getAppVersion(),
         uptimeMs: report.uptimeMs,
-        disk: { totalBytes: disk.totalBytes, freeBytes: disk.freeBytes, usedPct: disk.usedPct, level: disk.level },
+        disk: {
+          totalBytes: disk.totalBytes,
+          freeBytes: disk.freeBytes,
+          usedPct: disk.usedPct,
+          level: disk.level,
+        },
         cases: report.cases,
-        queue: { queued: operational.jobs.queued, running: operational.jobs.running, stalled: operational.jobs.stalled },
+        queue: {
+          queued: operational.jobs.queued,
+          running: operational.jobs.running,
+          stalled: operational.jobs.stalled,
+        },
         ai: { configured: ai.configured, local: ai.local, errorsByKind: report.ai.errorCounts },
         operational,
       });
@@ -348,7 +447,8 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
         if (budget.n <= 0) break;
         // listCases returns the raw meta (password included) — read the salt straight off it rather
         // than re-reading each case.json just to learn whether it is locked.
-        if (c.password && !ctx.readUnlockState(req, c.caseId, c.password.salt).unlocked) withheld.add(c.caseId);
+        if (c.password && !ctx.readUnlockState(req, c.caseId, c.password.salt).unlocked)
+          withheld.add(c.caseId);
         const dir = store.caseDir(c.caseId);
         await walkCaseFiles(dir, dir, c.caseId, files, budget);
       }
@@ -365,7 +465,11 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   app.post("/diagnostics/ai-test", async (_req: Request, res: Response) => {
     const provider = options.aiTestProvider?.();
     if (!provider) {
-      return res.status(501).json({ ok: false, error: "AI provider not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in Settings → AI, then restart the server" });
+      return res.status(501).json({
+        ok: false,
+        error:
+          "AI provider not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in Settings → AI, then restart the server",
+      });
     }
     const startedAt = Date.now();
     try {
@@ -374,8 +478,9 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       // asks for a tiny JSON object — both messages mention "json" — which also exercises the real
       // request shape (auth + json_object + parse) across every provider, not just bare connectivity.
       const result = await provider.analyze({
-        systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
-        userPrompt: "Return the JSON object {\"ok\":true}.",
+        systemPrompt:
+          'You are a connectivity probe. Reply ONLY with the JSON object {"ok":true} and nothing else.',
+        userPrompt: 'Return the JSON object {"ok":true}.',
         images: [],
       });
       const latencyMs = Date.now() - startedAt;
@@ -385,8 +490,12 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       const latencyMs = Date.now() - startedAt;
       const kind = err instanceof ProviderError ? err.kind : "other";
-      serverLogger.info(`[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`);
-      return res.status(200).json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
+      serverLogger.info(
+        `[diagnostics] AI test failed provider=${provider.name} kind=${kind}: ${(err as Error).message}`,
+      );
+      return res
+        .status(200)
+        .json({ ok: false, provider: provider.name, latencyMs, kind, error: (err as Error).message });
     }
   });
 
@@ -442,7 +551,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   async function readPreflightDisabled(): Promise<boolean> {
     try {
       const raw = await readFile(preflightControlPath, "utf-8");
-      return !!(JSON.parse(raw)?.disabled);
+      return !!JSON.parse(raw)?.disabled;
     } catch {
       return false;
     }
@@ -468,18 +577,30 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
     // 1. AI provider — CRITICAL: without it, analysis and synthesis don't work.
     const aiProvider = options.aiTestProvider?.();
     if (!aiProvider) {
-      items.push({ name: "AI provider", ok: false, critical: true, detail: "not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in .env, then restart" });
+      items.push({
+        name: "AI provider",
+        ok: false,
+        critical: true,
+        detail:
+          "not configured — set DFIR_VISION_PROVIDER / DFIR_VISION_MODEL / DFIR_VISION_KEY in .env, then restart",
+      });
     } else {
       try {
         await aiProvider.analyze({
-          systemPrompt: "You are a connectivity probe. Reply ONLY with the JSON object {\"ok\":true} and nothing else.",
-          userPrompt: "Return the JSON object {\"ok\":true}.",
+          systemPrompt:
+            'You are a connectivity probe. Reply ONLY with the JSON object {"ok":true} and nothing else.',
+          userPrompt: 'Return the JSON object {"ok":true}.',
           images: [],
         });
         items.push({ name: "AI provider", ok: true, critical: true, detail: `${aiProvider.name} reachable` });
       } catch (err) {
         const kind = err instanceof ProviderError ? err.kind : "other";
-        items.push({ name: "AI provider", ok: false, critical: true, detail: `${aiProvider.name} ${kind}: ${(err as Error).message}` });
+        items.push({
+          name: "AI provider",
+          ok: false,
+          critical: true,
+          detail: `${aiProvider.name} ${kind}: ${(err as Error).message}`,
+        });
       }
     }
 
@@ -539,7 +660,9 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
 
   app.get("/diagnostics/preflight", async (_req: Request, res: Response) => {
     if (preflightCache && Date.now() - preflightCache.at < PREFLIGHT_TTL_MS) {
-      return res.status(200).json({ report: preflightCache.report, text: buildPreflightText(preflightCache.report) });
+      return res
+        .status(200)
+        .json({ report: preflightCache.report, text: buildPreflightText(preflightCache.report) });
     }
     try {
       const report = await runPreflightChecks();
