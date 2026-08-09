@@ -30,14 +30,16 @@ describe("escapeHtml", () => {
     expect(escapeHtml("' onload='alert(1)")).not.toContain("'");
   });
 
-  it("is defined once: neither report exporter carries its own copy", () => {
-    for (const module of ["html.ts", "interactiveHtml.ts"]) {
+  // Every module that escapes evidence into the report document, including the two SVG renderers
+  // embedded in it — they had the same four-character copy under the name `esc`.
+  it("is defined once: no report module carries its own copy", () => {
+    for (const module of ["html.ts", "interactiveHtml.ts", "assetGraphSvg.ts", "swimlaneSvg.ts"]) {
       const source = readFileSync(
         fileURLToPath(new URL(`../../src/reports/${module}`, import.meta.url)),
         "utf8",
       );
-      expect(source).not.toMatch(/function\s+escapeHtml\s*\(/);
-      expect(source).toMatch(/from\s+"\.\/escapeHtml\.js"/);
+      expect(source, `${module} defines its own escaper`).not.toMatch(/replace\(\/&\/g/);
+      expect(source, `${module} does not import the shared escaper`).toMatch(/from\s+"\.\/escapeHtml\.js"/);
     }
   });
 });
