@@ -212,6 +212,11 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
 // baseline and the second atomicWrite replaces the first caller's keys wholesale. atomicWrite makes
 // each individual write atomic; it cannot make the read and the write one step. The 200 has already
 // gone out by then, so the loss is silent (#510).
+//
+// Scope is this process, which is the whole exposure: the companion is the only writer of its own
+// .env, and every save arrives through one server. Two companions pointed at one file would still
+// race, and closing that would take an on-disk lock — not worth the failure modes (a stale lock
+// blocks every save) for a configuration nothing else is supposed to be writing.
 let envWriteQueue: Promise<unknown> = Promise.resolve();
 
 function withEnvWriteLock<T>(run: () => Promise<T>): Promise<T> {

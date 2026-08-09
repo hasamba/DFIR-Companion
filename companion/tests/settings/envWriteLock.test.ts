@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { updateEnv } from "../../src/settings/envManager.js";
 
 /**
@@ -44,7 +44,31 @@ describe("updateEnv — concurrent saves", () => {
     const written = await readFile(envFile, "utf8");
     // One winner, not two lines for one key: the loser's write was read and replaced, not skipped.
     expect(written.match(/^DFIR_RACED=/gm)).toHaveLength(1);
-    expect(written).toMatch(/DFIR_RACED=(first|second)/);
+    // And a specific winner: the queue is FIFO and these were enqueued left to right, so the save
+    // that arrived second is the one left standing. Accepting either value would pass even if the
+    // ordering were reversed, which is the property worth pinning.
+    expect(written).toContain("DFIR_RACED=second");
+  });
+
+  // The anti-wedge property: a save whose write throws must reject its own caller and must not stop
+  // the ones queued behind it. Without that, one EACCES would strand every later save in the process.
+  it("rejects the failed save without wedging the queue behind it", async () => {
+    // Fail the write by nesting the target under a regular FILE, which yields ENOTDIR. Removing
+    // directory permissions would not do it: CI often runs as root, where the mode bits are ignored
+    // and the "failing" write would quietly succeed, leaving this test green and meaningless.
+    const blocker = join(dirname(envFile), "not-a-directory");
+    await writeFile(blocker, "", "utf8");
+    process.env.DFIR_ENV_FILE = join(blocker, ".env");
+
+    await expect(updateEnv({ DFIR_WILL_FAIL: "x" })).rejects.toThrow();
+
+    process.env.DFIR_ENV_FILE = envFile;
+    // The queue still runs: a save enqueued after the failure completes normally.
+    await updateEnv({ DFIR_AFTER_FAILURE: "ok" });
+
+    const written = await readFile(envFile, "utf8");
+    expect(written).toContain("DFIR_AFTER_FAILURE=ok");
+    expect(written).not.toContain("DFIR_WILL_FAIL");
   });
 
   it("survives a burst without dropping anyone", async () => {
