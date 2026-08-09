@@ -59,14 +59,19 @@ const caseQueues = new Map<string, Promise<unknown>>();
 function withCaseLock<T>(caseId: string, run: () => Promise<T>): Promise<T> {
   const previous = caseQueues.get(caseId) ?? Promise.resolve();
   // Run whether the previous capture resolved or rejected: one failure must not stall the case.
+  // (A capture that never settles at all would, but a hung evidence write already blocks that
+  // case's captures downstream — they share the store's sequence allocation.)
   const result = previous.then(run, run);
-  caseQueues.set(
-    caseId,
-    result.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
   );
+  caseQueues.set(caseId, settled);
+  // Drop the entry once this is the tail and nothing is waiting on it, so the map holds only
+  // active chains rather than one dead promise per case the process has ever seen.
+  void settled.then(() => {
+    if (caseQueues.get(caseId) === settled) caseQueues.delete(caseId);
+  });
   return result;
 }
 
@@ -167,5 +172,7 @@ async function persistCapture(
 // Exposed for test isolation.
 export function _resetDedupCache(): void {
   lastHashByCase.clear();
-  caseQueues.clear();
+  // Deliberately NOT clearing caseQueues: dropping a live chain would let a post-reset capture run
+  // alongside one still in flight, which is the interleaving the queue exists to prevent. Settled
+  // chains remove themselves, so there is nothing left to clear anyway.
 }
