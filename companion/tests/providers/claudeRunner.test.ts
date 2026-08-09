@@ -55,6 +55,25 @@ describe("defaultClaudeRunner", () => {
     expect(r.stdout).toContain('"result":"the answer"');
   });
 
+  // The cap is named in bytes, so it has to be measured in bytes. String.length counts UTF-16 code
+  // units, which undercounts every non-ASCII character — and this output carries plenty of them, so
+  // a cap measured that way would let the buffer run to several times its stated limit.
+  it("measures the cap in UTF-8 bytes, not UTF-16 code units", async () => {
+    // "€" is one UTF-16 code unit but three UTF-8 bytes, so 300k of them is 300k units and 900 KB.
+    // Counting units against a 200 KB cap would retain 200k of them — 600 KB, three times the cap.
+    const r = await defaultClaudeRunner({
+      bin: process.execPath,
+      args: ["-e", 'process.stdout.write("\\u20ac".repeat(300000))'],
+      stdin: "",
+      timeoutMs: 30_000,
+      maxStdoutBytes: 200_000,
+    });
+
+    // The cap plus at most one whole chunk, which is always retained however large it is.
+    expect(Buffer.byteLength(r.stdout, "utf8")).toBeLessThanOrEqual(300_000);
+    expect(r.stdout).not.toContain("�"); // the tail is still whole characters
+  });
+
   it("keeps everything when no cap is set", async () => {
     const r = await defaultClaudeRunner({
       bin: process.execPath,

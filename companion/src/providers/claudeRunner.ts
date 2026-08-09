@@ -38,8 +38,12 @@ export type ClaudeRunner = (opts: ClaudeRunOptions) => Promise<ClaudeRunResult>;
 export const defaultClaudeRunner: ClaudeRunner = (opts) =>
   new Promise<ClaudeRunResult>((resolve) => {
     // Retained as chunks rather than one growing string so the cap can drop the oldest ones without
-    // rebuilding the whole buffer on every event.
+    // rebuilding the whole buffer on every event. Each chunk's UTF-8 size is kept alongside it:
+    // String.length counts UTF-16 code units, which undercounts every non-ASCII character — and
+    // non-ASCII is exactly what this output carries (hostnames, filenames, quoted log text), so a
+    // byte cap measured in code units would let the buffer run several times over its limit.
     const stdoutChunks: string[] = [];
+    const stdoutChunkBytes: number[] = [];
     let stdoutBytes = 0;
     const maxStdoutBytes = opts.maxStdoutBytes ?? Infinity;
     const stdoutText = () => stdoutChunks.join("");
@@ -70,10 +74,13 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdoutChunks.push(chunk);
-      stdoutBytes += chunk.length;
+      const chunkBytes = Buffer.byteLength(chunk, "utf8");
+      stdoutChunkBytes.push(chunkBytes);
+      stdoutBytes += chunkBytes;
       // Keep at least the newest chunk, however large it is: a cap must never yield empty output.
       while (stdoutBytes > maxStdoutBytes && stdoutChunks.length > 1) {
-        stdoutBytes -= stdoutChunks.shift()!.length;
+        stdoutChunks.shift();
+        stdoutBytes -= stdoutChunkBytes.shift()!;
       }
       opts.onStdout?.(chunk);
     });
