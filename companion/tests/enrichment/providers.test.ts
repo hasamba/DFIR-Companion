@@ -206,7 +206,9 @@ describe("CrowdStrikeProvider (Falcon Intelligence + MalQuery)", () => {
     const intelCall = String(
       fetchFn.mock.calls.find((c) => String(c[0]).includes("/intel/combined/indicators"))![0],
     );
-    const filter = decodeURIComponent(new URL(intelCall).searchParams.get("filter") ?? "");
+    // searchParams already percent-decodes; decoding again would hide a double-encoding bug and
+    // would corrupt any IOC value legitimately containing a % sequence.
+    const filter = new URL(intelCall).searchParams.get("filter") ?? "";
     // The value's own quote is escaped, so the literal still opens and closes exactly once.
     expect(filter).toBe("indicator:'http://evil.test/a\\'b\\\\c'");
   });
