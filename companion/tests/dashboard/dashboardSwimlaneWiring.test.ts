@@ -50,6 +50,22 @@ describe("initSwimlane wires every control it owns", () => {
     const observed: string[] = [];
     const els = new Map<string, Record<string, unknown>>();
 
+    // DEDUPES THE WAY A BROWSER DOES. addEventListener ignores a registration whose type, listener
+    // REFERENCE and capture flag all match one already present, so two of this feature's handlers —
+    // swScopeToView and swExportPng, module-level declarations rather than closures — cannot double
+    // up however many times the initializer runs. A recorder that just pushed every call reported
+    // them as duplicated anyway, which meant it could not tell a real double-wire from a safe
+    // re-registration, and would fail a correct fix that swapped closures for named functions.
+    const registered = new Set<string>();
+    const record = (scope: string, type: string, fn: unknown): void => {
+      const key = `${scope}:${type}`;
+      const seen = `${key}::${fnIds.get(fn) ?? (fnIds.set(fn, String(fnIds.size)), fnIds.size - 1)}`;
+      if (registered.has(seen)) return;
+      registered.add(seen);
+      listeners.push(key);
+    };
+    const fnIds = new Map<unknown, string>();
+
     const el = (id: string): Record<string, unknown> => {
       if (!els.has(id)) {
         els.set(id, {
@@ -63,7 +79,7 @@ describe("initSwimlane wires every control it owns", () => {
           style: {},
           dataset: {},
           classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-          addEventListener: (type: string) => listeners.push(`${id}:${type}`),
+          addEventListener: (type: string, fn: unknown) => record(id, type, fn),
           getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
           // Only swRenderCanvas() reaches for a 2d context, and initSwimlane does not call it — but
           // a stub costs nothing and keeps a future render inside the initializer from turning this
@@ -86,7 +102,7 @@ describe("initSwimlane wires every control it owns", () => {
       querySelector: () => null,
       querySelectorAll: () => [],
       createElement: () => el("__created"),
-      addEventListener: (type: string) => listeners.push(`document:${type}`),
+      addEventListener: (type: string, fn: unknown) => record("document", type, fn),
       body: { classList: { add() {}, remove() {} }, appendChild() {} },
       fullscreenElement: null,
     };
@@ -108,7 +124,7 @@ describe("initSwimlane wires every control it owns", () => {
         document,
         ResizeObserver,
         // `sandbox.window = sandbox`, so a window-level listener is a bare global here.
-        addEventListener: (type: string) => listeners.push(`window:${type}`),
+        addEventListener: (type: string, fn: unknown) => record("window", type, fn),
         requestAnimationFrame: (cb: () => void) => {
           void cb;
           return 0;
@@ -170,6 +186,28 @@ describe("initSwimlane wires every control it owns", () => {
     const counts = new Map<string, number>();
     for (const l of fx.listeners) counts.set(l, (counts.get(l) ?? 0) + 1);
     expect([...counts.entries()].filter(([, c]) => c !== 1)).toEqual([]);
+  });
+
+  it("wires nothing on a second run", () => {
+    // ONCE-ONLY IS THE CONTRACT, and it is now enforced rather than assumed. Every handler bar two
+    // is a fresh closure, so a second run used to hand addEventListener a reference it had never
+    // seen and register alongside the first — 17 listeners became 32, and one click ran its handler
+    // twice: a zoom that jumps two steps, a selection that clears twice, no error anywhere. The
+    // ResizeObserver doubled too, which the issue did not mention and which costs a second render
+    // on every resize.
+    //
+    // Nothing reaches it today — the page calls the initializer once, pinned by "the page calls
+    // initSwimlane exactly once, at load" — so this guards a trap rather than a live bug. A panel
+    // re-render or a retry path after a late canvas would spring it.
+    const { api, fx } = load();
+    init(api);
+    const afterFirst = [...fx.listeners].sort();
+    const observedFirst = [...fx.observed];
+    init(api);
+    expect([...fx.listeners].sort(), "a second run re-wired controls the first run already wired").toEqual(
+      afterFirst,
+    );
+    expect(fx.observed, "a second run added another resize observer").toEqual(observedFirst);
   });
 
   // NOT ASSERTED HERE: what a SECOND initSwimlane() should do.
