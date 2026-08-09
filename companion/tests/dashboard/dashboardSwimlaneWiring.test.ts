@@ -188,29 +188,17 @@ describe("initSwimlane wires every control it owns", () => {
     expect([...counts.entries()].filter(([, c]) => c !== 1)).toEqual([]);
   });
 
-  it("wires nothing on a second run", () => {
-    // ONCE-ONLY IS THE CONTRACT, and it is now enforced rather than assumed. Every handler bar two
-    // is a fresh closure, so a second run used to hand addEventListener a reference it had never
-    // seen and register alongside the first — 17 listeners became 32, and one click ran its handler
-    // twice: a zoom that jumps two steps, a selection that clears twice, no error anywhere. The
-    // ResizeObserver doubled too, which the issue did not mention and which costs a second render
-    // on every resize.
-    //
-    // Nothing reaches it today — the page calls the initializer once, pinned by "the page calls
-    // initSwimlane exactly once, at load" — so this guards a trap rather than a live bug. A panel
-    // re-render or a retry path after a late canvas would spring it.
-    const { api, fx } = load();
-    init(api);
-    const afterFirst = [...fx.listeners].sort();
-    const observedFirst = [...fx.observed];
-    init(api);
-    expect([...fx.listeners].sort(), "a second run re-wired controls the first run already wired").toEqual(
-      afterFirst,
-    );
-    expect(fx.observed, "a second run added another resize observer").toEqual(observedFirst);
-  });
-
   // NOT ASSERTED HERE: what a SECOND initSwimlane() should do.
+  //
+  // A MODULE-WIDE ONE-SHOT GUARD IS THE WRONG FIX, which is worth recording because it is the first
+  // one #496 suggests. `if (swWired) return` makes a repeat call safe and a RE-RENDER fatal: when
+  // the panel's markup is rebuilt, getElementById hands back a new canvas and the guard refuses to
+  // wire it, so the panel is silently dead rather than merely double-wired. Measured with this
+  // fixture — clear the element cache to model a re-render and the new canvas receives nothing.
+  // Re-render is the scenario #496 names as how this goes live, so the guard makes the primary case
+  // worse. A correct fix has to key on the ELEMENT, and separately keep the document/window
+  // handlers from stacking; two of those capture init-local `canvas`/`tooltip`, so they cannot just
+  // be hoisted to named functions without moving that state too. Caught by Codex stop-gate review.
   //
   // It currently re-registers all seventeen, because every handler is a fresh anonymous function
   // and the browser keeps both — so one click would run twice. That is a latent defect in the

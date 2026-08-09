@@ -309,19 +309,10 @@
     }
 
     // Wiring. Called by the page where the old setupSwimlane IIFE sat, once the markup exists.
-    // Whether the controls below are already wired. Every handler here bar swScopeToView and
-    // swExportPng is a fresh closure, so a second run hands addEventListener a reference it has
-    // never seen and registers alongside the first rather than replacing it — one click would then
-    // run its handler twice, silently. See #496.
-    let swWired = false;
     function initSwimlane() {
       const canvas = document.getElementById("swimlaneCanvas");
       const tooltip = document.getElementById("swimlaneTooltip");
       if (!canvas) return;
-      // AFTER the canvas check, deliberately: a call that found no panel wired nothing, so it must
-      // not count as the one that did. That keeps a retry once the canvas exists working.
-      if (swWired) return;
-      swWired = true;
 
       // Zoom via mouse wheel — pin the time under the cursor
       canvas.addEventListener("wheel", function(e) {

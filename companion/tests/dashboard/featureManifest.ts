@@ -1468,7 +1468,6 @@ export const FEATURES: Feature[] = [
       "swTimer",
       "swRubber",
       "swTimeBrush",
-      "swWired",
     ],
     // The thirteen private FUNCTIONS (swFitView, swUpdateSubtitle, swZoomRatio, swTsToX, swXToTs,
     // swRenderLabels, swHitTest, swShowDetail, swUpdateZoomLabel, swSelectionChanged,
