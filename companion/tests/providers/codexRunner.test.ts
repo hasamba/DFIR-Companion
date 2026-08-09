@@ -12,17 +12,20 @@ describe("defaultCodexRunner", () => {
     expect(r.stdout).toBe("HELLO");
   });
 
-  // Same pipe-chunk hazard as claudeRunner: a 3-byte character cannot align with the ~64 KB
-  // boundary, so decoding each Buffer separately would strand half a character as U+FFFD (#515).
+  // Same hazard as claudeRunner: the two halves of one character arrive in separate data events,
+  // and decoding each Buffer on its own strands them as two U+FFFDs (#515).
   it("reassembles multi-byte UTF-8 split across pipe chunk boundaries", async () => {
     const r = await defaultCodexRunner({
       bin: process.execPath,
-      args: ["-e", 'process.stdout.write("\\u20ac".repeat(70000))'],
+      args: [
+        "-e",
+        'const b=Buffer.from("\\u20ac","utf8");process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),50);',
+      ],
       stdin: "",
       timeoutMs: 30_000,
     });
     expect(r.stdout).not.toContain("�");
-    expect(r.stdout).toBe("€".repeat(70_000));
+    expect(r.stdout).toBe("€");
   });
 
   it("captures stderr and a non-zero exit code", async () => {

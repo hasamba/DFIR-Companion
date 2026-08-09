@@ -18,17 +18,20 @@ describe("defaultClaudeRunner", () => {
   // concatenation cannot repair — mangling non-ASCII evidence (hostnames, filenames) or breaking
   // JSON.parse on a stream-json line, which the MCP runner then silently skips (#515).
   it("reassembles multi-byte UTF-8 split across pipe chunk boundaries", async () => {
-    // A 3-byte character on purpose: the 64 KB boundary is not a multiple of 3, so a split is
-    // guaranteed. A 2-byte character would align with the boundary and never reproduce the bug.
-    const EXPECTED = "€".repeat(70_000); // 210 KB
+    // Split one character across two writes explicitly rather than relying on where a ~64 KB pipe
+    // boundary happens to land — that is platform- and scheduling-dependent, so a size-based test
+    // can pass against the unfixed code on a kernel that happens to align the reads.
     const r = await defaultClaudeRunner({
       bin: process.execPath,
-      args: ["-e", 'process.stdout.write("\\u20ac".repeat(70000))'],
+      args: [
+        "-e",
+        'const b=Buffer.from("\\u20ac","utf8");process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),50);',
+      ],
       stdin: "",
       timeoutMs: 30_000,
     });
     expect(r.stdout).not.toContain("�");
-    expect(r.stdout).toBe(EXPECTED);
+    expect(r.stdout).toBe("€");
   });
 
   it("reports a non-zero exit code", async () => {
