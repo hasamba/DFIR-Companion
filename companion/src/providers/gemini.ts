@@ -30,13 +30,16 @@ export class GeminiProvider implements AIProvider {
     for (const img of req.images) {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
-    const url = `${this.baseUrl}/models/${this.opts.model}:generateContent?key=${this.opts.apiKey}`;
+    // The key goes in a header, never the query string: a URL is written into the request line, so
+    // ?key=... lands in the access log of every proxy or gateway on the path — and baseUrl is
+    // operator-configurable, so that path is not always one they control. Google supports both.
+    const url = `${this.baseUrl}/models/${this.opts.model}:generateContent`;
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
       res = await this.fetchFn(url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-goog-api-key": this.opts.apiKey },
         body: JSON.stringify({
           contents: [{ role: "user", parts }],
           generationConfig: {
