@@ -1,9 +1,10 @@
 import { test, expect } from "../fixtures/test.js";
 
 // Covers: NO USER STORY EXISTS.
-// feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
-// incidentally, about single controls. The a11y suite is gated by scripts/a11y-ledger.json
-// instead. Mapping these to feature ids would misrepresent both.
+// Not US-240: that story is about job completion, import failure and synthesis-complete events
+// REACHING the announcer, and this suite never triggers one — setStatus writes the status line
+// directly. What is proven here is the #status -> aria-live bridge underneath, which no story
+// describes on its own. Claiming US-240 would read as "those events are tested" when they are not.
 //
 
 // Proves the #status -> aria-live bridge in public/js/a11y/announcer.js. axe cannot check this:

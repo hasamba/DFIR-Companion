@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/test.js";
 
-// Covers: NO USER STORY EXISTS.
+// Covers: US-242
 // feature-user-stories.csv has no accessibility stories; this proves the data-tip naming fix that
 // US-220's "icon with accessible text/title" requirement exposed. The a11y suite is gated by
 // scripts/a11y-ledger.json instead.
