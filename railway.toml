@@ -1,16 +1,20 @@
-# Railway serves this on a public URL, so set DFIR_AUTH_MODE=team and DFIR_AUTH_BOOTSTRAP_TOKEN in
-# the service variables before the first deploy. Without one of the accepted postures the server
-# refuses to start, and that refusal is the guard working: the image binds 0.0.0.0 and single-user
-# mode has no login.
+# This deployment is the PUBLIC DEMO advertised in README.md: no login, anyone may open it. Set
+# these two variables on the Railway service before the first deploy —
 #
-# DFIR_DEMO_MODE is NOT one of those postures, despite what "read-only demo" suggests. Its gate
-# allow-lists POST /cases/seed-demo, which takes a caller-supplied caseId and a force flag, so on a
-# public deployment anyone who finds the URL can create and reseed cases. See the comment at the top
-# of src/routes/seedDemo.ts, which says so directly. Making demo mode a safe public posture means
-# closing that route first — until then, team auth is the only answer for a public URL.
+#   DFIR_ALLOW_UNAUTHENTICATED_REMOTE=public-demo
+#   DFIR_DEMO_MODE=1
 #
-# Do NOT set DFIR_ALLOW_UNAUTHENTICATED_REMOTE here either. It means "my port is published to host
-# loopback only" (see docker-compose.yml), which is untrue of a public URL.
+# The first is how you tell the server you meant to expose it: single-user mode has no login and the
+# image binds 0.0.0.0, so without it the server refuses to start. Use this value, not
+# container-loopback-proxy — that one means "my port is published to host loopback only", which is
+# untrue here, and the distinction is the whole point of having two spellings.
+#
+# The second blocks every mutating route except POST /cases/seed-demo, which stays open by design so
+# visitors can reseed the demo. That route takes a caller-supplied caseId and a force flag (see the
+# header of src/routes/seedDemo.ts), so treat everything on this deployment as throwaway: a stranger
+# can create and reseed cases here. Keep real case data somewhere else.
+#
+# A deployment holding real cases wants DFIR_AUTH_MODE=team and DFIR_AUTH_BOOTSTRAP_TOKEN instead.
 
 [build]
 dockerfilePath = "Dockerfile"

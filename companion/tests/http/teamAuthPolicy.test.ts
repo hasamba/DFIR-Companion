@@ -13,6 +13,27 @@ describe("team-auth configuration and policy", () => {
     ).not.toThrow();
   });
 
+  // The public demo is deliberately unauthenticated, so it needs a way to say so. The two override
+  // values are not interchangeable: one claims the port is loopback-published, the other admits the
+  // exposure is real. A typo in either must still refuse rather than half-open the server.
+  it("accepts both documented unauthenticated-remote overrides and nothing else", () => {
+    const single = resolveTeamAuthConfig({});
+    for (const value of ["container-loopback-proxy", "public-demo"]) {
+      expect(() =>
+        assertRemoteBindingSafe("0.0.0.0", single, { DFIR_ALLOW_UNAUTHENTICATED_REMOTE: value }),
+      ).not.toThrow();
+    }
+    for (const value of ["public", "demo", "true", "1", "yes", ""]) {
+      expect(() =>
+        assertRemoteBindingSafe("0.0.0.0", single, { DFIR_ALLOW_UNAUTHENTICATED_REMOTE: value }),
+      ).toThrow(/refusing to bind/);
+    }
+    // Demo mode alone is not an opt-out: its gate still allow-lists POST /cases/seed-demo.
+    expect(() => assertRemoteBindingSafe("0.0.0.0", single, { DFIR_DEMO_MODE: "1" })).toThrow(
+      /refusing to bind/,
+    );
+  });
+
   it("keeps reviewer separation of duties instead of treating roles as a rank", () => {
     expect(caseRoleAllows("reader", "read")).toBe(true);
     expect(caseRoleAllows("reader", "write")).toBe(false);
