@@ -24,10 +24,17 @@ fi
 log "Starting server..."
 # Passed as BOTH an origin and a host: /etc/killercoda/host is documented only by example, so this
 # works whether it yields a full URL or a bare hostname. Empty values parse to an empty list.
+# DFIR_ALLOW_UNAUTHENTICATED_REMOTE: single-user mode refuses a non-loopback bind, and this is a
+# non-loopback bind — Killercoda fronts the port with a per-session hostname, so unlike the Compose
+# and docker-run recipes the exposure is real rather than loopback-only. It is accepted here and
+# ONLY here because the session is an ephemeral sandbox holding a synthetic demo case, reachable at
+# a URL minted for that session and destroyed with it. Do not copy this line into a deployment that
+# outlives its tutorial: set DFIR_AUTH_MODE=team instead.
 docker run -d \
   --name dfir \
   -p 4773:4773 \
   -e DFIR_HOST=0.0.0.0 \
+  -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
   -e DFIR_ALLOWED_ORIGINS="$KC_ORIGIN" \
   -e DFIR_ALLOWED_HOSTS="$KC_ORIGIN" \
   ghcr.io/hasamba/dfir-companion:latest

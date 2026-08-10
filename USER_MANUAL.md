@@ -93,11 +93,19 @@ Download `dfir-companion-linux.AppImage` from the [latest GitHub release](https:
 #### Docker
 
 ```bash
-docker run -p 4773:4773 \
+docker run -p 127.0.0.1:4773:4773 \
   -v /your/cases:/cases \
   -e DFIR_CASES_ROOT=/cases \
+  -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
   ghcr.io/hasamba/dfir-companion:latest
 ```
+
+The published port is bound to `127.0.0.1`, so the dashboard is reachable from this machine only.
+The container itself listens on `0.0.0.0` because that is the only way Docker can forward a port
+into it, and single-user mode refuses a non-loopback bind unless you say that is what you meant —
+which is what `DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy` says. Publishing the
+port more widely (`-p 4773:4773`) puts an unauthenticated dashboard on every interface; set
+`DFIR_AUTH_MODE=team` before doing that.
 
 Dashboard is then at **http://127.0.0.1:4773/dashboard**. Mount a local volume for persistent case storage.
 
