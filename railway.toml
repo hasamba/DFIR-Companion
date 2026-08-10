@@ -1,11 +1,14 @@
-# Railway serves this on a public URL, so DFIR_AUTH_MODE=team is REQUIRED — set it, along with
-# DFIR_AUTH_BOOTSTRAP_TOKEN, in the service's variables before the first deploy.
+# Railway serves this on a public URL with no login, which is fine for exactly one thing: the
+# read-only demo advertised in README.md. Set DFIR_DEMO_MODE=1 in the service variables — it mounts
+# the gate that answers every non-GET with 403, so visitors can browse the seeded case and change
+# nothing. That is also what lets the server bind 0.0.0.0 here at all; see assertRemoteBindingSafe.
 #
-# Without it the server refuses to start, and that refusal is correct rather than a bug to route
-# around: the image binds 0.0.0.0, single-user mode has no login, and a public URL would put every
-# case on the internet unauthenticated. DFIR_ALLOW_UNAUTHENTICATED_REMOTE exists for containers
-# whose port is published to host loopback only (see docker-compose.yml); it does not apply here
-# and must not be set on this deployment.
+# For a deployment that holds real cases, DFIR_DEMO_MODE is not enough — set DFIR_AUTH_MODE=team
+# and DFIR_AUTH_BOOTSTRAP_TOKEN instead, and create the first administrator before use.
+#
+# Do NOT set DFIR_ALLOW_UNAUTHENTICATED_REMOTE here. It means "my port is published to host
+# loopback only" (see docker-compose.yml), which is untrue of a public URL, and it would leave a
+# writable server open to anyone who finds it.
 
 [build]
 dockerfilePath = "Dockerfile"

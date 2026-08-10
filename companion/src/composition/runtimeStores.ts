@@ -96,6 +96,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { CustomerExposureStore } from "../analysis/customerExposure.js";
 import { loadOrCreateInstanceSecret } from "../analysis/instanceSecret.js";
+import { isDemoModeEnabled } from "../auth/authConfig.js";
 
 export interface RuntimeStoresParams {
   casesRoot: string;
@@ -107,7 +108,10 @@ export interface RuntimeStoresParams {
 }
 
 export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeStoresParams) {
-  const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
+  // Shared with assertRemoteBindingSafe: that guard treats demo mode as a safe posture for a
+  // public bind precisely because this flag mounts the read-only gate. Two spellings of the same
+  // check could drift apart and leave an exposed server writable.
+  const demoMode = isDemoModeEnabled();
   const store = new CaseStore(casesRoot);
   const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
   if (writerGuard) process.once("exit", () => writerGuard.release());
