@@ -88,15 +88,6 @@ function normalizedHost(host: string): string {
     .replace(/^\[|\]$/g, "");
 }
 
-/**
- * Demo mode, read the same way runtimeStores.ts reads it — the two must agree, because this
- * function decides whether the server may bind and that one decides whether the read-only gate is
- * mounted. Disagreeing would either expose a writable server or refuse to start a safe one.
- */
-export function isDemoModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.DFIR_DEMO_MODE === "true" || env.DFIR_DEMO_MODE === "1";
-}
-
 export function isLoopbackBinding(host: string): boolean {
   return LOOPBACK_HOSTS.has(normalizedHost(host));
 }
@@ -108,16 +99,8 @@ export function assertRemoteBindingSafe(
 ): void {
   if (isLoopbackBinding(host) || config.enabled) return;
   if (env.DFIR_ALLOW_UNAUTHENTICATED_REMOTE === "container-loopback-proxy") return;
-  // Demo mode is the fourth safe posture, and the reason the public demo can exist at all. What
-  // makes an exposed single-user server dangerous is that it is WRITABLE by anyone who reaches it;
-  // demoModeReadOnlyGate answers every non-GET with 403 before any route sees it, so the thing this
-  // guard protects against is already gone. Without this branch the advertised demo cannot start,
-  // and the only ways to run it would be to bypass the guard entirely or to put a login in front of
-  // a demo whose whole point is that anyone can open it.
-  if (isDemoModeEnabled(env)) return;
   throw new Error(
     `refusing to bind without authentication in single-user mode to ${host}; ` +
-      "set DFIR_AUTH_MODE=team, bind to 127.0.0.1, enable DFIR_DEMO_MODE for a read-only public " +
-      "demo, or use the documented container loopback-proxy override",
+      "set DFIR_AUTH_MODE=team, bind to 127.0.0.1, or use the documented container loopback-proxy override",
   );
 }

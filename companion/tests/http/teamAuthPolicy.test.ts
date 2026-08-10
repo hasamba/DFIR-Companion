@@ -13,24 +13,6 @@ describe("team-auth configuration and policy", () => {
     ).not.toThrow();
   });
 
-  // The public demo at the Railway URL binds 0.0.0.0 in single-user mode, which the guard otherwise
-  // refuses. It is allowed because demoModeReadOnlyGate answers every non-GET with 403, so there is
-  // no writable surface to protect — and refusing would leave the advertised demo unable to start.
-  it("accepts a public bind in read-only demo mode, and only in demo mode", () => {
-    const single = resolveTeamAuthConfig({});
-    expect(() => assertRemoteBindingSafe("0.0.0.0", single, { DFIR_DEMO_MODE: "1" })).not.toThrow();
-    expect(() => assertRemoteBindingSafe("0.0.0.0", single, { DFIR_DEMO_MODE: "true" })).not.toThrow();
-
-    // Anything that is not the documented spelling leaves the server writable, so it must still
-    // refuse rather than half-enabling a demo the read-only gate was never mounted for.
-    for (const value of ["yes", "on", "0", "false", ""]) {
-      expect(() => assertRemoteBindingSafe("0.0.0.0", single, { DFIR_DEMO_MODE: value })).toThrow(
-        /refusing to bind/,
-      );
-    }
-    expect(() => assertRemoteBindingSafe("0.0.0.0", single, {})).toThrow(/refusing to bind/);
-  });
-
   it("keeps reviewer separation of duties instead of treating roles as a rank", () => {
     expect(caseRoleAllows("reader", "read")).toBe(true);
     expect(caseRoleAllows("reader", "write")).toBe(false);
