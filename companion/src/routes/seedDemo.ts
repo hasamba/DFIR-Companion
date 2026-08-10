@@ -35,7 +35,13 @@ export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
             "caseId must use only letters, numbers, dots, dashes, or underscores, and may not contain path traversal",
         });
       }
-      const caseId = typeof rawCaseId === "string" ? rawCaseId : undefined;
+      // Demo mode leaves this route reachable with no authentication, which is the point — a
+      // visitor can reset the demo. But honouring a caller-supplied id there turns one reset button
+      // into unbounded case creation: a stranger can loop over names and scaffold a new case
+      // directory per request until the volume is full. Ignore the id and reseed the single default
+      // demo case, so the write stays bounded to one case however often it is called.
+      const requestedCaseId = typeof rawCaseId === "string" ? rawCaseId : undefined;
+      const caseId = options.demoMode ? undefined : requestedCaseId;
       const force = req.body?.force === true;
       // Guard against clobbering an in-progress case. force previously overwrote case.json +
       // investigation state for an OPEN case with a running synthesis/import job, destroying the

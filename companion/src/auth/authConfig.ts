@@ -98,9 +98,26 @@ export function assertRemoteBindingSafe(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (isLoopbackBinding(host) || config.enabled) return;
-  if (env.DFIR_ALLOW_UNAUTHENTICATED_REMOTE === "container-loopback-proxy") return;
+  // Two documented opt-outs, deliberately spelled differently because they claim different things.
+  //
+  //   container-loopback-proxy — the port is published to host loopback only, so nothing outside
+  //     this machine can reach it (docker-compose.yml). The exposure is not real.
+  //
+  //   public-demo — the exposure IS real and the operator accepts it: anyone who finds the URL can
+  //     use the server with no login. Named for what it is, because reusing the loopback value here
+  //     would assert a network topology a public deployment does not have. Pair it with
+  //     DFIR_DEMO_MODE=1, which blocks every mutating route except POST /cases/seed-demo — that one
+  //     stays reachable, so visitors can still create and reseed cases. Only put throwaway data
+  //     behind this.
+  if (
+    env.DFIR_ALLOW_UNAUTHENTICATED_REMOTE === "container-loopback-proxy" ||
+    env.DFIR_ALLOW_UNAUTHENTICATED_REMOTE === "public-demo"
+  ) {
+    return;
+  }
   throw new Error(
     `refusing to bind without authentication in single-user mode to ${host}; ` +
-      "set DFIR_AUTH_MODE=team, bind to 127.0.0.1, or use the documented container loopback-proxy override",
+      "set DFIR_AUTH_MODE=team, bind to 127.0.0.1, or set DFIR_ALLOW_UNAUTHENTICATED_REMOTE to the " +
+      "documented container-loopback-proxy or public-demo value",
   );
 }
