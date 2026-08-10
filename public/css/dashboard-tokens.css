@@ -337,8 +337,8 @@
   --sev-medium:            #ffd93b;
   --sev-low:               #6bcb77;
   --sev-info:              #6aa9ff;
-  --text-dim:              #7e8aa0;
-  --text-faint:            #6b7280;
+  --text-dim:              #929ba9;
+  --text-faint:            #818a96;
   --border-subtle:         #232a33;
   --border-strong:         #3a4050;
   --accent-solid:          #2d6cdf;
@@ -367,40 +367,31 @@
   --border-color:          #d7dde6;
   --text-primary:          #222a35;
   --text-bright:           #1b2128;
-  /* 4.33:1 as #5a6573 on --border-color (#d7dde6), which is the background of every grey chip and
-     secondary button. A hair darker clears it without touching the perceived hierarchy. */
-  --text-muted:            #56616e;
+  --text-muted:            #57626f;
   --accent:                #2563c9;
   --accent-hover:          #005de0;
   --bg-drop-active:        #dfe9f6;
   --modal-backdrop:        rgba(0, 0, 0, 0.5);
-  --badge-danger-text:     #e00000;
+  --badge-danger-text:     #c40000;
   --danger-bg:             #f6dfe3;
   --badge-bg-neutral:      #f6f7f8;
-  /* WCAG AA (4.5:1) against the light surfaces these actually sit on, not just against white.
-     #e07e00 measured 2.52:1 on --bg-secondary (#eaeef5), which is where the "next action" cards
-     put it — orange on a pale panel is the classic case that looks fine to whoever picked it and
-     is unreadable to everyone else. #9f5900 is the lightest darkening that clears 4.5. */
-  --badge-warning-text:    #9f5900;
-  --badge-success-text:    #149a45;
-  --tag-red-text:          #e00000;
+  --badge-warning-text:    #8f5100;
+  --badge-success-text:    #0e6f32;
+  --tag-red-text:          #c40000;
   --tag-purple-text:       #6300e0;
-  --tag-orange-text:       #e08200;
-  --tag-blue-text:         #2563c9;
-  --tag-gray-text:         #56616e;   /* same 4.33:1 on --border-color as --text-muted above */
-  --tag-green-text:        #2d8158;
-  --help-icon-color:       #9b7712;
+  --tag-orange-text:       #8f5300;
+  --tag-blue-text:         #235dbd;
+  --tag-gray-text:         #57626f;
+  --tag-green-text:        #266e4b;
+  --help-icon-color:       #785c0e;
 
   --sev-critical:          #ca2527;
   --sev-high:              #a45300;
   --sev-medium:            #7a6000;
   --sev-low:               #007a2c;
   --sev-info:              #2563c9;
-  --text-dim:              #6b7585;
-  /* 3.57:1 on --bg-secondary as #737d8c, and 4.16:1 even on plain white — the single biggest
-     source of contrast failures on the dashboard (28 of 43 nodes). #626a77 clears 4.5 against
-     both, and stays clearly lighter than --text-dim so the hierarchy it exists for survives. */
-  --text-faint:            #626a77;
+  --text-dim:              #5a6573;
+  --text-faint:            #5f6a78;
   --border-subtle:         #e4eaf1;
   --border-strong:         #c2c9d4;
   --accent-solid:          #2563c9;

@@ -25,6 +25,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const ROLE_MAP_PATH = join(here, "role-map.json");
 export const DASHBOARD_PATH = join(here, "..", "..", "..", "public", "dashboard.html");
 
+/**
+ * The file holding the generated theme registry the picker reads.
+ *
+ * It moved out of dashboard.html into its own script in #415, and applyRoles.ts was not moved with
+ * it — so `npm run theme:apply` threw "theme registry markers not found in dashboard.html" and the
+ * generator could not run at all. A generator that cannot run makes its output look hand-editable,
+ * which is how a hand-edit to a generated region survives long enough to be believed.
+ */
+export const THEME_REGISTRY_PATH = join(here, "..", "..", "..", "public", "js", "dashboard-theme.js");
+
 const css = (name: string): string => join(here, "..", "..", "..", "public", "css", name);
 
 /**

@@ -18,39 +18,35 @@
   // Colours are addressed by ROLE (--bg-primary, --sev-high), never by hex. A theme supplies
   // the 25 "tier A" roles; everything else derives from those. See companion/scripts/theme/.
   /* >>> dfir-theme registry (generated) */
-  // Theme palettes are third-party, MIT, (c) 2026 Security Onion Solutions, LLC;
-  // see companion/scripts/theme/vendor/themePalettes.ts for the full notice.
-  const DFIR_THEMES = {
-    dark: { label: "Dark", group: "dark", polarity: "dark" },
-    light: { label: "Light", group: "light", polarity: "light" },
-    catppuccin: { label: "Catppuccin", group: "dark", polarity: "dark" },
-    "catppuccin-latte": {
-      label: "Catppuccin Latte",
-      group: "light",
-      polarity: "light",
-    },
-    cga: { label: "CGA", group: "fun", polarity: "dark" },
-    ethereal: { label: "Ethereal", group: "dark", polarity: "dark" },
-    everforest: { label: "Everforest", group: "dark", polarity: "dark" },
-    gruvbox: { label: "Gruvbox", group: "dark", polarity: "dark" },
-    hacker: { label: "Hacker", group: "fun", polarity: "dark" },
-    hackerman: { label: "Hackerman", group: "dark", polarity: "dark" },
-    kanagawa: { label: "Kanagawa", group: "dark", polarity: "dark" },
-    lumon: { label: "Lumon", group: "dark", polarity: "dark" },
-    "matte-black": { label: "Matte Black", group: "dark", polarity: "dark" },
-    miasma: { label: "Miasma", group: "dark", polarity: "dark" },
-    nord: { label: "Nord", group: "dark", polarity: "dark" },
-    "osaka-jade": { label: "Osaka Jade", group: "dark", polarity: "dark" },
-    "retro-82": { label: "Retro 82", group: "dark", polarity: "dark" },
-    ristretto: { label: "Ristretto", group: "dark", polarity: "dark" },
-    "rose-pine": { label: "Rose Pine", group: "light", polarity: "light" },
-    sguil: { label: "Sguil", group: "fun", polarity: "light" },
-    "tokyo-night": { label: "Tokyo Night", group: "dark", polarity: "dark" },
-    vantablack: { label: "Vantablack", group: "dark", polarity: "dark" },
-    vaporwave: { label: "Vaporwave", group: "fun", polarity: "dark" },
-    white: { label: "White", group: "light", polarity: "light" },
-  };
-  /* <<< dfir-theme registry */
+    // Theme palettes are third-party, MIT, (c) 2026 Security Onion Solutions, LLC;
+    // see companion/scripts/theme/vendor/themePalettes.ts for the full notice.
+    const DFIR_THEMES = {
+      dark:  { label: "Dark",  group: "dark",  polarity: "dark"  },
+      light: { label: "Light", group: "light", polarity: "light" },
+      catppuccin: { label: "Catppuccin", group: "dark", polarity: "dark" },
+      "catppuccin-latte": { label: "Catppuccin Latte", group: "light", polarity: "light" },
+      cga: { label: "CGA", group: "fun", polarity: "dark" },
+      ethereal: { label: "Ethereal", group: "dark", polarity: "dark" },
+      everforest: { label: "Everforest", group: "dark", polarity: "dark" },
+      gruvbox: { label: "Gruvbox", group: "dark", polarity: "dark" },
+      hacker: { label: "Hacker", group: "fun", polarity: "dark" },
+      hackerman: { label: "Hackerman", group: "dark", polarity: "dark" },
+      kanagawa: { label: "Kanagawa", group: "dark", polarity: "dark" },
+      lumon: { label: "Lumon", group: "dark", polarity: "dark" },
+      "matte-black": { label: "Matte Black", group: "dark", polarity: "dark" },
+      miasma: { label: "Miasma", group: "dark", polarity: "dark" },
+      nord: { label: "Nord", group: "dark", polarity: "dark" },
+      "osaka-jade": { label: "Osaka Jade", group: "dark", polarity: "dark" },
+      "retro-82": { label: "Retro 82", group: "dark", polarity: "dark" },
+      ristretto: { label: "Ristretto", group: "dark", polarity: "dark" },
+      "rose-pine": { label: "Rose Pine", group: "light", polarity: "light" },
+      sguil: { label: "Sguil", group: "fun", polarity: "light" },
+      "tokyo-night": { label: "Tokyo Night", group: "dark", polarity: "dark" },
+      vantablack: { label: "Vantablack", group: "dark", polarity: "dark" },
+      vaporwave: { label: "Vaporwave", group: "fun", polarity: "dark" },
+      white: { label: "White", group: "light", polarity: "light" },
+    };
+    /* <<< dfir-theme registry */
   const THEME_GROUP_LABELS = { dark: "Dark", light: "Light", fun: "Fun" };
   const THEME_GROUP_ORDER = ["dark", "light", "fun"];
 

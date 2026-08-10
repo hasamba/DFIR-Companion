@@ -25,6 +25,7 @@
 
 import {
   contrast,
+  deepenForContrast,
   hexToRgb,
   isLightBackground,
   rgbToHex,
@@ -104,12 +105,59 @@ export function resolveRoleValues(
 
 const pad = (s: string, n: number) => s + " ".repeat(Math.max(0, n - s.length));
 
+/** WCAG 2.x AA for normal-size text. 3.0 is the LARGE-text / non-text floor and does not apply to
+ *  the text ramp — see textRampSteps, where assuming otherwise generated sub-AA body text. */
+const AA_TEXT_CONTRAST = 4.5;
+
+/**
+ * Tier A roles that carry TEXT, and so owe WCAG AA against whatever they sit on.
+ *
+ * The legacy values were captured from the original hand-written dashboard, where nothing checked
+ * them: `--badge-warning-text` (#e07e00) measured 2.52:1 on --bg-secondary and `--text-muted`
+ * (#5a6573) 4.33:1 on --border-color. Severity and the text ramp are already solved for the
+ * built-in themes rather than carried over — this closes the last family that was not.
+ */
+const TIER_A_TEXT_ROLES = new Set([
+  "--text-muted",
+  "--badge-danger-text",
+  "--badge-warning-text",
+  "--badge-success-text",
+  "--tag-red-text",
+  "--tag-purple-text",
+  "--tag-orange-text",
+  "--tag-blue-text",
+  "--tag-gray-text",
+  "--tag-green-text",
+  "--help-icon-color",
+]);
+
 function tierABlock(values: Map<string, RoleValue>, mode: "dark" | "light"): string {
   const lines: string[] = [];
+  const pick = (role: string, fallback: string): string => {
+    const v = values.get(role);
+    if (!v) return fallback;
+    return mode === "dark" ? v.dark : v.light;
+  };
+  // Text lands on the page, on panels, and on grey chips and secondary buttons — whose background
+  // IS --border-color. Solving against the page alone is what let chip text ship at 4.33:1.
+  const surfaces = ["--bg-primary", "--bg-secondary", "--border-color"].map((r) =>
+    hexToRgb(pick(r, "#000000")),
+  );
+
   for (const role of TIER_A) {
     const v = values.get(role);
     if (!v) throw new Error(`tier A role has no value: ${role}`);
-    lines.push(`      ${pad(`${role}:`, 24)} ${mode === "dark" ? v.dark : v.light};`);
+    let value = mode === "dark" ? v.dark : v.light;
+    // Only ever DARKENS/lightens toward legibility, and only when the value actually falls short —
+    // a role already clearing AA passes through byte-identical, so shipped colours do not move.
+    if (TIER_A_TEXT_ROLES.has(role) && /^#[0-9a-f]{6}$/i.test(value)) {
+      const rgb = hexToRgb(value);
+      const worst = surfaces.reduce((a, b) => (contrast(rgb, a) <= contrast(rgb, b) ? a : b));
+      if (contrast(rgb, worst) < AA_TEXT_CONTRAST) {
+        value = rgbToHex(deepenForContrast(worst, rgb, AA_TEXT_CONTRAST));
+      }
+    }
+    lines.push(`      ${pad(`${role}:`, 24)} ${value};`);
   }
   return lines.join("\n");
 }
@@ -141,7 +189,25 @@ function builtInSeverity(values: Map<string, RoleValue>, mode: "dark" | "light")
 function tierBExplicitBlock(values: Map<string, RoleValue>, mode: "dark" | "light"): string {
   const lines: string[] = [];
   const severity = builtInSeverity(values, mode);
+  // Same argument as severity directly below: the text ramp is SOLVED for the built-in themes too,
+  // not carried over from the legacy values. Carrying it over is what kept `--text-faint: #737d8c`
+  // — 3.57:1 on --bg-secondary — in the default light theme while every imported theme got an
+  // AA-solved value, i.e. the floors held everywhere except the theme most people actually see.
+  const pick = (role: string, fallback: string): string => {
+    const v = values.get(role);
+    if (!v) return fallback;
+    return mode === "dark" ? v.dark : v.light;
+  };
+  const ramp = textRampSteps({
+    "--bg-primary": pick("--bg-primary", "#000000"),
+    "--bg-secondary": pick("--bg-secondary", pick("--bg-primary", "#000000")),
+    "--text-muted": pick("--text-muted", "#888888"),
+  });
   for (const role of Object.keys(TIER_B)) {
+    if (role === "--text-dim" || role === "--text-faint") {
+      lines.push(`      ${pad(`${role}:`, 24)} ${role === "--text-dim" ? ramp.dim : ramp.faint};`);
+      continue;
+    }
     // Severity is solved rather than carried over, so that the floors hold in the
     // built-in themes too and are not something only imported themes are held to.
     const sev = SEVERITY_ORDER.find((s) => `--sev-${s}` === role);
@@ -186,24 +252,35 @@ function aliasBlock(map: Record<string, RoleAssignment>, alphas: AlphaAlias[]): 
 /**
  * The two sub-muted text steps for an imported theme.
  *
- * Targets are floors, not fixed points: 3.0:1 for the faintest step (placeholders,
- * disabled controls, timestamps) and 4.5:1 for the one above it. Both are then capped at
- * the theme's own `--text-muted` contrast, because a step below muted must never end up
- * MORE prominent than muted — that would invert the ramp. Where a theme's muted is itself
- * under 3:1 the cap wins and the steps collapse onto muted: flatter than intended, but
- * legible, which is the right way to fail.
+ * Targets are floors, not fixed points: WCAG AA's 4.5:1 for BOTH steps. The faintest step used to
+ * floor at 3.0, on the reasoning that it dresses placeholders, disabled controls and timestamps.
+ * That reasoning does not survive contact with the markup — an axe scan found `--text-faint` on 28
+ * nodes of ordinary small body text, timestamps and confidence figures among them, measuring
+ * 3.57:1. 3.0 is the floor for LARGE text and non-text UI, and none of those were either. A ramp
+ * step generated below AA is a violation the generator manufactures on every theme at once, which
+ * is why it is fixed here rather than at 28 call sites.
+ *
+ * Both are still capped at the theme's own `--text-muted` contrast, because a step below muted must
+ * never end up MORE prominent than muted — that would invert the ramp. Where a theme's muted is
+ * itself under AA the cap wins and the steps collapse onto muted: flatter than intended, but never
+ * less legible than the step above, which is the right way to fail.
  */
 function textRampSteps(palette: Record<string, string>): { dim: string; faint: string } {
-  const bg = hexToRgb(palette["--bg-primary"]);
+  // The surface that gives the least contrast is the one every step has to satisfy. Faint text
+  // sits on panels and chips (--bg-secondary) as often as on the page, and in a light theme the
+  // secondary surface is the DARKER of the two — so a value solved against the page alone came up
+  // short exactly where it was used. The severity solver beside this one already takes both.
+  const surfaces = [hexToRgb(palette["--bg-primary"]), hexToRgb(palette["--bg-secondary"])];
   const muted = hexToRgb(palette["--text-muted"]);
-  const mutedContrast = contrast(muted, bg);
+  const worst = surfaces.reduce((a, b) => (contrast(muted, a) <= contrast(muted, b) ? a : b));
+  const mutedContrast = contrast(muted, worst);
 
-  const faintTarget = Math.min(Math.max(3.0, mutedContrast * 0.72), mutedContrast);
+  const faintTarget = Math.min(Math.max(AA_TEXT_CONTRAST, mutedContrast * 0.72), mutedContrast);
   const dimTarget = Math.min(Math.max(faintTarget * 1.25, mutedContrast * 0.88), mutedContrast);
 
   return {
-    dim: rgbToHex(solveForContrast(bg, muted, dimTarget)),
-    faint: rgbToHex(solveForContrast(bg, muted, faintTarget)),
+    dim: rgbToHex(solveForContrast(worst, muted, dimTarget)),
+    faint: rgbToHex(solveForContrast(worst, muted, faintTarget)),
   };
 }
 

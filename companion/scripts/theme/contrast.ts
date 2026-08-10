@@ -55,6 +55,44 @@ export function isLightBackground(hex: string): boolean {
  * A stylesheet cannot branch on the result of a colour mix, but the generator has the
  * palette in hand, so it solves for a concrete colour per theme instead.
  */
+/**
+ * Push `ink` AWAY from `bg` until it meets `target` — the inverse of solveForContrast.
+ *
+ * solveForContrast interpolates between the background and the ink, so it can only ever DIM a
+ * colour toward the background; asked to raise contrast it returns the ink untouched. That is
+ * correct for the text ramp (each step is a dimmer version of muted) and silently useless for a
+ * value that is already too faint — which is how an AA guard built on it can look like it is
+ * working and change nothing at all.
+ *
+ * Here the ink moves toward black on a light background and toward white on a dark one — the only
+ * directions that increase contrast — preserving hue while deepening it. An ink that already meets
+ * the target is returned unchanged, so colours that pass are never touched.
+ */
+export function deepenForContrast(bg: Rgb, ink: Rgb, target: number): Rgb {
+  if (contrast(ink, bg) >= target) return ink;
+  const toward: Rgb = relLuminance(bg) > 0.18 ? [0, 0, 0] : [255, 255, 255];
+  // Contrast is monotonic in t along this axis, so bisection converges. t = 1 is pure black/white,
+  // which clears any reachable target, so hi is a valid starting bound.
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const midpoint = (lo + hi) / 2;
+    if (contrast(mix(ink, toward, midpoint), bg) < target) lo = midpoint;
+    else hi = midpoint;
+  }
+  // Bisect on the QUANTISED colour, because an 8-bit hex is what actually ships. Solving in
+  // floating point and rounding afterwards landed three values at 4.47:1 against a target of 4.5 —
+  // passing in the solver, failing in the browser, which is the worst place to discover it.
+  let t = hi;
+  for (let i = 0; i < 64 && contrast(quantise(mix(ink, toward, t)), bg) < target; i++) {
+    t = Math.min(1, t + 0.01);
+  }
+  return quantise(mix(ink, toward, t));
+}
+
+/** A colour as it will exist once written as a 6-digit hex, so contrast is measured on what ships. */
+const quantise = (rgb: Rgb): Rgb => hexToRgb(rgbToHex(rgb));
+
 export function solveForContrast(bg: Rgb, ink: Rgb, target: number): Rgb {
   // Contrast is monotonic in t along this axis, so bisection converges.
   if (contrast(ink, bg) <= target) return ink;

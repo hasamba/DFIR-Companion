@@ -29,8 +29,8 @@
   --help-icon-color:       #78824b;
   --accent-solid-hover:    #909c5a;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #7f7f71;
-  --text-faint:            #6f6f64;
+  --text-dim:              #878778;
+  --text-faint:            #878778;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff6b6b;
   --sev-high:              #c77f55;
@@ -71,7 +71,7 @@
   --accent-solid-hover:    #88c0d0;
   /* solved for contrast, not derived — see textRampSteps() */
   --text-dim:              #7b8494;
-  --text-faint:            #747d8c;
+  --text-faint:            #7b8494;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #e8858d;
   --sev-high:              #c57c66;
@@ -111,8 +111,8 @@
   --help-icon-color:       #509475;
   --accent-solid-hover:    #63b07a;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #7c8269;
-  --text-faint:            #6b725c;
+  --text-dim:              #848a6f;
+  --text-faint:            #848a6f;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff5345;
   --sev-high:              #ffa726;
@@ -193,8 +193,8 @@
   --help-icon-color:       #f38d70;
   --accent-solid-hover:    #f8a788;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #8c8283;
-  --text-faint:            #7b7273;
+  --text-dim:              #948a8b;
+  --text-faint:            #948a8b;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff7088;
   --sev-high:              #f38d70;
@@ -316,8 +316,8 @@
   --help-icon-color:       #7aa2f7;
   --accent-solid-hover:    #7da6ff;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #717590;
-  --text-faint:            #62657e;
+  --text-dim:              #787c99;
+  --text-faint:            #787c99;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #f7768e;
   --sev-high:              #ff9e64;
@@ -398,8 +398,8 @@
   --help-icon-color:       #ffffff;
   --accent-solid-hover:    #ff94dd;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #9e83be;
-  --text-faint:            #8c73ab;
+  --text-dim:              #a78bc8;
+  --text-faint:            #9b80bc;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff71ce;
   --sev-high:              #fffb96;
@@ -439,8 +439,8 @@
   --help-icon-color:       #6e6e6e;
   --accent-solid-hover:    #4a4a4a;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #757575;
-  --text-faint:            #858585;
+  --text-dim:              #6e6e6e;
+  --text-faint:            #6f6f6f;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #c62828;
   --sev-high:              #e04f00;

@@ -30,7 +30,7 @@
   --accent-solid-hover:    #b4befe;
   /* solved for contrast, not derived — see textRampSteps() */
   --text-dim:              #9da4be;
-  --text-faint:            #8c92ab;
+  --text-faint:            #8c92aa;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #f38ba8;
   --sev-high:              #fab387;
@@ -70,8 +70,8 @@
   --help-icon-color:       #1e66f5;
   --accent-solid-hover:    #1a57d0;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #73768b;
-  --text-faint:            #84879a;
+  --text-dim:              #6c6f85;
+  --text-faint:            #6c6f85;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #d10e39;
   --sev-high:              #b64400;
@@ -112,7 +112,7 @@
   --accent-solid-hover:    #ff80ff;
   /* solved for contrast, not derived — see textRampSteps() */
   --text-dim:              #50a1a1;
-  --text-faint:            #478e8e;
+  --text-faint:            #458f8f;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff55ff;
   --sev-high:              #ffffff;
@@ -152,8 +152,8 @@
   --help-icon-color:       #7d82d9;
   --accent-solid-hover:    #c2c4f0;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #6676ac;
-  --text-faint:            #596698;
+  --text-dim:              #6d7db6;
+  --text-faint:            #6d7db6;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ed5b5a;
   --sev-high:              #f99957;
@@ -193,8 +193,8 @@
   --help-icon-color:       #7fbbb3;
   --accent-solid-hover:    #8ed1c9;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #839087;
-  --text-faint:            #737f79;
+  --text-dim:              #859289;
+  --text-faint:            #859289;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #f3898b;
   --sev-high:              #faab87;
@@ -235,7 +235,7 @@
   --accent-solid-hover:    #8cc3b6;
   /* solved for contrast, not derived — see textRampSteps() */
   --text-dim:              #b3a58c;
-  --text-faint:            #9f937d;
+  --text-faint:            #9f937e;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ed6c64;
   --sev-high:              #d65d0f;
@@ -275,8 +275,8 @@
   --help-icon-color:       #00ff41;
   --accent-solid-hover:    #00cc33;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #008610;
-  --text-faint:            #00750e;
+  --text-dim:              #008f11;
+  --text-faint:            #008e11;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff4d4d;
   --sev-high:              #ffb300;
@@ -316,8 +316,8 @@
   --help-icon-color:       #82FB9C;
   --accent-solid-hover:    #a4fcc0;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #666a90;
-  --text-faint:            #585c7d;
+  --text-dim:              #6a6e95;
+  --text-faint:            #6a6e95;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff6b6b;
   --sev-high:              #ffa726;
@@ -358,7 +358,7 @@
   --accent-solid-hover:    #9bb8ea;
   /* solved for contrast, not derived — see textRampSteps() */
   --text-dim:              #727169;
-  --text-faint:            #6b6a63;
+  --text-faint:            #727169;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff4d43;
   --sev-high:              #ffa066;
@@ -398,8 +398,8 @@
   --help-icon-color:       #8bc9eb;
   --accent-solid-hover:    #b4e4f6;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #6d9dc0;
-  --text-faint:            #608bab;
+  --text-dim:              #71a3c7;
+  --text-faint:            #6491b2;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #ff6b6b;
   --sev-high:              #ffa726;
@@ -439,8 +439,8 @@
   --help-icon-color:       #e68e0d;
   --accent-solid-hover:    #f59e0b;
   /* solved for contrast, not derived — see textRampSteps() */
-  --text-dim:              #828285;
-  --text-faint:            #727275;
+  --text-dim:              #8a8a8d;
+  --text-faint:            #818184;
   /* solved for contrast AND mutual separation — see severity.ts */
   --sev-critical:          #d35f5f;
   --sev-high:              #e68e0d;
