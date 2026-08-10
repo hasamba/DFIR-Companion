@@ -1,5 +1,5 @@
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ReportGeneration } from "./reportGeneration.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
@@ -558,79 +558,92 @@ export class ReportWriter {
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
     const custody = this.custodyStore ? await this.custodyStore.load(caseId) : undefined;
     const c = this.renderContents(state, meta, exposure, graph, notebookEntries, playbookTasks, template, kevCatalog, hypotheses, secondLookLeads, coverage, lateralPaths, modelPerf, complianceControl, custody);
-    await writeFile(paths.markdown, c.markdown, "utf8");
-    await writeFile(paths.html, c.html, "utf8");
-    await writeFile(paths.findingsCsv, c.findingsCsv, "utf8");
-    await writeFile(paths.iocsCsv, c.iocsCsv, "utf8");
-    await writeFile(paths.timelineCsv, c.timelineCsv, "utf8");
-    await writeFile(paths.forensicTimelineCsv, c.forensicTimelineCsv, "utf8");
-    await writeFile(paths.stateJson, c.stateJson, "utf8");
+    // Staged, not published: nothing in reports/ changes until every artifact AND the provenance
+    // record below have succeeded. Writing them straight over the previous report left a mixed
+    // generation behind whenever anything in between failed — see reports/reportGeneration.ts.
+    const generation = new ReportGeneration();
     const sourceRuns = this.analysisRuns ? await this.analysisRuns.list(caseId) : [];
     let reportRunId: string | undefined;
-    if (this.analysisRuns) {
-      const reportRun = await this.analysisRuns.record(caseId, {
-        kind: "report",
-        parentRunId: opts.parentRunId,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        versions: { schema: "report/v1" },
-        input: {
-          artifacts: [],
-          eventIds: state.forensicTimeline.map((event) => event.id),
-          entityIds: [
-            ...state.findings.map((finding) => finding.id),
-            ...state.iocs.map((ioc) => ioc.id),
-          ],
-          selectionHash: hashManifestValue({
-            sourceRunIds: sourceRuns.map((run) => run.id),
+    // discard() is a no-op once published, so the finally covers every failure path — a render
+    // error, a full disk, a permission error, or a provenance write that never completed — without
+    // needing to know which one happened.
+    try {
+      await generation.stage(paths.markdown, c.markdown);
+      await generation.stage(paths.html, c.html);
+      await generation.stage(paths.findingsCsv, c.findingsCsv);
+      await generation.stage(paths.iocsCsv, c.iocsCsv);
+      await generation.stage(paths.timelineCsv, c.timelineCsv);
+      await generation.stage(paths.forensicTimelineCsv, c.forensicTimelineCsv);
+      await generation.stage(paths.stateJson, c.stateJson);
+      if (this.analysisRuns) {
+        const reportRun = await this.analysisRuns.record(caseId, {
+          kind: "report",
+          parentRunId: opts.parentRunId,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          versions: { schema: "report/v1" },
+          input: {
+            artifacts: [],
             eventIds: state.forensicTimeline.map((event) => event.id),
-          }),
-        },
-        configuration: {
-          templateHash: hashManifestValue(template),
-          parameters: {
-            templateId: template.id,
-            pinnedRunIds: sourceRuns.map((run) => run.id),
+            entityIds: [
+              ...state.findings.map((finding) => finding.id),
+              ...state.iocs.map((ioc) => ioc.id),
+            ],
+            selectionHash: hashManifestValue({
+              sourceRunIds: sourceRuns.map((run) => run.id),
+              eventIds: state.forensicTimeline.map((event) => event.id),
+            }),
           },
-          filteringPolicy: {
-            reportScopeApplied: true,
-            falsePositivesExcluded: true,
+          configuration: {
+            templateHash: hashManifestValue(template),
+            parameters: {
+              templateId: template.id,
+              pinnedRunIds: sourceRuns.map((run) => run.id),
+            },
+            filteringPolicy: {
+              reportScopeApplied: true,
+              falsePositivesExcluded: true,
+            },
           },
-        },
-        output: {
-          entityIds: [
-            "report.md",
-            "report.html",
-            "findings.csv",
-            "iocs.csv",
-            "timeline.csv",
-            "forensic-timeline.csv",
-            "state-export.json",
-          ],
-          hashes: [
-            ["report.md", c.markdown],
-            ["report.html", c.html],
-            ["findings.csv", c.findingsCsv],
-            ["iocs.csv", c.iocsCsv],
-            ["timeline.csv", c.timelineCsv],
-            ["forensic-timeline.csv", c.forensicTimelineCsv],
-            ["state-export.json", c.stateJson],
-          ].map(([id, contents]) => ({
-            id,
-            sha256: createHash("sha256").update(contents).digest("hex"),
-          })),
-          claims: state.findings.map((finding) => claimSnapshot(finding.id, {
-            title: finding.title,
-            severity: finding.severity,
-            description: finding.description,
-            evidenceEventIds: finding.relatedEventIds,
-          })),
-        },
-      });
-      reportRunId = reportRun.id;
-      await writeFile(paths.analysisRuns, JSON.stringify(await this.analysisRuns.list(caseId), null, 2), "utf8");
-    } else {
-      await writeFile(paths.analysisRuns, "[]\n", "utf8");
+          output: {
+            entityIds: [
+              "report.md",
+              "report.html",
+              "findings.csv",
+              "iocs.csv",
+              "timeline.csv",
+              "forensic-timeline.csv",
+              "state-export.json",
+            ],
+            hashes: [
+              ["report.md", c.markdown],
+              ["report.html", c.html],
+              ["findings.csv", c.findingsCsv],
+              ["iocs.csv", c.iocsCsv],
+              ["timeline.csv", c.timelineCsv],
+              ["forensic-timeline.csv", c.forensicTimelineCsv],
+              ["state-export.json", c.stateJson],
+            ].map(([id, contents]) => ({
+              id,
+              sha256: createHash("sha256").update(contents).digest("hex"),
+            })),
+            claims: state.findings.map((finding) => claimSnapshot(finding.id, {
+              title: finding.title,
+              severity: finding.severity,
+              description: finding.description,
+              evidenceEventIds: finding.relatedEventIds,
+            })),
+          },
+        });
+        reportRunId = reportRun.id;
+        await generation.stage(paths.analysisRuns, JSON.stringify(await this.analysisRuns.list(caseId), null, 2));
+      } else {
+        await generation.stage(paths.analysisRuns, "[]\n");
+      }
+      // Every artifact and the provenance record are on disk — publish them as one generation.
+      await generation.publish();
+    } finally {
+      await generation.discard();
     }
     // #77 report versioning: snapshot markdown + meta + the diff-relevant slice of state so the
     // dashboard can diff two generations and roll back to a prior version's editable meta.
