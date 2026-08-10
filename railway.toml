@@ -1,3 +1,12 @@
+# Railway serves this on a public URL, so DFIR_AUTH_MODE=team is REQUIRED — set it, along with
+# DFIR_AUTH_BOOTSTRAP_TOKEN, in the service's variables before the first deploy.
+#
+# Without it the server refuses to start, and that refusal is correct rather than a bug to route
+# around: the image binds 0.0.0.0, single-user mode has no login, and a public URL would put every
+# case on the internet unauthenticated. DFIR_ALLOW_UNAUTHENTICATED_REMOTE exists for containers
+# whose port is published to host loopback only (see docker-compose.yml); it does not apply here
+# and must not be set on this deployment.
+
 [build]
 dockerfilePath = "Dockerfile"
 

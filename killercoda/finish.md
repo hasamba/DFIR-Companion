@@ -16,7 +16,9 @@ DFIR Companion runs locally on your machine:
 
 ```bash
 # Via Docker
-docker run -d -p 4773:4773 -v $(pwd)/cases:/data/cases ghcr.io/hasamba/dfir-companion:latest
+docker run -d -p 127.0.0.1:4773:4773 -v $(pwd)/cases:/data/cases \
+  -e DFIR_ALLOW_UNAUTHENTICATED_REMOTE=container-loopback-proxy \
+  ghcr.io/hasamba/dfir-companion:latest
 
 # Or from source (Node 22.5+)
 git clone https://github.com/hasamba/DFIR-Companion.git
