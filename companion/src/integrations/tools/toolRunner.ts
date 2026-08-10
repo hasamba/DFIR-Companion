@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { openSync, closeSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { retryTransientSpawn } from "../velociraptor/velociraptorApi.js";
+import { ChildOutputCollector } from "../childOutput.js";
 
 // Generic runner for the analyst-configured external forensic tools (Hayabusa, Velociraptor CLI,
 // Suricata, Snort, YARA). It shells out to a LOCAL binary the analyst installed — the Companion never
@@ -158,8 +159,10 @@ function spawnToolOnce(
       launchFailed(e);   // Windows throws EPERM synchronously — not via the 'error' event
       return;
     }
-    let out = "";
-    let err = "";
+    // Raw BYTES under one budget, decoded once at the end — see integrations/childOutput.ts for why
+    // counting string length and decoding per chunk were both wrong, and why stderr needs a bound of
+    // its own rather than none at all.
+    const output = new ChildOutputCollector(opts.maxOutputBytes);
     let killed = false;
     const timer = setTimeout(() => {
       killed = true;
@@ -169,8 +172,7 @@ function spawnToolOnce(
     }, opts.timeoutMs);
     // When redirecting to a file, child.stdout is null (goes to the fd) — no in-memory buffer/cap.
     child.stdout?.on("data", (d: Buffer) => {
-      out += d.toString();
-      if (out.length > opts.maxOutputBytes) {
+      if (output.pushStdout(d)) {
         killed = true;
         child.kill();
         clearTimeout(timer);
@@ -178,7 +180,9 @@ function spawnToolOnce(
         reject(new Error(`Tool "${binary}" output exceeded ${opts.maxOutputBytes} bytes — raise the tool's MAX_OUTPUT, or narrow the run`));
       }
     });
-    child.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
+    // Never fatal, never unbounded: a bounded tail keeps the diagnostics a failure message needs
+    // while a tool that spews forever cannot exhaust the heap.
+    child.stderr?.on("data", (d: Buffer) => output.pushStderr(d));
     child.on("error", (e) => {
       if (killed) return;
       clearTimeout(timer);
@@ -188,7 +192,8 @@ function spawnToolOnce(
       if (killed) return;
       clearTimeout(timer);
       closeFd();
-      resolve({ stdout: out, stderr: err, code: code ?? 0 });
+      const { stdout, stderr } = output.text();
+      resolve({ stdout, stderr, code: code ?? 0 });
     });
   });
 }

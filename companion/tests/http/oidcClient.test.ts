@@ -121,3 +121,68 @@ describe("OIDC authorization-code client", () => {
     ).rejects.toThrow(/state/i);
   });
 });
+
+// /auth/oidc/start is public and stores a state, nonce, verifier, return path and expiry per call,
+// each living ten minutes. Expiry was swept only when ANOTHER flow started, so a caller issuing
+// starts faster than they expire grew the map without limit — no credentials needed.
+describe("OIDC flow storage is bounded", () => {
+  const discoveryOnly: typeof fetch = async (input) => {
+    if (String(input).endsWith("/.well-known/openid-configuration")) {
+      return Response.json({
+        issuer: ISSUER,
+        authorization_endpoint: `${ISSUER}/authorize`,
+        token_endpoint: `${ISSUER}/token`,
+        jwks_uri: `${ISSUER}/jwks`,
+        code_challenge_methods_supported: ["S256"],
+      });
+    }
+    throw new Error(`unexpected fetch: ${String(input)}`);
+  };
+
+  function makeClient(): OidcClient {
+    return new OidcClient(
+      { issuer: ISSUER, clientId: CLIENT_ID, redirectUri: REDIRECT_URI, scopes: ["openid"] },
+      discoveryOnly,
+    );
+  }
+
+  it("keeps outstanding flows under a hard ceiling however many are started", async () => {
+    const c = makeClient();
+    const flows = () => (c as unknown as { flows: Map<string, unknown> }).flows;
+
+    for (let i = 0; i < 1200; i++) await c.begin("/dashboard");
+
+    // Unbounded, this would be 1200 live entries with nothing to remove them for ten minutes.
+    expect(flows().size).toBeLessThanOrEqual(1000);
+  });
+
+  it("evicts the oldest flow, so the most recent logins still complete", async () => {
+    const c = makeClient();
+    const flows = () => (c as unknown as { flows: Map<string, unknown> }).flows;
+
+    const first = await c.begin("/dashboard");
+    for (let i = 0; i < 1100; i++) await c.begin("/dashboard");
+    const last = await c.begin("/dashboard");
+
+    // The oldest is gone (its owner restarts a login); the newest — the one a real user is
+    // mid-way through — is still there.
+    expect(flows().has(first.state)).toBe(false);
+    expect(flows().has(last.state)).toBe(true);
+  });
+
+  // The pre-existing behaviour that must survive the cap: an expired flow is still dropped, and
+  // a live one is still usable.
+  it("still drops expired flows and keeps live ones", async () => {
+    const c = makeClient();
+    const flows = () => (c as unknown as { flows: Map<string, { expiresAt: number }> }).flows;
+
+    const stale = await c.begin("/dashboard");
+    const entry = flows().get(stale.state);
+    if (entry) entry.expiresAt = Date.now() - 1;
+
+    const fresh = await c.begin("/dashboard");
+
+    expect(flows().has(stale.state)).toBe(false);
+    expect(flows().has(fresh.state)).toBe(true);
+  });
+});

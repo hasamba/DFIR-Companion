@@ -38,6 +38,18 @@ function tempPathFor(target: string): string {
   return `${target}.${randomUUID()}.tmp`;
 }
 
+/**
+ * A temp path for `target` in the same form atomicWrite uses.
+ *
+ * Exported so a multi-file publication (reports/reportGeneration.ts) can stage its artifacts under
+ * names the rest of the system ALREADY understands as a write in progress — caseTransientPaths.ts
+ * skips exactly this shape, so a staged generation can never be mistaken for case content or end up
+ * in an archive.
+ */
+export function atomicTempPath(target: string): string {
+  return tempPathFor(target);
+}
+
 /** True when `path` is a temp file atomicWrite created — a write in progress, not case content. */
 export function isAtomicWriteTempPath(path: string): boolean {
   return TEMP_SUFFIX_PATTERN.test(path);

@@ -152,6 +152,8 @@ let _loginLimiter: AttemptLimiter | null = null;
 let _loginIpLimiter: SlidingWindowLimiter | null = null;
 let _loginSweepTimer: NodeJS.Timeout | null = null;
 let _loginIpSweepTimer: NodeJS.Timeout | null = null;
+let _oidcStartLimiter: SlidingWindowLimiter | null = null;
+let _oidcStartSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -237,6 +239,22 @@ export function getLoginIpLimiter(): SlidingWindowLimiter {
   return _loginIpLimiter;
 }
 
+/** Per-IP budget for GET /auth/oidc/start, the one PUBLIC route that allocates server state.
+ *  Every call stores a state, nonce, verifier, return path and expiry for ten minutes, so without
+ *  a limiter an unauthenticated caller could allocate memory as fast as it could issue requests —
+ *  no credentials, no provider round-trip needed. 20 a minute is far past a human clicking
+ *  "Sign in with SSO" (each click is one flow, and a retry after a provider error is another),
+ *  and it caps one client's outstanding flows well below the client's own hard flow ceiling. */
+export function getOidcStartLimiter(): SlidingWindowLimiter {
+  if (!_oidcStartLimiter) {
+    const limiter = new SlidingWindowLimiter(20, 60_000);
+    _oidcStartLimiter = limiter;
+    _oidcStartSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _oidcStartSweepTimer.unref?.();
+  }
+  return _oidcStartLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
@@ -246,6 +264,7 @@ export function resetLimiters(): void {
   if (_importIpSweepTimer) clearInterval(_importIpSweepTimer);
   if (_loginSweepTimer) clearInterval(_loginSweepTimer);
   if (_loginIpSweepTimer) clearInterval(_loginIpSweepTimer);
+  if (_oidcStartSweepTimer) clearInterval(_oidcStartSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
@@ -258,4 +277,6 @@ export function resetLimiters(): void {
   _loginIpSweepTimer = null;
   _loginLimiter = null;
   _loginIpLimiter = null;
+  _oidcStartSweepTimer = null;
+  _oidcStartLimiter = null;
 }

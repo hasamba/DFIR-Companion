@@ -21,6 +21,21 @@ export function isValidCaseId(caseId: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(caseId) && !caseId.includes("..");
 }
 
+/**
+ * The case id is already owned by someone else. Thrown by createCase when its exclusive claim on
+ * case.json loses — which is the ONLY way a caller can learn it lost, since a check-then-create
+ * pair cannot: both racers pass the check.
+ *
+ * A distinct type rather than a message match so the route can answer 409 (someone else has it)
+ * instead of 500 (we broke), and so a future caller cannot mistake it for a disk failure.
+ */
+export class CaseAlreadyExistsError extends Error {
+  constructor(readonly caseId: string) {
+    super(`case ${caseId} already exists`);
+    this.name = "CaseAlreadyExistsError";
+  }
+}
+
 /** What the caller knows about where an artifact came from; only the capture path has all of it. */
 export interface ArtifactProvenance {
   source?: string;
@@ -168,10 +183,18 @@ export class CaseStore {
     await rm(dir, { recursive: true });
   }
 
-  // NOTE: does not itself guard against an id collision with an archived case (caseDir()
-  // resolves to the archived location and this would silently overwrite its case.json).
-  // Callers are responsible for that check — see POST /cases in server.ts, which calls
-  // caseExists() (archive-aware) and 409s before ever reaching here.
+  // Creating a case CLAIMS its id, so the write of case.json is exclusive (`wx` — O_CREAT|O_EXCL,
+  // atomic on POSIX and Windows alike) and is the FIRST thing that touches the case. A caller's
+  // caseExists() check cannot make this safe on its own: two requests for the same id both pass the
+  // check, both used to create, and the later metadata write simply became the final case.json —
+  // which under team auth handed BOTH requesters administrator on the same case. The exclusive
+  // create is the single point where exactly one of them can win.
+  //
+  // This also subsumes the archived-collision hazard the callers used to be responsible for:
+  // caseDir() resolves an archived id to its archived folder, so the claim collides there too and
+  // an archived case's metadata can no longer be silently overwritten.
+  //
+  // The subdirectories are created only AFTER the claim succeeds, so a loser leaves nothing behind.
   async createCase(input: CreateCaseInput): Promise<CaseMeta> {
     const meta: CaseMeta = {
       caseId: input.caseId,
@@ -180,16 +203,30 @@ export class CaseStore {
       investigator: input.investigator,
       aiProvider: input.aiProvider,
     };
-    for (const dir of [
+    // Resolved once: caseDir() is existsSync-based, so re-resolving it after the mkdir below would
+    // answer a different question than the one the claim is made against.
+    const dir = this.caseDir(input.caseId);
+    await mkdir(dir, { recursive: true });
+    try {
+      await writeFile(join(dir, "case.json"), JSON.stringify(meta, null, 2), {
+        encoding: "utf8",
+        flag: "wx",
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new CaseAlreadyExistsError(input.caseId);
+      }
+      throw err;
+    }
+    for (const sub of [
       this.screenshotsDir(input.caseId),
       this.metadataDir(input.caseId),
       this.stateDir(input.caseId),
       this.reportsDir(input.caseId),
       this.importsDir(input.caseId),
     ]) {
-      await mkdir(dir, { recursive: true });
+      await mkdir(sub, { recursive: true });
     }
-    await writeFile(this.caseMetaPath(input.caseId), JSON.stringify(meta, null, 2), "utf8");
     return meta;
   }
 

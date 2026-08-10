@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
-import { isValidCaseId } from "../storage/caseStore.js";
+import { isValidCaseId, CaseAlreadyExistsError } from "../storage/caseStore.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
@@ -100,11 +100,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   });
 
   // Create a case. This is the one place a case is born (the dashboard's New case form and
-  // `npm run`-style tooling call it); the extension no longer creates cases. Rejects a
-  // duplicate id so the form can't silently clobber an existing case's metadata/evidence.
-  // Optional `templateId`: pre-populates key questions from the named template.
-  // Optional `incidentTypeId` (#236): additionally applies an incident type's auto-playbook —
-  // type-specific key questions, next steps, and expected-finding confirm/deny seeds.
+  // `npm run`-style tooling call it); the extension no longer creates cases. The caseExists check
+  // is only the friendly duplicate answer — two simultaneous requests both pass it, so createCase's
+  // exclusive claim is the guarantee, and a loser 409s from the catch without reaching grantCreator.
+  // Optional `templateId` seeds key questions; `incidentTypeId` (#236) also applies its auto-playbook.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
       const { caseId, name, investigator, aiProvider, templateId, incidentTypeId } = req.body ?? {};
@@ -146,6 +145,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       await ensureDropFolders(caseId).catch(() => { /* the watcher re-ensures on its next poll */ });
       return res.status(201).json(sanitizeCaseMeta(meta));
     } catch (err) {
+      if (err instanceof CaseAlreadyExistsError) return res.status(409).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -452,7 +452,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
             data: Buffer.from(JSON.stringify(await buildCustodyManifest(store, options.custodyStore, id, instanceSecret), null, 2), "utf8"),
           }]
         : [];
-      const archive = await exportEncryptedCase(store, id, password, custodyManifest);
+      const archive = await exportEncryptedCase(store, id, password, custodyManifest, { runExclusive: ctx.runStateExclusive });
       const filename = dfircaseFilename(id, meta?.name);
       // Same as the ZIP path: the evidence is leaving, so the chain records it (#231).
       await options.custodyStore?.recordExport(id, { exportedBy: meta?.investigator || "analyst", destination: `encrypted archive: ${filename}` });

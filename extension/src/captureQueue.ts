@@ -44,13 +44,52 @@ export class CaptureQueue {
     });
   }
 
-  private tx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-    return this.open().then((db) => new Promise<T>((resolve, reject) => {
-      const store = db.transaction(STORE, mode).objectStore(STORE);
-      const req = fn(store);
-      req.onsuccess = () => resolve(req.result);
+  /** Run `fn` against an open connection and close it afterwards, however it ends. */
+  private async withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+    const db = await this.open();
+    try {
+      return await fn(db);
+    } finally {
+      // Left open, every operation leaked a connection — and a still-open connection blocks a
+      // future version upgrade, which would strand the queue rather than migrate it.
+      db.close();
+    }
+  }
+
+  /**
+   * One transaction, resolved when the TRANSACTION completes — not when the individual request
+   * succeeds.
+   *
+   * That distinction is the whole point. A request's onsuccess fires while its transaction is still
+   * open, so `await enqueue(...)` used to return before anything was durable. In a Manifest V3
+   * service worker, which can be suspended the moment it goes idle, "the caller believes the capture
+   * is saved" and "the capture is saved" were two different things, and the gap was where evidence
+   * went missing. Resolving from oncomplete, and rejecting from onabort/onerror, makes the promise
+   * mean what its callers already assumed.
+   */
+  private txOn<T>(
+    db: IDBDatabase,
+    mode: IDBTransactionMode,
+    fn: (store: IDBObjectStore) => IDBRequest<T>,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const tx = db.transaction(STORE, mode);
+      let result: T;
+      const req = fn(tx.objectStore(STORE));
+      req.onsuccess = () => {
+        result = req.result;
+      };
+      // A request error left unhandled aborts the transaction, so onabort is the backstop rather
+      // than the exception: either way the promise rejects and nothing is reported durable.
       req.onerror = () => reject(req.error);
-    }));
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = () => reject(tx.error ?? new Error("capture queue transaction aborted"));
+      tx.onerror = () => reject(tx.error ?? new Error("capture queue transaction failed"));
+    });
+  }
+
+  private tx<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+    return this.withDb((db) => this.txOn<T>(db, mode, fn));
   }
 
   async enqueue(payload: CapturePayload): Promise<void> {
@@ -73,37 +112,48 @@ export class CaptureQueue {
     if (this.draining) return summary;
     this.draining = true;
     try {
-      const db = await this.open();
-      const entries: { key: number; payload: CapturePayload }[] = await new Promise((resolve, reject) => {
-        const out: { key: number; payload: CapturePayload }[] = [];
-        const cursorReq = db.transaction(STORE, "readonly").objectStore(STORE).openCursor();
-        cursorReq.onsuccess = () => {
-          const cursor = cursorReq.result;
-          if (cursor) {
-            out.push({ key: cursor.key as number, payload: (cursor.value as { payload: CapturePayload }).payload });
-            cursor.continue();
-          } else resolve(out);
-        };
-        cursorReq.onerror = () => reject(cursorReq.error);
-      });
+      // ONE connection for the whole drain. Enumeration opened one and every deletion opened
+      // another, so draining fifty captures meant fifty-one connections — pure churn, and fifty-one
+      // chances to leave one open.
+      return await this.withDb(async (db) => {
+        const entries: { key: number; payload: CapturePayload }[] = await new Promise((resolve, reject) => {
+          const out: { key: number; payload: CapturePayload }[] = [];
+          const tx = db.transaction(STORE, "readonly");
+          const cursorReq = tx.objectStore(STORE).openCursor();
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result;
+            if (cursor) {
+              out.push({ key: cursor.key as number, payload: (cursor.value as { payload: CapturePayload }).payload });
+              cursor.continue();
+            }
+          };
+          cursorReq.onerror = () => reject(cursorReq.error);
+          // Resolved from the transaction, like every other operation here — the cursor is finished
+          // only once the transaction that owns it is.
+          tx.oncomplete = () => resolve(out);
+          tx.onabort = () => reject(tx.error ?? new Error("capture queue drain aborted"));
+        });
 
-      for (const entry of entries) {
-        const result = await sender(entry.payload);
-        if (result.outcome === "retry") return summary; // keep this and all later entries
-        if (result.outcome === "drop") {
-          summary.dropped.push({
-            payload: entry.payload,
-            status: result.status ?? 0,
-            ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-          });
-        } else {
-          summary.sent += 1;
+        for (const entry of entries) {
+          const result = await sender(entry.payload);
+          if (result.outcome === "retry") return summary; // keep this and all later entries
+          if (result.outcome === "drop") {
+            summary.dropped.push({
+              payload: entry.payload,
+              status: result.status ?? 0,
+              ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+            });
+          } else {
+            summary.sent += 1;
+          }
+          // Both "sent" and "drop" remove the entry — a permanently-rejected capture must not stay
+          // at the head of the queue blocking the ones behind it. Awaiting the transaction (not the
+          // request) means a capture is never counted as handled while its removal is still open:
+          // a suspend in that window would have resurrected an already-delivered capture.
+          await this.txOn(db, "readwrite", (s) => s.delete(entry.key));
         }
-        // Both "sent" and "drop" remove the entry — a permanently-rejected capture must not stay
-        // at the head of the queue blocking the ones behind it.
-        await this.tx("readwrite", (s) => s.delete(entry.key));
-      }
-      return summary;
+        return summary;
+      });
     } finally {
       this.draining = false;
     }

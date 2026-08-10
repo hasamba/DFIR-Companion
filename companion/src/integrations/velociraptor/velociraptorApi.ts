@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { ChildOutputCollector } from "../childOutput.js";
 
 // Run the hunt-pivot queries the Companion generates against a Velociraptor server through its API.
 // The hunt-pivot is run as a HUNT across ALL enrolled endpoints (not server-side): the pivot VQL is
@@ -183,8 +184,7 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
       launchFailed(e);   // Windows throws EPERM synchronously — not via the 'error' event
       return;
     }
-    let out = "";
-    let err = "";
+    const output = new ChildOutputCollector(opts.maxOutputBytes);   // real bytes, bounded stderr — see integrations/childOutput.ts
     let killed = false;
     const timer = setTimeout(() => {
       killed = true;
@@ -192,15 +192,14 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
       reject(new Error(`Velociraptor query timed out after ${opts.timeoutMs}ms`));
     }, opts.timeoutMs);
     child.stdout.on("data", (d: Buffer) => {
-      out += d.toString();
-      if (out.length > opts.maxOutputBytes) {
+      if (output.pushStdout(d)) {
         killed = true;
         child.kill();
         clearTimeout(timer);
         reject(new Error(`Velociraptor query output exceeded ${opts.maxOutputBytes} bytes — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT (collection) / DFIR_VELOCIRAPTOR_MAX_OUTPUT, or narrow the query`));
       }
     });
-    child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    child.stderr.on("data", (d: Buffer) => output.pushStderr(d));   // bounded tail, never fatal
     child.on("error", (e) => {
       if (killed) return;
       clearTimeout(timer);
@@ -209,6 +208,7 @@ function spawnVqlOnce(config: VelociraptorApiConfig, statements: string[], opts:
     child.on("close", (code) => {
       if (killed) return;
       clearTimeout(timer);
+      const { stdout: out, stderr: err } = output.text();
       if (code !== 0) {
         reject(new Error(translateVelociraptorError(err.trim()) || `velociraptor exited with code ${code}`));
         return;
