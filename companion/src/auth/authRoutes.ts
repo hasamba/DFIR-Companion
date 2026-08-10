@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { getLoginLimiter, getLoginIpLimiter } from "../http/rateLimiter.js";
+import { getLoginLimiter, getLoginIpLimiter, getOidcStartLimiter } from "../http/rateLimiter.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { readPublicAsset } from "../serverAssets.js";
 import type { TeamAuth } from "./teamAuth.js";
@@ -120,6 +120,15 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
 
   app.get("/auth/oidc/start", async (req: Request, res: Response) => {
     if (!auth.oidcClient) return res.status(404).json({ error: "OIDC is not configured" });
+    // The only PUBLIC route that allocates server state: each call stores a state, nonce, verifier,
+    // return path and expiry for ten minutes. Unlimited, an unauthenticated caller could allocate
+    // memory as fast as it could issue requests. Gated before begin(), so a throttled request costs
+    // nothing — no discovery fetch, no flow stored. The client's own hard flow ceiling is the
+    // backstop for many clients at once; this bounds any single one.
+    if (!getOidcStartLimiter().tryAcquire(req.ip ?? "unknown")) {
+      res.setHeader("Retry-After", "60");
+      return res.status(429).json({ error: "too many sign-in attempts, try again later" });
+    }
     try {
       const started = await auth.oidcClient.begin(
         typeof req.query.returnTo === "string" ? req.query.returnTo : undefined,
