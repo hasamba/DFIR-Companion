@@ -14,29 +14,21 @@
  * with the filesystem. A file awaiting a tool is the one exception: it stays put (so the dashboard's
  * "Run <tool>" can still act on it) and is tracked in memory instead.
  *
- * SYMLINKS AND HARDLINKS ARE REFUSED, twice — once when listing, once immediately before reading
- * (TOCTOU: the path could be swapped in between). A synced cases/ root is exactly where a
- * symlink-to-/etc/shadow is realistic, and a hardlink is indistinguishable from a normal file via
- * stat — but a legitimately dropped file is always nlink === 1, so nlink > 1 means some other
- * directory entry aliases the same inode.
+ * SYMLINKS AND HARDLINKS ARE REFUSED, when listing and again as part of every read. The second
+ * check is not a re-check of the path — that left a TOCTOU window, since the path could be swapped
+ * between checking it and reading it — but a descriptor opened with O_NOFOLLOW and verified by
+ * fstat, which the read then draws from (storage/noFollowRead.ts). A synced cases/ root is exactly
+ * where a symlink-to-/etc/shadow is realistic, and a hardlink is indistinguishable from a normal
+ * file via stat — but a legitimately dropped file is always nlink === 1, so nlink > 1 means some
+ * other directory entry aliases the same inode.
  *
  * ARMED ONLY WHEN options.dropStatusStore IS WIRED (i.e. by startServer), so createApp-only unit
  * tests never spin up a filesystem poller.
  */
 import { basename, dirname, extname, join, relative } from "node:path";
-import {
-  readFile,
-  readdir,
-  stat,
-  lstat,
-  open,
-  copyFile,
-  mkdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { readdir, stat, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
+import { openNoFollow, readFileNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
@@ -227,19 +219,27 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
     await mkdir(dirname(dest), { recursive: true });
     try {
-      // Guard against a symlink swap (TOCTOU): rename follows symlinks on some platforms, and
-      // copyFile always does. Re-check before moving. Also refuse a hardlink (nlink > 1) — see
-      // listDropFiles for why that's just as much a host-file-exfiltration vector as a symlink.
-      const lst = await lstat(src);
-      if (lst.isSymbolicLink())
-        throw new Error("symlink detected in drop folder — refused to move (security)");
-      if (lst.nlink > 1) throw new Error("hardlink detected in drop folder — refused to move (security)");
-      await rename(src, dest);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EXDEV") {
-        await copyFile(src, dest);
+      // rename() operates on the directory entry itself, so it cannot follow a planted symlink to
+      // somewhere else — but it must still refuse to FILE a link away as if it were evidence, and
+      // the EXDEV fallback below reads content and does follow. A path-based lstat here could be
+      // swapped before either call, so the guard is a descriptor: opened with O_NOFOLLOW, fstat'd,
+      // and — on the fallback path — the very descriptor the copy reads from.
+      const guard = await openNoFollow(src);
+      try {
+        await rename(src, dest);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+        // Cross-filesystem: copy the bytes of the descriptor already verified, never of the path.
+        await writeFile(dest, await guard.readFile());
         await rm(src, { force: true });
-      } else throw e;
+      } finally {
+        await guard.close();
+      }
+    } catch (e) {
+      if (e instanceof LinkGuardError) {
+        throw new Error(`${e.kind} detected in drop folder — refused to move (security)`);
+      }
+      throw e;
     }
   }
 
@@ -252,7 +252,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     name: string,
     mtimeMs: number,
   ): Promise<void> {
-    const raw = await readFile(fullPath);
+    const raw = await readFileNoFollow(fullPath);
     let webp: Buffer;
     try {
       const sharp = (await import("sharp")).default;
@@ -291,15 +291,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
     try {
-      // TOCTOU guard: re-check that the path is not a symlink before reading. A file could have
-      // been replaced with a symlink between listDropFiles and this read. Also refuse a hardlink
-      // (nlink > 1) — indistinguishable from a normal file via stat, but a legitimately-dropped
-      // file is always nlink === 1 (see listDropFiles).
-      const lst = await lstat(full);
-      if (lst.isSymbolicLink())
-        return { ok: false, reason: "symlink detected in drop folder — refused to read (security)" };
-      if (lst.nlink > 1)
-        return { ok: false, reason: "hardlink detected in drop folder — refused to read (security)" };
+      // The link guard travels WITH each read rather than preceding it: every read below goes
+      // through storage/noFollowRead.ts, which opens with O_NOFOLLOW and reads from the descriptor
+      // it just verified. Checking the path here and reading the path later left a window in which
+      // a process sharing this folder could swap the approved file for a symlink and have an
+      // arbitrary host file imported into the case as evidence. A hardlink is refused too — it is
+      // invisible to a symlink check, and a legitimately-dropped file is always nlink === 1.
+      // A LinkGuardError from any of them becomes a refusal in the catch below.
+      //
       // A raw file an external tool handles (built-in EVTX/PCAP, or any extension a CUSTOM tool claims)
       // — can't be read as text. Run the configured tool against the on-disk file (size-independent, so
       // checked BEFORE the oversize cap), or surface it as pending so the dashboard offers "Run/Configure
@@ -309,15 +308,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // raw rather than read as text. Only the first 8 KB — the file may be gigabytes.
       let head: Buffer | undefined;
       try {
-        const fh = await open(full, "r");
-        try {
-          const buf = Buffer.alloc(Math.min(8192, Math.max(0, file.size)));
-          if (buf.length) await fh.read(buf, 0, buf.length, 0);
-          head = buf;
-        } finally {
-          await fh.close();
-        }
-      } catch {
+        head = await readHeadNoFollow(full, Math.min(8192, Math.max(0, file.size)));
+      } catch (err) {
+        // A planted link must REFUSE the file, not quietly degrade to extension-only guessing —
+        // that would hand the path to a tool or the text reader anyway.
+        if (err instanceof LinkGuardError) throw err;
         /* unreadable head → fall back to extension-only classification */
       }
 
@@ -361,7 +356,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);
         return { ok: true };
       }
-      const text = await readFile(full, "utf8");
+      const text = (await readFileNoFollow(full)).toString("utf8");
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text);
       if (kind === "unknown")
@@ -374,6 +369,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         };
       return { ok: true };
     } catch (err) {
+      if (err instanceof LinkGuardError) {
+        return { ok: false, reason: `${err.kind} detected in drop folder — refused to read (security)` };
+      }
       recordImportFailure(caseId, "drop", name, err);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
     }

@@ -19,6 +19,7 @@ import { encryptBuffer, decryptBuffer } from "./caseEncryption.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+import { readFileNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
 // AES-256-GCM encrypted (via caseEncryption.ts) into a single `.dfircase` file that another
@@ -278,18 +279,18 @@ async function archiveGeneration(
       continue;
     }
     const fullPath = join(caseDir, rel);
-    // TOCTOU guard: re-check that the path is not a symlink (or hardlink — see walkDir) before
-    // reading. The file could have been replaced/swapped between the walk and the read.
-    const lst = await lstat(fullPath).catch(rethrowVanished(rel));
-    if (lst.isSymbolicLink())
-      throw new Error(
-        `symlink detected in case directory at "${rel}" — refusing to include in export (security)`,
-      );
-    if (lst.nlink > 1)
-      throw new Error(
-        `hardlink detected in case directory at "${rel}" — refusing to include in export (security)`,
-      );
-    const data = await readFile(fullPath).catch(rethrowVanished(rel));
+    // The link check and the read are ONE operation on ONE descriptor (see storage/noFollowRead.ts).
+    // Re-checking the path and then reading the path left a window in which a process controlling
+    // the case directory could swap the approved file for a symlink and have the read follow it —
+    // sealing an arbitrary host-readable file into the encrypted export.
+    const data = await readFileNoFollow(fullPath).catch((err: unknown) => {
+      if (err instanceof LinkGuardError) {
+        throw new Error(
+          `${err.kind} detected in case directory at "${rel}" — refusing to include in export (security)`,
+        );
+      }
+      return rethrowVanished(rel)(err);
+    });
     entries.push({ path: rel, data });
     manifestFiles.push({
       path: rel,
