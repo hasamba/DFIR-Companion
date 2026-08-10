@@ -452,7 +452,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
             data: Buffer.from(JSON.stringify(await buildCustodyManifest(store, options.custodyStore, id, instanceSecret), null, 2), "utf8"),
           }]
         : [];
-      const archive = await exportEncryptedCase(store, id, password, custodyManifest);
+      const archive = await exportEncryptedCase(store, id, password, custodyManifest, { runExclusive: ctx.runStateExclusive });
       const filename = dfircaseFilename(id, meta?.name);
       // Same as the ZIP path: the evidence is leaving, so the chain records it (#231).
       await options.custodyStore?.recordExport(id, { exportedBy: meta?.investigator || "analyst", destination: `encrypted archive: ${filename}` });
