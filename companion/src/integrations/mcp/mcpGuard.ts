@@ -54,8 +54,8 @@ export type CommandCheck =
  * segments and denies a harmless command. Quoting is tracked just far enough to get command
  * boundaries right — this is not a shell parser and does not try to be one.
  *
- * Returns null when the string contains a substitution (`$(…)`, backticks, `${…}`). What those
- * expand to is unknowable here, so there is nothing honest to check them against.
+ * Returns null when the string contains a substitution (`$(…)`, backticks, `${…}`, `<(…)`, `>(…)`).
+ * What those expand to is unknowable here, so there is nothing honest to check them against.
  */
 function shellSegments(input: string): string[] | null {
   const segments: string[] = [];
@@ -90,6 +90,12 @@ function shellSegments(input: string): string[] | null {
 
     if (c === "$" && (input[i + 1] === "(" || input[i + 1] === "{")) return null;
     if (c === "`") return null;
+    // PROCESS substitution (`cat <(curl …)`, `tee >(curl …)`). Unlike a pipeline stage this hides
+    // inside an ARGUMENT, so head-of-segment inspection saw only `cat` and handed the inner command
+    // cat's permission. Unknowable like `$(…)`, so refused the same way. Checked only here, in the
+    // unquoted branch, because bash performs it only unquoted — `"<(x)"` and `'<(x)'` are literal.
+    // A bare `<`/`>` NOT followed by `(` is an ordinary redirect and stays allowed.
+    if ((c === "<" || c === ">") && input[i + 1] === "(") return null;
     if (c === "'" || c === '"') { quote = c; continue; }
 
     if (SEGMENT_SEPARATORS.has(c)) { segments.push(current); current = ""; continue; }
