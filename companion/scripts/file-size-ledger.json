@@ -9,6 +9,5 @@
   "public/js/dashboard-velo-triage.js": 815,
   "reports/markdown.ts": 1461,
   "routes/import.ts": 1766,
-  "routes/mcp.ts": 845,
-  "routes/velociraptor.ts": 888
+  "routes/mcp.ts": 845
 }
