@@ -32,6 +32,11 @@ export const MIN_PASSWORD_LENGTH = 8;
 const IMPORT_STAGING_DIRNAME = ".import-staging";
 const IMPORT_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// Where an export stages the database snapshot it archives instead of the live file. Dotted and a
+// level above the cases for the same reason import staging is: nothing that enumerates the cases
+// root, and nothing that walks a case, may mistake it for case content.
+const EXPORT_STAGING_DIRNAME = ".export-staging";
+
 export class CaseImportConflictError extends Error {
   constructor(public readonly caseId: string) {
     super(`case ${caseId} already exists — import under a different case id`);
@@ -165,9 +170,22 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   return out;
 }
 
+export interface CaseExportOptions {
+  /**
+   * The app's per-case state mutex (createApp's runStateExclusive). Passing it makes the export a
+   * critical section: every load→save the app performs through the same lock either completes
+   * before the snapshot is taken or waits until the archive is built, so the export cannot capture
+   * a case midway through one. Omitted in tests and by callers with no lock wired, which run
+   * unserialized exactly as before.
+   */
+  runExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
+}
+
 /**
  * Build a `.dfircase` file: the whole case directory zipped, then AES-256-GCM encrypted with a
  * password-derived key. Throws if the case doesn't exist (no files under its directory).
+ *
+ * The archive is ONE generation of the case, not a walk of a moving target — see buildCaseArchive.
  */
 export async function exportEncryptedCase(
   store: CaseStore,
@@ -177,16 +195,88 @@ export async function exportEncryptedCase(
   // chain-of-custody manifest (#231). Passed in rather than written into the case first, so
   // exporting never mutates the case it is exporting.
   extraEntries: ZipEntry[] = [],
+  opts: CaseExportOptions = {},
 ): Promise<Buffer> {
   if (!isValidCaseId(caseId)) throw new Error(`invalid case id "${caseId}"`);
+  const run = opts.runExclusive ?? (<T>(_id: string, fn: () => Promise<T>) => fn());
+  return run(caseId, () => buildCaseArchive(store, caseId, password, extraEntries));
+}
+
+/**
+ * The archive itself, built from a single case generation.
+ *
+ * The database is taken through SQLite's own snapshot path (the worker's backupDatabase, which is
+ * VACUUM INTO plus an integrity_check) rather than copied as ordinary bytes. Copying the file while
+ * a transaction is open could yield an archive whose database does not open at all — the one defect
+ * an evidence archive cannot have — and reading the live file gave a database from one instant with
+ * a manifest counted at another. Entity counts now come from that same snapshot, so what the
+ * manifest claims and what the archive contains are the same generation by construction.
+ *
+ * Journal mode is DELETE (see caseTransientPaths.ts), so the database file alone is the complete
+ * database: there is no -wal/-shm sidecar that could disagree with the snapshot.
+ */
+async function buildCaseArchive(
+  store: CaseStore,
+  caseId: string,
+  password: string,
+  extraEntries: ZipEntry[],
+): Promise<Buffer> {
   const caseDir = store.caseDir(caseId);
   const relPaths = (await walkDir(caseDir)).map((p) => p.replace(/\\/g, "/"));
   if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);
+
+  const stagingRoot = join(store.casesRoot, EXPORT_STAGING_DIRNAME);
+  await mkdir(stagingRoot, { recursive: true });
+  const staging = await mkdtemp(join(stagingRoot, `${caseId}-`));
+  try {
+    return await archiveGeneration(caseDir, caseId, password, relPaths, extraEntries, staging);
+  } finally {
+    // The snapshot is a full copy of the case database, so it never outlives the request that
+    // needed it — including when the export throws.
+    await rm(staging, { recursive: true, force: true }).catch(() => {
+      /* nothing left to clean */
+    });
+  }
+}
+
+async function archiveGeneration(
+  caseDir: string,
+  caseId: string,
+  password: string,
+  relPaths: string[],
+  extraEntries: ZipEntry[],
+  staging: string,
+): Promise<Buffer> {
+  // The live database, and the consistent snapshot standing in for it in the archive. `false` means
+  // the case has no database yet (a case created but never written to), in which case there is
+  // nothing to substitute and nothing to count.
+  const liveDbPath = join(caseDir, "state", INVESTIGATION_DB_FILENAME);
+  const snapshotPath = join(staging, INVESTIGATION_DB_FILENAME);
+  const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
+  const snapshotted = await caseSqliteWorker.request<boolean>({
+    op: "backupDatabase",
+    dbPath: liveDbPath,
+    targetPath: snapshotPath,
+  });
 
   const entries: ZipEntry[] = [];
   const manifestFiles: Array<{ path: string; sha256: string; bytes: number }> = [];
   let totalBytes = 0;
   for (const rel of relPaths) {
+    // The database enters the archive as its SNAPSHOT, never as the live file: the live bytes can
+    // be mid-transaction, and they would also disagree with the counts below. The snapshot is one
+    // this process just wrote into its own staging directory, so it needs no link re-check.
+    if (snapshotted && rel === dbRel) {
+      const data = await readFile(snapshotPath);
+      entries.push({ path: rel, data });
+      manifestFiles.push({
+        path: rel,
+        sha256: createHash("sha256").update(data).digest("hex"),
+        bytes: data.length,
+      });
+      totalBytes += data.length;
+      continue;
+    }
     const fullPath = join(caseDir, rel);
     // TOCTOU guard: re-check that the path is not a symlink (or hardlink — see walkDir) before
     // reading. The file could have been replaced/swapped between the walk and the read.
@@ -220,9 +310,13 @@ export async function exportEncryptedCase(
     totalBytes += entry.data.length;
   }
   const counts = countsFromEntries(entries);
+  // Counted from the SNAPSHOT — the database that is actually in the archive. Counting the live one
+  // described a case that had moved on since the bytes were captured, so a recipient verifying the
+  // manifest against the archive could find fewer events than it claimed and reasonably conclude
+  // evidence had been dropped.
   const databaseCounts = await caseSqliteWorker.request<Record<string, number> | null>({
     op: "entityCounts",
-    dbPath: join(caseDir, "state", INVESTIGATION_DB_FILENAME),
+    dbPath: snapshotted ? snapshotPath : liveDbPath,
     kinds: ["forensicTimeline", "findings", "iocs"],
   });
   if (databaseCounts) {

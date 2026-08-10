@@ -14,6 +14,10 @@ import {
 import { createZip, readZip } from "../../src/analysis/zipArchive.js";
 import { encryptBuffer, decryptBuffer, DecryptionError } from "../../src/analysis/caseEncryption.js";
 import { atomicWrite } from "../../src/storage/atomicWrite.js";
+import { createHash } from "node:crypto";
+import { StateStore, INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -75,6 +79,112 @@ describe("exportEncryptedCase", () => {
   it("rejects an invalid case id instead of reading outside the cases root", async () => {
     const store = await harness();
     await expect(exportEncryptedCase(store, "../../etc", PASSWORD)).rejects.toThrow(/invalid case id/);
+  });
+});
+
+// The archive must be ONE generation of the case. It used to be a walk of a live directory: the
+// database was copied as ordinary bytes (so a concurrent transaction could make the copy unusable)
+// and the manifest's entity counts were queried from the LIVE database after those bytes had
+// already been captured — describing a case that had since moved on.
+describe("exportEncryptedCase — single-generation snapshot (#3)", () => {
+  function entriesOf(archive: Buffer): Map<string, Buffer> {
+    return new Map(readZip(decryptBuffer(archive, PASSWORD)).map((e) => [e.path, e.data]));
+  }
+
+  async function seedDatabase(store: CaseStore, caseId: string): Promise<void> {
+    await store.createCase({ caseId, name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(store);
+    const state = await stateStore.load(caseId);
+    const event = (id: string) => ({
+      id,
+      timestamp: "2026-01-01T00:00:00Z",
+      description: `event ${id}`,
+      severity: "High",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    state.findings = [{ id: "f1" }, { id: "f2" }] as typeof state.findings;
+    state.iocs = [{ id: "i1" }] as typeof state.iocs;
+    state.forensicTimeline = [event("e1"), event("e2"), event("e3")] as typeof state.forensicTimeline;
+    await stateStore.save(state);
+  }
+
+  it("archives a consistent database snapshot that opens on its own", async () => {
+    const store = await harness();
+    await seedDatabase(store, "SNAP-1");
+
+    const files = entriesOf(await exportEncryptedCase(store, "SNAP-1", PASSWORD));
+    const archived = files.get(`state/${INVESTIGATION_DB_FILENAME}`);
+    expect(archived).toBeDefined();
+
+    // A snapshot is a standalone database: written out on its own it must open and read back the
+    // same entities. Copied live bytes are what could fail this.
+    const loose = join(await mkdtemp(join(tmpdir(), "dfir-snapcheck-")), INVESTIGATION_DB_FILENAME);
+    await writeFile(loose, archived as Buffer);
+    const counts = await caseSqliteWorker.request<Record<string, number> | null>({
+      op: "entityCounts",
+      dbPath: loose,
+      kinds: ["forensicTimeline", "findings", "iocs"],
+    });
+    expect(counts).toMatchObject({ forensicTimeline: 3, findings: 2, iocs: 1 });
+  });
+
+  it("counts the manifest from the database it archived, not the live one", async () => {
+    const store = await harness();
+    await seedDatabase(store, "SNAP-2");
+
+    const files = entriesOf(await exportEncryptedCase(store, "SNAP-2", PASSWORD));
+    const manifest = JSON.parse((files.get("archive-manifest.json") as Buffer).toString("utf8"));
+
+    expect(manifest.counts).toMatchObject({ forensicEvents: 3, findings: 2, iocs: 1 });
+
+    // The manifest's checksum for the database must be the checksum of the bytes in the archive —
+    // the property a recipient actually verifies.
+    const archived = files.get(`state/${INVESTIGATION_DB_FILENAME}`) as Buffer;
+    const listed = manifest.files.find(
+      (f: { path: string }) => f.path === `state/${INVESTIGATION_DB_FILENAME}`,
+    );
+    expect(listed.sha256).toBe(createHash("sha256").update(archived).digest("hex"));
+    expect(listed.bytes).toBe(archived.length);
+  });
+
+  it("runs inside the caller's per-case lock, so app state writes cannot interleave", async () => {
+    const store = await harness();
+    await seedDatabase(store, "SNAP-3");
+    const order: string[] = [];
+    const lock = new StateLock();
+
+    const exported = exportEncryptedCase(store, "SNAP-3", PASSWORD, [], {
+      runExclusive: (caseId, fn) =>
+        lock.runExclusive(caseId, async () => {
+          order.push("export:start");
+          const out = await fn();
+          order.push("export:end");
+          return out;
+        }),
+    });
+    const write = lock.runExclusive("SNAP-3", async () => {
+      order.push("write");
+    });
+    await Promise.all([exported, write]);
+
+    // The write waited for the whole export rather than landing in the middle of it.
+    expect(order).toEqual(["export:start", "export:end", "write"]);
+  });
+
+  it("leaves no staging directory behind, on success or on failure", async () => {
+    const store = await harness();
+    await seedDatabase(store, "SNAP-4");
+    const stagingRoot = join(store.casesRoot, ".export-staging");
+
+    await exportEncryptedCase(store, "SNAP-4", PASSWORD);
+    expect(existsSync(stagingRoot) ? await readdir(stagingRoot) : []).toEqual([]);
+
+    // A symlink planted in the case makes the export throw mid-build; the snapshot must still go.
+    await symlink("/etc/hostname", join(store.screenshotsDir("SNAP-4"), "loot"));
+    await expect(exportEncryptedCase(store, "SNAP-4", PASSWORD)).rejects.toThrow(/symlink/);
+    expect(existsSync(stagingRoot) ? await readdir(stagingRoot) : []).toEqual([]);
   });
 });
 
