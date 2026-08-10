@@ -12,6 +12,11 @@ import type { OidcConfig } from "./authConfig.js";
 const FLOW_TTL_MS = 10 * 60_000;
 const CLOCK_SKEW_SECONDS = 60;
 
+// Hard ceiling on in-flight OIDC logins. A flow is a handful of short strings, so this is a few
+// hundred KB at worst — far more concurrent logins than any deployment of this tool will see, and
+// small enough that an unauthenticated caller cannot make it matter. See sweepFlows.
+const MAX_OUTSTANDING_FLOWS = 1000;
+
 interface OidcDiscovery {
   issuer: string;
   authorizationEndpoint: string;
@@ -187,9 +192,27 @@ export class OidcClient {
     };
   }
 
+  /**
+   * Drop expired flows, then enforce a hard ceiling on how many can be outstanding at once.
+   *
+   * The sweep alone never bounded anything: it only ran when another flow started, and every flow
+   * lives for ten minutes, so a caller issuing starts faster than they expire grew the map without
+   * limit — no credentials required, since /auth/oidc/start is public. The route is rate-limited per
+   * IP now, but a limiter is a rate, not a ceiling: enough distinct clients still add up. The cap is
+   * what actually bounds the memory.
+   *
+   * Eviction is oldest-first (Map preserves insertion order), which is the least-harmful choice
+   * available: the oldest outstanding flow is the one closest to expiring anyway, and losing it
+   * costs its owner a restarted login rather than anything durable.
+   */
   private sweepFlows(now = Date.now()): void {
     for (const [state, flow] of this.flows) {
       if (flow.expiresAt <= now) this.flows.delete(state);
+    }
+    while (this.flows.size >= MAX_OUTSTANDING_FLOWS) {
+      const oldest = this.flows.keys().next();
+      if (oldest.done) break;
+      this.flows.delete(oldest.value);
     }
   }
 
