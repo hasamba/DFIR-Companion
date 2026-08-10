@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, stat, mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, mkdir, rename, writeFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CaseStore } from "../../src/storage/caseStore.js";
-import type { CaptureMetadata } from "../../src/types.js";
+import { CaseStore, CaseAlreadyExistsError } from "../../src/storage/caseStore.js";
+import type { CaptureMetadata, CaseMeta } from "../../src/types.js";
 
 let root: string;
 beforeEach(async () => {
@@ -39,6 +40,73 @@ describe("CaseStore.createCase", () => {
     const store = new CaseStore(root);
     expect(store.screenshotsDir("case-001")).toBe(join(root, "case-001", "screenshots"));
     expect(store.capturesLogPath("case-001")).toBe(join(root, "case-001", "metadata", "captures.jsonl"));
+  });
+
+  // Creation is the point a case id gets an OWNER. Two callers racing for the same id both used to
+  // succeed — the second metadata write simply became the final case.json — and under team auth
+  // both of them were then granted administrator on it.
+  it("lets only one of two concurrent creations claim the same id", async () => {
+    const store = new CaseStore(root);
+    const claim = (name: string) =>
+      store.createCase({ caseId: "race-1", name, investigator: name, aiProvider: null });
+
+    const results = await Promise.allSettled([claim("first"), claim("second")]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r) => r.status === "rejected");
+
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(lost[0].reason).toBeInstanceOf(CaseAlreadyExistsError);
+
+    // The case.json on disk must be the WINNER's, not whichever write happened to land last.
+    const written = JSON.parse(await readFile(join(root, "race-1", "case.json"), "utf8"));
+    const winner: CaseMeta = won[0].value;
+    expect(written.name).toBe(winner.name);
+    expect(written.investigator).toBe(winner.investigator);
+  });
+
+  it("refuses to recreate an id that already exists, rather than overwriting its metadata", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "taken", name: "original", investigator: "i", aiProvider: null });
+
+    await expect(
+      store.createCase({ caseId: "taken", name: "usurper", investigator: "j", aiProvider: null }),
+    ).rejects.toBeInstanceOf(CaseAlreadyExistsError);
+
+    const written = JSON.parse(await readFile(join(root, "taken", "case.json"), "utf8"));
+    expect(written.name).toBe("original");
+  });
+
+  // caseDir() is archive-aware, so an id colliding with an ARCHIVED case used to resolve to the
+  // archived folder and silently overwrite its case.json. The exclusive create refuses that too,
+  // instead of relying on every caller remembering to check first.
+  it("refuses an id that collides with an archived case", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "arch-claim", name: "original", investigator: "i", aiProvider: null });
+    await store.archiveCaseFolder("arch-claim");
+
+    await expect(
+      store.createCase({ caseId: "arch-claim", name: "usurper", investigator: "j", aiProvider: null }),
+    ).rejects.toBeInstanceOf(CaseAlreadyExistsError);
+
+    const written = JSON.parse(
+      await readFile(join(root, "_archived", "arch-claim", "case.json"), "utf8"),
+    );
+    expect(written.name).toBe("original");
+  });
+
+  // A loser must not leave a half-built case behind: the subdirectories are created only after the
+  // claim succeeds, so the winner's layout is the only one on disk.
+  it("does not leave partial folders behind when a claim is lost", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "solo", name: "n", investigator: "i", aiProvider: null });
+    await rm(join(root, "solo", "reports"), { recursive: true });
+
+    await expect(
+      store.createCase({ caseId: "solo", name: "n2", investigator: "i", aiProvider: null }),
+    ).rejects.toBeInstanceOf(CaseAlreadyExistsError);
+
+    expect(existsSync(join(root, "solo", "reports"))).toBe(false);
   });
 });
 

@@ -88,6 +88,24 @@ describe("HTTP server", () => {
     expect(res.status).toBe(409);
   });
 
+  // The duplicate check above is a check-then-create pair, which two SIMULTANEOUS requests both
+  // pass. Exactly one must still end up creating the case: the 201 is also what gates
+  // teamAuth.grantCreator, so two 201s would mean two administrators on one case.
+  it("POST /cases lets only one of two simultaneous requests create the same caseId", async () => {
+    const send = (name: string) =>
+      request(app).post("/cases").send({ caseId: "race", name, investigator: "y", aiProvider: null });
+
+    const [a, b] = await Promise.all([send("first"), send("second")]);
+    // Never a 500: losing a claim is a legitimate answer, not a server fault.
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+
+    const winner = a.status === 201 ? a : b;
+    const listed = await request(app).get("/cases");
+    const created = listed.body.filter((c: { caseId: string }) => c.caseId === "race");
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe(winner.body.name);
+  });
+
   it("POST /cases rejects path-like case IDs before touching storage paths", async () => {
     const res = await request(app).post("/cases").send({ caseId: "..\\outside", name: "A", investigator: "y", aiProvider: null });
     expect(res.status).toBe(400);
