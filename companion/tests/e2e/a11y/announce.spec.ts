@@ -1,8 +1,10 @@
 import { test, expect } from "../fixtures/test.js";
 
-// Covers: US-240
-// US-240 covers the live-region announcements this suite asserts. The wider a11y suite is still gated by scripts/a11y-ledger.json rather than by
-// story ids, because most of what it checks has no single feature to point at.
+// Covers: NO USER STORY EXISTS.
+// Not US-240: that story is about job completion, import failure and synthesis-complete events
+// REACHING the announcer, and this suite never triggers one — setStatus writes the status line
+// directly. What is proven here is the #status -> aria-live bridge underneath, which no story
+// describes on its own. Claiming US-240 would read as "those events are tested" when they are not.
 //
 
 // Proves the #status -> aria-live bridge in public/js/a11y/announcer.js. axe cannot check this:
