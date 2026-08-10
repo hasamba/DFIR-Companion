@@ -24,32 +24,17 @@
 
 import type { InvestigationState } from "./stateTypes.js";
 import { suggestNextTechniques, type NextTechnique, type TechniqueInfoMap } from "./adversaryEmulation.js";
+import {
+  baseTechniqueId,
+  normalizeTechniqueId,
+  type AdversaryGroup,
+  type AdversaryHint,
+} from "./adversaryTechniques.js";
 
-// One adversary group's slimmed record from the bundled dataset. `techniques` carries ATT&CK ids at
-// full granularity — sub-technique (T1059.001) where MITRE maps it, base (T1486) otherwise.
-export interface AdversaryGroup {
-  id: string; // ATT&CK group id, e.g. "G0016"
-  name: string; // e.g. "APT29"
-  aliases: string[]; // other names, e.g. ["Cozy Bear", "The Dukes"]
-  description: string; // short attribution/sector context
-  techniques: string[]; // technique ids (sub-technique where mapped), e.g. ["T1059.001", "T1486"]
-}
-
-// A ranked match: a group whose technique set overlaps the case's by at least `minOverlap` (counted
-// at base-or-better), ordered by a weighted score that rewards exact sub-technique agreement.
-export interface AdversaryHint {
-  id: string;
-  name: string;
-  aliases: string[];
-  description: string;
-  url: string; // attack.mitre.org group page
-  overlapCount: number; // distinct case techniques the group shares at base-or-better (breadth)
-  exactCount: number; // of those, EXACT (same sub-technique / id) matches — the strong signal
-  overlapTechniques: string[]; // all matched case technique ids (full granularity), sorted
-  exactTechniques: string[]; // the subset matched exactly (full-id equality), sorted
-  groupTechniqueCount: number; // distinct techniques attributed to the group (context for the ratio)
-  score: number; // weighted: exactCount + BASE_MATCH_WEIGHT × (overlapCount − exactCount)
-}
+// AdversaryGroup and AdversaryHint moved to adversaryTechniques.ts, which this module and
+// adversaryEmulation.ts now BOTH depend on — see that file for why. Re-exported here so every
+// existing importer keeps working: the shapes did not change, only where they are declared.
+export type { AdversaryGroup, AdversaryHint };
 
 export interface AdversaryHintOptions {
   minOverlap?: number; // minimum overlapping techniques (base-or-better) to surface a group (default 3)
@@ -84,22 +69,9 @@ export const BASE_MATCH_WEIGHT = 0.5;
 export const ADVERSARY_HINTS_CAVEAT =
   "Statistical similarity based on technique overlap — not attribution.";
 
-const TECHNIQUE_RE = /^T(\d{4})(?:\.(\d{3}))?$/; // technique or sub-technique id
-
-// Normalize a technique id to its full, validated form, KEEPING the sub-technique:
-// "t1059.001" → "T1059.001", "T1486" → "T1486". Null when it isn't a valid technique id.
-export function normalizeTechniqueId(raw: string): string | null {
-  const m = TECHNIQUE_RE.exec(raw.trim().toUpperCase());
-  if (!m) return null;
-  return m[2] ? `T${m[1]}.${m[2]}` : `T${m[1]}`;
-}
-
-// The BASE technique of an id ("T1059.001" → "T1059", "T1486" → "T1486"), or null when invalid.
-// Used to award partial credit when the case and a group share a technique but differ on the sub.
-export function baseTechniqueId(raw: string): string | null {
-  const m = TECHNIQUE_RE.exec(raw.trim().toUpperCase());
-  return m ? `T${m[1]}` : null;
-}
+// The id helpers moved to adversaryTechniques.ts alongside the shapes they validate, for the same
+// reason. Re-exported so existing importers are unaffected.
+export { normalizeTechniqueId, baseTechniqueId };
 
 // The ATT&CK group page for a group id (e.g. "G0016" → https://attack.mitre.org/groups/G0016/).
 export function adversaryGroupUrl(id: string): string {
