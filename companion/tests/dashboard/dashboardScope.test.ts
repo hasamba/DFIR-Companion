@@ -278,11 +278,16 @@ describe("receive and confirm differ exactly where the call sites did", () => {
     const { api, dom } = loadScopeModule();
     api.DfirScope[op]("2026-05-20T00:00:00.000Z", null);
     expect(dom.els.scopeInfo.textContent).toContain("active:");
-    expect(dom.els.scopeInfo.style.color).toBe("#ffd93b");
+    // TOKENS, not literals. These were "#ffd93b" and "#9aa4b2" — the DARK palette's hex values,
+    // applied whatever the theme was, so in light theme the "scope is active" chip rendered at
+    // 1.37:1 on white. Pinning the literal here is what made the assertion agree with the bug: the
+    // property this test cares about is that committing REPAINTS, and a token satisfies that while
+    // also following the theme. Asserting the token spelling keeps a hardcoded hex from coming back.
+    expect(dom.els.scopeInfo.style.color).toBe("var(--sev-medium)");
 
     api.DfirScope[op](null, null);
     expect(dom.els.scopeInfo.textContent).toBe("none (all events)");
-    expect(dom.els.scopeInfo.style.color).toBe("#9aa4b2");
+    expect(dom.els.scopeInfo.style.color).toBe("var(--text-dim)");
   });
 });
 
