@@ -26,11 +26,12 @@ import { createApp } from "../../src/server.js";
 // accidentally safe even before this fix too — Dirent.isFile() already returns false for a symlink
 // dirent, so it was filtered before ever reaching stat() — but the REAL pre-fix symlink bug was a
 // narrower TOCTOU race (a file that reads as a normal file when first listed, then gets swapped to
-// a symlink before the read/move that follows once it's marked "ready"). That race isn't exercised
-// here — it would need to land squarely inside the drop poller's sub-second settle window — so the
-// symlink test below documents the now-deliberate (not incidental) guarantee at the listing stage,
-// while the processDropFile/moveDropFile lstat re-checks that close the TOCTOU window itself remain
-// unverified by an automated test.
+// a symlink before the read/move that follows once it's marked "ready"). That race is not exercised
+// HERE — it would need to land squarely inside the drop poller's sub-second settle window — so the
+// symlink test below documents the now-deliberate (not incidental) guarantee at the listing stage.
+// The race itself no longer depends on timing at all: processDropFile and moveDropFile no longer
+// re-check a path and then read it, they read through the descriptor they verified
+// (storage/noFollowRead.ts), and tests/storage/noFollowRead.test.ts exercises the swap directly.
 
 function findingPipeline(stateStore: StateStore): AnalysisPipeline {
   return new AnalysisPipeline({
