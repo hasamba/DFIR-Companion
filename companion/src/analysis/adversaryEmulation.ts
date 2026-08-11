@@ -26,7 +26,7 @@
 // SAME framing as adversary hints: statistical, predictive hypothesis fuel for hunt prioritization —
 // NOT attribution, and NOT a claim the actor WILL do this. Every surface that renders it says so.
 
-import { tacticForTechniques } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques } from "./mitreTactics.js";
 import { attackTechniqueUrl } from "./attack.js";
 // The shared vocabulary, NOT adversaryHints.js — importing it back from there is what made these
 // two modules a cycle. See adversaryTechniques.ts.

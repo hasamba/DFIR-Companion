@@ -1,6 +1,6 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { extractAccounts } from "./assetGraph.js";
-import { tacticForTechniques } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques } from "./mitreTactics.js";
 
 export type SwimlaneGroupBy = "asset" | "severity" | "tactic";
 

@@ -16,7 +16,7 @@
 
 import type { CollectDirective, ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { detectTimelineGaps, type GapOptions } from "./gapDetect.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import type { NextTechnique } from "./adversaryEmulation.js";
 import type { PlaybookMatch } from "./playbookMatch.js";
 import { rankHosts } from "./hostRanking.js";

@@ -37,7 +37,7 @@ it may never go up.**
 **Type-only imports count.** `import type` is exempt from `check:imports`, because an erased import
 cannot form a runtime initialisation cycle — that reasoning is correct there and does not carry over
 here. A type import still means one domain knows another's shape, which is the coupling this map
-exists to control. It is not a rounding error either: **15 of the 47 recorded violations are
+exists to control. It is not a rounding error either: **15 of the 39 recorded violations are
 type-only**, so exempting them would have hidden a third of the problem on day one.
 
 | Layer | Contents | May import |
@@ -180,8 +180,8 @@ established, and it works the same way.
 - `scripts/module-map.json` assigns **every file** in `companion/src` to a domain, and declares the
   allowed edges. Files are listed by exact path, not by count, so deleting one file never creates
   room for a different one.
-- `scripts/boundary-violations.json` records the **47 violations** that break the map today, as
-  concrete `source-file → target-file [kind]` entries spanning 29 domain edges. Not domain pairs,
+- `scripts/boundary-violations.json` records the **39 violations** that break the map today, as
+  concrete `source-file → target-file [kind]` entries spanning 9 domain edges. Not domain pairs,
   and not counts: an already-recorded edge must not become a licence to add more imports along it.
   The `[kind]` suffix is `runtime` or `type`, and it is part of the key so that a grandfathered
   type-only edge turning into a runtime one reads as a **new** violation rather than passing
@@ -333,9 +333,9 @@ the issue that owns the work, so no number is a blocker without an assignee:
 | `public/dashboard.html` inline JS | 2,000 | 1,964 — met | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/dashboard.html` inline CSS | 800 | **4 — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
 | `public/css/dashboard-*.css` (8 parts) | 800 | **489 max — met** | [#415](https://github.com/hasamba/DFIR-Companion/issues/415) |
-| Files in `src/` over 800 lines | 0 | 11 | the ledger below |
+| Files in `src/` over 800 lines | 0 | 10 | the ledger below |
 | Flat files in `src/analysis/` | 0 | 296 | whichever extraction touches them |
-| Boundary ledger | 10 | 47 | shrinks as the above land |
+| Boundary ledger | 10 | 39 | shrinks as the above land |
 
 **The ratchets hold every one of these flat in the meantime.** `check:size` freezes each file at its
 recorded length, `check:imports` at one known cycle, `check:boundaries` at the recorded violations.

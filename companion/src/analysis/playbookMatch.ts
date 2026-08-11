@@ -30,7 +30,7 @@
 import { baseTechniqueId, normalizeTechniqueId, BASE_MATCH_WEIGHT } from "./adversaryHints.js";
 import { sortByEventTime } from "./forensicSort.js";
 import { UNKNOWN_HOST } from "./sessionSegmentation.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export { BASE_MATCH_WEIGHT };
