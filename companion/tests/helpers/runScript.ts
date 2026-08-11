@@ -23,14 +23,19 @@
 // directly is not forced through here.
 import { execFileSync } from "node:child_process";
 
-/** stderr into the result, never onto the parent's. stdin closed: none of these scripts read it. */
-const STDIO = ["ignore", "pipe", "pipe"] as const;
-
-/** Run `node <script> <args>` and return its stdout. Throws if the script exits non-zero. */
+/**
+ * Run `node <script> <args>` and return its stdout. Throws if the script exits non-zero.
+ *
+ * The stdio triple is written out literally rather than hoisted to a shared constant: stderr into
+ * the result, never onto the parent's, and stdin closed because none of these scripts read it.
+ * childStderr.test.ts reads this value to decide whether the call is safe, and it cannot follow an
+ * identifier — a spread of a constant would be reported as unreadable, which is the correct
+ * behaviour for a guard that has to be conservative and a silly thing to make it do here.
+ */
 export function runScript(script: string, args: string[]): string {
   return execFileSync(process.execPath, [script, ...args], {
     encoding: "utf8",
-    stdio: [...STDIO],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
