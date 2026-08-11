@@ -18,7 +18,9 @@
 // Setting `stdio` explicitly is the whole fix — `error.stderr` is populated either way, so
 // assertions on the refusal text are unaffected. These helpers exist so that stays true: the four
 // call sites that leaked were four copies of one options object, and a fifth copy is how it comes
-// back. childStderr.test.ts pins that no test spawns a script any other way.
+// back. childStderr.test.ts enforces the invariant rather than this file — a spawn that sets its
+// own piping `stdio` is equally correct — so a test with a good reason to call execFileSync
+// directly is not forced through here.
 import { execFileSync } from "node:child_process";
 
 /** stderr into the result, never onto the parent's. stdin closed: none of these scripts read it. */

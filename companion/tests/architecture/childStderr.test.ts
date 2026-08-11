@@ -24,6 +24,39 @@ import { runScriptExpectingFailure } from "../helpers/runScript.js";
 
 const TESTS = new URL("../", import.meta.url);
 
+/**
+ * Line numbers of spawns in `source` that would echo the child's stderr onto this process's.
+ *
+ * The rule is the invariant itself — every spawn passes an explicit `stdio` that pipes stderr —
+ * rather than "call the helper", which is only one way of satisfying it. Enforcing the proxy would
+ * fail a spawn that is already correct, and a guard that fires on correct code gets relaxed by
+ * whoever hits it next, usually by deleting it.
+ *
+ * Reads the argument list by matching parens rather than by line, because the four call sites that
+ * caused this all wrapped their options object onto its own lines. A paren inside a string literal
+ * would confuse the balance; none of these calls has one, and the failure mode is a false positive
+ * naming a real line, which is the safe direction.
+ */
+export function unpipedSpawns(source: string): number[] {
+  const found: number[] = [];
+  const call = /\b(?:execFileSync|execSync|spawnSync)\s*\(/g;
+  for (let m = call.exec(source); m; m = call.exec(source)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let i = open;
+    for (; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")" && --depth === 0) break;
+    }
+    const args = source.slice(open + 1, i);
+    // `stdio: "inherit"` is the loud way to do exactly what the default does quietly.
+    if (!/\bstdio\s*:/.test(args) || /["']inherit["']/.test(args)) {
+      found.push(source.slice(0, m.index).split("\n").length);
+    }
+  }
+  return found;
+}
+
 /** Every .ts file under tests/, as a path relative to tests/. */
 async function testSources(dir: URL, prefix = ""): Promise<string[]> {
   const out: string[] = [];
@@ -55,11 +88,10 @@ describe("tests do not leak a child process's stderr into the run", () => {
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("spawns scripts only through the stderr-capturing helper", async () => {
+  it("gives every spawn in the suite an explicit stdio that pipes stderr", async () => {
     // Structural, not behavioural, and deliberately so. The leak is invisible from inside the
     // process that leaks — the parent's stderr belongs to the test runner — so the cheap thing a
-    // test can check is that no call site sets the leak up. One helper owns the `stdio` option;
-    // any other spawn is a copy of the options object waiting to drop it again.
+    // test can check is that no call site sets the leak up.
     const files = await testSources(TESTS);
     expect(files.length, "found no test sources — the walk is looking in the wrong place").toBeGreaterThan(
       10,
@@ -67,21 +99,37 @@ describe("tests do not leak a child process's stderr into the run", () => {
 
     const offenders: string[] = [];
     for (const file of files) {
-      if (file === "helpers/runScript.ts") continue;
+      // This file is the one place the offending shape appears as DATA — the fixture in the test
+      // below is a string of deliberately bad spawns, and scanning it reports itself. Its own two
+      // spawns go through the helper, so nothing here is exempted from the rule in practice.
+      if (file === "architecture/childStderr.test.ts") continue;
       const source = await readFile(new URL(file, TESTS), "utf8");
-      for (const [i, line] of source.split("\n").entries()) {
-        // The call form, not the bare name: the helper is named in prose in more than one comment,
-        // and a mention is not a spawn.
-        if (/\b(?:execFileSync|spawnSync)\s*\(/.test(line)) offenders.push(`${file}:${i + 1}`);
-      }
+      offenders.push(...unpipedSpawns(source).map((line) => `${file}:${line}`));
     }
 
     expect(
       offenders,
-      "spawn scripts via tests/helpers/runScript.ts — a bare execFileSync echoes the child's " +
-        "stderr onto the run's own, which is how four refusal messages came to print on every " +
-        "green run",
+      "these spawns would echo the child's stderr onto the run's own, which is how four refusal " +
+        "messages came to print on every green run. Use tests/helpers/runScript.ts, or pass " +
+        '`stdio: ["ignore", "pipe", "pipe"]` yourself',
     ).toEqual([]);
+  });
+
+  it("flags a spawn that omits stdio, and only that one", () => {
+    // The detector, watched working. Scanning real files reports "[]" both when every spawn is
+    // correct AND when the scan has quietly stopped recognising spawns at all — two cases a
+    // file-walking assertion cannot tell apart on its own.
+    const source = [
+      'const a = execFileSync(node, [s], { encoding: "utf8" });', // 1: no stdio
+      "const b = execFileSync(node, [s], {",
+      '  encoding: "utf8",', // options wrapped across lines, as all four leaks were
+      "});", // reported at line 2, where the call starts
+      'const c = execFileSync(node, [s], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });',
+      'const d = spawnSync(node, [s], { stdio: "inherit" });', // 6: loudly does the default
+      "const e = runScript(SCRIPT, [s]);", // not a spawn at all
+    ].join("\n");
+
+    expect(unpipedSpawns(source)).toEqual([1, 2, 6]);
   });
 
   it("still hands the refusal text to the test that asked for it", () => {
