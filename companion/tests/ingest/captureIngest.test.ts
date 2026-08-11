@@ -117,12 +117,19 @@ describe("ingestCapture", () => {
       return realSave(...args);
     };
 
-    const [doomed, landed] = await Promise.allSettled([
+    // WHICH of the two fails is not ours to choose. The stub fails whichever ingest reaches
+    // saveScreenshot first, and each does async work before that (hash, dedupe check, sequence
+    // reservation), so the winner is decided by scheduling — asserting index 0 was the doomed one
+    // failed on roughly a third of CI runs, whenever the other got there first. The property under
+    // test is "exactly one lands, and the survivor is analyzed", which does not care which.
+    const settled = await Promise.allSettled([
       ingestCapture(store, payload({ imageBase64: img })),
       ingestCapture(store, payload({ imageBase64: img })),
     ]);
-    expect(doomed.status).toBe("rejected");
-    expect(landed.status).toBe("fulfilled");
+    const doomed = settled.find((s) => s.status === "rejected");
+    const landed = settled.find((s) => s.status === "fulfilled");
+    expect(doomed, "one of the two overlapping captures must fail to save").toBeDefined();
+    expect(landed, "the other must land").toBeDefined();
     // The only copy on disk: it has to be analyzed, not skipped as a duplicate of a frame that
     // never landed.
     if (landed.status === "fulfilled") expect(landed.value.isDuplicate).toBe(false);
