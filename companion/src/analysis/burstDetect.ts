@@ -1,6 +1,6 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 
 // Temporal burst / attack-phase detection. A real intrusion arrives in bursts: a dense cluster
 // of events within minutes (initial access), a gap, then another burst (persistence), and so on.

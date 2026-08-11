@@ -1,6 +1,6 @@
 import type { InvestigationState, ForensicEvent, Severity } from "./stateTypes.js";
 import { filterTimeline, type TimeWindow } from "./assetGraph.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
   canonicalAccounts,
   canonicalFile,

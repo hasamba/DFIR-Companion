@@ -11,7 +11,7 @@ import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./irisClient.js";
 import type { PlaybookTask, PlaybookStatus } from "../../analysis/playbook.js";
-import { tacticForTechniques } from "./mitreTactics.js";
+import { tacticForTechniques } from "../../analysis/mitreTactics.js";
 import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js";
 
 const TAG = "dfir-companion";

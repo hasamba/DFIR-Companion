@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   irisEventDate, mapIoc, mapAsset, mapEvent, mapNextStepTask, buildNotes, executiveSummaryMarkdown,
 } from "../../src/integrations/iris/irisMap.js";
-import { tacticForTechniques } from "../../src/integrations/iris/mitreTactics.js";
+import { tacticForTechniques } from "../../src/analysis/mitreTactics.js";
 import { pushCaseToIris, type IrisClientLike } from "../../src/integrations/iris/irisPush.js";
 import { emptyState, type InvestigationState, type IOC, type ForensicEvent, type NextStep } from "../../src/analysis/stateTypes.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Finding, InvestigationState, Severity, StepPriority } from "./stateTypes.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import { collectSummary, isActionableCollect } from "./collectDirective.js";
 import { uncoveredCoreTactics, tacticCollectDirectives } from "./knownUnknowns.js";
 import { rankHosts } from "./hostRanking.js";

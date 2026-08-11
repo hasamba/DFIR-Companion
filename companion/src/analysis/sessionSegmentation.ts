@@ -1,7 +1,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import { parseLoginEvent } from "./loginGraph.js";
-import { tacticForTechniques, type IrisTactic } from "../integrations/iris/mitreTactics.js";
+import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 
 // Attacker session / story reconstruction (#229). The raw forensic timeline is a flat
 // chronological stream of events across every host; an analyst reading it has to mentally
