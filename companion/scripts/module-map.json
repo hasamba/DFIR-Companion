@@ -133,6 +133,7 @@
     "adversaryEmulation.ts": "analysis/intel",
     "adversaryGroupsData.ts": "analysis/intel",
     "adversaryHints.ts": "analysis/intel",
+    "adversaryTechniques.ts": "analysis/intel",
     "aiControl.ts": "analysis/ai",
     "aiCost.ts": "analysis/ai",
     "analysisRunCompare.ts": "analysis/case",

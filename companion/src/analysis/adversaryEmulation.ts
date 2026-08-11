@@ -28,12 +28,14 @@
 
 import { tacticForTechniques } from "../integrations/iris/mitreTactics.js";
 import { attackTechniqueUrl } from "./attack.js";
+// The shared vocabulary, NOT adversaryHints.js — importing it back from there is what made these
+// two modules a cycle. See adversaryTechniques.ts.
 import {
   baseTechniqueId,
   normalizeTechniqueId,
   type AdversaryGroup,
   type AdversaryHint,
-} from "./adversaryHints.js";
+} from "./adversaryTechniques.js";
 
 // One matched group that supports a given next-technique suggestion.
 export interface NextTechniqueGroup {
