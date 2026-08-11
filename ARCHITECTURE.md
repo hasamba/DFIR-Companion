@@ -200,8 +200,12 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **1,275 of the 1,323 cross-domain file dependencies already comply.** The map is mostly
+For context: **1,679 of the 1,718 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
+Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
+finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long
+enough to imply a ledger nine entries longer than the one on disk — nothing derived it and nothing
+checked it, which is the only reason it could drift.
 
 ### The initial ledger
 
