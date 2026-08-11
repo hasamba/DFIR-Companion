@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +17,31 @@ async function readMap(): Promise<{
 }
 
 const readDoc = (): Promise<string> => readFile(new URL("ARCHITECTURE.md", ROOT), "utf8");
+
+/**
+ * The counts, from the gate itself rather than recomputed here.
+ *
+ * Recomputing would mean re-implementing domainOf, rankOf and the import scanner in the test, and a
+ * re-implemented rule agrees with the original right up until it silently doesn't — that is exactly
+ * how the ready-count filter in dashboardInventory.test.ts came to certify a flag the script had
+ * stopped consulting. One resolver, two readers.
+ */
+const boundaryCounts = (): {
+  crossDomain: number;
+  complying: number;
+  violations: number;
+  violationEdges: number;
+} =>
+  JSON.parse(
+    execFileSync(
+      process.execPath,
+      [new URL("companion/scripts/check-boundaries.mjs", ROOT).pathname, "--json"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ),
+  );
+
+/** "1,679" -> 1679. The doc writes thousands separators; nothing else in it does. */
+const num = (s: string): number => Number(s.replace(/,/g, ""));
 
 describe("module map ↔ ARCHITECTURE.md", () => {
   it("documents every analysis domain, with the tier the map assigns it", async () => {
@@ -66,6 +92,47 @@ describe("module map ↔ ARCHITECTURE.md", () => {
     );
     expect(claims.length, "ARCHITECTURE.md should state the violation count").toBeGreaterThan(0);
     for (const claimed of claims) expect(claimed).toBe(ledger.length);
+  });
+
+  it("states a comply/total pair that the boundary scan actually produces", async () => {
+    // The number that rotted. The doc read "1,275 of the 1,323 cross-domain file dependencies
+    // already comply", a difference that contradicted the ledger sitting beside it — and both
+    // halves were stale besides. Every other figure in that document stayed right because the test
+    // above guarded it; this one had nothing, so it drifted quietly while still reading as
+    // authoritative, which is the failure mode a wrong number in prose always has.
+    //
+    // Both halves are asserted, not just the difference: a pair can be internally consistent and
+    // still describe a codebase two hundred dependencies smaller than this one.
+    const counts = boundaryCounts();
+    const doc = await readDoc();
+
+    const m = doc.match(/([\d,]+) of the ([\d,]+) cross-domain file dependencies already comply/);
+    expect(m, "ARCHITECTURE.md should state the cross-domain comply/total pair").not.toBeNull();
+
+    const [, complying, total] = m as RegExpMatchArray;
+    expect(num(complying), "the complying figure has drifted from check-boundaries").toBe(counts.complying);
+    expect(num(total), "the cross-domain total has drifted from check-boundaries").toBe(counts.crossDomain);
+
+    // The pair and the ledger have to agree with each other too. Asserting each against the scan
+    // separately would let a scan whose two counts disagreed satisfy both — and the whole reason
+    // the old pair looked wrong was that its difference contradicted the ledger.
+    const ledger = JSON.parse(
+      await readFile(new URL("companion/scripts/boundary-violations.json", ROOT), "utf8"),
+    ) as string[];
+    expect(counts.crossDomain - counts.complying).toBe(ledger.length);
+    expect(counts.violations).toBe(ledger.length);
+  });
+
+  it("states the number of domain edges the violations actually span", async () => {
+    // Correct today — #549 fixed it — and unguarded, which is the same position the comply/total
+    // pair was in before it drifted. A number that is right for now and watched by nothing is a
+    // number waiting its turn.
+    const counts = boundaryCounts();
+    const doc = await readDoc();
+
+    const claims = [...doc.matchAll(/spanning (\d+) domain edges/gi)].map((mm) => Number(mm[1]));
+    expect(claims.length, "ARCHITECTURE.md should state the domain-edge span").toBeGreaterThan(0);
+    for (const claimed of claims) expect(claimed).toBe(counts.violationEdges);
   });
 });
 

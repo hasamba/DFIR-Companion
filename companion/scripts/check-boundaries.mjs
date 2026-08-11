@@ -36,6 +36,7 @@
  *   node scripts/check-boundaries.mjs            # gate
  *   node scripts/check-boundaries.mjs --update   # re-record after removing violations (shrink-only)
  *   node scripts/check-boundaries.mjs --init     # re-baseline; additions are printed, justify them
+ *   node scripts/check-boundaries.mjs --json     # the counts ARCHITECTURE.md quotes; read-only
  *
  * No dependency: like check-imports.mjs, the graph is a regex over the import statements, because
  * the companion imports its own modules exclusively as relative specifiers ending in `.js`.
@@ -155,6 +156,20 @@ const files = walk(SRC).sort();
 const unclassified = [];
 const violations = [];
 
+// Every cross-domain dependency, complying or not — the denominator the violations are a numerator
+// of. Keyed identically to `violations` below (file pair PLUS kind), because two counts that key
+// differently cannot be subtracted: "complying" is literally this set minus the violating one, and
+// a type-only and a runtime edge between the same file pair are two dependencies in one and one in
+// the other. ARCHITECTURE.md quotes the pair, so both have to come from one pass over one resolver
+// — counting them separately by hand is what put the wrong number there.
+const crossDomain = new Set();
+
+// Domain pairs, for the "spanning N domain edges" claim. An edge is one direction between two
+// domains. The ledger is file-to-file deliberately (see the header), so this is derived, and
+// derived HERE rather than in the test: a test cannot classify a file without re-implementing
+// domainOf, and a re-implemented rule is one that agrees right up until it silently doesn't.
+const violationEdges = new Set();
+
 for (const file of files) {
   const from = rel(file);
   const fromDomain = domainOf(from);
@@ -169,13 +184,16 @@ for (const file of files) {
     const toDomain = domainOf(to);
     // An unresolvable or unclassified target is reported against the target file itself, not here.
     if (!toDomain || toDomain === fromDomain) continue;
+    // The kind is PART OF THE KEY. Without it, a grandfathered `type` edge silently becomes a
+    // runtime edge — the coupling gets strictly worse and the gate says nothing, because the
+    // source and target files did not change. Encoding it means the escalation reads as a new
+    // violation, while the reverse (runtime tightened to type) reads as one going away.
+    const key = `${from} -> ${to} [${isType ? "type" : "runtime"}]`;
+    crossDomain.add(key);
     if (rankOf(toDomain) <= rankOf(fromDomain)) continue;
+    violationEdges.add(`${fromDomain} -> ${toDomain}`);
     violations.push({
-      // The kind is PART OF THE KEY. Without it, a grandfathered `type` edge silently becomes a
-      // runtime edge — the coupling gets strictly worse and the gate says nothing, because the
-      // source and target files did not change. Encoding it means the escalation reads as a new
-      // violation, while the reverse (runtime tightened to type) reads as one going away.
-      key: `${from} -> ${to} [${isType ? "type" : "runtime"}]`,
+      key,
       detail: `${fromDomain} -> ${toDomain}${isType ? " (type-only)" : ""}`,
     });
   }
@@ -218,6 +236,29 @@ if (unclassified.length > 0) {
 
 const found = [...new Set(violations.map((v) => v.key))].sort();
 const detailOf = new Map(violations.map((v) => [v.key, v.detail]));
+
+// The figures ARCHITECTURE.md quotes, read out of the same pass that finds the violations rather
+// than counted by hand into the prose. Its "N of the M cross-domain file dependencies already
+// comply" sentence had drifted far enough that the implied violation count contradicted the ledger
+// sitting next to this script — because nothing derived the pair and nothing checked it.
+// tests/architecture/moduleMap.test.ts now asserts the doc against this output, the way it already
+// does for the violation count. As everywhere else in this file, the numbers themselves are not
+// repeated into a comment: a number written into a comment is a number that goes stale.
+if (process.argv.includes("--json")) {
+  console.log(
+    JSON.stringify(
+      {
+        crossDomain: crossDomain.size,
+        complying: crossDomain.size - found.length,
+        violations: found.length,
+        violationEdges: violationEdges.size,
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
 
 if (process.argv.includes("--init")) {
   const previous = existsSync(LEDGER) ? JSON.parse(readFileSync(LEDGER, "utf8")) : [];
