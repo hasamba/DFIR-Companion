@@ -445,7 +445,7 @@
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" data-safe-style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" data-safe-style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
-    <select id="exportSelect" class="toolbar-select" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, or a Timesketch export)">
+    <select id="exportSelect" class="toolbar-select" aria-label="Export this case" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, or a Timesketch export)">
 
       <option value="">Export…</option>
       <option value="report">Generate report (Markdown + HTML)</option>
@@ -532,7 +532,7 @@
       <div id="enrichProviders"></div>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="enrichSave">Save</button>
-        <button id="enrichCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="enrichCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="enrichMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -558,7 +558,7 @@
         <div id="anonCustom" data-safe-style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
         <div data-safe-style="display:flex;gap:6px;align-items:center">
           <input id="anonCustVal" placeholder="value (host, user, IP, codename…)" data-safe-style="flex:1" />
-          <select id="anonCustCat"></select>
+          <select id="anonCustCat" aria-label="Category for the custom anonymization term"></select>
           <button id="anonCustAdd" type="button">Add</button>
         </div>
         <div id="anonMsg" data-safe-style="color:var(--text-muted);font-size:12px;margin-top:8px"></div>
@@ -575,7 +575,7 @@
       <textarea id="commentText" rows="3" placeholder="Add a comment for other investigators… (@name to mention someone)"></textarea>
       <div data-safe-style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button id="commentPost">Post comment</button>
-        <button id="commentClose" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="commentClose" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span id="commentMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -588,7 +588,7 @@
       <div data-safe-style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <input id="tagInput" placeholder="custom label…" data-safe-style="flex:1" />
         <button id="tagAddBtn">Add tag</button>
-        <button id="tagClose" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="tagClose" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span id="tagMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -613,7 +613,7 @@
       <button id="fpAskAiBtn" type="button" data-safe-style="display:none;margin-top:6px">🔎 Ask AI for similar</button>
       <div data-safe-style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button id="fpConfirmBtn" type="button">Confirm</button>
-        <button id="fpCancelBtn" type="button" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="fpCancelBtn" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="fpMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -625,7 +625,7 @@
       <div id="mergeCandidates" data-safe-style="max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; margin-top:4px;"></div>
       <div data-safe-style="margin-top:8px; display:flex; gap:8px; align-items:center;">
         <button id="mergeConfirmBtn" type="button" disabled>Merge</button>
-        <button id="mergeCancelBtn" type="button" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="mergeCancelBtn" type="button" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="mergeMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -649,7 +649,7 @@
       <span class="sfield-hint" data-safe-style="display:block; margin-top:4px">You can change or clear this later in Settings → General → Import severity.</span>
       <div data-safe-style="margin-top:12px; display:flex; gap:8px; align-items:center;">
         <button id="importSevOk">Import</button>
-        <button id="importSevCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="importSevCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
       </div>
     </div>
   </div>
@@ -674,7 +674,7 @@
       </div>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="notionExportBtn">Export</button>
-        <button id="notionCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="notionCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="notionMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -691,7 +691,7 @@
       <p data-safe-style="color:var(--text-faint); font-size:11px; margin:4px 0 0">Find it in the list's URL: <code>app.clickup.com/…/li/<b>901234567</b></code></p>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="clickupPushBtn">Push</button>
-        <button id="clickupCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="clickupCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="clickupMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -708,7 +708,7 @@
       </label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="irisPushBtn">Push</button>
-        <button id="irisPushCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="irisPushCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="irisPushMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -722,7 +722,7 @@
         <button id="importCaseIris" type="button" data-safe-style="display:none; text-align:left;">🛰️ From DFIR-IRIS — pull an existing IRIS case</button>
       </div>
       <div data-safe-style="margin-top:12px;">
-        <button id="importCaseCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="importCaseCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="importCaseHint" data-safe-style="margin-left:8px; color:var(--text-faint); font-size:11px;"></span>
       </div>
     </div>
@@ -736,7 +736,7 @@
       <input id="ipPassword" type="password" autocomplete="new-password" data-safe-style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="ipImport">Import</button>
-        <button id="ipCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="ipCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="ipMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -757,7 +757,7 @@
       </label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="irisImportRun">Import</button>
-        <button id="irisImportCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="irisImportCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="irisImportMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -768,7 +768,7 @@
       <div id="huntSub" data-safe-style="color:var(--text-muted);font-size:12px;margin-bottom:6px"></div>
       <div id="huntBody"></div>
       <div data-safe-style="margin-top:10px;display:flex;gap:10px;align-items:center">
-        <button id="huntClose" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="huntClose" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span data-safe-style="color:var(--text-muted);font-size:11px">Pivot templates — review &amp; adapt field/table names to your schema before running.</span>
       </div>
     </div>
@@ -779,7 +779,7 @@
       <div id="explainEventTitle" data-safe-style="color:var(--text-muted);font-size:12px;margin-bottom:10px;font-style:italic"></div>
       <div id="explainBody"></div>
       <div data-safe-style="margin-top:12px">
-        <button id="explainClose" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="explainClose" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
       </div>
     </div>
   </div>
@@ -789,8 +789,8 @@
       <div id="iocChainTitle" data-safe-style="color:var(--text-muted);font-size:12px;margin-bottom:10px;font-style:italic"></div>
       <div id="iocChainBody"></div>
       <div data-safe-style="margin-top:12px">
-        <button id="iocChainExport" data-safe-style="background:var(--border-color);">Export JSON</button>
-        <button id="iocChainClose" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="iocChainExport" data-safe-style="background:var(--border-color);color:var(--text-primary);">Export JSON</button>
+        <button id="iocChainClose" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
       </div>
     </div>
   </div>
@@ -813,7 +813,7 @@
       <div id="ncTemplateDesc" data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px; padding:6px 8px; background:var(--bg-tertiary); border-radius:4px; display:none;"></div>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="ncCreate">Create case</button>
-        <button id="ncCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="ncCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="ncMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -829,7 +829,7 @@
         <input id="stDesc" placeholder="one-line summary of when to use this template" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px;" /></label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="stSave">Save template</button>
-        <button id="stCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="stCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="stMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -863,7 +863,7 @@
         <button id="blDlTxt">Download TXT</button>
         <button id="blDlCsv">Download CSV</button>
         <button id="blDlStix">Download STIX</button>
-        <button id="blCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="blCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
       </div>
     </div>
   </div>
@@ -885,7 +885,7 @@
       <p data-safe-style="color:var(--help-icon-color); font-size:11px; margin:8px 0 0">⚠ Faces and other non-text visual PII are NOT auto-detected. Uncheck “Include screenshots” if unsure.</p>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="reDownload">Build &amp; download</button>
-        <button id="reCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="reCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="reMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -909,7 +909,7 @@
       </div>
       <div id="rvDiffResult" data-safe-style="font-size:12px; max-height:220px; overflow:auto;"></div>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
-        <button id="rvCancel" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="rvCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span id="rvMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -950,7 +950,7 @@
       </label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="zaArchive">Archive</button>
-        <button id="zaCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="zaCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="zaMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -974,7 +974,7 @@
       </label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="eeDownload">Export &amp; download</button>
-        <button id="eeCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="eeCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="eeMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -1005,7 +1005,7 @@
       </div>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="dcDelete" data-safe-style="background:#3a2020;border:1px solid #5a2a2a;color:#ff9f9f">Delete</button>
-        <button id="dcCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="dcCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="dcMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -1023,8 +1023,8 @@
       <input id="cpNewPassword" type="password" autocomplete="new-password" data-safe-style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button id="cpSave">Save password</button>
-        <button id="cpRemove" data-safe-style="background:var(--border-color);">Remove password</button>
-        <button id="cpCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="cpRemove" data-safe-style="background:var(--border-color);color:var(--text-primary);">Remove password</button>
+        <button id="cpCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="cpMsg" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
@@ -1041,7 +1041,7 @@
       </label>
       <div data-safe-style="display:flex; gap:8px; align-items:center;">
         <button id="cuUnlock">Unlock</button>
-        <button id="cuCancel" data-safe-style="background:var(--border-color);">Cancel</button>
+        <button id="cuCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="cuMsg" data-safe-style="color:var(--tag-red-text); font-size:12px;"></span>
       </div>
     </div>
@@ -1146,7 +1146,7 @@
           </label>
         </div>
         <div class="sfield">
-          <label>Import severity <span class="sfield-hint" data-safe-style="display:inline">— the minimum severity used when importing evidence. "Ask every time" prompts on each import; pick a level to remember it and skip the prompt. Saved in this browser.</span></label>
+          <label for="importSevDefault">Import severity <span class="sfield-hint" data-safe-style="display:inline">— the minimum severity used when importing evidence. "Ask every time" prompts on each import; pick a level to remember it and skip the prompt. Saved in this browser.</span></label>
           <select id="importSevDefault">
             <option value="">Ask every time (default)</option>
             <option value="critical">critical — only Critical</option>
@@ -1157,7 +1157,7 @@
           </select>
         </div>
         <div class="sfield">
-          <label>Log verbosity <span class="sfield-hint" data-safe-style="display:inline">— takes effect immediately (no restart)</span></label>
+          <label for="logLevelSelect">Log verbosity <span class="sfield-hint" data-safe-style="display:inline">— takes effect immediately (no restart)</span></label>
           <select id="logLevelSelect">
             <option value="error">error — only failures</option>
             <option value="warn">warn — failures + warnings</option>
@@ -2656,7 +2656,7 @@
 
       <div class="settings-footer">
         <button id="settingsSaveBtn">Save</button>
-        <button id="settingsCloseBtn" data-safe-style="background:var(--border-color);">Close</button>
+        <button id="settingsCloseBtn" data-safe-style="background:var(--border-color);color:var(--text-primary);">Close</button>
         <span id="settingsSaveMsg" class="settings-msg"></span>
       </div>
     </div>
@@ -3421,7 +3421,7 @@
     <section id="sec-inv-log" data-safe-style="grid-column: 1 / -1"><h2>Investigation Log<span class="ev-sub">import events and AI notes merged with analyst quick-action entries, in chronological order</span></h2><div id="timeline">—</div></section>
     <section id="sec-activity" data-safe-style="grid-column: 1 / -1"><h2>Activity Log<span class="ev-sub">Every security-relevant action taken on this case</span></h2>
       <div data-safe-style="margin-bottom:8px">
-        <select id="activityFilter" data-safe-style="font-size:12px">
+        <select id="activityFilter" aria-label="Filter the activity log by category" data-safe-style="font-size:12px">
           <option value="">All categories</option>
         </select>
       </div>

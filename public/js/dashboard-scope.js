@@ -188,7 +188,11 @@
     el.textContent = (s.start || s.end)
       ? `active: ${s.start ? utc(s.start) : "−∞"} → ${s.end ? utc(s.end) : "now"}`
       : "none (all events)";
-    el.style.color = (s.start || s.end) ? "#ffd93b" : "#9aa4b2";
+    // Theme TOKENS, not literals. These were the dark palette's hex values applied unconditionally,
+    // so in light theme the "scope is active" chip rendered #ffd93b on white — 1.37:1, effectively
+    // invisible, on the one indicator that tells an analyst they are looking at a filtered subset
+    // of the evidence rather than all of it. The tokens resolve per theme and both clear AA.
+    el.style.color = (s.start || s.end) ? "var(--sev-medium)" : "var(--text-dim)";
   }
 
   window.DfirScope = {

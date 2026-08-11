@@ -29,6 +29,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import {
   DASHBOARD_CSS_PARTS,
   DASHBOARD_PATH as DASHBOARD,
+  THEME_REGISTRY_PATH as REGISTRY_FILE,
   THEME_CSS_PARTS,
   loadBaseline,
   THEME_SOURCES,
@@ -112,11 +113,17 @@ function main() {
   // sync with the CSS from one run, because the two failure modes are both silent — a menu entry
   // with no matching block renders as the previous theme under a new name, and a block with no
   // entry is unreachable.
-  const rs = htmlSrc.indexOf(REGISTRY_BEGIN);
-  const re = htmlSrc.indexOf(REGISTRY_END);
-  if (rs < 0 || re < 0) throw new Error("theme registry markers not found in dashboard.html");
-  let outHtml =
-    htmlSrc.slice(0, rs) + renderThemeRegistry(IMPORTED_THEMES, values) + htmlSrc.slice(re + REGISTRY_END.length);
+  // The registry lives in js/dashboard-theme.js since #415, not in dashboard.html. Reading it from
+  // the wrong file threw here on every run, so the generator had been unable to run at all.
+  const registrySrc = readFileSync(REGISTRY_FILE, "utf8");
+  const rs = registrySrc.indexOf(REGISTRY_BEGIN);
+  const re = registrySrc.indexOf(REGISTRY_END);
+  if (rs < 0 || re < 0) throw new Error(`theme registry markers not found in ${REGISTRY_FILE}`);
+  let outRegistry =
+    registrySrc.slice(0, rs) +
+    renderThemeRegistry(IMPORTED_THEMES, values) +
+    registrySrc.slice(re + REGISTRY_END.length);
+  let outHtml = htmlSrc;
 
   // Call-site rewrite. Both patterns are anchored on the full 6-hex name so a partial
   // match is impossible, and an unknown name is left alone and reported rather than
@@ -163,6 +170,7 @@ function main() {
 
   for (let i = 0; i < outParts.length; i++) outParts[i] = rewriteQuoted(rewriteVars(outParts[i]));
   outHtml = rewriteQuoted(rewriteVars(outHtml));
+  outRegistry = rewriteQuoted(rewriteVars(outRegistry));
 
   const outCss = outParts.join("");
   const generatedLen = parts.tokens.length + parts.themesA.length + parts.themesB.length;
@@ -178,7 +186,7 @@ function main() {
   //   - one alias declaration per variable
   //   - one declaration per alpha alias
   //   - the alpha call sites themselves, which keep their own variable on purpose
-  const both = `${outHtml}\n${outCss}`;
+  const both = `${outHtml}\n${outRegistry}\n${outCss}`;
   const remaining = (both.match(/--c-[0-9a-f]{6}/g) ?? []).length;
   const alphaSites = (both.match(/var\(\s*--c-[0-9a-f]{8}\s*\)/g) ?? []).length;
   const expected = facts.length + alphas.length + alphaSites;
@@ -196,7 +204,10 @@ function main() {
   }
   DASHBOARD_CSS_PARTS.forEach((p, i) => writeFileSync(p, outParts[i]));
   writeFileSync(DASHBOARD, outHtml);
-  console.log(`\nwrote ${DASHBOARD_CSS_PARTS.length} stylesheet parts\nwrote ${DASHBOARD}`);
+  writeFileSync(REGISTRY_FILE, outRegistry);
+  console.log(
+    `\nwrote ${DASHBOARD_CSS_PARTS.length} stylesheet parts\nwrote ${DASHBOARD}\nwrote ${REGISTRY_FILE}`,
+  );
 }
 
 const lineOf = (s: string, idx: number) => s.slice(0, idx).split("\n").length;
