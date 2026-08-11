@@ -12,10 +12,10 @@
 // fail CI on each one and be regenerated without being read, which is how a ledger stops meaning
 // anything. The JSON is a planning snapshot; the invariant is what is enforced.
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runScript, runScriptExpectingFailure } from "../helpers/runScript.js";
 
 const SCRIPT = new URL("../../scripts/dashboard-inventory.mjs", import.meta.url).pathname;
 
@@ -45,7 +45,7 @@ const run = (): {
     foreignStanzas: string[];
     functions: number;
   }[];
-} => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--json"], { encoding: "utf8" }));
+} => JSON.parse(runScript(SCRIPT, ["--json"]));
 
 describe("dashboard extraction inventory", () => {
   const report = run();
@@ -225,11 +225,7 @@ describe("dashboard extraction inventory", () => {
     );
     writeFileSync(join(dir, "js", "sibling.js"), "calledOnlyBySibling();\n");
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const only = r.sections.find((s: { label: string }) => s.label === "Lonely feature");
       expect(only.publish).toContain("calledOnlyBySibling");
       // The complement: a function nothing calls must NOT be published, or "publish" degenerates
@@ -259,11 +255,7 @@ describe("dashboard extraction inventory", () => {
     );
     writeFileSync(join(dir, "js", "sibling.js"), "// mentionedInProse() is documented here.\n");
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const only = r.sections.find((s: { label: string }) => s.label === "Lonely feature");
       expect(only.publish).toEqual([]);
     } finally {
@@ -293,11 +285,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const feature = r.sections.find((s: { label: string }) => s.label === "The feature");
       expect(feature.moduleScopeDom).toBe(0);
       expect(feature.boundElsewhere).toEqual(["closeThing"]);
@@ -327,11 +315,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const feature = r.sections.find((s: { label: string }) => s.label === "The feature");
       expect(feature.boundElsewhere).toEqual([]);
       expect(feature.needsInitializer).toBe(false);
@@ -363,11 +347,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const only = r.sections[0];
       expect(only.clusters).toEqual([2, 2]);
       expect(only.looksLikeTwoFeatures).toBe(true);
@@ -400,11 +380,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       // aOne+aTwo is a cluster of two; stowaway is a cluster of one that counts; SMALL_TABLE is a
       // singleton that does not.
       expect(r.sections[0].clusters).toEqual([2, 1]);
@@ -433,11 +409,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       expect(r.sections[0].clusters).toEqual([4]);
       expect(r.sections[0].looksLikeTwoFeatures).toBe(false);
     } finally {
@@ -470,11 +442,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       expect(r.sections[0].foreignStanzas).toEqual(["5 initGone"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -504,11 +472,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       expect(r.sections[0].foreignStanzas).toEqual(["5 initGone"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -534,11 +498,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       expect(r.sections[0].foreignStanzas).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -579,11 +539,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const sec = r.sections.find((s: { label: string }) => s.label === "Owner");
       expect(sec.vocabulary.join(" "), "30 call sites is vocabulary").toContain("shout");
       // The complement: a name called once must NOT be flagged, or every declaration reads as
@@ -618,11 +574,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       const sec = r.sections.find((s: { label: string }) => s.label === "Helpers and state");
       // Both function forms are publishable, neither is a state escape.
       expect(sec.publish).toContain("quote");
@@ -682,11 +634,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const r = JSON.parse(
-        execFileSync(process.execPath, [SCRIPT, "--html", join(dir, "dashboard.html"), "--json"], {
-          encoding: "utf8",
-        }),
-      );
+      const r = JSON.parse(runScript(SCRIPT, ["--html", join(dir, "dashboard.html"), "--json"]));
       // renderThingRow must NOT match on a prefix — the list is exact names, not shapes.
       expect(r.sections[0].coreMachinery).toEqual([]);
       expect(r.sections[0].isCoreMachinery).toBe(false);
@@ -715,12 +663,13 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      execFileSync(process.execPath, [SCRIPT, "--html", broken, "--json"], { encoding: "utf8" });
-      expect.unreachable("inventory accepted a dashboard with code outside every section");
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string };
-      expect(err.status, "expected a non-zero exit").toBeGreaterThan(0);
-      expect(err.stderr ?? "").toContain("invisible to this inventory");
+      // Through the helper, so the refusal this test is PROVOKING lands in `stderr` here instead of
+      // on the run's own stderr. It used to print `[inventory] FAIL: sections cover 2 lines but the
+      // inline script is 4` on every green run — this fixture's four lines, read by anyone
+      // scanning the output as the real dashboard failing its coverage check.
+      const { status, stderr } = runScriptExpectingFailure(SCRIPT, ["--html", broken, "--json"]);
+      expect(status, "expected a non-zero exit").toBeGreaterThan(0);
+      expect(stderr).toContain("invisible to this inventory");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -746,10 +695,7 @@ describe("dashboard extraction inventory", () => {
       ].join("\n"),
     );
     try {
-      const out = execFileSync(process.execPath, [SCRIPT, "--html", fixed, "--json"], {
-        encoding: "utf8",
-      });
-      const r = JSON.parse(out);
+      const r = JSON.parse(runScript(SCRIPT, ["--html", fixed, "--json"]));
       expect(r.covered).toBe(r.inlineScript.lines);
       expect(r.sections.map((s: { label: string }) => s.label)).toEqual([
         "Stray, now owned",

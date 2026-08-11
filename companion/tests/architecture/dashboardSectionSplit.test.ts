@@ -7,10 +7,10 @@
 // would have left three buttons permanently dead — in a <head> script the query runs before the
 // markup exists, binds nothing, and reports nothing. The first case below is exactly that shape.
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runScript, runScriptExpectingFailure } from "../helpers/runScript.js";
 
 const SCRIPT = new URL("../../scripts/dashboard-section-split.mjs", import.meta.url).pathname;
 
@@ -22,12 +22,23 @@ const dashboardWith = (body: string[]): { dir: string; path: string } => {
   return { dir, path };
 };
 
-const split = (path: string, from: number, to: number) =>
-  JSON.parse(
-    execFileSync(process.execPath, [SCRIPT, String(from), String(to), "--json", "--html", path], {
-      encoding: "utf8",
-    }),
-  );
+const args = (path: string, from: number, to: number): string[] => [
+  String(from),
+  String(to),
+  "--json",
+  "--html",
+  path,
+];
+
+const split = (path: string, from: number, to: number) => JSON.parse(runScript(SCRIPT, args(path, from, to)));
+
+/**
+ * The refusal cases. These go through the helper so the `[split] REFUSING: …` line each one is
+ * PROVOKING is captured rather than printed onto the run's own stderr — three of them were, on
+ * every green run, describing throwaway fixtures rather than anything wrong with the dashboard.
+ */
+const splitExpectingFailure = (path: string, from: number, to: number) =>
+  runScriptExpectingFailure(SCRIPT, args(path, from, to));
 
 describe("dashboard section split", () => {
   it("puts a bare block that wires a button into the initializer, not the body", () => {
@@ -109,14 +120,9 @@ describe("dashboard section split", () => {
       "  }", // 5
     ]);
     try {
-      execFileSync(process.execPath, [SCRIPT, "3", "4", "--json", "--html", path], {
-        encoding: "utf8",
-      });
-      expect.unreachable("accepted a range ending inside a function body");
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string };
-      expect(err.status).toBe(1);
-      expect(err.stderr ?? "").toContain("REFUSING");
+      const { status, stderr } = splitExpectingFailure(path, 3, 4);
+      expect(status).toBe(1);
+      expect(stderr).toContain("REFUSING");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -145,12 +151,9 @@ describe("dashboard section split", () => {
       '  if (typeof initSomethingElse !== "undefined") initSomethingElse();',
     ]);
     try {
-      execFileSync(process.execPath, [SCRIPT, "3", "4", "--json", "--html", path], { encoding: "utf8" });
-      expect.unreachable("accepted a range containing another feature's initializer");
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string };
-      expect(err.status).toBe(1);
-      expect(err.stderr ?? "").toContain("initSomethingElse");
+      const { status, stderr } = splitExpectingFailure(path, 3, 4);
+      expect(status).toBe(1);
+      expect(stderr).toContain("initSomethingElse");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -166,12 +169,9 @@ describe("dashboard section split", () => {
       '  if (typeof initOther === "function") initOther();',
     ]);
     try {
-      execFileSync(process.execPath, [SCRIPT, "3", "4", "--json", "--html", path], { encoding: "utf8" });
-      expect.unreachable('accepted a range containing an === "function" guard');
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string };
-      expect(err.status).toBe(1);
-      expect(err.stderr ?? "").toContain("initOther");
+      const { status, stderr } = splitExpectingFailure(path, 3, 4);
+      expect(status).toBe(1);
+      expect(stderr).toContain("initOther");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -196,12 +196,7 @@ describe("dashboard section split", () => {
     // that gets acted on without being questioned.
     const { dir, path } = dashboardWith(["  function f() {}"]);
     try {
-      execFileSync(process.execPath, [SCRIPT, "40", "10", "--json", "--html", path], {
-        encoding: "utf8",
-      });
-      expect.unreachable("accepted a range that ends before it starts");
-    } catch (e) {
-      expect((e as { status?: number }).status).toBe(2);
+      expect(splitExpectingFailure(path, 40, 10).status).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
